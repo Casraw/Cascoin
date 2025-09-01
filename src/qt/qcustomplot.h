@@ -3233,14 +3233,14 @@ void QCPDataContainer<DataType>::performAutoSqueeze()
   const int usedSize = size();
   bool shrinkPostAllocation = false;
   bool shrinkPreAllocation = false;
-  if (totalAlloc > 650000) // if allocation is larger, shrink earlier with respect to total used size
+  if (totalAlloc > 50000) // CASCOIN: Drastically reduce memory limit to prevent 16GB leaks (was 650000)
   {
-    shrinkPostAllocation = postAllocSize > usedSize*1.5; // QVector grow strategy is 2^n for static data. Watch out not to oscillate!
-    shrinkPreAllocation = mPreallocSize*10 > usedSize;
-  } else if (totalAlloc > 1000) // below 10 MiB raw data be generous with preallocated memory, below 1k points don't even bother
+    shrinkPostAllocation = postAllocSize > usedSize*1.2; // More aggressive shrinking
+    shrinkPreAllocation = mPreallocSize*3 > usedSize; // More aggressive prealloc shrinking
+  } else if (totalAlloc > 500) // CASCOIN: Lower threshold for smaller datasets (was 1000)
   {
-    shrinkPostAllocation = postAllocSize > usedSize*5;
-    shrinkPreAllocation = mPreallocSize > usedSize*1.5; // preallocation can grow into postallocation, so can be smaller
+    shrinkPostAllocation = postAllocSize > usedSize*2; // CASCOIN: More aggressive shrinking (was *5)
+    shrinkPreAllocation = mPreallocSize > usedSize*1.2; // CASCOIN: More aggressive shrinking (was *1.5)
   }
   
   if (shrinkPreAllocation || shrinkPostAllocation)

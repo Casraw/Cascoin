@@ -1012,6 +1012,9 @@ public:
     // Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead bees and optionally scanning for blocks minted by bees from each BCT
     std::vector<CBeeCreationTransactionInfo> GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations = 1);
 
+    // Cascoin: Hive: Cached coinbase map for performance optimization
+    mutable std::map<std::string, std::pair<int, CAmount>> hiveCoinbaseMap;
+    
     // Cascoin: Rialto: Create an NCT to register a given nickname
     bool CreateNickRegistrationTransaction(std::string nickname, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyNickAddress, std::string nickAddress, std::string changeAddress, std::string& strFailReason, const Consensus::Params& consensusParams);
 

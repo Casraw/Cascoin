@@ -5,8 +5,8 @@
 #ifndef BITCOIN_QT_GUICONSTANTS_H
 #define BITCOIN_QT_GUICONSTANTS_H
 
-/* Milliseconds between model updates */
-static const int MODEL_UPDATE_DELAY = 250;
+/* Milliseconds between model updates - increased to reduce CPU load */
+static const int MODEL_UPDATE_DELAY = 500;
 
 /* AskPassphraseDialog -- Maximum passphrase length */
 static const int MAX_PASSPHRASE_SIZE = 1024;

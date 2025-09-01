@@ -14,8 +14,13 @@
 
 #include <map>
 #include <vector>
+#include <memory>
 
 #include <QObject>
+
+// Forward declarations
+class MemoryOptimizer;
+class BCTCache;
 
 enum OutputType : int;
 
@@ -233,6 +238,9 @@ private:
     CWallet *wallet;
     bool fHaveWatchOnly;
     bool fForceCheckBalanceChanged;
+    
+    // Memory-optimized caching - using pointer to avoid including large header
+    std::unique_ptr<BCTCache> bctCache;
 
     // Wallet has an options model for wallet-specific options
     // (transaction fee, for example)

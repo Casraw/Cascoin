@@ -8,6 +8,7 @@
 #include <wallet/fees.h>
 
 #include <qt/hivedialog.h>
+#include <qt/threadpool.h>
 #include <qt/forms/ui_hivedialog.h>
 #include <qt/clientmodel.h>
 #include <qt/sendcoinsdialog.h>
@@ -194,37 +195,70 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
 
     if (forceGlobalSummaryUpdate || chainActive.Tip()->nHeight >= lastGlobalCheckHeight + 10) { // Don't update global summary every block
         int globalImmatureBees, globalImmatureBCTs, globalMatureBees, globalMatureBCTs;
-        if (!GetNetworkHiveInfo(globalImmatureBees, globalImmatureBCTs, globalMatureBees, globalMatureBCTs, potentialRewards, consensusParams, true)) {
-            ui->globalHiveSummary->hide();
-            ui->globalHiveSummaryError->show();
-        } else {
-            ui->globalHiveSummaryError->hide();
-            ui->globalHiveSummary->show();
-            if (globalImmatureBees == 0)
-                ui->globalImmatureLabel->setText("0");
-            else
-                ui->globalImmatureLabel->setText(formatLargeNoLocale(globalImmatureBees) + " (" + QString::number(globalImmatureBCTs) + " transactions)");
-
-            if (globalMatureBees == 0)
-                ui->globalMatureLabel->setText("0");
-            else
-                ui->globalMatureLabel->setText(formatLargeNoLocale(globalMatureBees) + " (" + QString::number(globalMatureBCTs) + " transactions)");
-
-            updateGraph();
-        }
-
-        setAmountField(ui->potentialRewardsLabel, potentialRewards);
-
-        double hiveWeight = (globalMatureBees == 0) ? 0.0 : mature / (double)globalMatureBees;
-        ui->localHiveWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
-        ui->hiveWeightPie->setValue(hiveWeight);
-
-        beePopIndex = ((beeCost * globalMatureBees) / (double)potentialRewards) * 100.0;
-        if (beePopIndex > 200) beePopIndex = 200;
-        ui->beePopIndexLabel->setText(QString::number(floor(beePopIndex)));
-        ui->beePopIndexPie->setValue(beePopIndex / 100);
+        // PERFORMANCE FIX: Show loading state immediately and move heavy operation to background
+        ui->globalHiveSummaryError->hide();
+        ui->globalHiveSummary->show();
+        ui->globalImmatureLabel->setText(tr("Loading..."));
+        ui->globalMatureLabel->setText(tr("Loading..."));
         
-        lastGlobalCheckHeight = chainActive.Tip()->nHeight;
+        // Execute heavy blockchain operation in background
+        CascoinThreadPool::instance().executeAsync([=, &consensusParams]() {
+            try {
+                int globalImmatureBees, globalImmatureBCTs, globalMatureBees, globalMatureBCTs;
+                CAmount backgroundPotentialRewards;
+                
+                bool success = GetNetworkHiveInfo(globalImmatureBees, globalImmatureBCTs, 
+                                                globalMatureBees, globalMatureBCTs, 
+                                                backgroundPotentialRewards, consensusParams, true);
+                
+                // Update UI on main thread
+                QMetaObject::invokeMethod(this, [=]() {
+                    if (!success) {
+                        ui->globalHiveSummary->hide();
+                        ui->globalHiveSummaryError->show();
+                    } else {
+                        ui->globalHiveSummaryError->hide();
+                        ui->globalHiveSummary->show();
+                        
+                        if (globalImmatureBees == 0)
+                            ui->globalImmatureLabel->setText("0");
+                        else
+                            ui->globalImmatureLabel->setText(formatLargeNoLocale(globalImmatureBees) + " (" + QString::number(globalImmatureBCTs) + " transactions)");
+
+                        if (globalMatureBees == 0)
+                            ui->globalMatureLabel->setText("0");
+                        else
+                            ui->globalMatureLabel->setText(formatLargeNoLocale(globalMatureBees) + " (" + QString::number(globalMatureBCTs) + " transactions)");
+
+                        // Update these after loading the data
+                        potentialRewards = backgroundPotentialRewards;
+                        setAmountField(ui->potentialRewardsLabel, potentialRewards);
+                        
+                        double hiveWeight = (globalMatureBees == 0) ? 0.0 : mature / (double)globalMatureBees;
+                        ui->localHiveWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
+                        ui->hiveWeightPie->setValue(hiveWeight);
+
+                        beePopIndex = ((beeCost * globalMatureBees) / (double)potentialRewards) * 100.0;
+                        if (beePopIndex > 200) beePopIndex = 200;
+                        ui->beePopIndexLabel->setText(QString::number(floor(beePopIndex)));
+                        ui->beePopIndexPie->setValue(beePopIndex / 100);
+                        
+                        updateGraph(); // Update graph after data is loaded
+                        lastGlobalCheckHeight = chainActive.Tip()->nHeight;
+                    }
+                }, Qt::QueuedConnection);
+                
+            } catch (const std::exception& e) {
+                qDebug() << "Error in background hive data update:" << e.what();
+                QMetaObject::invokeMethod(this, [=]() {
+                    ui->globalHiveSummary->hide();
+                    ui->globalHiveSummaryError->show();
+                }, Qt::QueuedConnection);
+            }
+        });
+        
+        // Skip the synchronous operations - they will be done in background
+        // (lastGlobalCheckHeight is updated after successful background operation)
     }
 
     ui->blocksTillGlobalRefresh->setText(QString::number(10 - (chainActive.Tip()->nHeight - lastGlobalCheckHeight)));
@@ -325,12 +359,22 @@ void HiveDialog::onUpdateTimerTimeout() {
     ui->includeDeadBeesCheckbox->setText(tr("Include expired mice (updating...)"));
 
     if(model && model->getHiveTableModel()) {
+        // Connect to completion signal to re-enable UI after background operation finishes
+        connect(model->getHiveTableModel(), &HiveTableModel::updateCompleted, 
+                this, &HiveDialog::onBCTUpdateCompleted, Qt::UniqueConnection);
+        
         model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
     }
+}
 
-    // Re-enable checkbox after update
+void HiveDialog::onBCTUpdateCompleted() {
+    // Re-enable checkbox after background update completes
     ui->includeDeadBeesCheckbox->setEnabled(true);
     ui->includeDeadBeesCheckbox->setText(tr("Include expired mice"));
+    
+    // Disconnect to avoid multiple connections
+    disconnect(model->getHiveTableModel(), &HiveTableModel::updateCompleted, 
+               this, &HiveDialog::onBCTUpdateCompleted);
 }
 
 void HiveDialog::on_showAdvancedStatsCheckbox_stateChanged() {

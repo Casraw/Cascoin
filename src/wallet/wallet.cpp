@@ -2899,6 +2899,8 @@ CBeeCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool 
 
 // Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead bees and optionally scanning for blocks minted by bees from each BCT
 std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations) {
+    LOCK2(cs_main, cs_wallet);
+    
     std::vector<CBeeCreationTransactionInfo> bcts;
 
     if (chainActive.Height() == 0)  // Don't continue if chainActive is invalid; we may be reindexing
@@ -2907,35 +2909,48 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
 
-    // Pre-build a lookup map for hive coinbase transactions to avoid O(n²) complexity
-    std::map<std::string, std::pair<int, CAmount>> hiveCoinbaseMap;
+    // Use cached hiveCoinbaseMap to avoid expensive O(n²) wallet scanning
+    std::map<std::string, std::pair<int, CAmount>> localHiveCoinbaseMap;
     if (scanRewards) {
-        for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
-            const CWalletTx& wtx = pairWtx.second;
+        // Clear and rebuild cache every 1000 entries to prevent memory leaks
+        if (hiveCoinbaseMap.size() > 1000) {
+            LogPrintf("Clearing hiveCoinbaseMap to prevent memory leak (size: %d)\n", hiveCoinbaseMap.size());
+            hiveCoinbaseMap.clear();
+        }
+        
+        // Check if we have a cached version first
+        if (hiveCoinbaseMap.empty()) {
+            // Build coinbase map only once and cache it
+            for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
+                const CWalletTx& wtx = pairWtx.second;
             
-            // Only process hive coinbase transactions
-            if (!wtx.IsHiveCoinBase())
-                continue;
+                // Only process hive coinbase transactions
+                if (!wtx.IsHiveCoinBase())
+                    continue;
                 
-            // Skip unconfirmed transactions
-            if (wtx.GetDepthInMainChain() < minHoneyConfirmations)
-                continue;
+                // Skip unconfirmed transactions
+                if (wtx.GetDepthInMainChain() < minHoneyConfirmations)
+                    continue;
                 
-            // Extract the BCT txid from the coinbase transaction
-            if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
-                std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
-                std::string blockTxidStr = std::string(blockTxid.begin(), blockTxid.end());
-                
-                // Accumulate rewards for this BCT
-                if (hiveCoinbaseMap.find(blockTxidStr) == hiveCoinbaseMap.end()) {
-                    hiveCoinbaseMap[blockTxidStr] = std::make_pair(0, 0);
-                }
-                hiveCoinbaseMap[blockTxidStr].first++;  // blocks found
-                if (wtx.tx->vout.size() > 1) {
-                    hiveCoinbaseMap[blockTxidStr].second += wtx.tx->vout[1].nValue;  // rewards
+                // Extract the BCT txid from the coinbase transaction
+                if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
+                    std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
+                    std::string blockTxidStr = std::string(blockTxid.begin(), blockTxid.end());
+                    
+                    // Accumulate rewards for this BCT
+                    if (hiveCoinbaseMap.find(blockTxidStr) == hiveCoinbaseMap.end()) {
+                        hiveCoinbaseMap[blockTxidStr] = std::make_pair(0, 0);
+                    }
+                    hiveCoinbaseMap[blockTxidStr].first++;  // blocks found
+                    if (wtx.tx->vout.size() > 1) {
+                        hiveCoinbaseMap[blockTxidStr].second += wtx.tx->vout[1].nValue;  // rewards
+                    }
                 }
             }
         }
+        localHiveCoinbaseMap = hiveCoinbaseMap; // Use cached version
+    } else {
+        localHiveCoinbaseMap = hiveCoinbaseMap; // Use already cached version
     }
 
     for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
@@ -2954,7 +2969,7 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
             continue;
 
         // Get its info if it's a BCT - use optimized version with pre-built lookup
-        CBeeCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minHoneyConfirmations, hiveCoinbaseMap);
+        CBeeCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minHoneyConfirmations, localHiveCoinbaseMap);
         if (bct.txid != "")
             bcts.push_back(bct);
     }

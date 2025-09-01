@@ -19,6 +19,7 @@
 #include <QCheckBox>
 #include <QProgressBar>
 #include <QTimer>
+#include <atomic>
 
 #include <qt/bctdatabase.h>
 
@@ -80,6 +81,9 @@ private:
     QLabel *bctStatusLabel;
     QProgressBar *bctProgressBar;
     bool bctLoading = false;
+    
+    // Memory leak protection
+    std::atomic<int> activeDetachedThreads{0};
     
     // Transfer Tab
     QWidget *transferTab;

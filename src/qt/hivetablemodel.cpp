@@ -11,6 +11,7 @@
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/hivedialog.h>  // For formatLargeNoLocale()
+#include <qt/threadpool.h>
 
 #include <clientversion.h>
 #include <streams.h>
@@ -50,8 +51,8 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
     }
     updateInProgress = true;
 
-    // Move expensive wallet operations to background thread to prevent GUI hang
-    std::thread([=]() {
+    // Use centralized thread pool for better resource management
+    CascoinThreadPool::instance().executeAsync([=]() {
         try {
             // Load entries from wallet in background thread
             std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
@@ -91,8 +92,9 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 // Fire signal
                 QMetaObject::invokeMethod(walletModel, "newHiveSummaryAvailable", Qt::QueuedConnection);
                 
-                // Reset update flag
+                // Reset update flag and emit completion signal
                 updateInProgress = false;
+                Q_EMIT updateCompleted();
             }, Qt::QueuedConnection);
             
         } catch (const std::exception& e) {
@@ -100,9 +102,10 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 LogPrintf("Error updating BCTs: %s\n", e.what());
                 // Reset update flag on error too
                 updateInProgress = false;
+                Q_EMIT updateCompleted();
             }, Qt::QueuedConnection);
         }
-    }).detach();
+    });
 }
 
 void HiveTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit) {

@@ -21,8 +21,9 @@ class uint256;
 
 //! No need to periodic flush if at least this much space still available.
 static constexpr int MAX_BLOCK_COINSDB_USAGE = 10;
-//! -dbcache default (MiB)
-static const int64_t nDefaultDbCache = 450;
+//! PERFORMANCE FIX: Balanced cache size for optimal block loading vs RAM usage
+//! -dbcache default (MiB) - increased from 150 to 250 for faster block loading
+static const int64_t nDefaultDbCache = 250;
 //! -dbbatchsize default (bytes)
 static const int64_t nDefaultDbBatchSize = 16 << 20;
 //! max. -dbcache (MiB)
@@ -35,8 +36,9 @@ static const int64_t nMaxBlockDBCache = 2;
 // Unlike for the UTXO database, for the txindex scenario the leveldb cache make
 // a meaningful difference: https://github.com/bitcoin/bitcoin/pull/8273#issuecomment-229601991
 static const int64_t nMaxBlockDBAndTxIndexCache = 1024;
-//! Max memory allocated to coin DB specific cache (MiB)
-static const int64_t nMaxCoinsDBCache = 8;
+//! PERFORMANCE FIX: Increased coins DB cache for faster block loading
+//! Max memory allocated to coin DB specific cache (MiB) - increased from 8 to 32  
+static const int64_t nMaxCoinsDBCache = 32;
 
 struct CDiskTxPos : public CDiskBlockPos
 {

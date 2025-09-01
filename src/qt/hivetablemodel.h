@@ -59,6 +59,10 @@ public:
 public Q_SLOTS:
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
 
+Q_SIGNALS:
+    void updated();
+    void updateCompleted();
+
 private:
     static QString secondsToString(qint64 seconds);
     void addBCT(const CBeeCreationTransactionInfo &bct);

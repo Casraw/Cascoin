@@ -220,6 +220,15 @@ void ModalOverlay::showHide(bool hide, bool userRequested)
     animation->setStartValue(startRect);
     animation->setEndValue(endRect);
     animation->setEasingCurve(QEasingCurve::OutQuad);
+    
+    // Connect to handle animation completion
+    if (hide) {
+        connect(animation, &QPropertyAnimation::finished, [this]() {
+            setVisible(false);
+            if (ui->bgWidget) ui->bgWidget->setVisible(false);
+        });
+    }
+    
     animation->start(QAbstractAnimation::DeleteWhenStopped);
     
     if (!hide && ui->bgWidget) {

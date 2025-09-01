@@ -5,6 +5,8 @@
 #include <qt/walletmodel.h>
 
 #include <qt/addresstablemodel.h>
+#include <QProgressDialog>
+#include <QCoreApplication>
 #include <consensus/validation.h>
 #include <qt/guiconstants.h>
 #include <qt/guiutil.h>
@@ -14,6 +16,7 @@
 #include <qt/hivetablemodel.h>  // Cascoin: Hive
 #include <qt/sendcoinsdialog.h>
 #include <qt/transactiontablemodel.h>
+#include <qt/memoryoptimizer.h>
 
 #include <base58.h>
 #include <chain.h>
@@ -28,7 +31,10 @@
 #include <wallet/coincontrol.h>
 #include <wallet/feebumper.h>
 #include <wallet/wallet.h>
+#include <thread>  // For background threading
+#include <atomic>  // For atomic operations
 #include <wallet/walletdb.h> // for BackupWallet
+#include <qt/adaptivepoller.h>  // For adaptive polling
 
 #include <stdint.h>
 
@@ -43,6 +49,7 @@ WalletModel::WalletModel(const PlatformStyle *platformStyle, CWallet *_wallet, O
     QObject(parent), wallet(_wallet), optionsModel(_optionsModel), addressTableModel(0),
     transactionTableModel(0),
     recentRequestsTableModel(0),
+    bctCache(std::make_unique<BCTCache>(std::min(8, MemoryOptimizer::instance().getRecommendedCacheSize() / 16))),
     hiveTableModel(0),  // Cascoin: Hive
     cachedBalance(0), cachedUnconfirmedBalance(0), cachedImmatureBalance(0),
     cachedEncryptionStatus(Unencrypted),
@@ -56,7 +63,7 @@ WalletModel::WalletModel(const PlatformStyle *platformStyle, CWallet *_wallet, O
     recentRequestsTableModel = new RecentRequestsTableModel(wallet, this);
     hiveTableModel = new HiveTableModel(platformStyle, wallet, this);  // Cascoin: Hive
 
-    // This timer will be fired repeatedly to update the balance
+    // Use adaptive polling to adjust frequency based on system load
     pollTimer = new QTimer(this);
     connect(pollTimer, SIGNAL(timeout()), this, SLOT(pollBalanceChanged()));
     pollTimer->start(MODEL_UPDATE_DELAY);
@@ -119,27 +126,63 @@ void WalletModel::updateStatus()
 
 void WalletModel::pollBalanceChanged()
 {
-    // Get required locks upfront. This avoids the GUI from getting stuck on
-    // periodical polls if the core is holding the locks for a longer time -
-    // for example, during a wallet rescan.
-    TRY_LOCK(cs_main, lockMain);
-    if(!lockMain)
+    // Use a background thread for expensive operations to prevent GUI freezing
+    static std::atomic<bool> updateInProgress{false};
+    
+    // Skip if update already in progress to prevent accumulation
+    if (updateInProgress.load()) {
         return;
-    TRY_LOCK(wallet->cs_wallet, lockWallet);
-    if(!lockWallet)
-        return;
-
-    if(fForceCheckBalanceChanged || chainActive.Height() != cachedNumBlocks)
-    {
-        fForceCheckBalanceChanged = false;
-
-        // Balance and number of transactions might have changed
-        cachedNumBlocks = chainActive.Height();
-
-        checkBalanceChanged();
-        if(transactionTableModel)
-            transactionTableModel->updateConfirmations();
     }
+    
+    // Quick check without locks first
+    int currentHeight;
+    {
+        TRY_LOCK(cs_main, lockMain);
+        if (!lockMain) {
+            return; // Can't get lock, skip this update to keep GUI responsive
+        }
+        currentHeight = chainActive.Height();
+    }
+    
+    // Only proceed with expensive operations if height actually changed
+    if (!fForceCheckBalanceChanged && currentHeight == cachedNumBlocks) {
+        return;
+    }
+    
+    updateInProgress.store(true);
+    
+    // Run expensive wallet operations in background thread
+    std::thread([this, currentHeight]() {
+        try {
+            // Get required locks upfront with timeout to avoid indefinite blocking
+            TRY_LOCK(cs_main, lockMain);
+            if(!lockMain) {
+                updateInProgress.store(false);
+                return;
+            }
+            TRY_LOCK(wallet->cs_wallet, lockWallet);
+            if(!lockWallet) {
+                updateInProgress.store(false);
+                return;
+            }
+
+            if(fForceCheckBalanceChanged || chainActive.Height() != cachedNumBlocks)
+            {
+                fForceCheckBalanceChanged = false;
+                cachedNumBlocks = chainActive.Height();
+
+                // Schedule UI updates on main thread
+                QMetaObject::invokeMethod(this, [this]() {
+                    checkBalanceChanged();
+                    if(transactionTableModel)
+                        transactionTableModel->updateConfirmations();
+                }, Qt::QueuedConnection);
+            }
+            updateInProgress.store(false);
+        } catch (...) {
+            updateInProgress.store(false);
+        }
+    }).detach();  // TODO: Replace with CascoinThreadPool to prevent memory leaks
 }
 
 void WalletModel::checkBalanceChanged()
@@ -661,24 +704,61 @@ void WalletModel::loadReceiveRequests(std::vector<std::string>& vReceiveRequests
     vReceiveRequests = wallet->GetDestValues("rr"); // receive request
 }
 
-// Cascoin: Hive
+// Cascoin: Hive - Memory-optimized BCT retrieval with caching
 void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreationTransactions, bool includeDeadBees) {
-    if (wallet) {
-        // Use TRY_LOCK with timeout to prevent indefinite hanging
-        TRY_LOCK(wallet->cs_wallet, lockWallet);
-        if (lockWallet) {
+    if (!wallet) {
+        vBeeCreationTransactions.clear();
+        return;
+    }
+    
+    // Create cache key based on current state
+    QString cacheKey = QString("bcts_%1_%2_%3")
+        .arg(includeDeadBees ? "expired" : "active")
+        .arg(chainActive.Height())
+        .arg(wallet->GetName().c_str());
+    
+    // Try to get from cache first
+    if (bctCache && bctCache->get(cacheKey, vBeeCreationTransactions, includeDeadBees)) {
+        return; // Cache hit!
+    }
+    
+    // Cache miss - load from wallet with lock timeout
+    TRY_LOCK(wallet->cs_wallet, lockWallet);
+    if (lockWallet) {
+        try {
             vBeeCreationTransactions = wallet->GetBCTs(includeDeadBees, true, Params().GetConsensus());
-        } else {
-            // If we can't get the lock immediately, return empty result to prevent hang
-            LogPrintf("Warning: Could not acquire wallet lock for BCT update, skipping to prevent GUI hang\n");
+            
+            // Cache the result
+            if (bctCache) {
+                bctCache->put(cacheKey, vBeeCreationTransactions, includeDeadBees);
+            }
+        } catch (const std::exception& e) {
+            qDebug() << "Error getting BCTs:" << e.what();
             vBeeCreationTransactions.clear();
         }
+    } else {
+        // If we can't get the lock immediately, return empty result to prevent hang
+        LogPrintf("Warning: Could not acquire wallet lock for BCT update, skipping to prevent GUI hang\n");
+        vBeeCreationTransactions.clear();
     }
 }
 
 // Cascoin: Hive
 bool WalletModel::createBees(int beeCount, bool communityContrib, QWidget *parent, double beePopIndex) {
+    // Show progress dialog immediately to provide user feedback
+    QProgressDialog progressDialog(tr("Creating mice..."), tr("Cancel"), 0, 100, parent);
+    progressDialog.setWindowModality(Qt::ApplicationModal);
+    progressDialog.setMinimumDuration(0);
+    progressDialog.setValue(10);
+    progressDialog.show();
+    
+    // Process events to show the dialog
+    QCoreApplication::processEvents();
+    
+    // Perform blocking operations with periodic GUI updates
     wallet->BlockUntilSyncedToCurrentChain();
+    progressDialog.setValue(30);
+    QCoreApplication::processEvents();
 
     LOCK2(cs_main, wallet->cs_wallet);
 
@@ -688,14 +768,25 @@ bool WalletModel::createBees(int beeCount, bool communityContrib, QWidget *paren
 	std::string changeAddress;
     CReserveKey reservekeyChange(wallet);
     CReserveKey reservekeyHoney(wallet);
+    
+    progressDialog.setValue(50);
+    QCoreApplication::processEvents();
+    
     if (!wallet->CreateBeeTransaction(beeCount, wtxNew, reservekeyChange, reservekeyHoney, honeyAddress, changeAddress, communityContrib, strError, Params().GetConsensus())) {
+        progressDialog.close();
         QMessageBox::critical(parent, tr("Error"), "Mouse creation error: " + QString::fromStdString(strError));
         return false;
     }
+    
+    progressDialog.setValue(80);
+    QCoreApplication::processEvents();
 
     CAmount totalAmount = wtxNew.GetDebit(ISMINE_ALL) - wtxNew.GetCredit(ISMINE_ALL);
     CAmount txFee = wtxNew.GetDebit(ISMINE_ALL) - wtxNew.tx->GetValueOut();
     CAmount amountWithoutFees = totalAmount - txFee;
+    
+    progressDialog.setValue(100);
+    progressDialog.close();
 
     QString questionString = tr("Are you sure you want to create mice?<br />");
 

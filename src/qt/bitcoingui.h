@@ -23,6 +23,7 @@ class NetworkStyle;
 class Notificator;
 class OptionsModel;
 class PlatformStyle;
+class ResponseMonitor;
 class RPCConsole;
 class SendCoinsRecipient;
 class UnitDisplayStatusBarControl;
@@ -126,6 +127,9 @@ private:
     /** Keep track of previous number of blocks, to detect progress */
     int prevBlocks;
     int spinnerFrame;
+    
+    /** Monitor GUI responsiveness */
+    ResponseMonitor *responseMonitor;
 
     bool m_numBlocksChangedConnected; // Flag to ensure we only connect the signal once
 

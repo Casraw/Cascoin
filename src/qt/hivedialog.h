@@ -110,6 +110,7 @@ private Q_SLOTS:
     void on_createBeesButton_clicked();
     void on_beeCountSpinner_valueChanged(int i);
     void on_includeDeadBeesCheckbox_stateChanged();
+    void onBCTUpdateCompleted();
     void onUpdateTimerTimeout();
     void on_showAdvancedStatsCheckbox_stateChanged();
     void updateDisplayUnit();

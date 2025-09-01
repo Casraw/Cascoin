@@ -15,6 +15,7 @@
 #include <qt/optionsdialog.h>
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
+#include <qt/responsemonitor.h>
 #include <qt/rpcconsole.h>
 #include <qt/utilitydialog.h>
 
@@ -129,7 +130,9 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
     modalOverlay(0),
     prevBlocks(0),
     spinnerFrame(0),
+    responseMonitor(0),
     m_numBlocksChangedConnected(false),
+
     platformStyle(_platformStyle)
 {
     QSettings settings;
@@ -206,6 +209,10 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
 
     // Disable size grip because it looks ugly and nobody needs it
     statusBar()->setSizeGripEnabled(false);
+    
+    // Initialize GUI responsiveness monitor
+    responseMonitor = new ResponseMonitor(this);
+    responseMonitor->startMonitoring();
 
     // Status bar notification icons
     QFrame *frameBlocks = new QFrame();

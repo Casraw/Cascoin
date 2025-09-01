@@ -24,6 +24,9 @@
 #include <wallet/rpcwallet.h>   // Cascoin: Key import helper
 #include <wallet/wallet.h>      // Cascoin: Key import helper
 #include <validation.h>         // Cascoin: Key import helper
+#include <thread>               // For background threading
+#include <QProgressDialog>      // For progress dialogs
+#include <QMetaObject>          // For invokeMethod
 
 #include <ui_interface.h>
 
@@ -200,8 +203,15 @@ void WalletView::gotoOverviewPage()
 // Cascoin: Hive page
 void WalletView::gotoHivePage()
 {
-    hivePage->updateData();
+    // PERFORMANCE FIX: Switch tab immediately, then update data asynchronously
     setCurrentWidget(hivePage);
+    
+    // Schedule data update with slight delay to ensure smooth UI transition
+    QTimer::singleShot(50, [this](){
+        if (hivePage) {
+            hivePage->updateData();
+        }
+    });
 }
 
 // Cascoin: Bee NFT page
@@ -382,13 +392,48 @@ void WalletView::requestedSyncWarningInfo()
 // Cascoin: Key import helper
 void WalletView::doRescan(CWallet* pwallet, int64_t startTime)
 {
-    WalletRescanReserver reserver(pwallet);
-    if (!reserver.reserve()) {
-        QMessageBox::critical(0, tr(PACKAGE_NAME), tr("Wallet is currently rescanning. Abort existing rescan or wait."));
-        return;
-    }
-	pwallet->RescanFromTime(TIMESTAMP_MIN, reserver, true);
-	QMessageBox::information(0, tr(PACKAGE_NAME), tr("Rescan complete."));
+    // Show progress dialog to keep user informed
+    QProgressDialog* progressDialog = new QProgressDialog(tr("Rescanning wallet..."), tr("Cancel"), 0, 100, nullptr);
+    progressDialog->setWindowModality(Qt::ApplicationModal);
+    progressDialog->setMinimumDuration(0);
+    progressDialog->setValue(0);
+    progressDialog->show();
+    
+    // Run rescan in background thread to prevent GUI freeze
+    std::thread([pwallet, startTime, progressDialog]() {
+        WalletRescanReserver reserver(pwallet);
+        if (!reserver.reserve()) {
+            QMetaObject::invokeMethod(progressDialog, [progressDialog]() {
+                progressDialog->close();
+                progressDialog->deleteLater();
+                QMessageBox::critical(0, tr(PACKAGE_NAME), tr("Wallet is currently rescanning. Abort existing rescan or wait."));
+            }, Qt::QueuedConnection);
+            return;
+        }
+        
+        try {
+            // Update progress periodically during rescan
+            QMetaObject::invokeMethod(progressDialog, [progressDialog]() {
+                progressDialog->setValue(25);
+            }, Qt::QueuedConnection);
+            
+            pwallet->RescanFromTime(TIMESTAMP_MIN, reserver, true);
+            
+            // Complete and show success message on main thread
+            QMetaObject::invokeMethod(progressDialog, [progressDialog]() {
+                progressDialog->setValue(100);
+                progressDialog->close();
+                progressDialog->deleteLater();
+                QMessageBox::information(0, tr(PACKAGE_NAME), tr("Rescan complete."));
+            }, Qt::QueuedConnection);
+        } catch (const std::exception& e) {
+            QMetaObject::invokeMethod(progressDialog, [progressDialog, e]() {
+                progressDialog->close();
+                progressDialog->deleteLater();
+                QMessageBox::critical(0, tr(PACKAGE_NAME), tr("Rescan failed: ") + QString::fromStdString(e.what()));
+            }, Qt::QueuedConnection);
+        }
+    }).detach();  // TODO: Replace with CascoinThreadPool to prevent memory leaks
 }
 
 // Cascoin: Key import helper
