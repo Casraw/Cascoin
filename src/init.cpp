@@ -207,6 +207,9 @@ void Shutdown()
 
     StopTorControl();
 
+    // Stop the scheduler before interrupting threads to ensure clean shutdown
+    scheduler.stop(true);
+
     // After everything has been shut down, but before things get flushed, stop the
     // CScheduler/checkqueue threadGroup
     threadGroup.interrupt_all();
@@ -278,6 +281,9 @@ void Shutdown()
 #ifdef ENABLE_WALLET
     CloseWallets();
 #endif
+    // Release directory locks before static destructors run to avoid
+    // static destruction order issues with the scheduler
+    ReleaseDirectoryLocks();
     globalVerifyHandle.reset();
     ECC_Stop();
     LogPrintf("%s: done\n", __func__);
