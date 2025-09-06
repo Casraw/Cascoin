@@ -465,7 +465,7 @@ UniValue createrawbct(const JSONRPCRequest& request)
             "       } \n"
             "       ,...\n"
             "     ]\n"
-            "2. bee_count              (numeric, required) The number of mice to create.\n"
+            "2. mice_count              (numeric, required) The number of mice to create.\n"
             "3. \"honey_address\"        (string, required) The CAS address to receive rewards for blocks mined by mice created in this transaction.\n"
             "4. community_contrib      (boolean, optional, default=true) If true, a small percentage of mouse creation cost will be paid to a community fund.\n"
             "5. locktime               (numeric, optional, default=0) Raw locktime. Non-0 value also locktime-activates inputs\n"

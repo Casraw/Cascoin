@@ -92,7 +92,7 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createrawtransaction", 2, "locktime" },
     { "createrawtransaction", 3, "replaceable" },
     { "createrawbct", 0, "inputs" },                // Cascoin: Hive: Create a Raw BCT
-    { "createrawbct", 1, "bee_count" },             // Cascoin: Hive: Create a Raw BCT
+    { "createrawbct", 1, "mice_count" },             // Cascoin: Hive: Create a Raw BCT
     { "createrawbct", 3, "community_contrib" },     // Cascoin: Hive: Create a Raw BCT
     { "createrawbct", 4, "locktime" },              // Cascoin: Hive: Create a Raw BCT
     { "createmice", 0, "beecount" },                // Cascoin: Hive: Create a BCT
