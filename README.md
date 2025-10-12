@@ -4,7 +4,7 @@ Cascoin Core integration/staging tree
 What is Cascoin?
 ----------------------
 
-Cascoin is a fork of Litecoin Cassh supporting SHA256 PoW and Hive Mining. For full details, as well as prebuilt binaries for Windows, Mac and Linux, please visit our website at https://cascoin.net.
+Cascoin is a fork of Litecoin Cash supporting SHA256 PoW and Hive Mining. For full details, as well as prebuilt binaries for Windows, Mac and Linux, please visit our website at https://cascoin.net.
 
 Cascoin Core is the full node software that makes up the backbone of the CAS network.
 
