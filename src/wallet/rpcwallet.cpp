@@ -646,7 +646,7 @@ UniValue createbees(const JSONRPCRequest& request)
         if (honeyAddress.empty()) // If not using a custom honey address, keep the honey key
             reservekeyHoney.KeepKey();
         if (!pwallet->CommitTransaction(wtxNew, reservekeyChange, g_connman.get(), state))
-            throw JSONRPCError(RPC_WALLET_BCT_FAIL, "Error: Bee creation transaction was rejected. Reason given: " + state.GetRejectReason());
+            throw JSONRPCError(RPC_WALLET_BCT_FAIL, "Error: Mice creation transaction was rejected. Reason given: " + state.GetRejectReason());
         return wtxNew.GetHash().GetHex();
     } else
         throw JSONRPCError(RPC_WALLET_BCT_FAIL, strError);
@@ -2358,7 +2358,7 @@ UniValue getbctinfo(const JSONRPCRequest& request)
             "    community_contrib,    (boolean) If true, indicates that a portion of the bee creation fee was paid to the community fund\n"
             "    \"bee_status\",         (string) resting | adventure | dead. Only adventure mice are capable of mining\n"
             "    \"honey_address\",      (string) The address which will receive block rewards for blocks minted by the mice\n"
-            "    bee_fee_paid,         (numeric) Total mouse creation fee (in " + CURRENCY_UNIT + ")\n"
+            "    mice_fee_paid,         (numeric) Total mouse creation fee (in " + CURRENCY_UNIT + ")\n"
             "    rewards_paid,         (numeric) The amount of block rewards earned by the mice (in " + CURRENCY_UNIT + ")\n"
             "    profit,               (numeric) The profit earned by the mice (in " + CURRENCY_UNIT + ")\n"
             "    blocks_found,         (numeric) The number of blocks minted by the mice\n"
@@ -2400,7 +2400,7 @@ UniValue getbctinfo(const JSONRPCRequest& request)
         jsonResults.push_back(Pair("community_contrib", bct.communityContrib));
         jsonResults.push_back(Pair("bee_status", bct.beeStatus));
         jsonResults.push_back(Pair("honey_address", bct.honeyAddress));
-        jsonResults.push_back(Pair("bee_fee_paid", ValueFromAmount(bct.beeFeePaid)));
+        jsonResults.push_back(Pair("mice_fee_paid", ValueFromAmount(bct.beeFeePaid)));
         jsonResults.push_back(Pair("rewards_paid", ValueFromAmount(bct.rewardsPaid)));
         jsonResults.push_back(Pair("profit", ValueFromAmount(bct.profit)));
         jsonResults.push_back(Pair("blocks_found", bct.blocksFound));
@@ -2430,7 +2430,7 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
             "        mature_bees,              (numeric) Total Adventure mice\n"
             "        immature_bees,            (numeric) Total Resting mice\n"
             "        blocks_found,             (numeric) Total blocks found\n"
-            "        bee_fee_paid,             (numeric) Total bee creation fees (in " + CURRENCY_UNIT + ")\n"
+            "        bee_fee_paid,             (numeric) Total mice creation fees (in " + CURRENCY_UNIT + ")\n"
             "        rewards_paid,             (numeric) Total rewards paid (in " + CURRENCY_UNIT + ")\n"
             "        profit,                   (numeric) Total rewards paid (in " + CURRENCY_UNIT + ")\n"
             "        \"warnings\"                (string) Warnings; empty if no warnings\n"
@@ -2500,7 +2500,7 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
             entry.push_back(Pair("community_contrib", bct.communityContrib));
             entry.push_back(Pair("bee_status", bct.beeStatus));
             entry.push_back(Pair("honey_address", bct.honeyAddress));
-            entry.push_back(Pair("bee_fee_paid", ValueFromAmount(bct.beeFeePaid)));
+            entry.push_back(Pair("mice_fee_paid", ValueFromAmount(bct.beeFeePaid)));
             entry.push_back(Pair("rewards_paid", ValueFromAmount(bct.rewardsPaid)));
             entry.push_back(Pair("profit", ValueFromAmount(bct.profit)));
             entry.push_back(Pair("blocks_found", bct.blocksFound));
@@ -2521,10 +2521,10 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
 
     UniValue summary(UniValue::VOBJ);
     summary.push_back(Pair("mice_count", totalBees));
-    summary.push_back(Pair("mature_bees", totalMature));
-    summary.push_back(Pair("immature_bees", totalImmature));
+    summary.push_back(Pair("mature_mice", totalMature));
+    summary.push_back(Pair("immature_mice", totalImmature));
     summary.push_back(Pair("blocks_found", totalBlocksFound));
-    summary.push_back(Pair("bee_fee_paid", ValueFromAmount(totalBeeFee)));
+    summary.push_back(Pair("mice_fee_paid", ValueFromAmount(totalBeeFee)));
     summary.push_back(Pair("rewards_paid", ValueFromAmount(totalRewards)));
     summary.push_back(Pair("profit", ValueFromAmount(totalRewards-totalBeeFee)));
     summary.push_back(Pair("warnings", pwallet->IsLocked()? "Wallet is locked and must be unlocked to mine" : ""));
