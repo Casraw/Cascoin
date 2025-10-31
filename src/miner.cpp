@@ -856,7 +856,7 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
 
     if (potentialBcts.empty() || totalBees == 0)
     {
-        LogPrint(BCLog::HIVE, "BusyBees: No mature bees found\n");
+        LogPrint(BCLog::HIVE, "BusyBees: No mature mice found\n");
         return false;
     }
 
