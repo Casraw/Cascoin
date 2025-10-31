@@ -62,6 +62,12 @@ void BeeNFTPage::setModel(WalletModel *_walletModel)
             
             // Connect model signals
             connect(beeNFTModel, SIGNAL(beeNFTsChanged()), this, SLOT(updateBeeNFTCombo()));
+
+            // Connect selection after model is set
+            if (beeNFTView->selectionModel()) {
+                connect(beeNFTView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
+                        this, SLOT(onBeeNFTSelectionChanged()));
+            }
         }
         
         updateBeeNFTCombo();
@@ -227,8 +233,7 @@ void BeeNFTPage::setupUI()
     detailsButton->setEnabled(false);
     transferButton->setEnabled(false);
     
-    connect(beeNFTView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
-            this, SLOT(onBeeNFTSelectionChanged()));
+    // Selection connection will be made once a model is set
     
     // Defer heavy loading until the user visits the Tokenize tab
     connect(tabWidget, &QTabWidget::currentChanged, this, [this](int idx){
@@ -935,32 +940,29 @@ void BeeNFTPage::updateTableModelWithRealData(const QString& jsonString)
         
         if (status != "mature") continue;
         
-        // Count available mice
+        // Count TOKENIZED mice (not available ones - we want to show NFTs, not BCTs)
         QJsonArray availableMice = bct["available_mice"].toArray();
-        int availableCount = 0;
         for (const QJsonValue& mouseValue : availableMice) {
             if (!mouseValue.isObject()) continue;
             QJsonObject mouse = mouseValue.toObject();
             bool alreadyTokenized = mouse["already_tokenized"].toBool();
-            if (!alreadyTokenized) {
-                availableCount++;
-            }
-        }
-        
-        // Only add BCTs that could be tokenized (have available mice)
-        if (availableCount > 0) {
-            BeeNFTRecord record;
-            record.beeNFTId = QString("bct-nft-%1...").arg(bctTxid.left(8));
-            record.originalBCT = bctTxid;
-            record.beeIndex = totalMiceInBct; // Real total mice count
-            record.currentOwner = "CMyWalletAddress123...";
-            record.status = "active";
-            record.maturityHeight = 100000; // TODO: Get real data
-            record.expiryHeight = 200000;   // TODO: Get real data
-            record.tokenizedHeight = 50000; // TODO: Get real data
-            record.blocksLeft = 5000;       // TODO: Get real data
             
-            newRecords.append(record);
+            // Only show mice that have been tokenized (are actual NFTs)
+            if (alreadyTokenized) {
+                BeeNFTRecord record;
+                int miceIndex = mouse["mice_index"].toInt();
+                record.beeNFTId = QString("mice-nft-%1-%2").arg(bctTxid.left(8)).arg(miceIndex);
+                record.originalBCT = bctTxid;
+                record.beeIndex = miceIndex;
+                record.currentOwner = mouse["owner"].toString();
+                record.status = status == "mature" ? "mature" : "immature";
+                record.maturityHeight = bct["maturity_height"].toInt();
+                record.expiryHeight = bct["expiry_height"].toInt();
+                record.tokenizedHeight = mouse["tokenized_height"].toInt();
+                record.blocksLeft = bct["blocks_left"].toInt();
+                
+                newRecords.append(record);
+            }
         }
     }
     

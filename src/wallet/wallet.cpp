@@ -2907,80 +2907,55 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
 
-    // Pre-build a lookup map for hive coinbase transactions to avoid O(n²) complexity
-    std::map<std::string, std::pair<int, CAmount>> hiveCoinbaseMap;
-    if (scanRewards) {
-        // Cascoin: Memory leak fix - Add counter and early exit for very large wallets
-        int processedCount = 0;
-        const int MAX_COINBASE_PROCESS = 5000; // Limit coinbase processing to prevent memory explosion
-        
+    // Pre-compute our BCT txids to restrict reward aggregation only to relevant coinbases
+    std::set<std::string> myBctIds;
+    {
+        CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
         for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
             const CWalletTx& wtx = pairWtx.second;
-            
-            // Early exit if processing too many transactions
-            if (processedCount >= MAX_COINBASE_PROCESS) {
-                LogPrintf("Memory optimization: Stopping coinbase processing at %d transactions to prevent RAM overflow\n", processedCount);
-                break;
-            }
-            
+            if (wtx.IsCoinBase()) continue;
+            if (!IsAllFromMe(*wtx.tx, ISMINE_SPENDABLE)) continue;
+            if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF)) continue;
+            myBctIds.insert(wtx.GetHash().GetHex());
+        }
+    }
+
+    // Lookup map for hive coinbase transactions restricted to our BCT ids
+    std::map<std::string, std::pair<int, CAmount>> hiveCoinbaseMap;
+    if (scanRewards && !myBctIds.empty()) {
+        for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
+            const CWalletTx& wtx = pairWtx.second;
+
             // Only process hive coinbase transactions
-            if (!wtx.IsHiveCoinBase()) {
-                processedCount++;
-                continue;
-            }
-                
+            if (!wtx.IsHiveCoinBase()) continue;
+
             // Skip unconfirmed transactions
-            if (wtx.GetDepthInMainChain() < minHoneyConfirmations) {
-                processedCount++;
-                continue;
-            }
-                
+            if (wtx.GetDepthInMainChain() < minHoneyConfirmations) continue;
+
             // Extract the BCT txid from the coinbase transaction
             if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
                 std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
-                std::string blockTxidStr = std::string(blockTxid.begin(), blockTxid.end());
-                
-                // Accumulate rewards for this BCT
-                if (hiveCoinbaseMap.find(blockTxidStr) == hiveCoinbaseMap.end()) {
-                    hiveCoinbaseMap[blockTxidStr] = std::make_pair(0, 0);
-                }
-                hiveCoinbaseMap[blockTxidStr].first++;  // blocks found
+                std::string blockTxidStr(blockTxid.begin(), blockTxid.end());
+
+                // Only accumulate if this coinbase references one of our BCTs
+                if (myBctIds.find(blockTxidStr) == myBctIds.end()) continue;
+
+                auto &entry = hiveCoinbaseMap[blockTxidStr];
+                entry.first++;  // blocks found
                 if (wtx.tx->vout.size() > 1) {
-                    hiveCoinbaseMap[blockTxidStr].second += wtx.tx->vout[1].nValue;  // rewards
+                    entry.second += wtx.tx->vout[1].nValue;  // rewards
                 }
             }
-            processedCount++;
         }
-        
-        // Cascoin: Memory leak fix - More aggressive clearing for large maps
-        if (hiveCoinbaseMap.size() > 500) {  // Reduced from 1000 to 500
-            LogPrintf("Memory optimization: Clearing hiveCoinbaseMap to prevent memory leak (size: %d)\n", hiveCoinbaseMap.size());
-            hiveCoinbaseMap.clear();
-        }
-        
-        LogPrintf("Processed %d wallet transactions for coinbase rewards (map size: %d)\n", processedCount, hiveCoinbaseMap.size());
+        LogPrintf("Processed %u wallet transactions for coinbase rewards (map size: %u)\n", (unsigned)mapWallet.size(), (unsigned)hiveCoinbaseMap.size());
     }
 
-    // Cascoin: Memory leak fix - Add limits for BCT processing to prevent RAM explosion
+    // Iterate all wallet transactions; memory stays bounded since we only push BCTs we own
     int bctProcessedCount = 0;
-    const int MAX_BCT_PROCESS = 10000; // Limit BCT processing for very large wallets
-    const int MAX_BCTS_RESULT = 1000;  // Limit result size to prevent memory overflow
-
     for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
         const CWalletTx& wtx = pairWtx.second;
 
-        // Early exit if processing too many transactions
         bctProcessedCount++;
-        if (bctProcessedCount > MAX_BCT_PROCESS) {
-            LogPrintf("Memory optimization: Stopped BCT processing at %d transactions to prevent RAM overflow\n", MAX_BCT_PROCESS);
-            break;
-        }
-
-        // Early exit if we have too many results already
-        if (bcts.size() >= MAX_BCTS_RESULT) {
-            LogPrintf("Memory optimization: Limited BCT results to %d entries to prevent memory overflow\n", MAX_BCTS_RESULT);
-            break;
-        }
 
         // Skip unconfirmed transactions and orphans
         if (wtx.GetDepthInMainChain() < 1)
@@ -4903,3 +4878,4 @@ CTxDestination CWallet::AddAndGetDestinationForScript(const CScript& script, Out
     default: assert(false);
     }
 }
+

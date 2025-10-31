@@ -134,6 +134,19 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
             return true;
         }
         
+        // Special handling for Mice NFT transactions (CASTOK = tokenize, CASXFR = transfer)
+        if (txout.scriptPubKey.size() >= 8 && 
+            txout.scriptPubKey[0] == OP_RETURN &&
+            txout.scriptPubKey[1] == 0x06) {  // PUSH 6 bytes
+            std::vector<unsigned char> magic(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
+            std::vector<unsigned char> castok = {'C', 'A', 'S', 'T', 'O', 'K'};
+            std::vector<unsigned char> casxfr = {'C', 'A', 'S', 'X', 'F', 'R'};
+            if (magic == castok || magic == casxfr) {
+                // Accept Mice NFT transactions as standard
+                return true;
+            }
+        }
+        
         // Standard BCT check
         if (CScript::IsBCTScript(txout.scriptPubKey, scriptPubKeyBCF))      // Cascoin: Hive
             return true;                                                    // Cascoin: Hive

@@ -687,8 +687,8 @@ void WalletModel::loadReceiveRequests(std::vector<std::string>& vReceiveRequests
 // Cascoin: Hive
 void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreationTransactions, bool includeDeadBees) {
     if (wallet) {
-        // Try a few times with short waits to avoid showing empty results when wallet is temporarily busy
-        int retries = 3;
+        // Try multiple times with short waits to avoid showing empty results when wallet is temporarily busy
+        int retries = 10;
         bool success = false;
         
         for (int i = 0; i < retries && !success; i++) {
@@ -698,9 +698,7 @@ void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreation
                 success = true;
             } else {
                 // Short delay before retry to allow other operations to complete
-                if (i < retries - 1) {
-                    QThread::msleep(50); // 50ms delay
-                }
+                if (i < retries - 1) QThread::msleep(100);
             }
         }
         

@@ -72,6 +72,7 @@ private:
     int immature, mature, dead, blocksFound;
     CAmount cost, rewardsPaid, profit;
     bool updateInProgress;  // Flag to prevent concurrent updates
+    bool pendingUpdate;     // If an update was requested while one is running
 };
 
 #endif // BITCOIN_QT_HIVETABLEMODEL_H

@@ -9,6 +9,7 @@
 #include <utilstrencodings.h>
 #include <consensus/validation.h>
 #include <base58.h>
+#include <util.h>
 
 #include <algorithm>
 #include <mutex>
@@ -20,21 +21,25 @@ size_t NFTMemoryManager::currentPoolSize = 0;
 
 // Validate a bee NFT token transaction
 bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
-    // Must have at least one OP_RETURN output with OP_BEE_TOKEN
+    // Must have at least one OP_RETURN output with CASTOK magic bytes
     bool foundBeeToken = false;
     
     for (const CTxOut& txout : tx.vout) {
-        // Check for NFT token magic bytes "BEETOK" instead of opcode
-        if (txout.scriptPubKey.size() >= 8 && 
-            txout.scriptPubKey[0] == OP_RETURN) {
-            std::vector<unsigned char> magicBytes(txout.scriptPubKey.begin() + 1, txout.scriptPubKey.begin() + 7);
+        // Check for NFT token magic bytes "CASTOK"
+        // Format: OP_RETURN (0x6a) + PUSH(6) + "CASTOK" + OP_PUSHDATA1 (0x4c) + length + data
+        if (txout.scriptPubKey.size() >= 10 && 
+            txout.scriptPubKey[0] == OP_RETURN &&
+            txout.scriptPubKey[1] == 0x06) {
+            
+            std::vector<unsigned char> magicBytes(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
             std::vector<unsigned char> expectedMagic = {'C', 'A', 'S', 'T', 'O', 'K'};
             if (magicBytes == expectedMagic) {
                 foundBeeToken = true;
                 
-                // Validate OP_RETURN data size (magic bytes + data)
-                if (txout.scriptPubKey.size() > BEE_NFT_MAX_DATA_SIZE + 7) {
+                // Validate OP_RETURN data size
+                if (txout.scriptPubKey.size() > BEE_NFT_MAX_DATA_SIZE + 10) {
                     error = "Bee NFT token data exceeds maximum size";
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
             }
@@ -42,6 +47,7 @@ bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
             // Parse and validate token data
             std::vector<BeeNFTToken> tokens;
             if (!ParseBeeNFTTokenTransaction(tx, tokens, error)) {
+                LogPrintf("NFT Validation Error (TX %s): Parse failed - %s\n", tx.GetHash().ToString(), error);
                 return false;
             }
             
@@ -50,29 +56,34 @@ bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
                 // Check original BCT exists and is valid
                 if (token.originalBCT.IsNull()) {
                     error = "Invalid original BCT hash";
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
                 
                 // Check maturity and expiry heights make sense
                 if (token.maturityHeight >= token.expiryHeight) {
-                    error = "Invalid bee lifecycle: maturity >= expiry";
+                    error = strprintf("Invalid bee lifecycle: maturity (%d) >= expiry (%d)", token.maturityHeight, token.expiryHeight);
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
                 
-                // Check bee index is reasonable (max 1000 bees per BCT)
-                if (token.beeIndex >= 1000) {
-                    error = "Bee index too high";
+                // Check bee index is reasonable (max 1 million bees per BCT to be future-proof)
+                if (token.beeIndex >= 1000000) {
+                    error = strprintf("Bee index too high: %d", token.beeIndex);
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
                 
                 // Validate owner address format
                 if (token.currentOwner.empty()) {
-                    error = "Invalid owner address";
+                    error = "Invalid owner address (empty)";
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
                 CTxDestination dest = DecodeDestination(token.currentOwner);
                 if (!IsValidDestination(dest)) {
-                    error = "Invalid owner address";
+                    error = strprintf("Invalid owner address: %s", token.currentOwner);
+                    LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
             }
@@ -167,31 +178,32 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
     tokens.clear();
     
     for (const CTxOut& txout : tx.vout) {
-        // Check for NFT token magic bytes "BEETOK" instead of opcode
-        if (txout.scriptPubKey.size() >= 8 && 
-            txout.scriptPubKey[0] == OP_RETURN) {
-            std::vector<unsigned char> magicBytes(txout.scriptPubKey.begin() + 1, txout.scriptPubKey.begin() + 7);
+        // Check for NFT token magic bytes "CASTOK"
+        // Format: OP_RETURN (0x6a) + PUSH(6) + "CASTOK" + OP_PUSHDATA1 (0x4c) + length + data
+        if (txout.scriptPubKey.size() >= 10 && 
+            txout.scriptPubKey[0] == OP_RETURN &&
+            txout.scriptPubKey[1] == 0x06) {
+            
+            std::vector<unsigned char> magicBytes(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
             std::vector<unsigned char> expectedMagic = {'C', 'A', 'S', 'T', 'O', 'K'};
             if (magicBytes == expectedMagic) {
-            
-                // Extract data after OP_RETURN + magic bytes
-                if (txout.scriptPubKey.size() < 9) {
-                    error = "Bee NFT token data too short";
+                // Check for OP_PUSHDATA1 (0x4c)
+                if (txout.scriptPubKey[8] != 0x4c) {
+                    error = "Expected OP_PUSHDATA1 after CASTOK magic bytes";
                     return false;
                 }
-            }
-            
-                // Get data length (after magic bytes)
-                unsigned char dataLen = txout.scriptPubKey[7];
-                if (static_cast<size_t>(dataLen + 8) > txout.scriptPubKey.size()) {
+                
+                // Get data length (byte after OP_PUSHDATA1)
+                unsigned char dataLen = txout.scriptPubKey[9];
+                if (static_cast<size_t>(dataLen + 10) > txout.scriptPubKey.size()) {
                     error = "Invalid bee NFT token data length";
                     return false;
                 }
                 
-                // Extract raw data (after magic bytes + length)
+                // Extract raw data (starts at offset 10)
                 std::vector<unsigned char> rawData(
-                    txout.scriptPubKey.begin() + 8,
-                    txout.scriptPubKey.begin() + 8 + dataLen
+                    txout.scriptPubKey.begin() + 10,
+                    txout.scriptPubKey.begin() + 10 + dataLen
                 );
             
             // Parse token data (simplified format for MVP)
@@ -211,6 +223,9 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
             token.expiryHeight = ReadLE32(&rawData[40]);
             token.tokenizedHeight = ReadLE32(&rawData[44]);
             
+            LogPrintf("Parsed NFT Token: beeIndex=%u, maturity=%u, expiry=%u, tokenized=%u\n",
+                      token.beeIndex, token.maturityHeight, token.expiryHeight, token.tokenizedHeight);
+            
             // Parse owner address (remaining bytes as string)
             if (rawData.size() > 48) {
                 token.currentOwner = std::string(rawData.begin() + 48, rawData.end());
@@ -218,6 +233,7 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
             
             tokens.push_back(token);
             break; // Only process first bee token output
+            }
         }
     }
     

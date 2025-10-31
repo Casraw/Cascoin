@@ -347,10 +347,33 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
     bool fOverflow;
     arith_uint256 bnTarget;
 
-    LogPrintf("CheckProofOfWork: Entered. Hash: %s, nBits: 0x%08x\n", hash.ToString(), nBits);
+    // Throttled summary logging (only when -debug=minotaurx)
+    const bool doLog = LogAcceptCategory(BCLog::MINOTAURX);
+    static uint64_t checks_total = 0;
+    static uint64_t checks_valid = 0;
+    static uint64_t checks_failed_range = 0;
+    static uint64_t checks_failed_hash = 0;
+    static int64_t next_summary_ms = 0;
+    static int64_t period_start_ms = 0;
+    auto emit_summary_if_due = [&]() {
+        if (!doLog) return;
+        const int64_t now = GetTimeMillis();
+        if (next_summary_ms == 0) {
+            next_summary_ms = now + 5000; // 5s window
+            period_start_ms = now;
+        }
+        if (now >= next_summary_ms) {
+            const int64_t elapsed = (period_start_ms > 0) ? (now - period_start_ms) : 0;
+            LogPrint(BCLog::MINOTAURX, "CheckProofOfWork: %u checks in last %d ms (valid=%u, range_fail=%u, hash_fail=%u)\n",
+                (unsigned)checks_total, (int)elapsed, (unsigned)checks_valid,
+                (unsigned)checks_failed_range, (unsigned)checks_failed_hash);
+            checks_total = checks_valid = checks_failed_range = checks_failed_hash = 0;
+            period_start_ms = now;
+            next_summary_ms = now + 5000;
+        }
+    };
 
     bnTarget.SetCompact(nBits, &fNegative, &fOverflow);
-    LogPrintf("CheckProofOfWork: bnTarget calculated: %s (Compact: 0x%08x). fNegative: %s, fOverflow: %s\n", bnTarget.ToString(), bnTarget.GetCompact(), fNegative ? "true" : "false", fOverflow ? "true" : "false");
 
     // Cascoin: MinotaurX+Hive1.2: Use highest pow limit for limit check
     arith_uint256 overallPowLimit = 0;
@@ -361,25 +384,21 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
         }
         // LogPrintf("CheckProofOfWork: Algo %d (%s) Limit: %s (Compact: 0x%08x)\n", i, POW_TYPE_NAMES[i], currentAlgoLimit.ToString(), currentAlgoLimit.GetCompact()); // Optional: too verbose usually
     }
-    LogPrintf("CheckProofOfWork: Overall derived powLimit for check: %s (Compact: 0x%08x)\n", overallPowLimit.ToString(), overallPowLimit.GetCompact());
+    // (details suppressed per-call)
 
     // Check range
     if (fNegative || bnTarget == 0 || fOverflow || bnTarget > overallPowLimit) {
-        LogPrintf("CheckProofOfWork: Range check FAILED. fNegative=%s, bnTarget==0 is %s, fOverflow=%s, bnTarget > overallPowLimit (%s > %s) is %s\n",
-            fNegative ? "true" : "false",
-            (bnTarget == 0) ? "true" : "false",
-            fOverflow ? "true" : "false",
-            bnTarget.ToString(), overallPowLimit.ToString(), (bnTarget > overallPowLimit) ? "true" : "false");
+        if (doLog) { checks_total++; checks_failed_range++; emit_summary_if_due(); }
         return false;
     }
-    LogPrintf("CheckProofOfWork: Range check PASSED.\n");
+    // range ok
 
     // Check proof of work matches claimed amount
     if (UintToArith256(hash) > bnTarget) {
-        LogPrintf("CheckProofOfWork: Hash > bnTarget FAILED. Hash_arith: %s, bnTarget: %s\n", UintToArith256(hash).ToString(), bnTarget.ToString());
+        if (doLog) { checks_total++; checks_failed_hash++; emit_summary_if_due(); }
         return false;
     }
-    LogPrintf("CheckProofOfWork: Hash <= bnTarget check PASSED. Proof of work is valid.\n");
+    if (doLog) { checks_total++; checks_valid++; emit_summary_if_due(); }
 
     return true;
 }

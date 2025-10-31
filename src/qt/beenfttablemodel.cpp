@@ -200,15 +200,11 @@ void BeeNFTTableModel::updateBeeNFTList()
         return;
     }
 
-    beginResetModel();
-    cachedBeeNFTList.clear();
+    // Don't clear the list here - keep existing NFTs visible until new data arrives
+    // This prevents the "flickering" effect where NFTs appear and disappear
+    // The list will be updated when updateBeeNFTListWithData() is called with fresh data
     
-    // No sample data - only real NFTs will be shown when loaded via updateBeeNFTListWithData
-    // This ensures the table starts empty and only shows actual NFTs from the wallet
-
-
-    endResetModel();
-    
+    // Just emit the signal to notify listeners that an update was requested
     Q_EMIT beeNFTsChanged();
 }
 

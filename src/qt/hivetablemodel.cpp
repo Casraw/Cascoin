@@ -32,7 +32,8 @@ HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wal
 
     rewardsPaid = cost = profit = 0;
     immature = mature = dead = blocksFound = 0;
-    updateInProgress = false; 
+    updateInProgress = false;
+    pendingUpdate = false;
 }
 
 HiveTableModel::~HiveTableModel() {
@@ -44,9 +45,9 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
         return;
     }
 
-    // Prevent concurrent updates
+    // Prevent concurrent updates: coalesce into a single follow-up run
     if (updateInProgress) {
-        LogPrintf("Warning: BCT update already in progress, skipping duplicate request\n");
+        pendingUpdate = true;
         return;
     }
     updateInProgress = true;
@@ -60,46 +61,57 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             
             // Update UI on main thread
             QMetaObject::invokeMethod(this, [=]() {
-                // Clear existing
+                // Rebuild the entire model atomically to avoid incorrect row counts
                 beginResetModel();
-                list.clear();
-                endResetModel();
 
-                beginInsertRows(QModelIndex(), 0, 0);
-                immature = 0, mature = 0, dead = 0, blocksFound = 0;
-                cost = rewardsPaid = profit = 0;
-                
+                list.clear();
+                immature = 0;
+                mature = 0;
+                dead = 0;
+                blocksFound = 0;
+                cost = 0;
+                rewardsPaid = 0;
+                profit = 0;
+
                 for (const CBeeCreationTransactionInfo& bct : vBeeCreationTransactions) {
-                    if (bct.beeStatus == "mature")
+                    if (bct.beeStatus == "mature") {
                         mature += bct.beeCount;
-                    else if (bct.beeStatus == "immature")
+                    } else if (bct.beeStatus == "immature") {
                         immature += bct.beeCount;
-                    else if (bct.beeStatus == "expired")
+                    } else if (bct.beeStatus == "expired") {
                         dead += bct.beeCount;
+                    }
 
                     blocksFound += bct.blocksFound;
                     cost += bct.beeFeePaid;
                     rewardsPaid += bct.rewardsPaid;
                     profit += bct.profit;
 
+                    // Prepend to keep most recent on top before sorting
                     list.prepend(bct);
                 }
-                endInsertRows();
+
+                endResetModel();
 
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
 
                 // Fire signal
                 QMetaObject::invokeMethod(walletModel, "newHiveSummaryAvailable", Qt::QueuedConnection);
-                
+
                 // Sync BCT database with real wallet data (fix dummy data issue)
                 BCTDatabase* bctDb = BCTDatabase::instance();
                 if (bctDb) {
                     bctDb->syncWithWalletBCTs(vBeeCreationTransactions);
                 }
-                
-                // Reset update flag
+
+                // Reset update flag and process any pending request
                 updateInProgress = false;
+                if (pendingUpdate) {
+                    pendingUpdate = false;
+                    // Re-run with the same includeDeadBees value requested last
+                    updateBCTs(includeDeadBees);
+                }
             }, Qt::QueuedConnection);
             
         } catch (const std::exception& e) {

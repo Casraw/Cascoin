@@ -45,40 +45,62 @@ uint256 CBlockHeader::MinotaurHashString(std::string data) {
 // Cascoin: MinotaurX+Hive1.2: Get pow hash based on block type and UASF activation
 uint256 CBlockHeader::GetPoWHash() const
 {
-    LogPrintf("GetPoWHash (Block: %s): nTime=%u, nVersion=0x%08x, Consensus.powForkTime=%u\n", GetHash().ToString().substr(0,10), nTime, nVersion, Params().GetConsensus().powForkTime);
+    // Throttled summary logging for PoW hashing (only when -debug=minotaurx)
+    const bool doLog = LogAcceptCategory(BCLog::MINOTAURX);
+    static uint64_t calls_total = 0;
+    static uint64_t calls_postfork = 0;
+    static uint64_t calls_prefork = 0;
+    static uint64_t type_sha256 = 0;
+    static uint64_t type_minotaurx = 0;
+    static uint64_t type_scrypt = 0;
+    static int64_t next_summary_ms = 0;
+    static int64_t period_start_ms = 0;
+    const bool postFork = (nTime > Params().GetConsensus().powForkTime);
+    auto emit_summary_if_due = [&]() {
+        if (!doLog) return;
+        const int64_t now = GetTimeMillis();
+        if (next_summary_ms == 0) {
+            next_summary_ms = now + 5000; // 5s window
+            period_start_ms = now;
+        }
+        if (now >= next_summary_ms) {
+            const int64_t elapsed = (period_start_ms > 0) ? (now - period_start_ms) : 0;
+            LogPrint(BCLog::MINOTAURX, "GetPoWHash: %u calls in last %d ms (postFork=%u, preFork=%u; types: sha256=%u, minotaurx=%u, scrypt=%u)\n",
+                (unsigned)calls_total, (int)elapsed, (unsigned)calls_postfork, (unsigned)calls_prefork,
+                (unsigned)type_sha256, (unsigned)type_minotaurx, (unsigned)type_scrypt);
+            calls_total = calls_postfork = calls_prefork = 0;
+            type_sha256 = type_minotaurx = type_scrypt = 0;
+            period_start_ms = now;
+            next_summary_ms = now + 5000;
+        }
+    };
 
-    if (nTime > Params().GetConsensus().powForkTime) { // Multi-algo logic is active
-        LogPrintf("GetPoWHash: Multi-algo time zone (nTime > powForkTime).\n");
+    if (postFork) { // Multi-algo logic is active
 
         POW_TYPE calculatedPowType = GetPoWType(); // (nVersion >> 16) & 0xFF
-        LogPrintf("GetPoWHash: Raw GetPoWType() from nVersion 0x%08x returned: %d (%s)\n", nVersion, static_cast<int>(calculatedPowType), (calculatedPowType < NUM_BLOCK_TYPES ? POW_TYPE_NAMES[calculatedPowType] : "unknown_type_value"));
 
         // Explicit check for known algorithm types based on extracted bits
         if (calculatedPowType == POW_TYPE_MINOTAURX) {
-            LogPrintf("GetPoWHash: PoW Type bits explicitly indicate MINOTAURX (%d). Using Minotaur hash.\n", static_cast<int>(POW_TYPE_MINOTAURX));
+            if (doLog) { calls_total++; calls_postfork++; type_minotaurx++; emit_summary_if_due(); }
             return Minotaur(BEGIN(nVersion), END(nNonce), true);
         }
         
         // Check for BIP9-style versioning (e.g. 0x20000000 for standard SHA256 blocks if other bits aren't set for specific algos)
         // This was the previous logic's first check after powForkTime.
         if (nVersion >= 0x20000000) {
-             LogPrintf("GetPoWHash: nVersion 0x%08x >= 0x20000000 (BIP9 style). Assuming SHA256. Returning GetHash().\n", nVersion);
+             if (doLog) { calls_total++; calls_postfork++; type_sha256++; emit_summary_if_due(); }
              return GetHash();
         }
 
         // If not MinotaurX by explicit bits, and not a high-bit BIP9 version, then default to SHA256.
         // This covers PoWType being explicitly POW_TYPE_SHA256 (0) or any other value not caught above (like 217 from 0x04d98000).
-        if (calculatedPowType == POW_TYPE_SHA256) {
-             LogPrintf("GetPoWHash: PoW Type bits explicitly indicate SHA256 (%d). Returning GetHash().\n", static_cast<int>(POW_TYPE_SHA256));
-        } else {
-             LogPrintf("GetPoWHash: PoW Type bits indicate UNKNOWN type %d (and nVersion < 0x20000000). Defaulting to SHA256 for LCC compatibility. Returning GetHash().\n", static_cast<int>(calculatedPowType));
-        }
+        if (doLog) { calls_total++; calls_postfork++; type_sha256++; emit_summary_if_due(); }
         return GetHash(); // Default to SHA256
 
     } else { // Pre-multi-algo fork (powForkTime not reached)
-        LogPrintf("GetPoWHash: Pre-multi-algo fork (nTime <= powForkTime). Using Scrypt.\n");
         uint256 thash;
         scrypt_1024_1_1_256(BEGIN(nVersion), BEGIN(thash));
+        if (doLog) { calls_total++; calls_prefork++; type_scrypt++; emit_summary_if_due(); }
         return thash;
     }
 }

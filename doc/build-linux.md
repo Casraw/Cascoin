@@ -37,8 +37,8 @@ cd /pfad/zu/Cascoin
   MOC=/usr/lib/qt6/libexec/moc \
   UIC=/usr/lib/qt6/libexec/uic \
   RCC=/usr/lib/qt6/libexec/rcc \
-  LRELEASE=/usr/bin/lrelease \
-  LUPDATE=/usr/bin/lupdate
+  LRELEASE=$(command -v lrelease || command -v lrelease-qt6 || echo /usr/lib/qt6/libexec/lrelease) \
+  LUPDATE=$(command -v lupdate || command -v lupdate-qt6 || echo /usr/lib/qt6/libexec/lupdate)
 
 make -j"$(nproc)"
 ```

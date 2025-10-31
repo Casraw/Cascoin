@@ -416,7 +416,7 @@ BitcoinApplication::BitcoinApplication(int &argc, char **argv):
         "QLabel[styleClass=\"section-header\"] { font-size: 18px; font-weight: bold; color: #e2e8f0; margin: 16px 0 8px 0; }\n"
         // Input fields - enhanced visibility and contrast
         "QLineEdit, QTextEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox { background: #718096; color: #ffffff; border: 2px solid #a0aec0; border-radius: 8px; padding: 10px 14px; font-size: 14px; }\n"
-        "QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { background: #4a5568; border-color: #48bb78; box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.3); }\n"
+        "QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { background: #4a5568; border-color: #48bb78; }\n"
         "QLineEdit:hover, QTextEdit:hover, QPlainTextEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover { border-color: #cbd5e0; }\n"
         "QLineEdit:disabled, QTextEdit:disabled, QPlainTextEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled { background: #2d3748; color: #a0aec0; border-color: #4a5568; }\n"
         "QLineEdit::placeholder, QTextEdit::placeholder, QPlainTextEdit::placeholder { color: #cbd5e0; }\n"
@@ -425,14 +425,14 @@ BitcoinApplication::BitcoinApplication(int &argc, char **argv):
         "QCheckBox::indicator { width: 18px; height: 18px; border: 2px solid #718096; border-radius: 4px; background: #4a5568; }\n"
         "QCheckBox::indicator:hover { border-color: #48bb78; background: #718096; }\n"
         "QCheckBox::indicator:checked { background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #48bb78, stop:1 #38a169); border-color: #48bb78; }\n"
-        "QCheckBox::indicator:checked::before { content: ''; position: absolute; left: 5px; top: 2px; width: 6px; height: 10px; border: solid #ffffff; border-width: 0 2px 2px 0; transform: rotate(45deg); }\n"
+        /* Removed unsupported content/transform pseudo-element styling */
         "QCheckBox::indicator:checked:hover { background: #38a169; }\n"
         "QCheckBox::indicator:disabled { background: #2d3748; border-color: #4a5568; }\n"
         "QRadioButton { color: #ffffff; spacing: 8px; }\n"
         "QRadioButton::indicator { width: 18px; height: 18px; border: 2px solid #718096; border-radius: 9px; background: #4a5568; }\n"
         "QRadioButton::indicator:hover { border-color: #48bb78; background: #718096; }\n"
         "QRadioButton::indicator:checked { background: #48bb78; border-color: #48bb78; }\n"
-        "QRadioButton::indicator:checked::before { content: ''; width: 8px; height: 8px; border-radius: 4px; background: #ffffff; margin: 3px; }\n"
+        /* Removed unsupported content pseudo-element styling */
         // Tables and lists - modern design with proper contrast and visibility
         "QHeaderView::section { background: #2d3748; color: #e2e8f0; padding: 8px 12px; border: none; border-bottom: 1px solid #4a5568; font-weight: bold; min-height: 20px; }\n"
         "QTableView, QListView { background: #1e1e1e; color: #ffffff; border: none; alternate-background-color: #2d3748; gridline-color: #4a5568; outline: none; }\n"
@@ -446,7 +446,7 @@ BitcoinApplication::BitcoinApplication(int &argc, char **argv):
         // Combo boxes - enhanced to match input fields
         "QComboBox { background: #718096; color: #ffffff; border: 2px solid #a0aec0; border-radius: 8px; padding: 10px 14px; font-size: 14px; min-width: 120px; }\n"
         "QComboBox:hover { border-color: #cbd5e0; }\n"
-        "QComboBox:focus { background: #4a5568; border-color: #48bb78; box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.3); }\n"
+        "QComboBox:focus { background: #4a5568; border-color: #48bb78; }\n"
         "QComboBox:disabled { background: #2d3748; color: #a0aec0; border-color: #4a5568; }\n"
         "QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left-width: 2px; border-left-color: #a0aec0; border-left-style: solid; border-top-right-radius: 8px; border-bottom-right-radius: 8px; background: #a0aec0; }\n"
         "QComboBox::down-arrow { width: 12px; height: 12px; background: #2d3748; }\n"
