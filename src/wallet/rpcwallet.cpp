@@ -2521,17 +2521,17 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
 
     UniValue summary(UniValue::VOBJ);
     summary.push_back(Pair("mice_count", totalBees));
-    summary.push_back(Pair("mature_bees", totalMature));
-    summary.push_back(Pair("immature_bees", totalImmature));
+    summary.push_back(Pair("mature_mice", totalMature));
+    summary.push_back(Pair("immature_mice", totalImmature));
     summary.push_back(Pair("blocks_found", totalBlocksFound));
-    summary.push_back(Pair("bee_fee_paid", ValueFromAmount(totalBeeFee)));
+    summary.push_back(Pair("mice_fee_paid", ValueFromAmount(totalBeeFee)));
     summary.push_back(Pair("rewards_paid", ValueFromAmount(totalRewards)));
     summary.push_back(Pair("profit", ValueFromAmount(totalRewards-totalBeeFee)));
     summary.push_back(Pair("warnings", pwallet->IsLocked()? "Wallet is locked and must be unlocked to mine" : ""));
             
     UniValue jsonResults(UniValue::VOBJ);
     jsonResults.push_back(Pair("summary", summary));
-    jsonResults.push_back(Pair("bees", bctList));
+    jsonResults.push_back(Pair("mice", bctList));
 
     return jsonResults;
 }
