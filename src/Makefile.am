@@ -103,6 +103,7 @@ BITCOIN_CORE_H = \
   fs.h \
   httprpc.h \
   httpserver.h \
+  httpserver/cvmdashboard.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -211,6 +212,7 @@ libbitcoin_server_a_SOURCES = \
   consensus/tx_verify.cpp \
   httprpc.cpp \
   httpserver.cpp \
+  httpserver/cvmdashboard.cpp \
   init.cpp \
   dbwrapper.cpp \
   merkleblock.cpp \

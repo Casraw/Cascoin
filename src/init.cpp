@@ -19,6 +19,7 @@
 #include <fs.h>
 #include <httpserver.h>
 #include <httprpc.h>
+#include <httpserver/cvmdashboard.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -748,6 +749,15 @@ bool AppInitServers()
         return false;
     if (!StartHTTPServer())
         return false;
+    
+    // Cascoin: Initialize CVM Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard enabled - handlers registered\n");
+        InitCVMDashboardHandlers();
+    } else {
+        LogPrintf("CVM Dashboard disabled (use -cvmdashboard=1 to enable)\n");
+    }
+    
     return true;
 }
 
