@@ -48,6 +48,7 @@
 #include <wallet/init.h>
 #endif
 #include <warnings.h>
+#include <cvm/cvmdb.h>  // Cascoin: CVM Database
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -253,6 +254,10 @@ void Shutdown()
         pcoinsdbview.reset();
         pblocktree.reset();
     }
+    
+    // Shutdown CVM database
+    CVM::ShutdownCVMDatabase();
+    
 #ifdef ENABLE_WALLET
     StopWallets();
 #endif
@@ -1638,6 +1643,13 @@ bool AppInitMain()
 #else
     LogPrintf("No wallet support compiled in!\n");
 #endif
+
+    // ********************************************************* Step 8a: initialize CVM (Cascoin Virtual Machine)
+    LogPrintf("Initializing CVM database...\n");
+    if (!CVM::InitCVMDatabase(GetDataDir())) {
+        return InitError(_("Failed to initialize CVM database"));
+    }
+    LogPrintf("CVM database initialized successfully\n");
 
     // ********************************************************* Step 9: data directory maintenance
 

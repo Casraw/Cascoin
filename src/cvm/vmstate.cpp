@@ -16,7 +16,7 @@ VMState::VMState()
 VMState::~VMState() {
 }
 
-void VMState::Push(const uint256& value) {
+void VMState::Push(const arith_uint256& value) {
     if (stack.size() >= MAX_STACK_SIZE) {
         status = Status::STACK_OVERFLOW;
         errorMessage = "Stack overflow";
@@ -25,20 +25,20 @@ void VMState::Push(const uint256& value) {
     stack.push_back(value);
 }
 
-uint256 VMState::Pop() {
+arith_uint256 VMState::Pop() {
     if (stack.empty()) {
         status = Status::STACK_UNDERFLOW;
         errorMessage = "Stack underflow";
-        return uint256();
+        return arith_uint256();
     }
-    uint256 value = stack.back();
+    arith_uint256 value = stack.back();
     stack.pop_back();
     return value;
 }
 
-uint256 VMState::Peek(size_t depth) const {
+arith_uint256 VMState::Peek(size_t depth) const {
     if (depth >= stack.size()) {
-        return uint256();
+        return arith_uint256();
     }
     return stack[stack.size() - 1 - depth];
 }
@@ -64,7 +64,7 @@ void VMState::Dup(size_t depth) {
         errorMessage = "Stack overflow in dup";
         return;
     }
-    uint256 value = Peek(depth);
+    arith_uint256 value = Peek(depth);
     stack.push_back(value);
 }
 

@@ -6,6 +6,7 @@
 #define CASCOIN_CVM_VMSTATE_H
 
 #include <uint256.h>
+#include <arith_uint256.h>
 #include <serialize.h>
 #include <vector>
 #include <stack>
@@ -35,9 +36,9 @@ public:
     ~VMState();
 
     // Stack operations
-    void Push(const uint256& value);
-    uint256 Pop();
-    uint256 Peek(size_t depth = 0) const;
+    void Push(const arith_uint256& value);
+    arith_uint256 Pop();
+    arith_uint256 Peek(size_t depth = 0) const;
     void Swap(size_t depth);
     void Dup(size_t depth);
     size_t StackSize() const { return stack.size(); }
@@ -137,7 +138,7 @@ public:
 
 private:
     // Execution stack
-    std::vector<uint256> stack;
+    std::vector<arith_uint256> stack;
     
     // Program counter
     size_t programCounter;
@@ -164,7 +165,7 @@ private:
     
     // Snapshots for revert
     struct Snapshot {
-        std::vector<uint256> stack;
+        std::vector<arith_uint256> stack;
         size_t programCounter;
         uint64_t gasRemaining;
     };

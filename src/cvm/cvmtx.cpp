@@ -11,6 +11,7 @@
 #include <primitives/block.h>
 #include <chain.h>
 #include <util.h>
+#include <consensus/validation.h>
 
 namespace CVM {
 
@@ -139,8 +140,10 @@ bool ExecuteCVMBlock(const CBlock& block, const CBlockIndex* pindex,
                     totalGasUsed += deployTx.gasLimit;
                     
                     // Generate contract address
-                    // Simplified: use tx hash as address
-                    uint160 contractAddr(tx->GetHash());
+                    // Simplified: use first 160 bits of tx hash as address
+                    uint256 txHash = tx->GetHash();
+                    uint160 contractAddr;
+                    memcpy(contractAddr.begin(), txHash.begin(), 20);
                     
                     // Store contract
                     Contract contract;

@@ -90,7 +90,7 @@ private:
     bool HandleCall(const std::vector<uint8_t>& code, VMState& state, ContractStorage* storage);
     
     // Helper functions
-    uint256 ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes);
+    arith_uint256 ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes);
     bool VerifySignature(const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature, 
                         const std::vector<uint8_t>& pubkey);
 };

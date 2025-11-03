@@ -6,6 +6,7 @@
 #define CASCOIN_CVM_CVMTX_H
 
 #include <primitives/transaction.h>
+#include <primitives/block.h>
 #include <consensus/params.h>
 #include <string>
 

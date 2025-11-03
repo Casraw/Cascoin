@@ -8,6 +8,7 @@
 #include <pubkey.h>
 #include <key.h>
 #include <util.h>
+#include <arith_uint256.h>
 
 namespace CVM {
 
@@ -180,7 +181,7 @@ bool CVM::HandlePush(const std::vector<uint8_t>& code, VMState& state) {
     }
     
     // Read the value
-    uint256 value = ReadImmediate(code, pc, size);
+    arith_uint256 value = ReadImmediate(code, pc, size);
     state.Push(value);
     // Set PC to skip opcode byte (at pc) + size byte (at pc+1) + data bytes (size)
     // Main loop will increment by 1, so set to pc + 1 + size
@@ -197,9 +198,9 @@ bool CVM::HandleArithmetic(OpCode opcode, VMState& state) {
         return false;
     }
     
-    uint256 b = state.Pop();
-    uint256 a = state.Pop();
-    uint256 result;
+    arith_uint256 b = state.Pop();
+    arith_uint256 a = state.Pop();
+    arith_uint256 result;
     
     switch (opcode) {
         case OpCode::OP_ADD:
@@ -213,16 +214,17 @@ bool CVM::HandleArithmetic(OpCode opcode, VMState& state) {
             break;
         case OpCode::OP_DIV:
             if (b == 0) {
-                result = uint256();
+                result = arith_uint256();
             } else {
                 result = a / b;
             }
             break;
         case OpCode::OP_MOD:
             if (b == 0) {
-                result = uint256();
+                result = arith_uint256();
             } else {
-                result = a % b;
+                // Modulo operation: a % b = a - (a/b)*b
+                result = a - (a / b) * b;
             }
             break;
         default:
@@ -241,14 +243,14 @@ bool CVM::HandleLogical(OpCode opcode, VMState& state) {
         return false;
     }
     
-    uint256 result;
+    arith_uint256 result;
     
     if (opcode == OpCode::OP_NOT) {
-        uint256 a = state.Pop();
+        arith_uint256 a = state.Pop();
         result = ~a;
     } else {
-        uint256 b = state.Pop();
-        uint256 a = state.Pop();
+        arith_uint256 b = state.Pop();
+        arith_uint256 a = state.Pop();
         
         switch (opcode) {
             case OpCode::OP_AND:
@@ -276,8 +278,8 @@ bool CVM::HandleComparison(OpCode opcode, VMState& state) {
         return false;
     }
     
-    uint256 b = state.Pop();
-    uint256 a = state.Pop();
+    arith_uint256 b = state.Pop();
+    arith_uint256 a = state.Pop();
     bool result = false;
     
     switch (opcode) {
@@ -303,7 +305,7 @@ bool CVM::HandleComparison(OpCode opcode, VMState& state) {
             return false;
     }
     
-    state.Push(result ? uint256(1) : uint256());
+    state.Push(result ? arith_uint256(1) : arith_uint256());
     return true;
 }
 
@@ -314,7 +316,7 @@ bool CVM::HandleJump(OpCode opcode, const std::vector<uint8_t>& code, VMState& s
         return false;
     }
     
-    uint256 target256 = state.Pop();
+    arith_uint256 target256 = state.Pop();
     size_t target = target256.GetLow64();
     
     if (opcode == OpCode::OP_JUMPI) {
@@ -323,7 +325,7 @@ bool CVM::HandleJump(OpCode opcode, const std::vector<uint8_t>& code, VMState& s
             state.SetStatus(VMState::Status::STACK_UNDERFLOW);
             return false;
         }
-        uint256 condition = state.Pop();
+        arith_uint256 condition = state.Pop();
         if (condition == 0) {
             // Don't jump, continue execution
             return true;
@@ -356,14 +358,15 @@ bool CVM::HandleStorage(OpCode opcode, VMState& state, ContractStorage* storage)
             return false;
         }
         
-        uint256 key = state.Pop();
+        arith_uint256 key_arith = state.Pop();
+        uint256 key = ArithToUint256(key_arith);
         uint256 value;
         
         if (!storage->Load(state.GetContractAddress(), key, value)) {
             value = uint256(); // Return 0 if key doesn't exist
         }
         
-        state.Push(value);
+        state.Push(UintToArith256(value));
         return true;
     } else if (opcode == OpCode::OP_SSTORE) {
         // SSTORE: key value ->
@@ -373,8 +376,10 @@ bool CVM::HandleStorage(OpCode opcode, VMState& state, ContractStorage* storage)
             return false;
         }
         
-        uint256 key = state.Pop();
-        uint256 value = state.Pop();
+        arith_uint256 key_arith = state.Pop();
+        arith_uint256 value_arith = state.Pop();
+        uint256 key = ArithToUint256(key_arith);
+        uint256 value = ArithToUint256(value_arith);
         
         return storage->Store(state.GetContractAddress(), key, value);
     }
@@ -390,9 +395,10 @@ bool CVM::HandleCrypto(OpCode opcode, VMState& state) {
             return false;
         }
         
-        uint256 input = state.Pop();
+        arith_uint256 input_arith = state.Pop();
+        uint256 input = ArithToUint256(input_arith);
         uint256 hash = Hash(input.begin(), input.end());
-        state.Push(hash);
+        state.Push(UintToArith256(hash));
         return true;
     } else if (opcode == OpCode::OP_VERIFY_SIG) {
         // Simplified: Pop message, signature, pubkey
@@ -407,7 +413,7 @@ bool CVM::HandleCrypto(OpCode opcode, VMState& state) {
         state.Pop(); // message
         
         // Simplified: always return true for now
-        state.Push(uint256(1));
+        state.Push(arith_uint256(1));
         return true;
     }
     
@@ -415,33 +421,44 @@ bool CVM::HandleCrypto(OpCode opcode, VMState& state) {
 }
 
 bool CVM::HandleContext(OpCode opcode, VMState& state, ContractStorage* storage) {
-    uint256 value;
+    arith_uint256 value;
     
     switch (opcode) {
-        case OpCode::OP_ADDRESS:
-            value = uint256(state.GetContractAddress());
+        case OpCode::OP_ADDRESS: {
+            // Convert uint160 to arith_uint256
+            uint160 addr = state.GetContractAddress();
+            value = arith_uint256();
+            for (int i = 0; i < 20; i++) {
+                value = (value << 8) | arith_uint256(addr.begin()[i]);
+            }
             break;
-        case OpCode::OP_CALLER:
-            value = uint256(state.GetCallerAddress());
+        }
+        case OpCode::OP_CALLER: {
+            uint160 caller = state.GetCallerAddress();
+            value = arith_uint256();
+            for (int i = 0; i < 20; i++) {
+                value = (value << 8) | arith_uint256(caller.begin()[i]);
+            }
             break;
+        }
         case OpCode::OP_CALLVALUE:
-            value = uint256(state.GetCallValue());
+            value = arith_uint256(state.GetCallValue());
             break;
         case OpCode::OP_TIMESTAMP:
-            value = uint256(state.GetTimestamp());
+            value = arith_uint256(state.GetTimestamp());
             break;
         case OpCode::OP_BLOCKHEIGHT:
-            value = uint256(state.GetBlockHeight());
+            value = arith_uint256(state.GetBlockHeight());
             break;
         case OpCode::OP_BLOCKHASH:
-            value = state.GetBlockHash();
+            value = UintToArith256(state.GetBlockHash());
             break;
         case OpCode::OP_GAS:
-            value = uint256(state.GetGasRemaining());
+            value = arith_uint256(state.GetGasRemaining());
             break;
         case OpCode::OP_BALANCE:
             // Simplified: return 0 for now
-            value = uint256();
+            value = arith_uint256();
             break;
         default:
             return false;
@@ -458,17 +475,12 @@ bool CVM::HandleCall(const std::vector<uint8_t>& code, VMState& state, ContractS
     return false;
 }
 
-uint256 CVM::ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes) {
-    uint256 result;
-    std::vector<uint8_t> data;
+arith_uint256 CVM::ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes) {
+    arith_uint256 result;
     
+    // Read bytes in big-endian order and construct arith_uint256
     for (size_t i = 0; i < bytes && pc + 2 + i < code.size(); i++) {
-        data.push_back(code[pc + 2 + i]);
-    }
-    
-    // Convert bytes to uint256 (big-endian)
-    if (!data.empty()) {
-        result = uint256(data);
+        result = (result << 8) | arith_uint256(code[pc + 2 + i]);
     }
     
     return result;

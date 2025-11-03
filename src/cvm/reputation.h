@@ -114,6 +114,9 @@ bool ParseReputationVoteTx(const CTransaction& tx, ReputationVoteTx& voteTx);
  */
 bool IsReputationVoteTransaction(const CTransaction& tx);
 
+// Forward declaration
+class CVMDatabase;
+
 /**
  * Reputation system manager
  */

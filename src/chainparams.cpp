@@ -450,6 +450,18 @@ public:
         // Cascoin: Add powLimitHive for regtest, matching the other networks for consistency during bootstrap
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Target for ~2^20 work, good for CPU bootstrap
 
+        // Cascoin: MinotaurX+Hive1.2-related consensus fields
+        consensus.lwmaAveragingWindow = 90;                 // Averaging window size for LWMA diff adjust
+        consensus.powTypeLimits.emplace_back(uint256S("0x000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // sha256d limit
+        consensus.powTypeLimits.emplace_back(uint256S("0x000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // MinotaurX limit
+
+        // Cascoin: Rialto-related consensus fields
+        consensus.nickCreationAddress = "tKJjaPcSS3nXYBN4QmmYnSanr9oUhSXAZB";        // Nick creation address (regtest uses same as testnet)
+        consensus.nickCreationCost3Char     = 100000000000; // Minimum costs to register a nick
+        consensus.nickCreationCost4Char     = 5000000000;
+        consensus.nickCreationCostStandard  = 100000000;
+        consensus.nickCreationAntiDust      = 10000;        // Portion of creation cost burnt in 2nd output
+
         // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
         consensus.cvmActivationHeight       = 0;                                        // Activate CVM immediately for regtest
         consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block

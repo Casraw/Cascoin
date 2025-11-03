@@ -4,6 +4,7 @@
 
 #include <cvm/contract.h>
 #include <cvm/opcodes.h>
+#include <cvm/vmstate.h>
 #include <hash.h>
 #include <utilstrencodings.h>
 #include <streams.h>
