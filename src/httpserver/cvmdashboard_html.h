@@ -69,6 +69,12 @@ body {
 .footer a { color: var(--primary-color); text-decoration: none; }
 .footer a:hover { text-decoration: underline; }
 .text-muted { color: var(--text-secondary); font-size: 0.85rem; }
+.info-icon { display: inline-block; width: 16px; height: 16px; background: var(--primary-color); color: white; border-radius: 50%; text-align: center; line-height: 16px; font-size: 11px; font-weight: bold; margin-left: 5px; cursor: help; }
+.tooltip { position: relative; }
+.tooltip .tooltiptext { visibility: hidden; width: 300px; background-color: #333; color: #fff; text-align: left; border-radius: 6px; padding: 10px; position: absolute; z-index: 1; bottom: 125%; left: 50%; margin-left: -150px; opacity: 0; transition: opacity 0.3s; font-size: 0.8rem; line-height: 1.4; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+.tooltip .tooltiptext::after { content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px; border-width: 5px; border-style: solid; border-color: #333 transparent transparent transparent; }
+.tooltip:hover .tooltiptext { visibility: visible; opacity: 1; }
+.info-box { background: var(--bg-color); border-left: 3px solid var(--primary-color); padding: 12px; margin-bottom: 15px; border-radius: 4px; font-size: 0.85rem; color: var(--text-secondary); }
 @media (max-width: 1024px) { .content-grid { grid-template-columns: 1fr; } .stats-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 640px) { .header { flex-direction: column; text-align: center; gap: 20px; } .stats-grid { grid-template-columns: 1fr; } .header h1 { font-size: 2rem; } }
     </style>
@@ -90,7 +96,15 @@ body {
             <div class="stat-card">
                 <div class="stat-icon">⭐</div>
                 <div class="stat-content">
-                    <h3>My HAT v2 Trust</h3>
+                    <h3>My HAT v2 Trust
+                        <span class="tooltip info-icon" style="font-size: 0.65rem;">?
+                            <span class="tooltiptext">
+                                Your Hybrid Adaptive Trust score (0-100).<br>
+                                Based on behavior, Web-of-Trust, economic stake, and activity.<br>
+                                Higher scores unlock better trading conditions!
+                            </span>
+                        </span>
+                    </h3>
                     <div class="stat-value" id="myReputation">--</div>
                     <div class="stat-progress"><div class="stat-progress-bar" id="repProgress"></div></div>
                     <p class="stat-label">Secure Multi-Layer Score (0-100)</p>
@@ -99,7 +113,14 @@ body {
             <div class="stat-card">
                 <div class="stat-icon">🤝</div>
                 <div class="stat-content">
-                    <h3>Trust Relations</h3>
+                    <h3>Trust Relations
+                        <span class="tooltip info-icon" style="font-size: 0.65rem;">?
+                            <span class="tooltiptext">
+                                Number of trust relationships you've established.<br>
+                                Building a diverse trust network improves your HAT v2 score.
+                            </span>
+                        </span>
+                    </h3>
                     <div class="stat-value" id="trustCount">--</div>
                     <p class="stat-label">Active connections</p>
                 </div>
@@ -107,7 +128,14 @@ body {
             <div class="stat-card">
                 <div class="stat-icon">🗳️</div>
                 <div class="stat-content">
-                    <h3>Votes Submitted</h3>
+                    <h3>Votes Submitted
+                        <span class="tooltip info-icon" style="font-size: 0.65rem;">?
+                            <span class="tooltiptext">
+                                Total reputation votes you've cast (positive and negative).<br>
+                                All votes are bonded with CAS.
+                            </span>
+                        </span>
+                    </h3>
                     <div class="stat-value" id="voteCount">--</div>
                     <p class="stat-label">Reputation votes</p>
                 </div>
@@ -115,7 +143,14 @@ body {
             <div class="stat-card">
                 <div class="stat-icon">🌐</div>
                 <div class="stat-content">
-                    <h3>Network Size</h3>
+                    <h3>Network Size
+                        <span class="tooltip info-icon" style="font-size: 0.65rem;">?
+                            <span class="tooltiptext">
+                                Total addresses participating in the Cascoin reputation network.<br>
+                                A larger network means better trust analysis.
+                            </span>
+                        </span>
+                    </h3>
                     <div class="stat-value" id="networkSize">--</div>
                     <p class="stat-label">Total addresses</p>
                 </div>
@@ -125,7 +160,19 @@ body {
         <div class="content-grid">
             <div class="card large">
                 <div class="card-header">
-                    <h2>🌐 Trust Network Graph</h2>
+                    <h2>🌐 Trust Network Graph
+                        <span class="tooltip info-icon">?
+                            <span class="tooltiptext">
+                                <strong>Trust Network Visualization</strong><br>
+                                Interactive graph showing trust relationships:<br>
+                                • <strong>Nodes</strong>: Addresses in the network<br>
+                                • <strong>Edges</strong>: Trust relations (green) and votes (blue)<br>
+                                • <strong>Size</strong>: Indicates reputation/trust score<br>
+                                • <strong>Clusters</strong>: Groups of interconnected addresses<br><br>
+                                Hover over nodes for details. Click to explore connections.
+                            </span>
+                        </span>
+                    </h2>
                     <button class="btn-secondary" onclick="refreshGraph()">🔄 Refresh</button>
                 </div>
                 <div class="card-body">
@@ -138,7 +185,21 @@ body {
                 </div>
             </div>
             <div class="card">
-                <div class="card-header"><h2>📜 Recent Activity</h2></div>
+                <div class="card-header">
+                    <h2>📜 Recent Activity
+                        <span class="tooltip info-icon">?
+                            <span class="tooltiptext">
+                                <strong>Recent Activity Feed</strong><br>
+                                Live feed of recent CVM transactions:<br>
+                                • Trust relations created<br>
+                                • Reputation votes submitted<br>
+                                • Reports filed<br>
+                                • Network changes<br><br>
+                                Updates automatically every 5 seconds.
+                            </span>
+                        </span>
+                    </h2>
+                </div>
                 <div class="card-body">
                     <div id="recentActivity" class="activity-list">
                         <div class="activity-placeholder">Loading recent transactions...</div>
@@ -148,8 +209,24 @@ body {
         </div>
 
         <div class="card">
-            <div class="card-header"><h2>🔒 HAT v2 Trust Breakdown</h2></div>
+            <div class="card-header">
+                <h2>🔒 HAT v2 Trust Breakdown
+                    <span class="tooltip info-icon">?
+                        <span class="tooltiptext">
+                            <strong>Hybrid Adaptive Trust v2</strong><br>
+                            Your trust score is calculated from four components:<br>
+                            • <strong>Behavior (40%)</strong>: Trading patterns and diversity<br>
+                            • <strong>Web-of-Trust (30%)</strong>: Community endorsements<br>
+                            • <strong>Economic (20%)</strong>: Staked CAS amount<br>
+                            • <strong>Temporal (10%)</strong>: Account age and activity
+                        </span>
+                    </span>
+                </h2>
+            </div>
             <div class="card-body">
+                <div class="info-box">
+                    HAT v2 protects against Sybil attacks using multi-layered reputation analysis. Higher scores unlock better trading conditions.
+                </div>
                 <table class="stats-table">
                     <tbody>
                         <tr>
@@ -204,7 +281,299 @@ body {
         </div>
 
         <div class="card">
-            <div class="card-header"><h2>📊 Network Statistics</h2></div>
+            <div class="card-header">
+                <h2>⚡ User Actions
+                    <span class="tooltip info-icon">?
+                        <span class="tooltiptext">
+                            <strong>User Actions</strong><br>
+                            Interact with the Cascoin network:<br>
+                            • <strong>Trust Relations</strong>: Build your Web-of-Trust network<br>
+                            • <strong>Reputation Votes</strong>: Endorse or warn about users<br>
+                            • <strong>Send CAS</strong>: Transfer funds to other addresses<br>
+                            • <strong>Report Bad Actors</strong>: Protect the community<br><br>
+                            All actions require CAS bonds that can be slashed if misused.
+                        </span>
+                    </span>
+                </h2>
+            </div>
+            <div class="card-body">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    
+                    <!-- Add Trust Form -->
+                    <div style="padding: 15px; background: var(--bg-color); border-radius: 8px;">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 15px; color: var(--primary-color);">
+                            🤝 Add Trust Relation
+                            <span class="tooltip info-icon">?
+                                <span class="tooltiptext">
+                                    <strong>Trust Relations</strong><br>
+                                    Create a trust edge in the Web-of-Trust graph.<br>
+                                    • <strong>Weight</strong>: -100 (distrust) to +100 (full trust)<br>
+                                    • <strong>Bond</strong>: Your stake, can be slashed if abused<br>
+                                    • Positive trust improves their HAT v2 score<br>
+                                    • Negative trust acts as a warning to others
+                                </span>
+                            </span>
+                        </h3>
+                        <p class="help-text">Build your Web-of-Trust network by adding trusted (or distrusted) addresses.</p>
+                        <form id="addTrustForm" onsubmit="return handleAddTrust(event);">
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Target Address:</label>
+                                <input type="text" id="trustAddress" placeholder="QAddress..." required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Trust Weight (-100 to +100):</label>
+                                <input type="number" id="trustWeight" min="-100" max="100" value="80" required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Bond Amount (CAS):</label>
+                                <input type="number" id="trustBond" min="0.01" step="0.01" value="1.0" required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <div style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Reason (optional):</label>
+                                <input type="text" id="trustReason" placeholder="Trustworthy trader"
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <button type="submit" style="width: 100%; padding: 10px; background: var(--primary-color); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                Add Trust Relation
+                            </button>
+                        </form>
+                        <div id="trustResult" style="margin-top: 10px; font-size: 0.85rem;"></div>
+                    </div>
+
+                    <!-- Vote Reputation Form -->
+                    <div style="padding: 15px; background: var(--bg-color); border-radius: 8px;">
+                        <h3 style="font-size: 1.1rem; margin-bottom: 15px; color: var(--primary-color);">
+                            ⭐ Vote Reputation
+                            <span class="tooltip info-icon">?
+                                <span class="tooltiptext">
+                                    <strong>Reputation Voting</strong><br>
+                                    Submit a bonded vote to rate a user's reputation.<br>
+                                    • <strong>Positive votes</strong> (+1 to +100): Endorse trusted users<br>
+                                    • <strong>Negative votes</strong> (-1 to -100): Warn about bad actors<br>
+                                    • Higher bonds = more voting weight<br>
+                                    • False votes can be slashed by the community
+                                </span>
+                            </span>
+                        </h3>
+                        <p class="help-text">Cast bonded votes to influence reputation scores. Your bond is at stake!</p>
+                        <form id="voteRepForm" onsubmit="return handleVoteReputation(event);">
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Target Address:</label>
+                                <input type="text" id="voteAddress" placeholder="QAddress..." required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Vote (-100 to +100):</label>
+                                <input type="number" id="voteValue" min="-100" max="100" value="100" required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <div style="margin-bottom: 12px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Bond Amount (CAS):</label>
+                                <input type="number" id="voteBond" min="0.01" step="0.01" value="1.0" required
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <div style="margin-bottom: 15px;">
+                                <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Reason (optional):</label>
+                                <input type="text" id="voteReason" placeholder="Excellent trader"
+                                       style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <button type="submit" style="width: 100%; padding: 10px; background: var(--secondary-color); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                                Submit Vote
+                            </button>
+                        </form>
+                        <div id="voteResult" style="margin-top: 10px; font-size: 0.85rem;"></div>
+                    </div>
+
+                </div>
+                
+                <!-- Send Transaction Form -->
+                <div style="margin-top: 20px; padding: 15px; background: var(--bg-color); border-radius: 8px;">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 15px; color: var(--primary-color);">
+                        💸 Send CAS
+                        <span class="tooltip info-icon">?
+                            <span class="tooltiptext">
+                                <strong>Send Cascoin</strong><br>
+                                Transfer CAS to any address on the network.<br>
+                                • Standard transaction fees apply<br>
+                                • Optional comment for record-keeping<br>
+                                • Transactions are irreversible once confirmed
+                            </span>
+                        </span>
+                    </h3>
+                    <p class="help-text">Send CAS to other users. Double-check the address before sending!</p>
+                    <form id="sendForm" onsubmit="return handleSendTransaction(event);" style="display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 10px; align-items: end;">
+                        <div>
+                            <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">To Address:</label>
+                            <input type="text" id="sendAddress" placeholder="QAddress..." required
+                                   style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.85rem;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Amount (CAS):</label>
+                            <input type="number" id="sendAmount" min="0.01" step="0.01" value="10" required
+                                   style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        </div>
+                        <div>
+                            <label style="display: block; font-size: 0.9rem; margin-bottom: 5px; color: var(--text-secondary);">Comment (optional):</label>
+                            <input type="text" id="sendComment" placeholder="Payment"
+                                   style="width: 100%; padding: 8px; border: 1px solid var(--border-color); border-radius: 4px;">
+                        </div>
+                        <button type="submit" style="padding: 10px 20px; background: var(--warning-color); color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600;">
+                            Send
+                        </button>
+                    </form>
+                    <div id="sendResult" style="margin-top: 10px; font-size: 0.85rem;"></div>
+                </div>
+
+                <!-- Negative Vote (Report/Dispute) -->
+                <div style="margin-top: 20px; padding: 15px; background: var(--bg-color); border-radius: 8px;">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 15px; color: var(--danger-color);">
+                        ⚠️ Report Bad Actor (Negative Vote)
+                        <span class="tooltip info-icon">?
+                            <span class="tooltiptext">
+                                <strong>Report Bad Actors</strong><br>
+                                Submit a negative reputation vote to warn the community.<br>
+                                • <strong>Severity</strong>: Choose based on offense (-25 to -100)<br>
+                                • <strong>Bond Required</strong>: Stake CAS to back your claim<br>
+                                • <strong>Risk</strong>: False reports can be slashed by the community<br>
+                                • <strong>Evidence</strong>: Always provide a clear reason<br><br>
+                                Use this feature responsibly to protect others from scammers!
+                            </span>
+                        </span>
+                    </h3>
+                    <p class="help-text">⚠️ Warning: Only report genuine bad actors. False reports can result in your bond being slashed!</p>
+                    <form id="reportForm" onsubmit="return handleReportBadActor(event);">
+                        <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr auto; gap: 10px; align-items: end;">
+                            <div>
+                                <label style="display: block; font-size: 0.85rem; margin-bottom: 3px; color: var(--text-secondary);">Address to Report:</label>
+                                <input type="text" id="reportAddress" placeholder="QAddress..." required
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.8rem;">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.85rem; margin-bottom: 3px; color: var(--text-secondary);">Severity:</label>
+                                <select id="reportSeverity" required style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 0.85rem;">
+                                    <option value="-100">Scammer (-100)</option>
+                                    <option value="-75">Fraud (-75)</option>
+                                    <option value="-50">Untrustwort hy (-50)</option>
+                                    <option value="-25">Suspicious (-25)</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.85rem; margin-bottom: 3px; color: var(--text-secondary);">Bond (CAS):</label>
+                                <input type="number" id="reportBond" min="0.01" step="0.01" value="1.0" required
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <div>
+                                <label style="display: block; font-size: 0.85rem; margin-bottom: 3px; color: var(--text-secondary);">Reason:</label>
+                                <input type="text" id="reportReason" placeholder="Scammed me" required
+                                       style="width: 100%; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px;">
+                            </div>
+                            <button type="submit" style="padding: 7px 15px; background: var(--danger-color); color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; white-space: nowrap;">
+                                Report
+                            </button>
+                        </div>
+                        <div id="reportResult" style="margin-top: 8px; font-size: 0.8rem;"></div>
+                        <p style="margin-top: 8px; font-size: 0.75rem; color: var(--text-secondary);">
+                            ⚠️ Report bad actors with negative votes. Your CAS will be bonded and can be slashed if the report is false.
+                        </p>
+                    </form>
+                </div>
+
+                <!-- Query & Check Actions -->
+                <div style="margin-top: 20px; padding: 15px; background: var(--bg-color); border-radius: 8px;">
+                    <h3 style="font-size: 1.1rem; margin-bottom: 15px; color: var(--primary-color);">
+                        🔍 Query Information
+                        <span class="tooltip info-icon">?
+                            <span class="tooltiptext">
+                                <strong>Query Tools</strong><br>
+                                Look up information about any address on the network:<br>
+                                • <strong>Reputation</strong>: Check basic reputation score (0-100)<br>
+                                • <strong>HAT v2 Trust</strong>: View full multi-layer trust breakdown<br>
+                                • <strong>Cluster Detection</strong>: Find Sybil attack patterns<br><br>
+                                Use these tools before trading to assess counterparty risk!
+                            </span>
+                        </span>
+                    </h3>
+                    <p class="help-text">Look up reputation and trust scores for any address. Always check before trading!</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+                        <!-- Get Reputation -->
+                        <div>
+                            <label style="display: block; font-size: 0.85rem; margin-bottom: 5px; color: var(--text-secondary);">
+                                Check Reputation:
+                                <span class="tooltip info-icon" style="font-size: 0.6rem;">?
+                                    <span class="tooltiptext">
+                                        View the basic reputation score (0-100) calculated from community votes.
+                                    </span>
+                                </span>
+                            </label>
+                            <div style="display: flex; gap: 5px;">
+                                <input type="text" id="checkRepAddress" placeholder="QAddress..."
+                                       style="flex: 1; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.8rem;">
+                                <button onclick="handleCheckReputation()" style="padding: 6px 12px; background: var(--primary-color); color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+                                    Check
+                                </button>
+                            </div>
+                            <div id="repCheckResult" style="margin-top: 5px; font-size: 0.75rem; color: var(--text-secondary);"></div>
+                        </div>
+
+                        <!-- Get HAT v2 Trust -->
+                        <div>
+                            <label style="display: block; font-size: 0.85rem; margin-bottom: 5px; color: var(--text-secondary);">
+                                Check HAT v2 Trust:
+                                <span class="tooltip info-icon" style="font-size: 0.6rem;">?
+                                    <span class="tooltiptext">
+                                        View the full HAT v2 trust breakdown with all four components: Behavior, Web-of-Trust, Economic, and Temporal.
+                                    </span>
+                                </span>
+                            </label>
+                            <div style="display: flex; gap: 5px;">
+                                <input type="text" id="checkHATAddress" placeholder="QAddress..."
+                                       style="flex: 1; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; font-family: monospace; font-size: 0.8rem;">
+                                <button onclick="handleCheckHAT()" style="padding: 6px 12px; background: var(--secondary-color); color: white; border: none; border-radius: 4px; cursor: pointer; white-space: nowrap;">
+                                    Check
+                                </button>
+                            </div>
+                            <div id="hatCheckResult" style="margin-top: 5px; font-size: 0.75rem; color: var(--text-secondary);"></div>
+                        </div>
+
+                        <!-- Detect Clusters -->
+                        <div>
+                            <label style="display: block; font-size: 0.85rem; margin-bottom: 5px; color: var(--text-secondary);">
+                                Detect Clusters:
+                                <span class="tooltip info-icon" style="font-size: 0.6rem;">?
+                                    <span class="tooltiptext">
+                                        Scan the entire network for Sybil attack patterns. Shows clusters of interconnected accounts that may be controlled by a single entity.
+                                    </span>
+                                </span>
+                            </label>
+                            <button onclick="handleDetectClusters()" style="width: 100%; padding: 6px; background: var(--warning-color); color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                Run Cluster Detection
+                            </button>
+                            <div id="clusterResult" style="margin-top: 5px; font-size: 0.75rem; color: var(--text-secondary);"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>📊 Network Statistics
+                    <span class="tooltip info-icon">?
+                        <span class="tooltiptext">
+                            <strong>Network Statistics</strong><br>
+                            Overview of the entire Cascoin reputation network:<br>
+                            • <strong>Trust Edges</strong>: Total trust relations between addresses<br>
+                            • <strong>Votes</strong>: All reputation votes submitted<br>
+                            • <strong>Disputes</strong>: Active negative votes / reports<br>
+                            • <strong>Slashed</strong>: Votes penalized for being false<br>
+                            • <strong>Bonds</strong>: Minimum stake requirements
+                        </span>
+                    </span>
+                </h2>
+            </div>
             <div class="card-body">
                 <table class="stats-table">
                     <tbody>
@@ -910,6 +1279,165 @@ class TrustGraphViz {
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Form Handlers
+// ═══════════════════════════════════════════════════════════════
+
+async function handleAddTrust(event) {
+    event.preventDefault();
+    const resultDiv = document.getElementById('trustResult');
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">⏳ Processing...</span>';
+    
+    try {
+        const address = document.getElementById('trustAddress').value;
+        const weight = parseInt(document.getElementById('trustWeight').value);
+        const bond = parseFloat(document.getElementById('trustBond').value);
+        const reason = document.getElementById('trustReason').value;
+        
+        const result = await window.dashboard.rpcCall('sendtrustrelation', [address, weight, bond, reason]);
+        
+        resultDiv.innerHTML = `<span style="color: var(--secondary-color);">✓ Trust added! TX: ${result.txid.substring(0, 10)}...</span>`;
+        document.getElementById('addTrustForm').reset();
+        
+        // Refresh data
+        setTimeout(() => window.dashboard.loadData(), 2000);
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">✗ Error: ${error.message}</span>`;
+    }
+    
+    return false;
+}
+
+async function handleVoteReputation(event) {
+    event.preventDefault();
+    const resultDiv = document.getElementById('voteResult');
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">⏳ Processing...</span>';
+    
+    try {
+        const address = document.getElementById('voteAddress').value;
+        const vote = parseInt(document.getElementById('voteValue').value);
+        const bond = parseFloat(document.getElementById('voteBond').value);
+        const reason = document.getElementById('voteReason').value;
+        
+        const result = await window.dashboard.rpcCall('sendbondedvote', [address, vote, bond, reason]);
+        
+        resultDiv.innerHTML = `<span style="color: var(--secondary-color);">✓ Vote submitted! TX: ${result.txid.substring(0, 10)}...</span>`;
+        document.getElementById('voteRepForm').reset();
+        
+        setTimeout(() => window.dashboard.loadData(), 2000);
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">✗ Error: ${error.message}</span>`;
+    }
+    
+    return false;
+}
+
+async function handleSendTransaction(event) {
+    event.preventDefault();
+    const resultDiv = document.getElementById('sendResult');
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">⏳ Sending...</span>';
+    
+    try {
+        const address = document.getElementById('sendAddress').value;
+        const amount = parseFloat(document.getElementById('sendAmount').value);
+        const comment = document.getElementById('sendComment').value;
+        
+        const result = await window.dashboard.rpcCall('sendtoaddress', [address, amount, comment]);
+        
+        resultDiv.innerHTML = `<span style="color: var(--secondary-color);">✓ Sent! TX: ${result.substring(0, 10)}...</span>`;
+        document.getElementById('sendForm').reset();
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">✗ Error: ${error.message}</span>`;
+    }
+    
+    return false;
+}
+
+async function handleReportBadActor(event) {
+    event.preventDefault();
+    const resultDiv = document.getElementById('reportResult');
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">⏳ Submitting report...</span>';
+    
+    try {
+        const address = document.getElementById('reportAddress').value;
+        const vote = parseInt(document.getElementById('reportSeverity').value); // Negative value
+        const bond = parseFloat(document.getElementById('reportBond').value);
+        const reason = document.getElementById('reportReason').value;
+        
+        // Use sendbondedvote with negative value to report
+        const result = await window.dashboard.rpcCall('sendbondedvote', [address, vote, bond, reason]);
+        
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">✓ Report submitted! TX: ${result.txid.substring(0, 10)}... (Vote: ${vote})</span>`;
+        document.getElementById('reportForm').reset();
+        
+        setTimeout(() => window.dashboard.loadData(), 2000);
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">✗ Error: ${error.message}</span>`;
+    }
+    
+    return false;
+}
+
+async function handleCheckReputation() {
+    const address = document.getElementById('checkRepAddress').value;
+    const resultDiv = document.getElementById('repCheckResult');
+    
+    if (!address) {
+        resultDiv.innerHTML = '<span style="color: var(--danger-color);">Enter an address</span>';
+        return;
+    }
+    
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">Checking...</span>';
+    
+    try {
+        const result = await window.dashboard.rpcCall('getreputation', [address]);
+        resultDiv.innerHTML = `<span style="color: var(--secondary-color);">Score: ${result.average_score}/100</span>`;
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">Error: ${error.message}</span>`;
+    }
+}
+
+async function handleCheckHAT() {
+    const address = document.getElementById('checkHATAddress').value;
+    const resultDiv = document.getElementById('hatCheckResult');
+    
+    if (!address) {
+        resultDiv.innerHTML = '<span style="color: var(--danger-color);">Enter an address</span>';
+        return;
+    }
+    
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">Checking...</span>';
+    
+    try {
+        const result = await window.dashboard.rpcCall('getsecuretrust', [address]);
+        resultDiv.innerHTML = `<span style="color: var(--secondary-color);">HAT v2: ${result.trust_score}/100</span>`;
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">Error: ${error.message}</span>`;
+    }
+}
+
+async function handleDetectClusters() {
+    const resultDiv = document.getElementById('clusterResult');
+    resultDiv.innerHTML = '<span style="color: var(--warning-color);">Analyzing network...</span>';
+    
+    try {
+        const result = await window.dashboard.rpcCall('detectclusters', []);
+        const count = result.count || 0;
+        
+        if (count === 0) {
+            resultDiv.innerHTML = '<span style="color: var(--secondary-color);">✓ No suspicious clusters</span>';
+        } else {
+            resultDiv.innerHTML = `<span style="color: var(--danger-color);">⚠ Found ${count} suspicious addresses</span>`;
+        }
+    } catch (error) {
+        resultDiv.innerHTML = `<span style="color: var(--danger-color);">Error: ${error.message}</span>`;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Graph Refresh
+// ═══════════════════════════════════════════════════════════════
 
 function refreshGraph() {
     if (window.dashboard) window.dashboard.loadData();
