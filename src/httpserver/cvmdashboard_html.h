@@ -163,13 +163,14 @@ body {
                     <h2>🌐 Trust Network Graph
                         <span class="tooltip info-icon">?
                             <span class="tooltiptext">
-                                <strong>Trust Network Visualization</strong><br>
-                                Interactive graph showing trust relationships:<br>
-                                • <strong>Nodes</strong>: Addresses in the network<br>
-                                • <strong>Edges</strong>: Trust relations (green) and votes (blue)<br>
-                                • <strong>Size</strong>: Indicates reputation/trust score<br>
-                                • <strong>Clusters</strong>: Groups of interconnected addresses<br><br>
-                                Hover over nodes for details. Click to explore connections.
+                                <strong>Wallet Cluster Visualization</strong><br>
+                                Each node represents a WALLET (cluster of addresses):<br>
+                                • <strong>Single node = One wallet</strong> (may contain multiple addresses)<br>
+                                • <strong>Node size</strong>: Number of addresses in wallet<br>
+                                • <strong>Gold border</strong>: Multi-address wallet cluster<br>
+                                • <strong>White border</strong>: Single-address wallet<br>
+                                • <strong>Color</strong>: Effective trust score (lowest in cluster)<br><br>
+                                Click on any wallet to see all its addresses and scores!
                             </span>
                         </span>
                     </h2>
@@ -922,10 +923,16 @@ class TrustGraphViz {
             g.style.cursor = 'pointer';
             g.style.transition = 'all 0.3s ease';
             
+            // Calculate node size based on cluster size
+            const clusterSize = n.cluster_size || 1;
+            const baseRadius = 22;
+            const radius = baseRadius + Math.min(clusterSize - 1, 10) * 2; // Max +20px for large clusters
+            const glowRadius = radius + 3;
+            
             // Outer glow circle
             const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             glow.setAttribute('cx', n.x); glow.setAttribute('cy', n.y);
-            glow.setAttribute('r', 25);
+            glow.setAttribute('r', glowRadius);
             glow.setAttribute('fill', this.getColor(n.rep || 50));
             glow.setAttribute('opacity', '0.3');
             glow.setAttribute('filter', 'url(#glow)');
@@ -933,12 +940,18 @@ class TrustGraphViz {
             // Main circle
             const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
             c.setAttribute('cx', n.x); c.setAttribute('cy', n.y);
-            c.setAttribute('r', 22);
+            c.setAttribute('r', radius);
             c.setAttribute('fill', this.getColor(n.rep || 50));
             c.setAttribute('stroke', '#ffffff');
             c.setAttribute('stroke-width', '3');
             c.style.transition = 'all 0.3s ease';
             c.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))';
+            
+            // Add cluster size indicator for multi-address clusters
+            if (clusterSize > 1) {
+                c.setAttribute('stroke', '#fbbf24'); // Gold border for clusters
+                c.setAttribute('stroke-width', '4');
+            }
             
             // Inner highlight
             const highlight = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -962,19 +975,19 @@ class TrustGraphViz {
                 this.showModal(n);
             };
             
-            // Hover effects
+            // Hover effects with dynamic radius
             g.onmouseenter = (e) => {
-                c.setAttribute('r', 28);
-                c.setAttribute('stroke-width', '4');
-                glow.setAttribute('r', 35);
+                c.setAttribute('r', radius + 6);
+                c.setAttribute('stroke-width', clusterSize > 1 ? '5' : '4');
+                glow.setAttribute('r', glowRadius + 10);
                 glow.setAttribute('opacity', '0.6');
                 this.showTooltip(n, e);
                 this.highlightConnections(n);
             };
             g.onmouseleave = () => {
-                c.setAttribute('r', 22);
-                c.setAttribute('stroke-width', '3');
-                glow.setAttribute('r', 25);
+                c.setAttribute('r', radius);
+                c.setAttribute('stroke-width', clusterSize > 1 ? '4' : '3');
+                glow.setAttribute('r', glowRadius);
                 glow.setAttribute('opacity', '0.3');
                 this.hideTooltip();
                 this.unhighlightConnections();
@@ -1030,14 +1043,22 @@ class TrustGraphViz {
             (l.source && l.source.id === node.id) || (l.target && l.target.id === node.id)
         ).length;
         
+        const clusterSize = node.cluster_size || 1;
+        const isCluster = clusterSize > 1;
+        const penaltyWarning = node.penalty_applied ? '<div style="color: #fca5a5;">⚠️ Penalty Applied</div>' : '';
+        
         this.tooltip.innerHTML = `
             <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;">
-                ${node.label || node.id.substring(0, 12) + '...'}
+                ${isCluster ? '🏦' : '👤'} ${node.label || node.id.substring(0, 12) + '...'}
             </div>
             <div style="color: #a0aec0; font-size: 12px;">
-                <div>💎 Reputation: <span style="color: ${this.getColor(node.rep || 50)}; font-weight: bold;">${node.rep || 50}</span></div>
+                <div>💎 Effective Trust: <span style="color: ${this.getColor(node.rep || 50)}; font-weight: bold;">${Math.round(node.rep || 50)}</span></div>
+                ${isCluster ? `<div>📦 Cluster Size: <span style="color: #fbbf24; font-weight: bold;">${clusterSize} addresses</span></div>` : ''}
                 <div>🔗 Connections: <span style="color: #63b3ed; font-weight: bold;">${connections}</span></div>
-                <div>📍 ID: ${node.id.substring(0, 16)}...</div>
+                ${penaltyWarning}
+                <div style="margin-top: 4px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 10px; color: #718096;">
+                    Click for details
+                </div>
             </div>
         `;
         this.tooltip.style.opacity = '1';
@@ -1063,11 +1084,68 @@ class TrustGraphViz {
             ? Math.round(incoming.reduce((sum, l) => sum + (l.weight || 0), 0) / incoming.length)
             : 0;
         
+        // Generate cluster members section
+        const clusterSize = node.cluster_size || 1;
+        const isCluster = clusterSize > 1;
+        const members = node.members || [node.id];
+        const individualScores = node.individual_scores || {};
+        
+        let clusterMembersHTML = '';
+        if (isCluster) {
+            clusterMembersHTML = `
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px; margin-bottom: 16px;">
+                    <div style="color: rgba(255, 255, 255, 0.9); font-size: 14px; font-weight: bold; margin-bottom: 12px;">
+                        📦 Wallet Cluster (${clusterSize} addresses)
+                    </div>
+                    ${node.penalty_applied ? `
+                        <div style="background: rgba(239, 68, 68, 0.2); border-left: 3px solid #ef4444; padding: 8px 12px; margin-bottom: 12px; border-radius: 4px;">
+                            <span style="color: #fca5a5; font-size: 12px;">
+                                ⚠️ Cluster penalty applied! Effective score lowered by worst address.
+                            </span>
+                        </div>
+                    ` : ''}
+                    <div style="max-height: 200px; overflow-y: auto;">
+                        ${members.map(addr => {
+                            const score = individualScores[addr] || 50;
+                            const isWorst = node.worst_address === addr;
+                            const shortAddr = addr.substring(0, 24) + '...';
+                            return `
+                                <div style="
+                                    background: ${isWorst ? 'rgba(239, 68, 68, 0.15)' : 'rgba(0, 0, 0, 0.2)'};
+                                    padding: 10px;
+                                    margin-bottom: 8px;
+                                    border-radius: 8px;
+                                    border-left: 3px solid ${this.getColor(score)};
+                                    display: flex;
+                                    justify-content: space-between;
+                                    align-items: center;
+                                ">
+                                    <div>
+                                        <div style="color: rgba(255, 255, 255, 0.9); font-family: monospace; font-size: 11px; margin-bottom: 2px;">
+                                            ${shortAddr} ${isWorst ? '<span style="color: #fca5a5;">⚠️ WORST</span>' : ''}
+                                        </div>
+                                    </div>
+                                    <div style="
+                                        background: ${this.getColor(score)};
+                                        color: white;
+                                        padding: 4px 12px;
+                                        border-radius: 12px;
+                                        font-weight: bold;
+                                        font-size: 13px;
+                                    ">${Math.round(score)}</div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
         this.modalContent.innerHTML = `
             <div style="background: rgba(0, 0, 0, 0.3); padding: 24px; border-radius: 16px 16px 0 0;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                     <h2 style="color: white; margin: 0; font-size: 24px; font-weight: bold;">
-                        ${node.label || 'User'}
+                        ${isCluster ? '🏦 Wallet Cluster' : '👤 User'}
                     </h2>
                     <button onclick="window.trustGraph.hideModal()" style="
                         background: rgba(255, 255, 255, 0.2);
@@ -1082,7 +1160,7 @@ class TrustGraphViz {
                     ">×</button>
                 </div>
                 <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px; font-family: monospace;">
-                    ${node.id}
+                    Cluster ID: ${node.id.substring(0, 40)}...
                 </div>
             </div>
             
@@ -1115,6 +1193,9 @@ class TrustGraphViz {
                         </div>
                     </div>
                 </div>
+                
+                <!-- Wallet Cluster Members -->
+                ${clusterMembersHTML}
                 
                 <!-- Trust Statistics -->
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
@@ -1441,23 +1522,9 @@ async function handleDetectClusters() {
 
 function refreshGraph() {
     if (window.dashboard) window.dashboard.loadData();
-    if (window.trustGraph) {
-        // Reload graph data
-        const mockNodes = [
-            {id: 'QcPLC...', rep: 75, label: 'Alice'},
-            {id: 'QXabc...', rep: 60, label: 'Bob'},
-            {id: 'QYdef...', rep: 85, label: 'Carol'},
-            {id: 'QZghi...', rep: 45, label: 'Dave'}
-        ];
-        const mockLinks = [
-            {source: 'QcPLC...', target: 'QXabc...', weight: 80},
-            {source: 'QXabc...', target: 'QYdef...', weight: 60},
-            {source: 'QYdef...', target: 'QZghi...', weight: 70},
-            {source: 'QcPLC...', target: 'QZghi...', weight: 50}
-        ];
-        window.trustGraph.setData(mockNodes, mockLinks);
-        window.trustGraph.render();
-        window.trustGraph.simulate(50);
+    if (window.loadRealTrustGraph) {
+        console.log('Refreshing wallet cluster graph...');
+        window.loadRealTrustGraph();
     }
 }
 
@@ -1470,16 +1537,15 @@ document.addEventListener('DOMContentLoaded', () => {
     window.trustGraph = new TrustGraphViz('trustGraph', 750, 380);
     window.trustGraph.init();
     
-    // Load REAL trust graph data from blockchain
+    // Load REAL trust graph data with WALLET CLUSTERING (Optimized)
     async function loadRealTrustGraph() {
         try {
-            console.log('Loading real trust graph data...');
+            console.log('Loading trust graph with wallet clustering...');
             const result = await window.dashboard.rpcCall('listtrustrelations', [100]);
             
             if (!result.edges || result.edges.length === 0) {
                 console.log('No trust relationships found yet');
-                // Show empty state with helpful message
-                const emptyNodes = [{id: 'empty', rep: 50, label: 'No Data Yet'}];
+                const emptyNodes = [{id: 'empty', rep: 50, label: 'No Data Yet', cluster_size: 0}];
                 const emptyLinks = [];
                 window.trustGraph.setData(emptyNodes, emptyLinks);
                 window.trustGraph.render();
@@ -1487,46 +1553,135 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
             
-            console.log('Processing', result.edges.length, 'edges...');
+            console.log('Building wallet clusters from', result.edges.length, 'edges...');
             
-            // Build nodes from edges
-            const nodeMap = new Map();
+            // 1. Get all unique addresses
+            const addresses = new Set();
             result.edges.forEach(edge => {
-                if (!nodeMap.has(edge.from)) {
-                    const rep = result.reputations[edge.from] || 50;
-                    const shortAddr = edge.from.substring(0, 8) + '...';
-                    nodeMap.set(edge.from, { id: edge.from, rep: rep, label: shortAddr });
+                addresses.add(edge.from);
+                addresses.add(edge.to);
+            });
+            
+            console.log(`Found ${addresses.size} unique addresses, fetching cluster info...`);
+            
+            // 2. Get wallet cluster info for each address (OPTIMIZED: reduced calls)
+            const clusterMap = new Map(); // cluster_id -> {id, members[], rep, effectiveScore}
+            const addressToCluster = new Map(); // address -> cluster_id
+            const processedClusters = new Set(); // Track which clusters we've already processed
+            
+            for (const addr of addresses) {
+                try {
+                    // Only fetch cluster info if we haven't processed this cluster yet
+                    const clusterInfo = await window.dashboard.rpcCall('getwalletcluster', [addr]);
+                    const cluster_id = clusterInfo.cluster_id;
+                    
+                    addressToCluster.set(addr, cluster_id);
+                    
+                    // Skip if we already processed this cluster
+                    if (processedClusters.has(cluster_id)) {
+                        continue;
+                    }
+                    
+                    processedClusters.add(cluster_id);
+                    
+                    // Use shared_hat_score from cluster info (already calculated)
+                    const cluster_size = clusterInfo.member_count || 1;
+                    const rep = clusterInfo.shared_hat_score || clusterInfo.shared_reputation || 50;
+                    
+                    clusterMap.set(cluster_id, {
+                        id: cluster_id,
+                        members: clusterInfo.members || [addr],
+                        cluster_size: cluster_size,
+                        rep: rep,
+                        individual_scores: {},
+                        penalty_applied: cluster_size > 1 && rep < 50, // Assume penalty if multi-address cluster with low score
+                        worst_address: addr
+                    });
+                    
+                    console.log(`Cluster ${cluster_id.substring(0, 8)}...: ${cluster_size} addresses, score ${rep}`);
+                    
+                } catch (error) {
+                    console.log(`Address ${addr.substring(0, 8)}... clustering failed, treating as standalone`);
+                    // If clustering fails, treat address as standalone
+                    addressToCluster.set(addr, addr);
+                    if (!clusterMap.has(addr)) {
+                        clusterMap.set(addr, {
+                            id: addr,
+                            members: [addr],
+                            cluster_size: 1,
+                            rep: result.reputations[addr] || 50,
+                            individual_scores: {[addr]: result.reputations[addr] || 50},
+                            penalty_applied: false
+                        });
+                    }
                 }
-                if (!nodeMap.has(edge.to)) {
-                    const rep = result.reputations[edge.to] || 50;
-                    const shortAddr = edge.to.substring(0, 8) + '...';
-                    nodeMap.set(edge.to, { id: edge.to, rep: rep, label: shortAddr });
+            }
+            
+            // 3. Build nodes (one per wallet cluster)
+            const nodes = Array.from(clusterMap.values()).map(cluster => {
+                const shortId = cluster.id.substring(0, 6) + '...';
+                const sizeLabel = cluster.cluster_size > 1 ? ` (${cluster.cluster_size})` : '';
+                return {
+                    id: cluster.id,
+                    rep: cluster.rep,
+                    label: shortId + sizeLabel,
+                    cluster_size: cluster.cluster_size,
+                    members: cluster.members,
+                    individual_scores: cluster.individual_scores,
+                    penalty_applied: cluster.penalty_applied,
+                    worst_address: cluster.worst_address
+                };
+            });
+            
+            // 4. Build edges (between clusters, not individual addresses)
+            const clusterEdges = new Map();
+            
+            result.edges.forEach(edge => {
+                const fromCluster = addressToCluster.get(edge.from) || edge.from;
+                const toCluster = addressToCluster.get(edge.to) || edge.to;
+                
+                // Skip edges within same cluster
+                if (fromCluster === toCluster) return;
+                
+                const edgeKey = `${fromCluster}->${toCluster}`;
+                
+                if (!clusterEdges.has(edgeKey)) {
+                    clusterEdges.set(edgeKey, {
+                        source: fromCluster,
+                        target: toCluster,
+                        weight: edge.weight,
+                        count: 1
+                    });
+                } else {
+                    // Aggregate multiple edges between same clusters
+                    const existing = clusterEdges.get(edgeKey);
+                    existing.weight = Math.max(existing.weight, edge.weight);
+                    existing.count++;
                 }
             });
             
-            const nodes = Array.from(nodeMap.values());
-            const links = result.edges.map(edge => ({
-                source: edge.from,
-                target: edge.to,
-                weight: edge.weight
-            }));
+            const links = Array.from(clusterEdges.values());
             
-            console.log('Loaded', nodes.length, 'nodes and', links.length, 'links (REAL DATA!)');
+            console.log(`✅ Loaded ${nodes.length} wallet clusters (${addresses.size} addresses) and ${links.length} inter-cluster edges`);
             
             window.trustGraph.setData(nodes, links);
             window.trustGraph.render();
             setTimeout(() => window.trustGraph.simulate(50), 500);
             
         } catch (error) {
-            console.error('Failed to load real trust graph:', error);
+            console.error('Failed to load clustered trust graph:', error);
+            console.error('Error details:', error.message);
             // Fallback to empty state
-            const emptyNodes = [{id: 'error', rep: 50, label: 'Error Loading'}];
+            const emptyNodes = [{id: 'error', rep: 50, label: 'Error Loading', cluster_size: 0}];
             const emptyLinks = [];
             window.trustGraph.setData(emptyNodes, emptyLinks);
             window.trustGraph.render();
             setTimeout(() => window.trustGraph.simulate(10), 100);
         }
     }
+    
+    // Make loadRealTrustGraph globally accessible for refresh
+    window.loadRealTrustGraph = loadRealTrustGraph;
     
     // Start loading real data
     loadRealTrustGraph();

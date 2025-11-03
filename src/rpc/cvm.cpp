@@ -15,6 +15,7 @@
 #include <cvm/behaviormetrics.h>
 #include <cvm/graphanalysis.h>
 #include <cvm/securehat.h>
+#include <cvm/walletcluster.h>
 #include <validation.h>
 #include <util.h>
 #include <base58.h>
@@ -1520,6 +1521,191 @@ UniValue gettrustbreakdown(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue buildwalletclusters(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "buildwalletclusters\n"
+            "\nAnalyze blockchain and build wallet clusters based on transaction patterns.\n"
+            "This links addresses that belong to the same wallet.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"total_clusters\": n,                (numeric) Number of identified wallet clusters\n"
+            "  \"largest_cluster\": n,               (numeric) Size of largest cluster\n"
+            "  \"analyzed_transactions\": n          (numeric) Number of transactions analyzed\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("buildwalletclusters", "")
+            + HelpExampleRpc("buildwalletclusters", "")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    clusterer.BuildClusters();
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("total_clusters", (uint64_t)clusterer.GetTotalClusters());
+    result.pushKV("largest_cluster", (uint64_t)clusterer.GetLargestClusterSize());
+    result.pushKV("status", "Wallet clusters built successfully");
+    
+    return result;
+}
+
+UniValue getwalletcluster(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getwalletcluster \"address\"\n"
+            "\nGet all addresses in the same wallet cluster as the given address.\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) The address to query\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"cluster_id\": \"address\",          (string) Primary address of cluster\n"
+            "  \"member_count\": n,                  (numeric) Number of addresses in cluster\n"
+            "  \"members\": [                        (array) All addresses in cluster\n"
+            "    \"address\",\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"shared_reputation\": n.n,           (numeric) Minimum reputation across cluster\n"
+            "  \"shared_hat_score\": n.n             (numeric) Minimum HAT v2 score across cluster\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getwalletcluster", "\"QAddress...\"")
+            + HelpExampleRpc("getwalletcluster", "\"QAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    CKeyID* keyID = boost::get<CKeyID>(&dest);
+    if (!keyID) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address must be a pubkey hash");
+    }
+    
+    uint160 address(*keyID);
+    
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    uint160 cluster_id = clusterer.GetClusterForAddress(address);
+    std::set<uint160> members = clusterer.GetClusterMembers(address);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(cluster_id)));
+    result.pushKV("member_count", (uint64_t)members.size());
+    
+    UniValue members_arr(UniValue::VARR);
+    for (const uint160& member : members) {
+        members_arr.push_back(EncodeDestination(CKeyID(member)));
+    }
+    result.pushKV("members", members_arr);
+    
+    result.pushKV("shared_reputation", clusterer.GetEffectiveReputation(address));
+    result.pushKV("shared_hat_score", clusterer.GetEffectiveHATScore(address));
+    
+    return result;
+}
+
+UniValue geteffectivetrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "geteffectivetrust \"target\" ( \"viewer\" )\n"
+            "\nGet effective HAT v2 trust score considering wallet clustering.\n"
+            "This returns the MINIMUM score across all addresses in the wallet cluster.\n"
+            "\nArguments:\n"
+            "1. \"target\"     (string, required) The address to evaluate\n"
+            "2. \"viewer\"     (string, optional) Viewer address for personalized trust\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"target\": \"address\",              (string) Target address\n"
+            "  \"cluster_id\": \"address\",          (string) Wallet cluster ID\n"
+            "  \"cluster_size\": n,                  (numeric) Number of addresses in cluster\n"
+            "  \"individual_score\": n.n,            (numeric) Score for this address alone\n"
+            "  \"effective_score\": n.n,             (numeric) Minimum score across cluster\n"
+            "  \"penalty_applied\": true|false       (boolean) Whether cluster penalty was applied\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("geteffectivetrust", "\"QAddress...\"")
+            + HelpExampleRpc("geteffectivetrust", "\"QAddress...\", \"QViewer...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse target
+    CTxDestination target_dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(target_dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
+    }
+    
+    CKeyID* target_keyID = boost::get<CKeyID>(&target_dest);
+    if (!target_keyID) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target must be a pubkey hash");
+    }
+    
+    uint160 target(*target_keyID);
+    uint160 viewer;
+    
+    if (request.params.size() > 1) {
+        CTxDestination viewer_dest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(viewer_dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
+        }
+        CKeyID* viewer_keyID = boost::get<CKeyID>(&viewer_dest);
+        if (!viewer_keyID) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer must be a pubkey hash");
+        }
+        viewer = uint160(*viewer_keyID);
+    }
+    
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::SecureHAT hat(*CVM::g_cvmdb);
+    
+    uint160 cluster_id = clusterer.GetClusterForAddress(target);
+    std::set<uint160> members = clusterer.GetClusterMembers(target);
+    
+    double individual_score = hat.CalculateFinalTrust(target, viewer);
+    double effective_score = clusterer.GetEffectiveHATScore(target);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("target", EncodeDestination(CKeyID(target)));
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(cluster_id)));
+    result.pushKV("cluster_size", (uint64_t)members.size());
+    result.pushKV("individual_score", individual_score);
+    result.pushKV("effective_score", effective_score);
+    result.pushKV("penalty_applied", effective_score < individual_score);
+    
+    // Show which address in cluster has lowest score
+    if (members.size() > 1) {
+        uint160 worst_address = target;
+        double worst_score = individual_score;
+        
+        for (const uint160& member : members) {
+            double member_score = hat.CalculateFinalTrust(member, viewer);
+            if (member_score < worst_score) {
+                worst_score = member_score;
+                worst_address = member;
+            }
+        }
+        
+        result.pushKV("worst_address_in_cluster", EncodeDestination(CKeyID(worst_address)));
+        result.pushKV("worst_score", worst_score);
+    }
+    
+    return result;
+}
+
 UniValue detectclusters(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
@@ -1585,6 +1771,9 @@ static const CRPCCommand commands[] =
     { "hat",                "getsecuretrust",        &getsecuretrust,         {"target","viewer"} },
     { "hat",                "gettrustbreakdown",     &gettrustbreakdown,      {"target","viewer"} },
     { "hat",                "detectclusters",        &detectclusters,         {} },
+    { "wallet_cluster",     "buildwalletclusters",   &buildwalletclusters,    {} },
+    { "wallet_cluster",     "getwalletcluster",      &getwalletcluster,       {"address"} },
+    { "wallet_cluster",     "geteffectivetrust",     &geteffectivetrust,      {"target","viewer"} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)

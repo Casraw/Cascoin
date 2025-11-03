@@ -192,6 +192,7 @@ BITCOIN_CORE_H = \
   cvm/behaviormetrics.h \
   cvm/graphanalysis.h \
   cvm/securehat.h \
+  cvm/walletcluster.h \
   cvm/cvmtx.h
 
 
@@ -260,6 +261,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/behaviormetrics.cpp \
   cvm/graphanalysis.cpp \
   cvm/securehat.cpp \
+  cvm/walletcluster.cpp \
   cvm/cvmtx.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
