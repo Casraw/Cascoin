@@ -87,7 +87,7 @@ The system automatically detects:
 ## Activation
 
 CVM and ASRS activate at configured block heights (see `chainparams.cpp`):
-- **Mainnet**: Block 150,000
+- **Mainnet**: Block 220,000 (scheduled ~2 months future activation)
 - **Testnet**: Block 500
 - **Regtest**: Block 0 (immediate)
 

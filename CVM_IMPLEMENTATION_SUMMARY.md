@@ -105,7 +105,7 @@ Comprehensive documentation:
 
 ### Activation Heights
 
-- **Mainnet**: Block 150,000
+- **Mainnet**: Block 220,000 (scheduled ~2 months future activation, current mainnet: ~182,030)
 - **Testnet**: Block 500
 - **Regtest**: Block 0 (immediate)
 
@@ -259,8 +259,8 @@ cascoin-cli getreputation "ADDRESS"
 1. Deploy to testnet at block 500
 2. Monitor for 1-2 months
 3. Fix any issues found
-4. Announce mainnet activation date
-5. Activate at block 150,000
+4. Announce mainnet activation date (at least 2 months in advance)
+5. Activate at block 220,000 (approximately 38,000 blocks from current mainnet height)
 6. Monitor carefully post-activation
 
 ## Known Limitations
@@ -355,5 +355,5 @@ MIT License - See COPYING for details
 **Implementation Date**: November 2025  
 **Version**: 1.0.0  
 **Status**: Testing Phase  
-**Target Activation**: Block 150,000 (Mainnet)
+**Target Activation**: Block 220,000 (Mainnet - 2+ Months Future Activation)
 

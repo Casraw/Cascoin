@@ -175,6 +175,49 @@ bool CVMDatabase::ReadBalance(const uint160& address, uint64_t& balance) {
     return true;
 }
 
+// Generic key-value storage for extensions (Web-of-Trust, etc.)
+bool CVMDatabase::WriteGeneric(const std::string& key, const std::vector<uint8_t>& value) {
+    return db->Write(key, value);
+}
+
+bool CVMDatabase::ReadGeneric(const std::string& key, std::vector<uint8_t>& value) {
+    return db->Read(key, value);
+}
+
+bool CVMDatabase::ExistsGeneric(const std::string& key) {
+    return db->Exists(key);
+}
+
+bool CVMDatabase::EraseGeneric(const std::string& key) {
+    return db->Erase(key);
+}
+
+std::vector<std::string> CVMDatabase::ListKeysWithPrefix(const std::string& prefix) {
+    std::vector<std::string> keys;
+    
+    // Create iterator
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    
+    // Start from the beginning since string serialization adds length prefix
+    // which makes direct prefix seeking unreliable
+    pcursor->SeekToFirst();
+    
+    // Iterate through all keys and filter by prefix
+    while (pcursor->Valid()) {
+        std::string key;
+        // Try to deserialize as string
+        if (pcursor->GetKey(key)) {
+            // Check if this key matches our prefix
+            if (key.compare(0, prefix.size(), prefix) == 0) {
+                keys.push_back(key);
+            }
+        }
+        pcursor->Next();
+    }
+    
+    return keys;
+}
+
 bool CVMDatabase::Flush() {
     return db->Flush();
 }

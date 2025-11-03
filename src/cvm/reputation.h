@@ -130,6 +130,11 @@ public:
     bool GetReputation(const uint160& address, ReputationScore& score);
     
     /**
+     * Update reputation score for address
+     */
+    bool UpdateReputation(const uint160& address, const ReputationScore& score);
+    
+    /**
      * Apply a reputation vote
      */
     bool ApplyVote(const uint160& voterAddress, const ReputationVoteTx& vote, int64_t timestamp);

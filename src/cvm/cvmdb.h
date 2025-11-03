@@ -58,6 +58,15 @@ public:
     bool WriteBalance(const uint160& address, uint64_t balance);
     bool ReadBalance(const uint160& address, uint64_t& balance);
     
+    // Generic key-value storage (for Web-of-Trust and other extensions)
+    bool WriteGeneric(const std::string& key, const std::vector<uint8_t>& value);
+    bool ReadGeneric(const std::string& key, std::vector<uint8_t>& value);
+    bool ExistsGeneric(const std::string& key);
+    bool EraseGeneric(const std::string& key);
+    
+    // Iterator for generic keys with prefix
+    std::vector<std::string> ListKeysWithPrefix(const std::string& prefix);
+    
     // Batch operations for atomic updates
     class Batch {
     public:

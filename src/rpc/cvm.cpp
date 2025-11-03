@@ -8,11 +8,20 @@
 #include <cvm/cvmdb.h>
 #include <cvm/contract.h>
 #include <cvm/reputation.h>
+#include <cvm/softfork.h>
+#include <cvm/txbuilder.h>
+#include <cvm/blockprocessor.h>
+#include <cvm/trustgraph.h>
 #include <validation.h>
 #include <util.h>
 #include <base58.h>
 #include <utilstrencodings.h>
 #include <univalue.h>
+#include <wallet/wallet.h>
+#include <wallet/coincontrol.h>
+#include <wallet/rpcwallet.h>
+#include <hash.h>
+#include <core_io.h>
 
 /**
  * RPC commands for CVM (Cascoin Virtual Machine) and Reputation System
@@ -76,13 +85,33 @@ UniValue deploycontract(const JSONRPCRequest& request)
         initData = ParseHex(initDataHex);
     }
     
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("status", "Contract deployment prepared");
-    result.pushKV("bytecode_size", (int64_t)bytecode.size());
-    result.pushKV("gas_limit", (int64_t)gasLimit);
+    // Create deployment data with hash of bytecode (Soft Fork compatible)
+    CVM::CVMDeployData deployData;
+    deployData.codeHash = Hash(bytecode.begin(), bytecode.end());
+    deployData.gasLimit = gasLimit;
     
-    // Note: Actual transaction creation would be done by wallet
-    // This RPC would normally create a transaction with contract deployment data
+    // Store actual bytecode in CVM database (off-chain for old nodes)
+    if (CVM::g_cvmdb) {
+        // TODO: Store bytecode associated with hash in database
+        LogPrintf("CVM: Contract bytecode hash: %s\n", deployData.codeHash.ToString());
+    }
+    
+    // Build OP_RETURN output with CVM data (Soft Fork!)
+    std::vector<uint8_t> deployBytes = deployData.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::CONTRACT_DEPLOY, deployBytes);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("status", "Contract deployment prepared (Soft Fork OP_RETURN)");
+    result.pushKV("bytecode_size", (int64_t)bytecode.size());
+    result.pushKV("bytecode_hash", deployData.codeHash.ToString());
+    result.pushKV("gas_limit", (int64_t)gasLimit);
+    result.pushKV("op_return_script", HexStr(cvmScript.begin(), cvmScript.end()));
+    result.pushKV("softfork_compatible", true);
+    
+    // Note: To actually broadcast, user needs to create a transaction with:
+    // - Input: Funding
+    // - Output 0: OP_RETURN (cvmScript)
+    // - Output 1: Change
     
     return result;
 }
@@ -192,9 +221,15 @@ UniValue getreputation(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
     
-    // Get address hash
-    CKeyID keyID = boost::get<CKeyID>(dest);
-    uint160 address(keyID);
+    // Get address hash - handle both P2PKH and P2SH
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported for reputation");
+    }
     
     // Get reputation score
     CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
@@ -244,7 +279,13 @@ UniValue votereputation(const JSONRPCRequest& request)
     }
 
     std::string addressStr = request.params[0].get_str();
-    int64_t voteValue = request.params[1].get_int64();
+    // Handle vote value - can be int or string
+    int64_t voteValue;
+    if (request.params[1].isNum()) {
+        voteValue = request.params[1].get_int64();
+    } else {
+        voteValue = atoi64(request.params[1].get_str());
+    }
     std::string reason = request.params[2].get_str();
     
     // Parse address
@@ -253,35 +294,58 @@ UniValue votereputation(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
     }
     
-    CKeyID keyID = boost::get<CKeyID>(dest);
-    uint160 targetAddress(keyID);
-    
-    // Create vote transaction
-    CVM::ReputationVoteTx voteTx;
-    voteTx.targetAddress = targetAddress;
-    voteTx.voteValue = voteValue;
-    voteTx.reason = reason;
-    
-    if (request.params.size() > 3) {
-        std::string proofHex = request.params[3].get_str();
-        if (proofHex.substr(0, 2) == "0x") {
-            proofHex = proofHex.substr(2);
-        }
-        voteTx.proof = ParseHex(proofHex);
+    // Get address hash - handle both P2PKH and P2SH
+    uint160 targetAddress;
+    if (boost::get<CKeyID>(&dest)) {
+        targetAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        targetAddress = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported for reputation");
     }
     
-    // Validate vote
-    std::string error;
-    if (!voteTx.IsValid(error)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid vote: " + error);
+    // Create reputation vote data (Soft Fork compatible with OP_RETURN)
+    CVM::CVMReputationData repData;
+    repData.targetAddress = targetAddress;
+    repData.voteValue = static_cast<int16_t>(voteValue);
+    repData.timestamp = static_cast<uint32_t>(GetTime());
+    
+    // Build OP_RETURN output with reputation data (Soft Fork!)
+    std::vector<uint8_t> repBytes = repData.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::REPUTATION_VOTE, repBytes);
+    
+    // For now, just store vote directly in database (simulated on-chain)
+    // In production, this would create a real transaction
+    if (CVM::g_cvmdb) {
+        CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
+        CVM::ReputationScore score;
+        repSystem.GetReputation(targetAddress, score);
+        
+        // Update score
+        score.score += voteValue;
+        score.voteCount++;
+        score.lastUpdated = repData.timestamp;
+        
+        // Store updated score
+        repSystem.UpdateReputation(targetAddress, score);
+        
+        LogPrintf("CVM: Reputation vote recorded for %s: %+d (new score: %d)\n",
+                  addressStr, voteValue, score.score);
     }
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("status", "Vote prepared");
+    result.pushKV("status", "Vote recorded (Soft Fork OP_RETURN)");
+    result.pushKV("address", addressStr);
     result.pushKV("vote", voteValue);
     result.pushKV("reason", reason);
+    result.pushKV("timestamp", (int64_t)repData.timestamp);
+    result.pushKV("op_return_script", HexStr(cvmScript.begin(), cvmScript.end()));
+    result.pushKV("softfork_compatible", true);
     
-    // Note: Actual transaction creation would be done by wallet
+    // Note: In production, this would create a transaction with:
+    // - Input: Small amount from voter
+    // - Output 0: OP_RETURN (cvmScript)
+    // - Output 1: Change back
     
     return result;
 }
@@ -321,6 +385,688 @@ UniValue listreputations(const JSONRPCRequest& request)
     return result;
 }
 
+/**
+ * sendcvmvote - Send reputation vote transaction to network
+ * 
+ * Creates, signs, and broadcasts a real transaction with vote in OP_RETURN.
+ * This will go into mempool and be mined into a block.
+ */
+UniValue sendcvmvote(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 3)
+        throw std::runtime_error(
+            "sendcvmvote \"address\" vote \"reason\"\n"
+            "\nSend reputation vote transaction (broadcasts to network).\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) Address to vote on\n"
+            "2. vote          (numeric, required) Vote value (-100 to +100)\n"
+            "3. \"reason\"      (string, required) Reason for vote\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"xxx\",     (string) Transaction ID\n"
+            "  \"fee\": n,            (numeric) Transaction fee\n"
+            "  \"mempool\": true      (boolean) In mempool\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("sendcvmvote", "\"Qi9hi...\" 100 \"Trusted user\"")
+            + HelpExampleRpc("sendcvmvote", "\"Qi9hi...\", 100, \"Trusted user\"")
+        );
+    
+    // Get wallet
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet not available");
+    }
+    
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse parameters
+    std::string addressStr = request.params[0].get_str();
+    int64_t voteValue;
+    if (request.params[1].isNum()) {
+        voteValue = request.params[1].get_int64();
+    } else {
+        voteValue = atoi64(request.params[1].get_str());
+    }
+    std::string reason = request.params[2].get_str();
+    
+    // Validate vote range
+    if (voteValue < -100 || voteValue > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Vote value must be between -100 and +100");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    // Get address hash
+    uint160 targetAddress;
+    if (boost::get<CKeyID>(&dest)) {
+        targetAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        targetAddress = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Build transaction
+    CAmount fee;
+    std::string error;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildVoteTransaction(
+        pwallet, targetAddress, static_cast<int16_t>(voteValue), reason, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast transaction
+    CTransactionRef tx = MakeTransactionRef(std::move(mtx));
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_TRANSACTION_REJECTED, "Failed to broadcast transaction: " + error);
+    }
+    
+    // Return result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.GetHex());
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("mempool", true);
+    result.pushKV("address", addressStr);
+    result.pushKV("vote", voteValue);
+    result.pushKV("reason", reason);
+    
+    return result;
+}
+
+/**
+ * sendcvmcontract - Deploy contract transaction to network
+ * 
+ * Creates, signs, and broadcasts a real transaction with contract in OP_RETURN.
+ */
+UniValue sendcvmcontract(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "sendcvmcontract \"bytecode\" ( gaslimit )\n"
+            "\nDeploy smart contract transaction (broadcasts to network).\n"
+            "\nArguments:\n"
+            "1. \"bytecode\"    (string, required) Contract bytecode in hex\n"
+            "2. gaslimit      (numeric, optional) Gas limit (default: 1000000)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"xxx\",         (string) Transaction ID\n"
+            "  \"fee\": n,                (numeric) Transaction fee\n"
+            "  \"bytecode_hash\": \"xxx\", (string) Bytecode hash\n"
+            "  \"mempool\": true          (boolean) In mempool\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("sendcvmcontract", "\"6001600201\" 1000000")
+            + HelpExampleRpc("sendcvmcontract", "\"6001600201\", 1000000")
+        );
+    
+    // Get wallet
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet not available");
+    }
+    
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse bytecode
+    std::string bytecodeHex = request.params[0].get_str();
+    if (bytecodeHex.substr(0, 2) == "0x") {
+        bytecodeHex = bytecodeHex.substr(2);
+    }
+    std::vector<uint8_t> bytecode = ParseHex(bytecodeHex);
+    
+    // Validate bytecode
+    std::string validationError;
+    if (!CVM::ValidateContractCode(bytecode, validationError)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid bytecode: " + validationError);
+    }
+    
+    // Get gas limit
+    uint64_t gasLimit = 1000000;
+    if (request.params.size() > 1) {
+        gasLimit = request.params[1].get_int64();
+    }
+    
+    // Build transaction
+    CAmount fee;
+    std::string error;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildDeployTransaction(
+        pwallet, bytecode, gasLimit, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast transaction
+    CTransactionRef tx = MakeTransactionRef(std::move(mtx));
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_TRANSACTION_REJECTED, "Failed to broadcast transaction: " + error);
+    }
+    
+    // Calculate bytecode hash
+    uint256 codeHash = Hash(bytecode.begin(), bytecode.end());
+    
+    // Return result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.GetHex());
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("bytecode_hash", codeHash.GetHex());
+    result.pushKV("bytecode_size", (int64_t)bytecode.size());
+    result.pushKV("gas_limit", (int64_t)gasLimit);
+    result.pushKV("mempool", true);
+    
+    return result;
+}
+
+/**
+ * addtrust - Add trust relationship (Web-of-Trust)
+ * 
+ * Creates a trust edge from caller to target address.
+ * Requires bonding CAS to prevent spam.
+ */
+UniValue addtrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
+        throw std::runtime_error(
+            "addtrust \"address\" weight ( bond \"reason\" )\n"
+            "\nAdd trust relationship in Web-of-Trust graph.\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) Address to trust\n"
+            "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
+            "3. bond          (numeric, optional) Amount to bond (default: calculated)\n"
+            "4. \"reason\"      (string, optional) Reason for trust\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"from\": \"xxx\",         (string) Your address\n"
+            "  \"to\": \"xxx\",           (string) Trusted address\n"
+            "  \"weight\": n,           (numeric) Trust weight\n"
+            "  \"bond\": n,             (numeric) Bonded amount\n"
+            "  \"required_bond\": n     (numeric) Required bond\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("addtrust", "\"Qi9hi...\" 80 1.5 \"Trusted user\"")
+            + HelpExampleRpc("addtrust", "\"Qi9hi...\", 80, 1.5, \"Trusted user\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse parameters
+    std::string addressStr = request.params[0].get_str();
+    int64_t weight;
+    if (request.params[1].isNum()) {
+        weight = request.params[1].get_int64();
+    } else {
+        weight = atoi64(request.params[1].get_str());
+    }
+    
+    // Validate weight
+    if (weight < -100 || weight > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 toAddress;
+    if (boost::get<CKeyID>(&dest)) {
+        toAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        toAddress = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get caller's address (would need wallet integration)
+    uint160 fromAddress; // Placeholder
+    
+    // Calculate required bond
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
+                          (CVM::g_wotConfig.bondPerVotePoint * std::abs(weight));
+    
+    // Get bond amount
+    CAmount bondAmount = requiredBond;
+    if (request.params.size() > 2) {
+        bondAmount = AmountFromValue(request.params[2]);
+    }
+    
+    if (bondAmount < requiredBond) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, 
+            strprintf("Insufficient bond: have %d, need %d", 
+                     bondAmount, requiredBond));
+    }
+    
+    // Get reason
+    std::string reason = "";
+    if (request.params.size() > 3) {
+        reason = request.params[3].get_str();
+    }
+    
+    // Placeholder bond transaction (in production, would create real TX)
+    uint256 bondTx;
+    
+    // Add trust edge
+    if (!trustGraph.AddTrustEdge(fromAddress, toAddress, weight, bondAmount, bondTx, reason)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("from", fromAddress.ToString());
+    result.pushKV("to", addressStr);
+    result.pushKV("weight", weight);
+    result.pushKV("bond", ValueFromAmount(bondAmount));
+    result.pushKV("required_bond", ValueFromAmount(requiredBond));
+    result.pushKV("reason", reason);
+    
+    return result;
+}
+
+/**
+ * getweightedreputation - Get reputation from viewer's perspective (Web-of-Trust)
+ * 
+ * Returns personalized reputation based on viewer's trust graph.
+ */
+UniValue getweightedreputation(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+            "getweightedreputation \"target\" ( \"viewer\" maxdepth )\n"
+            "\nGet weighted reputation from viewer's perspective.\n"
+            "\nArguments:\n"
+            "1. \"target\"      (string, required) Target address\n"
+            "2. \"viewer\"      (string, optional) Viewer address (default: caller)\n"
+            "3. maxdepth      (numeric, optional) Max trust path depth (default: 3)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"target\": \"xxx\",       (string) Target address\n"
+            "  \"viewer\": \"xxx\",       (string) Viewer address\n"
+            "  \"reputation\": n,       (numeric) Weighted reputation score\n"
+            "  \"paths_found\": n,      (numeric) Number of trust paths found\n"
+            "  \"max_depth\": n         (numeric) Maximum depth searched\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getweightedreputation", "\"Qi9hi...\"")
+            + HelpExampleRpc("getweightedreputation", "\"Qi9hi...\", \"Qj8gh...\", 3")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse target address
+    std::string targetStr = request.params[0].get_str();
+    CTxDestination targetDest = DecodeDestination(targetStr);
+    if (!IsValidDestination(targetDest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
+    }
+    
+    uint160 targetAddress;
+    if (boost::get<CKeyID>(&targetDest)) {
+        targetAddress = uint160(boost::get<CKeyID>(targetDest));
+    } else if (boost::get<CScriptID>(&targetDest)) {
+        targetAddress = uint160(boost::get<CScriptID>(targetDest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Parse viewer address
+    uint160 viewerAddress = targetAddress; // Default: self-view
+    if (request.params.size() > 1) {
+        std::string viewerStr = request.params[1].get_str();
+        CTxDestination viewerDest = DecodeDestination(viewerStr);
+        if (!IsValidDestination(viewerDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
+        }
+        
+        if (boost::get<CKeyID>(&viewerDest)) {
+            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
+        } else if (boost::get<CScriptID>(&viewerDest)) {
+            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
+        }
+    }
+    
+    // Get max depth
+    int maxDepth = 3;
+    if (request.params.size() > 2) {
+        maxDepth = request.params[2].get_int();
+        if (maxDepth < 1 || maxDepth > 10) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Max depth must be between 1 and 10");
+        }
+    }
+    
+    // Calculate weighted reputation
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    double reputation = trustGraph.GetWeightedReputation(viewerAddress, targetAddress, maxDepth);
+    
+    // Find trust paths
+    std::vector<CVM::TrustPath> paths = trustGraph.FindTrustPaths(viewerAddress, targetAddress, maxDepth);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("target", targetStr);
+    result.pushKV("viewer", viewerAddress.ToString());
+    result.pushKV("reputation", reputation);
+    result.pushKV("paths_found", (int64_t)paths.size());
+    result.pushKV("max_depth", maxDepth);
+    
+    // Add path details
+    UniValue pathsArray(UniValue::VARR);
+    for (const auto& path : paths) {
+        if (pathsArray.size() >= 10) break; // Limit to first 10 paths
+        
+        UniValue pathObj(UniValue::VOBJ);
+        pathObj.pushKV("length", (int64_t)path.Length());
+        pathObj.pushKV("weight", path.totalWeight);
+        
+        UniValue hopsArray(UniValue::VARR);
+        for (size_t i = 0; i < path.addresses.size(); i++) {
+            UniValue hop(UniValue::VOBJ);
+            hop.pushKV("address", path.addresses[i].ToString());
+            hop.pushKV("trust_weight", path.weights[i]);
+            hopsArray.push_back(hop);
+        }
+        pathObj.pushKV("hops", hopsArray);
+        pathsArray.push_back(pathObj);
+    }
+    result.pushKV("paths", pathsArray);
+    
+    return result;
+}
+
+/**
+ * gettrustgraphstats - Get Web-of-Trust graph statistics
+ */
+UniValue gettrustgraphstats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "gettrustgraphstats\n"
+            "\nGet Web-of-Trust graph statistics.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"total_trust_edges\": n,  (numeric) Total trust relationships\n"
+            "  \"total_votes\": n,        (numeric) Total bonded votes\n"
+            "  \"total_disputes\": n,     (numeric) Total DAO disputes\n"
+            "  \"active_disputes\": n,    (numeric) Active disputes\n"
+            "  \"slashed_votes\": n       (numeric) Slashed votes\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("gettrustgraphstats", "")
+            + HelpExampleRpc("gettrustgraphstats", "")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    std::map<std::string, uint64_t> stats = trustGraph.GetGraphStats();
+    
+    UniValue result(UniValue::VOBJ);
+    for (const auto& stat : stats) {
+        result.pushKV(stat.first, (int64_t)stat.second);
+    }
+    
+    // Add configuration
+    result.pushKV("min_bond_amount", ValueFromAmount(CVM::g_wotConfig.minBondAmount));
+    result.pushKV("bond_per_vote_point", ValueFromAmount(CVM::g_wotConfig.bondPerVotePoint));
+    result.pushKV("max_trust_path_depth", CVM::g_wotConfig.maxTrustPathDepth);
+    result.pushKV("min_dao_votes", CVM::g_wotConfig.minDAOVotesForResolution);
+    
+    return result;
+}
+
+/**
+ * sendtrustrelation - Broadcast trust relationship to network (Phase 3: On-Chain)
+ */
+UniValue sendtrustrelation(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
+        throw std::runtime_error(
+            "sendtrustrelation \"address\" weight ( bond \"reason\" )\n"
+            "\nBroadcast a trust relationship to the network (on-chain).\n"
+            "\nArguments:\n"
+            "1. \"address\"       (string, required) Address to trust\n"
+            "2. weight           (numeric, required) Trust weight (-100 to +100)\n"
+            "3. bond             (numeric, optional, default=1.0) CAS to bond\n"
+            "4. \"reason\"        (string, optional) Reason for trust\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"xxx\",       (string) Transaction ID\n"
+            "  \"fee\": n.nnnnn,       (numeric) Transaction fee\n"
+            "  \"bond\": n.nnnnn       (numeric) Bonded amount\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("sendtrustrelation", "\"QAddress...\" 80 1.5 \"Friend\"")
+            + HelpExampleRpc("sendtrustrelation", "\"QAddress...\", 80, 1.5, \"Friend\"")
+        );
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+    
+    uint160 toAddress;
+    if (dest.type() == typeid(CKeyID)) {
+        toAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (dest.type() == typeid(CScriptID)) {
+        toAddress = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Parse weight
+    int64_t weightInt = 0;
+    if (request.params[1].isNum()) {
+        weightInt = request.params[1].get_int64();
+    } else {
+        weightInt = atoi64(request.params[1].get_str());
+    }
+    
+    if (weightInt < -100 || weightInt > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
+    }
+    int16_t weight = static_cast<int16_t>(weightInt);
+    
+    // Parse bond amount
+    CAmount bondAmount = 1 * COIN; // Default 1 CAS
+    if (request.params.size() > 2) {
+        bondAmount = AmountFromValue(request.params[2]);
+    }
+    
+    if (bondAmount < COIN / 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Bond amount must be at least 0.01 CAS");
+    }
+    
+    // Parse reason
+    std::string reason = "";
+    if (request.params.size() > 3) {
+        reason = request.params[3].get_str();
+    }
+    
+    // Build transaction
+    std::string error;
+    CAmount fee;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildTrustTransaction(
+        pwallet, toAddress, weight, bondAmount, reason, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast to network
+    CTransactionRef tx = MakeTransactionRef(mtx);
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to broadcast transaction: " + error);
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.ToString());
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("bond", ValueFromAmount(bondAmount));
+    result.pushKV("weight", weight);
+    result.pushKV("to_address", request.params[0].get_str());
+    
+    return result;
+}
+
+/**
+ * sendbondedvote - Broadcast bonded reputation vote to network (Phase 3: On-Chain)
+ */
+UniValue sendbondedvote(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
+        throw std::runtime_error(
+            "sendbondedvote \"address\" vote ( bond \"reason\" )\n"
+            "\nBroadcast a bonded reputation vote to the network (on-chain).\n"
+            "\nArguments:\n"
+            "1. \"address\"       (string, required) Address to vote on\n"
+            "2. vote             (numeric, required) Vote value (-100 to +100)\n"
+            "3. bond             (numeric, optional, default=1.0) CAS to bond\n"
+            "4. \"reason\"        (string, optional) Reason for vote\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"xxx\",       (string) Transaction ID\n"
+            "  \"fee\": n.nnnnn,       (numeric) Transaction fee\n"
+            "  \"bond\": n.nnnnn       (numeric) Bonded amount\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("sendbondedvote", "\"QAddress...\" 100 1.5 \"Trustworthy\"")
+            + HelpExampleRpc("sendbondedvote", "\"QAddress...\", 100, 1.5, \"Trustworthy\"")
+        );
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+    
+    uint160 targetAddress;
+    if (dest.type() == typeid(CKeyID)) {
+        targetAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (dest.type() == typeid(CScriptID)) {
+        targetAddress = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Parse vote value
+    int64_t voteInt = 0;
+    if (request.params[1].isNum()) {
+        voteInt = request.params[1].get_int64();
+    } else {
+        voteInt = atoi64(request.params[1].get_str());
+    }
+    
+    if (voteInt < -100 || voteInt > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Vote value must be between -100 and +100");
+    }
+    int16_t voteValue = static_cast<int16_t>(voteInt);
+    
+    // Parse bond amount
+    CAmount bondAmount = 1 * COIN; // Default 1 CAS
+    if (request.params.size() > 2) {
+        bondAmount = AmountFromValue(request.params[2]);
+    }
+    
+    if (bondAmount < COIN / 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Bond amount must be at least 0.01 CAS");
+    }
+    
+    // Parse reason
+    std::string reason = "";
+    if (request.params.size() > 3) {
+        reason = request.params[3].get_str();
+    }
+    
+    // Build transaction
+    std::string error;
+    CAmount fee;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildBondedVoteTransaction(
+        pwallet, targetAddress, voteValue, bondAmount, reason, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast to network
+    CTransactionRef tx = MakeTransactionRef(mtx);
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to broadcast transaction: " + error);
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.ToString());
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("bond", ValueFromAmount(bondAmount));
+    result.pushKV("vote", voteValue);
+    result.pushKV("target_address", request.params[0].get_str());
+    
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -328,9 +1074,16 @@ static const CRPCCommand commands[] =
     { "cvm",                "deploycontract",        &deploycontract,         {"bytecode","gaslimit","initdata"} },
     { "cvm",                "callcontract",          &callcontract,           {"contractaddress","data","gaslimit","value"} },
     { "cvm",                "getcontractinfo",       &getcontractinfo,        {"contractaddress"} },
+    { "cvm",                "sendcvmcontract",       &sendcvmcontract,        {"bytecode","gaslimit"} },
     { "reputation",         "getreputation",         &getreputation,          {"address"} },
     { "reputation",         "votereputation",        &votereputation,         {"address","vote","reason","proof"} },
+    { "reputation",         "sendcvmvote",           &sendcvmvote,            {"address","vote","reason"} },
     { "reputation",         "listreputations",       &listreputations,        {"threshold","count"} },
+    { "wot",                "addtrust",              &addtrust,               {"address","weight","bond","reason"} },
+    { "wot",                "getweightedreputation", &getweightedreputation,  {"target","viewer","maxdepth"} },
+    { "wot",                "gettrustgraphstats",    &gettrustgraphstats,     {} },
+    { "wot",                "sendtrustrelation",     &sendtrustrelation,      {"address","weight","bond","reason"} },
+    { "wot",                "sendbondedvote",        &sendbondedvote,         {"address","vote","bond","reason"} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)

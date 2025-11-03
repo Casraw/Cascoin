@@ -172,13 +172,13 @@ public:
         consensus.nickCreationAntiDust      = 10000;                                    // Portion of creation cost burnt in 2nd output
 
         // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
-        consensus.cvmActivationHeight       = 150000;                                   // Activate CVM at block 150000
+        consensus.cvmActivationHeight       = 220000;                                   // Activate CVM at block 220000 (2+ months for network upgrade)
         consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
         consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
         consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
-
+        
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
-        consensus.asrsActivationHeight      = 150000;                                   // Activate ASRS at block 150000
+        consensus.asrsActivationHeight      = 220000;                                   // Activate ASRS at block 220000 (2+ months for network upgrade)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
         consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
 

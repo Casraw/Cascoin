@@ -119,6 +119,13 @@ bool ReputationSystem::GetReputation(const uint160& address, ReputationScore& sc
     return true;
 }
 
+bool ReputationSystem::UpdateReputation(const uint160& address, const ReputationScore& score) {
+    std::string dbKey = std::string(1, DB_REPUTATION) + 
+                       std::string((char*)address.begin(), 20);
+    
+    return database.GetDB().Write(dbKey, score, true);
+}
+
 bool ReputationSystem::ApplyVote(const uint160& voterAddress, 
                                 const ReputationVoteTx& vote, 
                                 int64_t timestamp) {

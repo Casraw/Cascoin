@@ -56,6 +56,10 @@ using namespace boost::placeholders;
 
 #include <miner.h>  // Cascoin: Hive
 #include <merkleblock.h> // Cascoin: Hive for merkle transaction check in block
+#include <beenft.h>   // Cascoin: BCT & NFT
+#include <cvm/cvmdb.h>   // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>   // Cascoin: CVM Block Processor
+#include <cvm/softfork.h>   // Cascoin: CVM Soft Fork
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -2080,6 +2084,15 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     int64_t nTime6 = GetTimeMicros(); nTimeCallbacks += nTime6 - nTime5;
     LogPrint(BCLog::BENCH, "    - Callbacks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime6 - nTime5), nTimeCallbacks * MICRO, nTimeCallbacks * MILLI / nBlocksTotal);
 
+    // Cascoin: CVM - Process CVM transactions in block (soft fork)
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        if (CVM::g_cvmdb) {
+            CVM::CVMBlockProcessor::ProcessBlock(block, pindex->nHeight, *CVM::g_cvmdb);
+        } else {
+            LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
+        }
+    }
+
     return true;
 }
 
@@ -2439,14 +2452,12 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
     // Read block from disk.
     int64_t nTime1 = GetTimeMicros();
     std::shared_ptr<const CBlock> pthisBlock;
-    if (!pblock) {
-        std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
-        if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
-            return AbortNode(state, "Failed to read block");
-        pthisBlock = pblockNew;
-    } else {
-        pthisBlock = pblock;
-    }
+    // CASCOIN FIX: Always read full block from disk for CVM processing
+    // The pblock parameter may be a witness-stripped block that doesn't contain all TXs
+    std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
+    if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
+        return AbortNode(state, "Failed to read block");
+    pthisBlock = pblockNew;
     const CBlock& blockConnecting = *pthisBlock;
     // Apply the block atomically to the chain state.
     int64_t nTime2 = GetTimeMicros(); nTimeReadFromDisk += nTime2 - nTime1;

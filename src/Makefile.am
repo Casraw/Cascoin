@@ -184,6 +184,10 @@ BITCOIN_CORE_H = \
   cvm/contract.h \
   cvm/cvmdb.h \
   cvm/reputation.h \
+  cvm/softfork.h \
+  cvm/txbuilder.h \
+  cvm/blockprocessor.h \
+  cvm/trustgraph.h \
   cvm/cvmtx.h
 
 
@@ -244,6 +248,10 @@ libbitcoin_server_a_SOURCES = \
   cvm/contract.cpp \
   cvm/cvmdb.cpp \
   cvm/reputation.cpp \
+  cvm/softfork.cpp \
+  cvm/txbuilder.cpp \
+  cvm/blockprocessor.cpp \
+  cvm/trustgraph.cpp \
   cvm/cvmtx.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
