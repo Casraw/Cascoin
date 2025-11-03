@@ -2531,7 +2531,7 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
             
     UniValue jsonResults(UniValue::VOBJ);
     jsonResults.push_back(Pair("summary", summary));
-    jsonResults.push_back(Pair("bees", bctList));
+    jsonResults.push_back(Pair("mice", bctList));
 
     return jsonResults;
 }
