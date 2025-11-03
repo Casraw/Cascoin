@@ -271,14 +271,367 @@ class CVMDashboard {
     }
 }
 
+// Trust Graph Visualization (Beautiful, lightweight, no D3.js!)
+class TrustGraphViz {
+    constructor(id, w = 800, h = 400) {
+        this.el = document.getElementById(id);
+        this.w = w; this.h = h;
+        this.nodes = []; this.links = [];
+        this.hoveredNode = null;
+    }
+    init() {
+        this.el.innerHTML = '';
+        this.el.style.position = 'relative';
+        
+        // Create SVG with gradient background
+        this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        this.svg.setAttribute('width', this.w);
+        this.svg.setAttribute('height', this.h);
+        this.svg.style.background = 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)';
+        this.svg.style.borderRadius = '12px';
+        this.svg.style.boxShadow = '0 10px 30px rgba(0,0,0,0.3)';
+        
+        // Add glow filter for nodes
+        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+        const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+        filter.setAttribute('id', 'glow');
+        filter.innerHTML = `
+            <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
+            <feMerge>
+                <feMergeNode in="coloredBlur"/>
+                <feMergeNode in="SourceGraphic"/>
+            </feMerge>
+        `;
+        defs.appendChild(filter);
+        this.svg.appendChild(defs);
+        
+        this.el.appendChild(this.svg);
+        
+        // Add zoom & pan support
+        this.zoom = { scale: 1, x: 0, y: 0 };
+        this.isPanning = false;
+        this.lastPanX = 0;
+        this.lastPanY = 0;
+        
+        this.svg.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            this.zoom.scale = Math.max(0.3, Math.min(3, this.zoom.scale * delta));
+            this.applyZoom();
+        });
+        
+        this.svg.addEventListener('mousedown', (e) => {
+            if (e.button === 0) { // Left click
+                this.isPanning = true;
+                this.lastPanX = e.clientX;
+                this.lastPanY = e.clientY;
+                this.svg.style.cursor = 'grabbing';
+            }
+        });
+        
+        document.addEventListener('mousemove', (e) => {
+            if (this.isPanning) {
+                const dx = e.clientX - this.lastPanX;
+                const dy = e.clientY - this.lastPanY;
+                this.zoom.x += dx;
+                this.zoom.y += dy;
+                this.lastPanX = e.clientX;
+                this.lastPanY = e.clientY;
+                this.applyZoom();
+            }
+        });
+        
+        document.addEventListener('mouseup', () => {
+            this.isPanning = false;
+            this.svg.style.cursor = 'default';
+        });
+        
+        // Create tooltip
+        this.tooltip = document.createElement('div');
+        this.tooltip.style.cssText = `
+            position: absolute;
+            background: rgba(0, 0, 0, 0.95);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+        `;
+        this.el.appendChild(this.tooltip);
+    }
+    setData(nodes, links) {
+        this.nodes = nodes.map((n, i) => ({...n, x: Math.random() * this.w, y: Math.random() * this.h, vx: 0, vy: 0, i}));
+        this.links = links.map(l => ({...l, 
+            source: typeof l.source === 'object' ? l.source : this.nodes.find(n => n.id === l.source),
+            target: typeof l.target === 'object' ? l.target : this.nodes.find(n => n.id === l.target)
+        }));
+    }
+    render() {
+        if (!this.svg) this.init();
+        
+        // Clear ALL children except defs
+        const defs = this.svg.querySelector('defs');
+        const children = Array.from(this.svg.children);
+        children.forEach(child => {
+            if (child !== defs) {
+                this.svg.removeChild(child);
+            }
+        });
+        
+        // Create main group for zoom/pan
+        const mainGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        mainGroup.setAttribute('id', 'main-group');
+        
+        const lg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        const ng = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        
+        // Draw links with gradient
+        this.links.forEach(l => {
+            if (!l.source || !l.target) return;
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', l.source.x); line.setAttribute('y1', l.source.y);
+            line.setAttribute('x2', l.target.x); line.setAttribute('y2', l.target.y);
+            line.setAttribute('stroke', 'rgba(255, 255, 255, 0.4)');
+            line.setAttribute('stroke-width', Math.max(2, Math.sqrt(l.weight / 10) || 2));
+            line.setAttribute('stroke-linecap', 'round');
+            line.style.transition = 'all 0.3s ease';
+            lg.appendChild(line);
+        });
+        
+        // Draw nodes with beautiful effects
+        this.nodes.forEach((n, i) => {
+            const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            g.style.cursor = 'pointer';
+            g.style.transition = 'all 0.3s ease';
+            
+            // Outer glow circle
+            const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            glow.setAttribute('cx', n.x); glow.setAttribute('cy', n.y);
+            glow.setAttribute('r', 25);
+            glow.setAttribute('fill', this.getColor(n.rep || 50));
+            glow.setAttribute('opacity', '0.3');
+            glow.setAttribute('filter', 'url(#glow)');
+            
+            // Main circle
+            const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            c.setAttribute('cx', n.x); c.setAttribute('cy', n.y);
+            c.setAttribute('r', 22);
+            c.setAttribute('fill', this.getColor(n.rep || 50));
+            c.setAttribute('stroke', '#ffffff');
+            c.setAttribute('stroke-width', '3');
+            c.style.transition = 'all 0.3s ease';
+            c.style.filter = 'drop-shadow(0 4px 8px rgba(0,0,0,0.3))';
+            
+            // Inner highlight
+            const highlight = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            highlight.setAttribute('cx', n.x - 5); highlight.setAttribute('cy', n.y - 5);
+            highlight.setAttribute('r', 6);
+            highlight.setAttribute('fill', 'rgba(255, 255, 255, 0.4)');
+            
+            // Label with shadow
+            const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            t.setAttribute('x', n.x); t.setAttribute('y', n.y + 40);
+            t.setAttribute('text-anchor', 'middle');
+            t.setAttribute('font-size', '12');
+            t.setAttribute('font-weight', 'bold');
+            t.setAttribute('fill', '#ffffff');
+            t.style.textShadow = '0 2px 4px rgba(0,0,0,0.5)';
+            t.textContent = n.label || n.id.substring(0, 8) + '...';
+            
+            // Hover effects
+            g.onmouseenter = (e) => {
+                c.setAttribute('r', 28);
+                c.setAttribute('stroke-width', '4');
+                glow.setAttribute('r', 35);
+                glow.setAttribute('opacity', '0.6');
+                this.showTooltip(n, e);
+                this.highlightConnections(n);
+            };
+            g.onmouseleave = () => {
+                c.setAttribute('r', 22);
+                c.setAttribute('stroke-width', '3');
+                glow.setAttribute('r', 25);
+                glow.setAttribute('opacity', '0.3');
+                this.hideTooltip();
+                this.unhighlightConnections();
+            };
+            
+            g.appendChild(glow);
+            g.appendChild(c);
+            g.appendChild(highlight);
+            g.appendChild(t);
+            ng.appendChild(g);
+        });
+        
+        mainGroup.appendChild(lg);
+        mainGroup.appendChild(ng);
+        this.svg.appendChild(mainGroup);
+        this.applyZoom();
+    }
+    
+    applyZoom() {
+        const mainGroup = this.svg.querySelector('#main-group');
+        if (mainGroup) {
+            mainGroup.setAttribute('transform', 
+                `translate(${this.zoom.x}, ${this.zoom.y}) scale(${this.zoom.scale})`);
+        }
+    }
+    
+    highlightConnections(node) {
+        const lines = this.svg.querySelectorAll('line');
+        lines.forEach(line => {
+            const x1 = parseFloat(line.getAttribute('x1'));
+            const y1 = parseFloat(line.getAttribute('y1'));
+            const x2 = parseFloat(line.getAttribute('x2'));
+            const y2 = parseFloat(line.getAttribute('y2'));
+            if ((Math.abs(x1 - node.x) < 1 && Math.abs(y1 - node.y) < 1) ||
+                (Math.abs(x2 - node.x) < 1 && Math.abs(y2 - node.y) < 1)) {
+                line.setAttribute('stroke', 'rgba(255, 255, 255, 0.9)');
+                line.setAttribute('stroke-width', '4');
+            }
+        });
+    }
+    
+    unhighlightConnections() {
+        const lines = this.svg.querySelectorAll('line');
+        lines.forEach(line => {
+            line.setAttribute('stroke', 'rgba(255, 255, 255, 0.4)');
+            const weight = parseFloat(line.getAttribute('data-weight')) || 80;
+            line.setAttribute('stroke-width', Math.max(2, Math.sqrt(weight / 10)));
+        });
+    }
+    
+    showTooltip(node, event) {
+        const connections = this.links.filter(l => 
+            (l.source && l.source.id === node.id) || (l.target && l.target.id === node.id)
+        ).length;
+        
+        this.tooltip.innerHTML = `
+            <div style="font-weight: bold; margin-bottom: 6px; font-size: 14px;">
+                ${node.label || node.id.substring(0, 12) + '...'}
+            </div>
+            <div style="color: #a0aec0; font-size: 12px;">
+                <div>💎 Reputation: <span style="color: ${this.getColor(node.rep || 50)}; font-weight: bold;">${node.rep || 50}</span></div>
+                <div>🔗 Connections: <span style="color: #63b3ed; font-weight: bold;">${connections}</span></div>
+                <div>📍 ID: ${node.id.substring(0, 16)}...</div>
+            </div>
+        `;
+        this.tooltip.style.opacity = '1';
+        this.tooltip.style.left = (event.pageX + 15) + 'px';
+        this.tooltip.style.top = (event.pageY - 15) + 'px';
+    }
+    
+    hideTooltip() {
+        this.tooltip.style.opacity = '0';
+    }
+    simulate(iters = 50) {
+        for (let i = 0; i < iters; i++) {
+            const cx = this.w / 2, cy = this.h / 2;
+            this.nodes.forEach(n => {
+                n.vx += (cx - n.x) * 0.01; n.vy += (cy - n.y) * 0.01;
+            });
+            for (let j = 0; j < this.nodes.length; j++) {
+                for (let k = j + 1; k < this.nodes.length; k++) {
+                    const a = this.nodes[j], b = this.nodes[k];
+                    const dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+                    if (d < 100) {
+                        const f = (100 - d) * 0.5, fx = (dx / d) * f, fy = (dy / d) * f;
+                        a.vx -= fx; a.vy -= fy; b.vx += fx; b.vy += fy;
+                    }
+                }
+            }
+            this.links.forEach(l => {
+                if (!l.source || !l.target) return;
+                const dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
+                const d = Math.sqrt(dx*dx + dy*dy) || 1, f = (d - 100) * 0.1;
+                const fx = (dx / d) * f, fy = (dy / d) * f;
+                l.source.vx += fx; l.source.vy += fy;
+                l.target.vx -= fx; l.target.vy -= fy;
+            });
+            this.nodes.forEach(n => {
+                n.x += n.vx; n.y += n.vy; n.vx *= 0.8; n.vy *= 0.8;
+                n.x = Math.max(30, Math.min(this.w - 30, n.x));
+                n.y = Math.max(30, Math.min(this.h - 30, n.y));
+            });
+            if (i % 10 === 0) setTimeout(() => this.render(), i * 10);
+        }
+        setTimeout(() => this.render(), iters * 10);
+    }
+    getColor(rep) {
+        // Beautiful color gradient: Red -> Orange -> Yellow -> Green -> Cyan
+        if (rep < 25) {
+            // Red to Orange
+            const t = rep / 25;
+            return `rgb(${239}, ${Math.round(68 + 90 * t)}, 68)`;
+        } else if (rep < 50) {
+            // Orange to Yellow
+            const t = (rep - 25) / 25;
+            return `rgb(${Math.round(239 + 6 * t)}, ${Math.round(158 + 40 * t)}, 68)`;
+        } else if (rep < 75) {
+            // Yellow to Green
+            const t = (rep - 50) / 25;
+            return `rgb(${Math.round(245 - 129 * t)}, ${Math.round(198 - 13 * t)}, ${Math.round(68 + 61 * t)})`;
+        } else {
+            // Green to Cyan (highest reputation)
+            const t = (rep - 75) / 25;
+            return `rgb(${Math.round(116 - 100 * t)}, ${Math.round(185 + 50 * t)}, ${Math.round(129 + 50 * t)})`;
+        }
+    }
+}
+
 function refreshGraph() {
     if (window.dashboard) window.dashboard.loadData();
+    if (window.trustGraph) {
+        // Reload graph data
+        const mockNodes = [
+            {id: 'QcPLC...', rep: 75, label: 'Alice'},
+            {id: 'QXabc...', rep: 60, label: 'Bob'},
+            {id: 'QYdef...', rep: 85, label: 'Carol'},
+            {id: 'QZghi...', rep: 45, label: 'Dave'}
+        ];
+        const mockLinks = [
+            {source: 'QcPLC...', target: 'QXabc...', weight: 80},
+            {source: 'QXabc...', target: 'QYdef...', weight: 60},
+            {source: 'QYdef...', target: 'QZghi...', weight: 70},
+            {source: 'QcPLC...', target: 'QZghi...', weight: 50}
+        ];
+        window.trustGraph.setData(mockNodes, mockLinks);
+        window.trustGraph.render();
+        window.trustGraph.simulate(50);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('DOM loaded, initializing dashboard...');
     window.dashboard = new CVMDashboard();
     window.dashboard.init();
+    
+    // Initialize trust graph
+    window.trustGraph = new TrustGraphViz('trustGraph', 750, 380);
+    window.trustGraph.init();
+    
+    // Load initial graph data (mock for now)
+    const mockNodes = [
+        {id: 'QcPLC...', rep: 75, label: 'Alice'},
+        {id: 'QXabc...', rep: 60, label: 'Bob'},
+        {id: 'QYdef...', rep: 85, label: 'Carol'},
+        {id: 'QZghi...', rep: 45, label: 'Dave'}
+    ];
+    const mockLinks = [
+        {source: 'QcPLC...', target: 'QXabc...', weight: 80},
+        {source: 'QXabc...', target: 'QYdef...', weight: 60},
+        {source: 'QYdef...', target: 'QZghi...', weight: 70},
+        {source: 'QcPLC...', target: 'QZghi...', weight: 50}
+    ];
+    window.trustGraph.setData(mockNodes, mockLinks);
+    window.trustGraph.render();
+    setTimeout(() => window.trustGraph.simulate(50), 500);
+    
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {
             console.log('Page hidden, stopping updates');

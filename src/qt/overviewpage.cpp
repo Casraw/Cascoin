@@ -17,8 +17,14 @@
 #include <qt/hivetablemodel.h>  // Cascoin: Hive
 #include <qt/hivedialog.h>      // Cascoin: Hive: For formatLargeNoLocale()
 
+#include <util.h>             // Cascoin: CVM: For gArgs
+#include <chainparamsbase.h>  // Cascoin: CVM: For BaseParams()
+
 #include <QAbstractItemDelegate>
 #include <QPainter>
+#include <QDesktopServices>  // Cascoin: CVM: For opening dashboard in browser
+#include <QUrl>               // Cascoin: CVM: For URL handling
+#include <QMessageBox>        // Cascoin: CVM: For error messages
 
 #define DECORATION_SIZE 54
 #define NUM_ITEMS 5
@@ -364,4 +370,32 @@ void OverviewPage::on_beeButton_clicked() {
 void OverviewPage::on_unlockWalletButton_clicked() {
     if(walletModel)
         walletModel->requestUnlock(true);
+}
+
+// Cascoin: CVM: Handle CVM Dashboard button click
+void OverviewPage::on_cvmDashboardButton_clicked() {
+    // Check if dashboard is enabled
+    if (!gArgs.GetBoolArg("-cvmdashboard", false)) {
+        QMessageBox::warning(this, tr("CVM Dashboard"),
+            tr("The CVM Dashboard is currently disabled.\n\n"
+               "To enable it, add the following line to your cascoin.conf:\n"
+               "cvmdashboard=1\n\n"
+               "Then restart the wallet."),
+            QMessageBox::Ok);
+        return;
+    }
+    
+    // Get RPC port from settings
+    int rpcPort = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+    
+    // Build dashboard URL
+    QString dashboardUrl = QString("http://localhost:%1/dashboard/").arg(rpcPort);
+    
+    // Open in system default browser
+    if (!QDesktopServices::openUrl(QUrl(dashboardUrl))) {
+        QMessageBox::critical(this, tr("CVM Dashboard"),
+            tr("Failed to open the CVM Dashboard in your browser.\n\n"
+               "Please manually open:\n%1").arg(dashboardUrl),
+            QMessageBox::Ok);
+    }
 }
