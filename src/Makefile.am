@@ -177,14 +177,7 @@ BITCOIN_CORE_H = \
   zmq/zmqnotificationinterface.h \
   zmq/zmqpublishnotifier.h \
   rialto.h \
-  beenft.h \
-  cvm/cvm.h \
-  cvm/vmstate.h \
-  cvm/opcodes.h \
-  cvm/contract.h \
-  cvm/cvmdb.h \
-  cvm/reputation.h \
-  cvm/cvmtx.h
+  beenft.h
 
 
 obj/build.h: FORCE
@@ -238,14 +231,6 @@ libbitcoin_server_a_SOURCES = \
   versionbits.cpp \
   rialto.cpp \
   beenft.cpp \
-  cvm/cvm.cpp \
-  cvm/vmstate.cpp \
-  cvm/opcodes.cpp \
-  cvm/contract.cpp \
-  cvm/cvmdb.cpp \
-  cvm/reputation.cpp \
-  cvm/cvmtx.cpp \
-  rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_ZMQ

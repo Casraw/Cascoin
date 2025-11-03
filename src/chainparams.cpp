@@ -171,17 +171,6 @@ public:
         consensus.nickCreationCostStandard  = 1000000000;
         consensus.nickCreationAntiDust      = 10000;                                    // Portion of creation cost burnt in 2nd output
 
-        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
-        consensus.cvmActivationHeight       = 150000;                                   // Activate CVM at block 150000
-        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
-        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
-        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
-
-        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
-        consensus.asrsActivationHeight      = 150000;                                   // Activate ASRS at block 150000
-        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
-        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
-
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Cascoin: 1695238
 
@@ -343,28 +332,16 @@ public:
         consensus.nickCreationAntiDust      = 10000;        // Portion of creation cost burnt in 2nd output
         //consensus.firstRialtoBlock = uint256S("0xb602f3f5093626bea32c5b9cf499de562e7a364dbe55ee3d34211e7f15502a7e");   // Block 500: First block to consider for Rialto registrations (only required if launching without a UASF)
 
-        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
-        consensus.cvmActivationHeight       = 500;                                      // Activate CVM at block 500 (earlier for testing)
-        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
-        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
-        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
-
-        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
-        consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
-        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
-        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
-
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Block 412
 
         // By default assume that the signatures in ancestors of this block are valid.
         consensus.defaultAssumeValid = uint256S("0x00"); // Block 412
 
-        // Testnet uses different magic bytes to prevent connecting to mainnet
-        pchMessageStart[0] = 0xfc;
-        pchMessageStart[1] = 0xc1;
-        pchMessageStart[2] = 0xb7;
-        pchMessageStart[3] = 0xdc;
+        pchMessageStart[0] = 0xca;
+        pchMessageStart[1] = 0x5c;
+        pchMessageStart[2] = 0x01;
+        pchMessageStart[3] = 0xcf;
         nDefaultPort = 22223;
         nPruneAfterHeight = 1000;
 
@@ -376,11 +353,10 @@ public:
         vFixedSeeds.clear();
         vSeeds.emplace_back("testseed.cascoin.net");
 
-        // Testnet uses different address prefixes (111 = 't' prefix like Bitcoin testnet)
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 196);
-        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 58);
-        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 239);
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 40);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 8);
+        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 50);
+        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 188);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
@@ -450,28 +426,16 @@ public:
         // Cascoin: Add powLimitHive for regtest, matching the other networks for consistency during bootstrap
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Target for ~2^20 work, good for CPU bootstrap
 
-        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
-        consensus.cvmActivationHeight       = 0;                                        // Activate CVM immediately for regtest
-        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
-        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
-        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
-
-        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
-        consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest
-        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
-        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
-
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
 
         // By default assume that the signatures in ancestors of this block are valid.
         consensus.defaultAssumeValid = uint256S("0x00");
 
-        // Regtest uses different magic bytes to prevent connecting to mainnet/testnet
-        pchMessageStart[0] = 0xfa;
-        pchMessageStart[1] = 0xbf;
-        pchMessageStart[2] = 0xb5;
-        pchMessageStart[3] = 0xda;
+        pchMessageStart[0] = 0xca;
+        pchMessageStart[1] = 0x5c;
+        pchMessageStart[2] = 0x01;
+        pchMessageStart[3] = 0xcf;
         nDefaultPort = 22224;
         nPruneAfterHeight = 1000;
 
@@ -499,11 +463,10 @@ public:
             0
         };
 
-        // Regtest uses different address prefixes (111 = 't' prefix)
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 196);
-        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 58);
-        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 239);
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 40);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 8);
+        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 50);
+        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 188);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
