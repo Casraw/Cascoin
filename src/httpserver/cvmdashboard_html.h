@@ -90,10 +90,10 @@ body {
             <div class="stat-card">
                 <div class="stat-icon">⭐</div>
                 <div class="stat-content">
-                    <h3>My Reputation</h3>
+                    <h3>My HAT v2 Trust</h3>
                     <div class="stat-value" id="myReputation">--</div>
                     <div class="stat-progress"><div class="stat-progress-bar" id="repProgress"></div></div>
-                    <p class="stat-label">out of 100</p>
+                    <p class="stat-label">Secure Multi-Layer Score (0-100)</p>
                 </div>
             </div>
             <div class="stat-card">
@@ -144,6 +144,62 @@ body {
                         <div class="activity-placeholder">Loading recent transactions...</div>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header"><h2>🔒 HAT v2 Trust Breakdown</h2></div>
+            <div class="card-body">
+                <table class="stats-table">
+                    <tbody>
+                        <tr>
+                            <td>🎯 Behavior Component (40%)</td>
+                            <td id="hatBehavior">--</td>
+                        </tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">├─ Base Score</td>
+                            <td id="hatBehaviorBase" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">├─ Diversity Penalty</td>
+                            <td id="hatDiversity" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">├─ Volume Penalty</td>
+                            <td id="hatVolume" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">└─ Pattern Penalty</td>
+                            <td id="hatPattern" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr><td>🤝 Web-of-Trust (30%)</td><td id="hatWot">--</td></tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">├─ Cluster Penalty</td>
+                            <td id="hatCluster" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">└─ Centrality Multiplier</td>
+                            <td id="hatCentrality" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr><td>💰 Economic Stake (20%)</td><td id="hatEconomic">--</td></tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">└─ Time Multiplier</td>
+                            <td id="hatStakeTime" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr><td>⏰ Temporal Activity (10%)</td><td id="hatTemporal">--</td></tr>
+                        <tr style="padding-left: 20px; font-size: 0.85rem;">
+                            <td style="padding-left: 30px; color: var(--text-secondary);">└─ Activity Penalty</td>
+                            <td id="hatActivity" style="color: var(--text-secondary);">--</td>
+                        </tr>
+                        <tr style="border-top: 2px solid var(--primary-color); font-weight: bold; font-size: 1.1rem;">
+                            <td>🏆 Final HAT v2 Score</td>
+                            <td id="hatFinal" style="color: var(--primary-color);">--</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <p class="text-muted" style="margin-top: 15px; text-align: center;">
+                    HAT v2 = Hybrid Adaptive Trust with multi-layer defense against Sybil attacks
+                </p>
             </div>
         </div>
 
@@ -242,10 +298,25 @@ class CVMDashboard {
                 const addresses = await this.rpcCall('listreceivedbyaddress', [0, true]);
                 if (addresses && addresses.length > 0) {
                     const myAddr = addresses[0].address;
-                    const rep = await this.rpcCall('getreputation', [myAddr]);
-                    const score = rep.average_score || 0;
-                    document.getElementById('myReputation').textContent = Math.round(score);
-                    document.getElementById('repProgress').style.width = score + '%';
+                    
+                    // Fetch HAT v2 trust score
+                    try {
+                        const trust = await this.rpcCall('getsecuretrust', [myAddr]);
+                        const score = trust.trust_score || 0;
+                        document.getElementById('myReputation').textContent = Math.round(score);
+                        document.getElementById('repProgress').style.width = score + '%';
+                        
+                        // Fetch detailed breakdown
+                        const breakdown = await this.rpcCall('gettrustbreakdown', [myAddr]);
+                        this.updateHATBreakdown(breakdown);
+                    } catch (hatError) {
+                        console.log('HAT v2 not available, falling back to old reputation:', hatError.message);
+                        // Fallback to old reputation system
+                        const rep = await this.rpcCall('getreputation', [myAddr]);
+                        const score = rep.average_score || 0;
+                        document.getElementById('myReputation').textContent = Math.round(score);
+                        document.getElementById('repProgress').style.width = score + '%';
+                    }
                 }
             } catch (e) {
                 document.getElementById('myReputation').textContent = 'N/A';
@@ -254,6 +325,47 @@ class CVMDashboard {
         } catch (error) {
             console.error('Failed to load trust graph stats:', error);
             throw error;
+        }
+    }
+    
+    updateHATBreakdown(breakdown) {
+        try {
+            // Behavior Component (40%)
+            const behaviorScore = (breakdown.behavior.secure_score * 100).toFixed(1);
+            document.getElementById('hatBehavior').textContent = behaviorScore + '%';
+            document.getElementById('hatBehaviorBase').textContent = (breakdown.behavior.base * 100).toFixed(1) + '%';
+            document.getElementById('hatDiversity').textContent = (breakdown.behavior.diversity_penalty * 100).toFixed(1) + '%';
+            document.getElementById('hatVolume').textContent = (breakdown.behavior.volume_penalty * 100).toFixed(1) + '%';
+            document.getElementById('hatPattern').textContent = (breakdown.behavior.pattern_penalty * 100).toFixed(1) + '%';
+            
+            // Web-of-Trust Component (30%)
+            const wotScore = (breakdown.wot.secure_score * 100).toFixed(1);
+            document.getElementById('hatWot').textContent = wotScore + '%';
+            document.getElementById('hatCluster').textContent = (breakdown.wot.cluster_penalty * 100).toFixed(1) + '%';
+            document.getElementById('hatCentrality').textContent = breakdown.wot.centrality_bonus.toFixed(2) + 'x';
+            
+            // Economic Component (20%)
+            const economicScore = (breakdown.economic.secure_score * 100).toFixed(1);
+            document.getElementById('hatEconomic').textContent = economicScore + '%';
+            document.getElementById('hatStakeTime').textContent = breakdown.economic.stake_time_weight.toFixed(2) + 'x';
+            
+            // Temporal Component (10%)
+            const temporalScore = (breakdown.temporal.secure_score * 100).toFixed(1);
+            document.getElementById('hatTemporal').textContent = temporalScore + '%';
+            document.getElementById('hatActivity').textContent = (breakdown.temporal.activity_penalty * 100).toFixed(1) + '%';
+            
+            // Final Score
+            document.getElementById('hatFinal').textContent = breakdown.final_score;
+            
+            console.log('HAT v2 breakdown updated:', breakdown);
+        } catch (error) {
+            console.error('Error updating HAT breakdown:', error);
+            // Set N/A on error
+            document.getElementById('hatBehavior').textContent = 'N/A';
+            document.getElementById('hatWot').textContent = 'N/A';
+            document.getElementById('hatEconomic').textContent = 'N/A';
+            document.getElementById('hatTemporal').textContent = 'N/A';
+            document.getElementById('hatFinal').textContent = 'N/A';
         }
     }
     
@@ -363,6 +475,38 @@ class TrustGraphViz {
             backdrop-filter: blur(10px);
         `;
         this.el.appendChild(this.tooltip);
+        
+        // Create Trust Detail Modal
+        this.modal = document.createElement('div');
+        this.modal.style.cssText = `
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            backdrop-filter: blur(10px);
+        `;
+        this.modal.onclick = (e) => {
+            if (e.target === this.modal) this.hideModal();
+        };
+        
+        this.modalContent = document.createElement('div');
+        this.modalContent.style.cssText = `
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            padding: 0;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+            position: relative;
+        `;
+        
+        this.modal.appendChild(this.modalContent);
+        document.body.appendChild(this.modal);
     }
     setData(nodes, links) {
         this.nodes = nodes.map((n, i) => ({...n, x: Math.random() * this.w, y: Math.random() * this.h, vx: 0, vy: 0, i}));
@@ -442,6 +586,12 @@ class TrustGraphViz {
             t.setAttribute('fill', '#ffffff');
             t.style.textShadow = '0 2px 4px rgba(0,0,0,0.5)';
             t.textContent = n.label || n.id.substring(0, 8) + '...';
+            
+            // Click handler - Show Trust Detail Modal
+            g.onclick = (e) => {
+                e.stopPropagation();
+                this.showModal(n);
+            };
             
             // Hover effects
             g.onmouseenter = (e) => {
@@ -529,6 +679,183 @@ class TrustGraphViz {
     hideTooltip() {
         this.tooltip.style.opacity = '0';
     }
+    
+    showModal(node) {
+        // Get connections
+        const outgoing = this.links.filter(l => l.source && l.source.id === node.id);
+        const incoming = this.links.filter(l => l.target && l.target.id === node.id);
+        const totalConnections = outgoing.length + incoming.length;
+        
+        // Calculate average trust given/received
+        const avgTrustGiven = outgoing.length > 0 
+            ? Math.round(outgoing.reduce((sum, l) => sum + (l.weight || 0), 0) / outgoing.length)
+            : 0;
+        const avgTrustReceived = incoming.length > 0
+            ? Math.round(incoming.reduce((sum, l) => sum + (l.weight || 0), 0) / incoming.length)
+            : 0;
+        
+        this.modalContent.innerHTML = `
+            <div style="background: rgba(0, 0, 0, 0.3); padding: 24px; border-radius: 16px 16px 0 0;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                    <h2 style="color: white; margin: 0; font-size: 24px; font-weight: bold;">
+                        ${node.label || 'User'}
+                    </h2>
+                    <button onclick="window.trustGraph.hideModal()" style="
+                        background: rgba(255, 255, 255, 0.2);
+                        border: none;
+                        color: white;
+                        width: 32px;
+                        height: 32px;
+                        border-radius: 8px;
+                        cursor: pointer;
+                        font-size: 20px;
+                        font-weight: bold;
+                    ">×</button>
+                </div>
+                <div style="color: rgba(255, 255, 255, 0.8); font-size: 13px; font-family: monospace;">
+                    ${node.id}
+                </div>
+            </div>
+            
+            <div style="padding: 24px; background: rgba(0, 0, 0, 0.2);">
+                <!-- Reputation Score -->
+                <div style="background: rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 20px; margin-bottom: 16px;">
+                    <div style="color: rgba(255, 255, 255, 0.7); font-size: 12px; text-transform: uppercase; margin-bottom: 8px;">
+                        💎 Reputation Score
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 16px;">
+                        <div style="
+                            font-size: 48px;
+                            font-weight: bold;
+                            color: ${this.getColor(node.rep || 50)};
+                            text-shadow: 0 0 20px ${this.getColor(node.rep || 50)}80;
+                        ">${node.rep || 50}</div>
+                        <div style="flex: 1;">
+                            <div style="background: rgba(0, 0, 0, 0.3); height: 12px; border-radius: 6px; overflow: hidden;">
+                                <div style="
+                                    background: ${this.getColor(node.rep || 50)};
+                                    height: 100%;
+                                    width: ${node.rep || 50}%;
+                                    transition: width 0.5s ease;
+                                    box-shadow: 0 0 10px ${this.getColor(node.rep || 50)};
+                                "></div>
+                            </div>
+                            <div style="color: rgba(255, 255, 255, 0.6); font-size: 11px; margin-top: 4px;">
+                                ${this.getReputationLabel(node.rep || 50)}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Trust Statistics -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                    <div style="background: rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px;">
+                        <div style="color: rgba(255, 255, 255, 0.7); font-size: 11px; margin-bottom: 4px;">
+                            🔗 Total Connections
+                        </div>
+                        <div style="color: white; font-size: 28px; font-weight: bold;">
+                            ${totalConnections}
+                        </div>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 16px;">
+                        <div style="color: rgba(255, 255, 255, 0.7); font-size: 11px; margin-bottom: 4px;">
+                            ⚡ Network Position
+                        </div>
+                        <div style="color: white; font-size: 28px; font-weight: bold;">
+                            ${this.getNetworkPosition(totalConnections)}
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Trust Given -->
+                <div style="background: rgba(16, 185, 129, 0.2); border-radius: 12px; padding: 16px; margin-bottom: 12px; border-left: 4px solid #10b981;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="color: #10b981; font-weight: bold; font-size: 14px;">
+                            ➡️ Trust Given (${outgoing.length})
+                        </div>
+                        <div style="color: #10b981; font-size: 18px; font-weight: bold;">
+                            ${avgTrustGiven}%
+                        </div>
+                    </div>
+                    ${outgoing.length > 0 ? outgoing.map(l => `
+                        <div style="
+                            background: rgba(255, 255, 255, 0.1);
+                            padding: 8px 12px;
+                            border-radius: 6px;
+                            margin-bottom: 6px;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <span style="color: white; font-size: 12px;">
+                                ${l.target ? (l.target.label || l.target.id.substring(0, 12) + '...') : 'Unknown'}
+                            </span>
+                            <span style="color: #10b981; font-weight: bold; font-size: 14px;">
+                                ${l.weight || 0}%
+                            </span>
+                        </div>
+                    `).join('') : '<div style="color: rgba(255, 255, 255, 0.5); font-size: 12px; text-align: center; padding: 8px;">No outgoing trust</div>'}
+                </div>
+                
+                <!-- Trust Received -->
+                <div style="background: rgba(59, 130, 246, 0.2); border-radius: 12px; padding: 16px; border-left: 4px solid #3b82f6;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <div style="color: #3b82f6; font-weight: bold; font-size: 14px;">
+                            ⬅️ Trust Received (${incoming.length})
+                        </div>
+                        <div style="color: #3b82f6; font-size: 18px; font-weight: bold;">
+                            ${avgTrustReceived}%
+                        </div>
+                    </div>
+                    ${incoming.length > 0 ? incoming.map(l => `
+                        <div style="
+                            background: rgba(255, 255, 255, 0.1);
+                            padding: 8px 12px;
+                            border-radius: 6px;
+                            margin-bottom: 6px;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                        ">
+                            <span style="color: white; font-size: 12px;">
+                                ${l.source ? (l.source.label || l.source.id.substring(0, 12) + '...') : 'Unknown'}
+                            </span>
+                            <span style="color: #3b82f6; font-weight: bold; font-size: 14px;">
+                                ${l.weight || 0}%
+                            </span>
+                        </div>
+                    `).join('') : '<div style="color: rgba(255, 255, 255, 0.5); font-size: 12px; text-align: center; padding: 8px;">No incoming trust</div>'}
+                </div>
+            </div>
+        `;
+        
+        this.modal.style.display = 'flex';
+        setTimeout(() => {
+            this.modal.style.opacity = '1';
+        }, 10);
+    }
+    
+    hideModal() {
+        this.modal.style.opacity = '0';
+        setTimeout(() => {
+            this.modal.style.display = 'none';
+        }, 300);
+    }
+    
+    getReputationLabel(rep) {
+        if (rep < 25) return '🔴 Low Reputation';
+        if (rep < 50) return '🟠 Fair Reputation';
+        if (rep < 75) return '🟡 Good Reputation';
+        if (rep < 90) return '🟢 Excellent Reputation';
+        return '💎 Outstanding Reputation';
+    }
+    
+    getNetworkPosition(connections) {
+        if (connections === 0) return '🌱 New';
+        if (connections < 3) return '👤 Member';
+        if (connections < 6) return '⭐ Active';
+        return '💫 Hub';
+    }
     simulate(iters = 50) {
         for (let i = 0; i < iters; i++) {
             const cx = this.w / 2, cy = this.h / 2;
@@ -615,22 +942,66 @@ document.addEventListener('DOMContentLoaded', () => {
     window.trustGraph = new TrustGraphViz('trustGraph', 750, 380);
     window.trustGraph.init();
     
-    // Load initial graph data (mock for now)
-    const mockNodes = [
-        {id: 'QcPLC...', rep: 75, label: 'Alice'},
-        {id: 'QXabc...', rep: 60, label: 'Bob'},
-        {id: 'QYdef...', rep: 85, label: 'Carol'},
-        {id: 'QZghi...', rep: 45, label: 'Dave'}
-    ];
-    const mockLinks = [
-        {source: 'QcPLC...', target: 'QXabc...', weight: 80},
-        {source: 'QXabc...', target: 'QYdef...', weight: 60},
-        {source: 'QYdef...', target: 'QZghi...', weight: 70},
-        {source: 'QcPLC...', target: 'QZghi...', weight: 50}
-    ];
-    window.trustGraph.setData(mockNodes, mockLinks);
-    window.trustGraph.render();
-    setTimeout(() => window.trustGraph.simulate(50), 500);
+    // Load REAL trust graph data from blockchain
+    async function loadRealTrustGraph() {
+        try {
+            console.log('Loading real trust graph data...');
+            const result = await window.dashboard.rpcCall('listtrustrelations', [100]);
+            
+            if (!result.edges || result.edges.length === 0) {
+                console.log('No trust relationships found yet');
+                // Show empty state with helpful message
+                const emptyNodes = [{id: 'empty', rep: 50, label: 'No Data Yet'}];
+                const emptyLinks = [];
+                window.trustGraph.setData(emptyNodes, emptyLinks);
+                window.trustGraph.render();
+                setTimeout(() => window.trustGraph.simulate(10), 100);
+                return;
+            }
+            
+            console.log('Processing', result.edges.length, 'edges...');
+            
+            // Build nodes from edges
+            const nodeMap = new Map();
+            result.edges.forEach(edge => {
+                if (!nodeMap.has(edge.from)) {
+                    const rep = result.reputations[edge.from] || 50;
+                    const shortAddr = edge.from.substring(0, 8) + '...';
+                    nodeMap.set(edge.from, { id: edge.from, rep: rep, label: shortAddr });
+                }
+                if (!nodeMap.has(edge.to)) {
+                    const rep = result.reputations[edge.to] || 50;
+                    const shortAddr = edge.to.substring(0, 8) + '...';
+                    nodeMap.set(edge.to, { id: edge.to, rep: rep, label: shortAddr });
+                }
+            });
+            
+            const nodes = Array.from(nodeMap.values());
+            const links = result.edges.map(edge => ({
+                source: edge.from,
+                target: edge.to,
+                weight: edge.weight
+            }));
+            
+            console.log('Loaded', nodes.length, 'nodes and', links.length, 'links (REAL DATA!)');
+            
+            window.trustGraph.setData(nodes, links);
+            window.trustGraph.render();
+            setTimeout(() => window.trustGraph.simulate(50), 500);
+            
+        } catch (error) {
+            console.error('Failed to load real trust graph:', error);
+            // Fallback to empty state
+            const emptyNodes = [{id: 'error', rep: 50, label: 'Error Loading'}];
+            const emptyLinks = [];
+            window.trustGraph.setData(emptyNodes, emptyLinks);
+            window.trustGraph.render();
+            setTimeout(() => window.trustGraph.simulate(10), 100);
+        }
+    }
+    
+    // Start loading real data
+    loadRealTrustGraph();
     
     document.addEventListener('visibilitychange', () => {
         if (document.hidden) {

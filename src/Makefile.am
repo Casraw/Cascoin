@@ -189,6 +189,9 @@ BITCOIN_CORE_H = \
   cvm/txbuilder.h \
   cvm/blockprocessor.h \
   cvm/trustgraph.h \
+  cvm/behaviormetrics.h \
+  cvm/graphanalysis.h \
+  cvm/securehat.h \
   cvm/cvmtx.h
 
 
@@ -254,6 +257,9 @@ libbitcoin_server_a_SOURCES = \
   cvm/txbuilder.cpp \
   cvm/blockprocessor.cpp \
   cvm/trustgraph.cpp \
+  cvm/behaviormetrics.cpp \
+  cvm/graphanalysis.cpp \
+  cvm/securehat.cpp \
   cvm/cvmtx.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)

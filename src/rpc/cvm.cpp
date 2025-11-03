@@ -12,6 +12,9 @@
 #include <cvm/txbuilder.h>
 #include <cvm/blockprocessor.h>
 #include <cvm/trustgraph.h>
+#include <cvm/behaviormetrics.h>
+#include <cvm/graphanalysis.h>
+#include <cvm/securehat.h>
 #include <validation.h>
 #include <util.h>
 #include <base58.h>
@@ -797,6 +800,124 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
 }
 
 /**
+ * listtrustrelations - List all trust relationships in the graph
+ */
+UniValue listtrustrelations(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "listtrustrelations [max_count]\n"
+            "\nList all trust relationships in the Web-of-Trust graph.\n"
+            "\nArguments:\n"
+            "1. max_count    (numeric, optional, default=100) Maximum number to return\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"edges\": [              (array) Trust edges\n"
+            "    {\n"
+            "      \"from\": \"address\",\n"
+            "      \"to\": \"address\",\n"
+            "      \"weight\": n,\n"
+            "      \"bond_amount\": n,\n"
+            "      \"timestamp\": n\n"
+            "    }, ...\n"
+            "  ],\n"
+            "  \"count\": n              (numeric) Number of edges returned\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listtrustrelations", "")
+            + HelpExampleCli("listtrustrelations", "50")
+            + HelpExampleRpc("listtrustrelations", "50")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    int maxCount = 100;
+    if (request.params.size() > 0) {
+        maxCount = request.params[0].get_int();
+        if (maxCount < 1 || maxCount > 1000) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Max count must be between 1 and 1000");
+        }
+    }
+    
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    
+    // Get all trust edges using existing infrastructure
+    std::vector<std::string> keys = CVM::g_cvmdb->ListKeysWithPrefix("trust_");
+    
+    UniValue edgesArray(UniValue::VARR);
+    std::set<std::string> addresses;
+    int count = 0;
+    
+    for (const auto& key : keys) {
+        // Skip reverse index keys
+        if (key.find("trust_in_") != std::string::npos) continue;
+        
+        // Read edge
+        std::vector<uint8_t> data;
+        if (CVM::g_cvmdb->ReadGeneric(key, data)) {
+            try {
+                CVM::TrustEdge edge;
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ss >> edge;
+                
+                // Convert uint160 to readable Cascoin addresses
+                std::string fromAddr = EncodeDestination(CKeyID(edge.fromAddress));
+                std::string toAddr = EncodeDestination(CKeyID(edge.toAddress));
+                
+                UniValue edgeObj(UniValue::VOBJ);
+                edgeObj.pushKV("from", fromAddr);
+                edgeObj.pushKV("to", toAddr);
+                edgeObj.pushKV("weight", edge.trustWeight);
+                edgeObj.pushKV("bond_amount", ValueFromAmount(edge.bondAmount));
+                edgeObj.pushKV("timestamp", (int64_t)edge.timestamp);
+                
+                edgesArray.push_back(edgeObj);
+                
+                // Collect addresses for reputation lookup (use readable format)
+                addresses.insert(fromAddr);
+                addresses.insert(toAddr);
+                
+                count++;
+                if (count >= maxCount) break;
+                
+            } catch (const std::exception& e) {
+                LogPrintf("listtrustrelations: Failed to deserialize edge for key %s: %s\n", 
+                         key, e.what());
+            }
+        }
+    }
+    
+    // Get reputations for all addresses involved
+    UniValue reputations(UniValue::VOBJ);
+    for (const auto& addrStr : addresses) {
+        CTxDestination dest = DecodeDestination(addrStr);
+        if (IsValidDestination(dest)) {
+            uint160 addr;
+            if (boost::get<CKeyID>(&dest)) {
+                addr = uint160(boost::get<CKeyID>(dest));
+            } else if (boost::get<CScriptID>(&dest)) {
+                addr = uint160(boost::get<CScriptID>(dest));
+            } else {
+                continue;
+            }
+            
+            // Get reputation (self-view = average of incoming trust)
+            double rep = trustGraph.GetWeightedReputation(addr, addr, 1);
+            reputations.pushKV(addrStr, rep);
+        }
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("edges", edgesArray);
+    result.pushKV("reputations", reputations);
+    result.pushKV("count", count);
+    
+    return result;
+}
+
+/**
  * gettrustgraphstats - Get Web-of-Trust graph statistics
  */
 UniValue gettrustgraphstats(const JSONRPCRequest& request)
@@ -1067,6 +1188,380 @@ UniValue sendbondedvote(const JSONRPCRequest& request)
     return result;
 }
 
+// ═══════════════════════════════════════════════════════════════
+// HAT v2 (Hybrid Adaptive Trust) RPC Commands
+// ═══════════════════════════════════════════════════════════════
+
+UniValue getbehaviormetrics(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getbehaviormetrics \"address\"\n"
+            "\nGet behavior metrics for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The Cascoin address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",                (string) Address\n"
+            "  \"total_trades\": n,                (numeric) Total trades\n"
+            "  \"successful_trades\": n,           (numeric) Successful trades\n"
+            "  \"disputed_trades\": n,             (numeric) Disputed trades\n"
+            "  \"total_volume\": n.nn,             (numeric) Total trade volume in CAS\n"
+            "  \"unique_partners\": n,             (numeric) Number of unique trade partners\n"
+            "  \"diversity_score\": n.nn,          (numeric) Partner diversity score (0-1)\n"
+            "  \"volume_score\": n.nn,             (numeric) Volume score (0-1)\n"
+            "  \"pattern_score\": n.nn,            (numeric) Pattern score (0.5 if suspicious, 1.0 if normal)\n"
+            "  \"base_reputation\": n,             (numeric) Base reputation (0-100)\n"
+            "  \"final_reputation\": n             (numeric) Final reputation with penalties (0-100)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getbehaviormetrics", "\"QAddress...\"")
+            + HelpExampleRpc("getbehaviormetrics", "\"QAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+    
+    uint160 address;
+    if (dest.type() == typeid(CKeyID)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (dest.type() == typeid(CScriptID)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get metrics
+    CVM::SecureHAT hat(*CVM::g_cvmdb);
+    CVM::BehaviorMetrics metrics = hat.GetBehaviorMetrics(address);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", request.params[0].get_str());
+    result.pushKV("total_trades", (uint64_t)metrics.total_trades);
+    result.pushKV("successful_trades", (uint64_t)metrics.successful_trades);
+    result.pushKV("disputed_trades", (uint64_t)metrics.disputed_trades);
+    result.pushKV("total_volume", ValueFromAmount(metrics.total_volume));
+    result.pushKV("unique_partners", (uint64_t)metrics.unique_partners.size());
+    result.pushKV("diversity_score", metrics.CalculateDiversityScore());
+    result.pushKV("volume_score", metrics.CalculateVolumeScore());
+    result.pushKV("pattern_score", metrics.DetectSuspiciousPattern());
+    result.pushKV("base_reputation", (int)metrics.CalculateBaseReputation());
+    result.pushKV("final_reputation", (int)metrics.CalculateFinalReputation());
+    
+    return result;
+}
+
+UniValue getgraphmetrics(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getgraphmetrics \"address\"\n"
+            "\nGet graph analysis metrics for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The Cascoin address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",                   (string) Address\n"
+            "  \"in_suspicious_cluster\": true|false, (boolean) If in suspicious cluster\n"
+            "  \"mutual_trust_ratio\": n.nn,          (numeric) Mutual trust ratio (0-1)\n"
+            "  \"betweenness_centrality\": n.nn,      (numeric) Betweenness centrality (0-1)\n"
+            "  \"degree_centrality\": n.nn,           (numeric) Degree centrality (0-1)\n"
+            "  \"closeness_centrality\": n.nn         (numeric) Closeness centrality (0-1)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getgraphmetrics", "\"QAddress...\"")
+            + HelpExampleRpc("getgraphmetrics", "\"QAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+    
+    uint160 address;
+    if (dest.type() == typeid(CKeyID)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (dest.type() == typeid(CScriptID)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get metrics
+    CVM::SecureHAT hat(*CVM::g_cvmdb);
+    CVM::GraphMetrics metrics = hat.GetGraphMetrics(address);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", request.params[0].get_str());
+    result.pushKV("in_suspicious_cluster", metrics.in_suspicious_cluster);
+    result.pushKV("mutual_trust_ratio", metrics.mutual_trust_ratio);
+    result.pushKV("betweenness_centrality", metrics.betweenness_centrality);
+    result.pushKV("degree_centrality", metrics.degree_centrality);
+    result.pushKV("closeness_centrality", metrics.closeness_centrality);
+    
+    return result;
+}
+
+UniValue getsecuretrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getsecuretrust \"target\" ( \"viewer\" )\n"
+            "\nGet secure HAT v2 trust score.\n"
+            "\nArguments:\n"
+            "1. \"target\"     (string, required) Target address to evaluate\n"
+            "2. \"viewer\"     (string, optional) Viewer address (for WoT personalization)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"target\": \"xxx\",         (string) Target address\n"
+            "  \"viewer\": \"xxx\",         (string) Viewer address\n"
+            "  \"trust_score\": n          (numeric) Final trust score (0-100)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getsecuretrust", "\"QAddress...\"")
+            + HelpExampleCli("getsecuretrust", "\"QTarget...\" \"QViewer...\"")
+            + HelpExampleRpc("getsecuretrust", "\"QTarget...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse target address
+    CTxDestination targetDest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(targetDest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
+    }
+    
+    uint160 targetAddress;
+    if (targetDest.type() == typeid(CKeyID)) {
+        targetAddress = uint160(boost::get<CKeyID>(targetDest));
+    } else if (targetDest.type() == typeid(CScriptID)) {
+        targetAddress = uint160(boost::get<CScriptID>(targetDest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target address type not supported");
+    }
+    
+    // Parse viewer address (optional)
+    uint160 viewerAddress = targetAddress; // Default to self
+    std::string viewerStr = request.params[0].get_str();
+    
+    if (request.params.size() > 1) {
+        CTxDestination viewerDest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(viewerDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
+        }
+        
+        if (viewerDest.type() == typeid(CKeyID)) {
+            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
+        } else if (viewerDest.type() == typeid(CScriptID)) {
+            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
+        } else {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer address type not supported");
+        }
+        
+        viewerStr = request.params[1].get_str();
+    }
+    
+    // Calculate trust
+    CVM::SecureHAT hat(*CVM::g_cvmdb);
+    int16_t trustScore = hat.CalculateFinalTrust(targetAddress, viewerAddress);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("target", request.params[0].get_str());
+    result.pushKV("viewer", viewerStr);
+    result.pushKV("trust_score", (int)trustScore);
+    
+    return result;
+}
+
+UniValue gettrustbreakdown(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "gettrustbreakdown \"target\" ( \"viewer\" )\n"
+            "\nGet detailed breakdown of HAT v2 trust calculation.\n"
+            "\nArguments:\n"
+            "1. \"target\"     (string, required) Target address to evaluate\n"
+            "2. \"viewer\"     (string, optional) Viewer address (for WoT personalization)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"target\": \"xxx\",                   (string) Target address\n"
+            "  \"viewer\": \"xxx\",                   (string) Viewer address\n"
+            "  \"behavior\": {                       (object) Behavior component (40%)\n"
+            "    \"base\": n.nn,\n"
+            "    \"diversity_penalty\": n.nn,\n"
+            "    \"volume_penalty\": n.nn,\n"
+            "    \"pattern_penalty\": n.nn,\n"
+            "    \"secure_score\": n.nn\n"
+            "  },\n"
+            "  \"wot\": {                            (object) Web-of-Trust component (30%)\n"
+            "    \"base\": n.nn,\n"
+            "    \"cluster_penalty\": n.nn,\n"
+            "    \"centrality_bonus\": n.nn,\n"
+            "    \"secure_score\": n.nn\n"
+            "  },\n"
+            "  \"economic\": {                       (object) Economic component (20%)\n"
+            "    \"base\": n.nn,\n"
+            "    \"stake_time_weight\": n.nn,\n"
+            "    \"secure_score\": n.nn\n"
+            "  },\n"
+            "  \"temporal\": {                       (object) Temporal component (10%)\n"
+            "    \"base\": n.nn,\n"
+            "    \"activity_penalty\": n.nn,\n"
+            "    \"secure_score\": n.nn\n"
+            "  },\n"
+            "  \"final_score\": n                    (numeric) Final trust score (0-100)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("gettrustbreakdown", "\"QAddress...\"")
+            + HelpExampleCli("gettrustbreakdown", "\"QTarget...\" \"QViewer...\"")
+            + HelpExampleRpc("gettrustbreakdown", "\"QTarget...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse target address
+    CTxDestination targetDest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(targetDest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
+    }
+    
+    uint160 targetAddress;
+    if (targetDest.type() == typeid(CKeyID)) {
+        targetAddress = uint160(boost::get<CKeyID>(targetDest));
+    } else if (targetDest.type() == typeid(CScriptID)) {
+        targetAddress = uint160(boost::get<CScriptID>(targetDest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target address type not supported");
+    }
+    
+    // Parse viewer address (optional)
+    uint160 viewerAddress = targetAddress; // Default to self
+    std::string viewerStr = request.params[0].get_str();
+    
+    if (request.params.size() > 1) {
+        CTxDestination viewerDest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(viewerDest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
+        }
+        
+        if (viewerDest.type() == typeid(CKeyID)) {
+            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
+        } else if (viewerDest.type() == typeid(CScriptID)) {
+            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
+        } else {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer address type not supported");
+        }
+        
+        viewerStr = request.params[1].get_str();
+    }
+    
+    // Calculate trust with breakdown
+    CVM::SecureHAT hat(*CVM::g_cvmdb);
+    CVM::TrustBreakdown breakdown = hat.CalculateWithBreakdown(targetAddress, viewerAddress);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("target", request.params[0].get_str());
+    result.pushKV("viewer", viewerStr);
+    
+    // Behavior component
+    UniValue behavior(UniValue::VOBJ);
+    behavior.pushKV("base", breakdown.behavior_base);
+    behavior.pushKV("diversity_penalty", breakdown.diversity_penalty);
+    behavior.pushKV("volume_penalty", breakdown.volume_penalty);
+    behavior.pushKV("pattern_penalty", breakdown.pattern_penalty);
+    behavior.pushKV("secure_score", breakdown.secure_behavior);
+    result.pushKV("behavior", behavior);
+    
+    // WoT component
+    UniValue wot(UniValue::VOBJ);
+    wot.pushKV("base", breakdown.wot_base);
+    wot.pushKV("cluster_penalty", breakdown.cluster_penalty);
+    wot.pushKV("centrality_bonus", breakdown.centrality_bonus);
+    wot.pushKV("secure_score", breakdown.secure_wot);
+    result.pushKV("wot", wot);
+    
+    // Economic component
+    UniValue economic(UniValue::VOBJ);
+    economic.pushKV("base", breakdown.economic_base);
+    economic.pushKV("stake_time_weight", breakdown.stake_time_weight);
+    economic.pushKV("secure_score", breakdown.secure_economic);
+    result.pushKV("economic", economic);
+    
+    // Temporal component
+    UniValue temporal(UniValue::VOBJ);
+    temporal.pushKV("base", breakdown.temporal_base);
+    temporal.pushKV("activity_penalty", breakdown.activity_penalty);
+    temporal.pushKV("secure_score", breakdown.secure_temporal);
+    result.pushKV("temporal", temporal);
+    
+    // Final score
+    result.pushKV("final_score", (int)breakdown.final_score);
+    
+    return result;
+}
+
+UniValue detectclusters(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "detectclusters\n"
+            "\nDetect suspicious clusters in the trust graph.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"suspicious_addresses\": [         (array) Array of suspicious addresses\n"
+            "    \"address\",                      (string) Address in suspicious cluster\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"count\": n                        (numeric) Number of suspicious addresses\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("detectclusters", "")
+            + HelpExampleRpc("detectclusters", "")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Detect clusters
+    CVM::GraphAnalyzer analyzer(*CVM::g_cvmdb);
+    std::set<uint160> suspicious = analyzer.DetectSuspiciousClusters();
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    UniValue addresses(UniValue::VARR);
+    
+    for (const auto& addr : suspicious) {
+        CKeyID keyID(addr);
+        addresses.push_back(EncodeDestination(keyID));
+    }
+    
+    result.pushKV("suspicious_addresses", addresses);
+    result.pushKV("count", (uint64_t)suspicious.size());
+    
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -1082,8 +1577,14 @@ static const CRPCCommand commands[] =
     { "wot",                "addtrust",              &addtrust,               {"address","weight","bond","reason"} },
     { "wot",                "getweightedreputation", &getweightedreputation,  {"target","viewer","maxdepth"} },
     { "wot",                "gettrustgraphstats",    &gettrustgraphstats,     {} },
+    { "wot",                "listtrustrelations",    &listtrustrelations,     {"max_count"} },
     { "wot",                "sendtrustrelation",     &sendtrustrelation,      {"address","weight","bond","reason"} },
     { "wot",                "sendbondedvote",        &sendbondedvote,         {"address","vote","bond","reason"} },
+    { "hat",                "getbehaviormetrics",    &getbehaviormetrics,     {"address"} },
+    { "hat",                "getgraphmetrics",       &getgraphmetrics,        {"address"} },
+    { "hat",                "getsecuretrust",        &getsecuretrust,         {"target","viewer"} },
+    { "hat",                "gettrustbreakdown",     &gettrustbreakdown,      {"target","viewer"} },
+    { "hat",                "detectclusters",        &detectclusters,         {} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)
