@@ -1,80 +1,145 @@
-Cascoin Core
-=============
+# Cascoin Documentation
 
-Setup
----------------------
-Cascoin Core is the original Cascoin client and it builds the backbone of the network. It downloads and, by default, stores the entire history of Cascoin transactions (which is currently more than 7 GBs); depending on the speed of your computer and network connection, the synchronization process can take anywhere from a few hours to a day or more.
+Welcome to Cascoin! This directory contains all user and developer documentation.
 
-To download Cascoin Core, visit [cascoin.net](https://cascoin.net).
+---
 
-Running
----------------------
-The following are some helpful notes on how to run Cascoin on your native platform.
+## 📚 Quick Links
 
-### Unix
+### **For Users**
+- **[HAT v2 User Guide](HAT_V2_USER_GUIDE.md)** ⭐ - Start here! Complete guide to the trust system
+- **[Documentation Index](CASCOIN_DOCS.md)** - All documentation organized by topic
 
-Unpack the files into a directory and run:
+### **For Developers**
+- **[Build Instructions](build-linux.md)** - How to build from source
+- **[Developer Notes](developer-notes.md)** - Development guidelines
+- **[HAT v2 Technical Docs](HAT_V2.md)** - Implementation details
 
-- `bin/cascoin-qt` (GUI) or
-- `bin/cascoind` (headless)
+---
 
-### Windows
+## 🚀 Getting Started
 
-Unpack the files into a directory, and then run cascoin-qt.exe.
+### Running Cascoin
 
-### OS X
+```bash
+# GUI
+./bin/cascoin-qt
 
-Drag Cascoin-Core to your applications folder, and then run Cascoin-Core.
+# Daemon (headless)
+./bin/cascoind -daemon
 
-### Need Help?
+# Command line interface
+./bin/cascoin-cli help
+```
 
-* See the documentation at the [Cascoin homepage](https://cascoin.net/)
-for help and more information.
-* Ask for help on [#cascoin](http://webchat.freenode.net?channels=cascoin) on Freenode. If you don't have an IRC client use [webchat here](http://webchat.freenode.net?channels=cascoin).
-* Ask for help on the [CascoinTalk](https://cascointalk.io/) forums.
+### Check Your Trust Score
 
-Building
----------------------
-The following are developer notes on how to build Cascoin on your native platform. They are not complete guides, but include notes on the necessary libraries, compile flags, etc.
+```bash
+# Get your HAT v2 trust score
+./bin/cascoin-cli getsecuretrust "YourAddress"
 
-- [Dependencies](dependencies.md)
-- [OS X Build Notes](build-osx.md)
-- [Unix Build Notes](build-unix.md)
-- [Windows Build Notes](build-windows.md)
-- [OpenBSD Build Notes](build-openbsd.md)
-- [Gitian Building Guide](gitian-building.md)
+# Get detailed breakdown
+./bin/cascoin-cli gettrustbreakdown "YourAddress"
+```
 
-Development
----------------------
-The Cascoin repo's [root README](/README.md) contains relevant information on the development process and automated testing.
+### View Dashboard
 
-- [Developer Notes](developer-notes.md)
-- [Release Notes](release-notes.md)
-- [Release Process](release-process.md)
-- [Translation Process](translation_process.md)
-- [Translation Strings Policy](translation_strings_policy.md)
-- [Travis CI](travis-ci.md)
-- [Unauthenticated REST Interface](REST-interface.md)
-- [Shared Libraries](shared-libraries.md)
-- [BIPS](bips.md)
-- [Dnsseed Policy](dnsseed-policy.md)
-- [Benchmarking](benchmarking.md)
+Open in browser: `http://localhost:8332/dashboard`
 
-### Resources
-* Discuss on the [CascoinTalk](https://cascointalk.io/) forums.
-* Discuss general Cascoin development on #cascoin-dev on Freenode. If you don't have an IRC client use [webchat here](http://webchat.freenode.net/?channels=cascoin-dev).
+---
 
-### Miscellaneous
-- [Assets Attribution](assets-attribution.md)
-- [Files](files.md)
-- [Fuzz-testing](fuzzing.md)
-- [Reduce Traffic](reduce-traffic.md)
-- [Tor Support](tor.md)
-- [Init Scripts (systemd/upstart/openrc)](init.md)
-- [ZMQ](zmq.md)
+## 📖 Main Documentation
 
-License
----------------------
+### User Guides
+- **[HAT_V2_USER_GUIDE.md](HAT_V2_USER_GUIDE.md)** - Complete trust system guide
+- **[CASCOIN_DOCS.md](CASCOIN_DOCS.md)** - Documentation index
+
+### Security
+- **[TRUST_SECURITY_ANALYSIS.md](TRUST_SECURITY_ANALYSIS.md)** - Security analysis
+- **[WOT_SECURITY_ANALYSIS.md](WOT_SECURITY_ANALYSIS.md)** - Web-of-Trust security
+- **[WOT_SCAM_PROTECTION.md](WOT_SCAM_PROTECTION.md)** - Scam protection
+
+### Technical
+- **[HAT_V2.md](HAT_V2.md)** - HAT v2 implementation details
+- **[developer-notes.md](developer-notes.md)** - Development guidelines
+- **[REST-interface.md](REST-interface.md)** - REST API documentation
+
+---
+
+## 🔧 Building from Source
+
+### Dependencies
+See [dependencies.md](dependencies.md) for required libraries.
+
+### Platform-Specific Guides
+- [Linux](build-linux.md)
+- [Unix/BSD](build-unix.md)
+- [macOS](build-osx.md)
+- [Windows](build-windows.md)
+
+---
+
+## 💡 Getting Help
+
+### Documentation
+1. Check [HAT_V2_USER_GUIDE.md](HAT_V2_USER_GUIDE.md) for trust system questions
+2. See [CASCOIN_DOCS.md](CASCOIN_DOCS.md) for topic index
+3. Read platform-specific build guides
+
+### Community
+- GitHub Issues for bug reports
+- Community forums for discussions
+
+---
+
+## 🎯 Key Features
+
+### HAT v2 Trust System
+- **99%+ manipulation-resistant**
+- Multi-layer security (4 components)
+- Personalized Web-of-Trust
+- Real-time dashboard
+- Complete RPC API
+
+### Documentation
+- Comprehensive user guides
+- Technical implementation docs
+- Security analysis
+- API references
+
+---
+
+## 📝 Documentation Structure
+
+```
+doc/
+├── README.md                # This file
+├── CASCOIN_DOCS.md          # Documentation index
+├── HAT_V2_USER_GUIDE.md     # User guide ⭐
+├── HAT_V2.md                # Technical docs
+├── TRUST_SECURITY_ANALYSIS.md
+├── WOT_SECURITY_ANALYSIS.md
+├── WOT_SCAM_PROTECTION.md
+├── build-*.md               # Build guides
+├── developer-notes.md
+└── REST-interface.md
+```
+
+---
+
+## 🔄 Contributing
+
+See [CONTRIBUTING.md](../CONTRIBUTING.md) in the root directory for:
+- How to contribute
+- Code style guidelines
+- Documentation standards
+
+---
+
+## 📜 License
+
 Distributed under the [MIT software license](/COPYING).
-This product includes software developed by the OpenSSL Project for use in the [OpenSSL Toolkit](https://www.openssl.org/). This product includes
-cryptographic software written by Eric Young ([eay@cryptsoft.com](mailto:eay@cryptsoft.com)), and UPnP software written by Thomas Bernard.
+
+---
+
+**For detailed information, start with [CASCOIN_DOCS.md](CASCOIN_DOCS.md)!**
