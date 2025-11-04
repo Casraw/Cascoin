@@ -902,6 +902,12 @@ class CVMDashboard {
     }
     
     async voteOnDispute(disputeId, supportSlash) {
+        // Ask for wallet address
+        const address = prompt(`Enter your Cascoin address to vote:\n\nThis address must be a DAO member with high reputation.\nYour stake will be locked during the dispute resolution.`);
+        
+        if (!address) return;
+        
+        // Ask for stake amount
         const stake = prompt(`How much CAS do you want to stake?\n\nYour stake determines your voting power.\nMinimum: 0.1 CAS\nRecommended: 1.0 - 5.0 CAS\n\nVoting: ${supportSlash ? 'SLASH (Remove Bond)' : 'KEEP (Return Bond)'}`, '1.0');
         
         if (!stake) return;
@@ -913,8 +919,8 @@ class CVMDashboard {
         }
         
         try {
-            const result = await this.rpcCall('votedispute', [disputeId, supportSlash, stakeAmount]);
-            alert(`✅ Vote recorded successfully!\n\nDispute: ${result.dispute_id}\nYour Vote: ${supportSlash ? 'SLASH' : 'KEEP'}\nStake: ${result.stake} CAS`);
+            const result = await this.rpcCall('votedispute', [disputeId, supportSlash, address, stakeAmount]);
+            alert(`✅ Vote recorded successfully!\n\nDispute: ${result.dispute_id}\nYour Address: ${result.voter}\nYour Vote: ${supportSlash ? 'SLASH' : 'KEEP'}\nStake: ${result.stake} CAS`);
             await this.loadDisputes(); // Reload disputes
         } catch (error) {
             alert(`❌ Failed to vote: ${error.message}`);

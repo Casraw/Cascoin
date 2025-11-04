@@ -1948,14 +1948,20 @@ UniValue getdispute(const JSONRPCRequest& request)
  */
 UniValue votedispute(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
         throw std::runtime_error(
-            "votedispute \"dispute_id\" support_slash [stake]\n"
-            "\nVote on a DAO dispute.\n"
+            "votedispute \"dispute_id\" support_slash \"from_address\" [stake]\n"
+            "\nVote on a DAO dispute as a DAO member.\n"
             "\nArguments:\n"
             "1. dispute_id       (string, required) The dispute ID\n"
             "2. support_slash    (boolean, required) true = slash the vote, false = keep the vote\n"
-            "3. stake            (numeric, optional) Amount of CAS to stake (default: 1.0)\n"
+            "3. from_address     (string, required) Vote from this address\n"
+            "4. stake            (numeric, optional) Amount of CAS to stake (default: 1.0)\n"
             "\nResult:\n"
             "{\n"
             "  \"dispute_id\": \"hash\",\n"
@@ -1964,30 +1970,40 @@ UniValue votedispute(const JSONRPCRequest& request)
             "  \"stake\": n\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("votedispute", "\"abc123...\" true 2.0")
-            + HelpExampleCli("votedispute", "\"abc123...\" false")
+            + HelpExampleCli("votedispute", "\"abc123...\" true \"CYourAddress...\"")
+            + HelpExampleCli("votedispute", "\"abc123...\" false \"CYourAddress...\" 2.5")
         );
     
     if (!CVM::g_cvmdb) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
+    LOCK2(cs_main, pwallet->cs_wallet);
+    
     uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
     bool supportSlash = request.params[1].get_bool();
-    CAmount stake = COIN; // Default 1.0 CAS
     
-    if (request.params.size() > 2) {
-        stake = AmountFromValue(request.params[2]);
+    // Get voter address (required)
+    CTxDestination voterDest = DecodeDestination(request.params[2].get_str());
+    if (!IsValidDestination(voterDest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+    
+    // Get stake amount (optional, default 1.0 CAS)
+    CAmount stake = COIN;
+    if (request.params.size() > 3 && !request.params[3].isNull()) {
+        stake = AmountFromValue(request.params[3]);
     }
     
     if (stake < COIN / 10) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Minimum stake is 0.1 CAS");
     }
     
-    // Get voter address
-    // TODO: Get from wallet
-    uint160 voterAddress;
-    // Placeholder - in production, get from wallet
+    const CKeyID* keyID = boost::get<CKeyID>(&voterDest);
+    if (!keyID) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
+    }
+    uint160 voterAddress(*keyID);
     
     // Vote on dispute
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
@@ -1997,7 +2013,7 @@ UniValue votedispute(const JSONRPCRequest& request)
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("dispute_id", disputeId.ToString());
-    result.pushKV("voter", EncodeDestination(CKeyID(voterAddress)));
+    result.pushKV("voter", EncodeDestination(voterDest));
     result.pushKV("support_slash", supportSlash);
     result.pushKV("stake", ValueFromAmount(stake));
     result.pushKV("status", "Vote recorded successfully");
@@ -2033,7 +2049,7 @@ static const CRPCCommand commands[] =
     { "wallet_cluster",     "geteffectivetrust",     &geteffectivetrust,      {"target","viewer"} },
     { "dao",                "listdisputes",          &listdisputes,           {"status"} },
     { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
-    { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","stake"} },
+    { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","from_address","stake"} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)
