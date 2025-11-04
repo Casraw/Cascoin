@@ -1750,6 +1750,261 @@ UniValue detectclusters(const JSONRPCRequest& request)
     return result;
 }
 
+/**
+ * listdisputes - List all active DAO disputes
+ */
+UniValue listdisputes(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "listdisputes [status]\n"
+            "\nList all DAO disputes.\n"
+            "\nArguments:\n"
+            "1. status    (string, optional) Filter: 'active', 'resolved', 'all' (default: 'active')\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"disputes\": [              (array) List of disputes\n"
+            "    {\n"
+            "      \"dispute_id\": \"hash\",\n"
+            "      \"original_vote_tx\": \"hash\",\n"
+            "      \"challenger\": \"address\",\n"
+            "      \"challenge_bond\": n,\n"
+            "      \"created_time\": n,\n"
+            "      \"resolved\": true|false,\n"
+            "      \"slash_decision\": true|false,\n"
+            "      \"dao_votes\": n,\n"
+            "      \"total_stake_support\": n,\n"
+            "      \"total_stake_oppose\": n\n"
+            "    }, ...\n"
+            "  ],\n"
+            "  \"count\": n\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listdisputes", "")
+            + HelpExampleCli("listdisputes", "\"active\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    std::string status = "active";
+    if (request.params.size() > 0) {
+        status = request.params[0].get_str();
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    UniValue disputesArray(UniValue::VARR);
+    
+    // Get all dispute keys from database
+    std::vector<std::string> keys;
+    CVM::g_cvmdb->GetAllKeys("dispute_", keys);
+    
+    int count = 0;
+    for (const auto& key : keys) {
+        std::vector<uint8_t> data;
+        if (CVM::g_cvmdb->ReadGeneric(key, data)) {
+            try {
+                CVM::DAODispute dispute;
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ss >> dispute;
+                
+                // Filter by status
+                if (status == "active" && dispute.resolved) continue;
+                if (status == "resolved" && !dispute.resolved) continue;
+                
+                UniValue disputeObj(UniValue::VOBJ);
+                disputeObj.pushKV("dispute_id", dispute.disputeId.ToString());
+                disputeObj.pushKV("original_vote_tx", dispute.originalVoteTx.ToString());
+                disputeObj.pushKV("challenger", EncodeDestination(CKeyID(dispute.challenger)));
+                disputeObj.pushKV("challenge_bond", ValueFromAmount(dispute.challengeBond));
+                disputeObj.pushKV("challenge_reason", dispute.challengeReason);
+                disputeObj.pushKV("created_time", (int64_t)dispute.createdTime);
+                disputeObj.pushKV("resolved", dispute.resolved);
+                
+                if (dispute.resolved) {
+                    disputeObj.pushKV("slash_decision", dispute.slashDecision);
+                    disputeObj.pushKV("resolved_time", (int64_t)dispute.resolvedTime);
+                }
+                
+                // Calculate vote totals
+                CAmount totalStakeSupport = 0;
+                CAmount totalStakeOppose = 0;
+                for (const auto& vote : dispute.daoVotes) {
+                    CAmount stake = dispute.daoStakes.at(vote.first);
+                    if (vote.second) {
+                        totalStakeSupport += stake;
+                    } else {
+                        totalStakeOppose += stake;
+                    }
+                }
+                
+                disputeObj.pushKV("dao_votes", (int)dispute.daoVotes.size());
+                disputeObj.pushKV("total_stake_support", ValueFromAmount(totalStakeSupport));
+                disputeObj.pushKV("total_stake_oppose", ValueFromAmount(totalStakeOppose));
+                
+                disputesArray.push_back(disputeObj);
+                count++;
+                
+            } catch (const std::exception& e) {
+                LogPrintf("listdisputes: Failed to deserialize dispute: %s\n", e.what());
+            }
+        }
+    }
+    
+    result.pushKV("disputes", disputesArray);
+    result.pushKV("count", count);
+    
+    return result;
+}
+
+/**
+ * getdispute - Get details of a specific dispute
+ */
+UniValue getdispute(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getdispute \"dispute_id\"\n"
+            "\nGet detailed information about a dispute.\n"
+            "\nArguments:\n"
+            "1. dispute_id    (string, required) The dispute ID (transaction hash)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"dispute_id\": \"hash\",\n"
+            "  \"original_vote_tx\": \"hash\",\n"
+            "  \"challenger\": \"address\",\n"
+            "  \"dao_votes\": [...],\n"
+            "  ...\n"
+            "}\n"
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
+    
+    std::string key = "dispute_" + disputeId.ToString();
+    std::vector<uint8_t> data;
+    
+    if (!CVM::g_cvmdb->ReadGeneric(key, data)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Dispute not found");
+    }
+    
+    CVM::DAODispute dispute;
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> dispute;
+    } catch (const std::exception& e) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, strprintf("Failed to deserialize dispute: %s", e.what()));
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("dispute_id", dispute.disputeId.ToString());
+    result.pushKV("original_vote_tx", dispute.originalVoteTx.ToString());
+    result.pushKV("challenger", EncodeDestination(CKeyID(dispute.challenger)));
+    result.pushKV("challenge_bond", ValueFromAmount(dispute.challengeBond));
+    result.pushKV("challenge_reason", dispute.challengeReason);
+    result.pushKV("created_time", (int64_t)dispute.createdTime);
+    result.pushKV("resolved", dispute.resolved);
+    
+    if (dispute.resolved) {
+        result.pushKV("slash_decision", dispute.slashDecision);
+        result.pushKV("resolved_time", (int64_t)dispute.resolvedTime);
+    }
+    
+    // DAO votes details
+    UniValue votesArray(UniValue::VARR);
+    CAmount totalStakeSupport = 0;
+    CAmount totalStakeOppose = 0;
+    
+    for (const auto& vote : dispute.daoVotes) {
+        UniValue voteObj(UniValue::VOBJ);
+        voteObj.pushKV("dao_member", EncodeDestination(CKeyID(vote.first)));
+        voteObj.pushKV("support_slash", vote.second);
+        
+        CAmount stake = dispute.daoStakes.at(vote.first);
+        voteObj.pushKV("stake", ValueFromAmount(stake));
+        
+        if (vote.second) {
+            totalStakeSupport += stake;
+        } else {
+            totalStakeOppose += stake;
+        }
+        
+        votesArray.push_back(voteObj);
+    }
+    
+    result.pushKV("dao_votes", votesArray);
+    result.pushKV("total_stake_support", ValueFromAmount(totalStakeSupport));
+    result.pushKV("total_stake_oppose", ValueFromAmount(totalStakeOppose));
+    
+    return result;
+}
+
+/**
+ * votedispute - Vote on a DAO dispute as a DAO member
+ */
+UniValue votedispute(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+            "votedispute \"dispute_id\" support_slash [stake]\n"
+            "\nVote on a DAO dispute.\n"
+            "\nArguments:\n"
+            "1. dispute_id       (string, required) The dispute ID\n"
+            "2. support_slash    (boolean, required) true = slash the vote, false = keep the vote\n"
+            "3. stake            (numeric, optional) Amount of CAS to stake (default: 1.0)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"dispute_id\": \"hash\",\n"
+            "  \"voter\": \"address\",\n"
+            "  \"support_slash\": true|false,\n"
+            "  \"stake\": n\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("votedispute", "\"abc123...\" true 2.0")
+            + HelpExampleCli("votedispute", "\"abc123...\" false")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
+    bool supportSlash = request.params[1].get_bool();
+    CAmount stake = COIN; // Default 1.0 CAS
+    
+    if (request.params.size() > 2) {
+        stake = AmountFromValue(request.params[2]);
+    }
+    
+    if (stake < COIN / 10) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Minimum stake is 0.1 CAS");
+    }
+    
+    // Get voter address
+    // TODO: Get from wallet
+    uint160 voterAddress;
+    // Placeholder - in production, get from wallet
+    
+    // Vote on dispute
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    if (!trustGraph.VoteOnDispute(disputeId, voterAddress, supportSlash, stake)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to record vote");
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("dispute_id", disputeId.ToString());
+    result.pushKV("voter", EncodeDestination(CKeyID(voterAddress)));
+    result.pushKV("support_slash", supportSlash);
+    result.pushKV("stake", ValueFromAmount(stake));
+    result.pushKV("status", "Vote recorded successfully");
+    
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -1776,6 +2031,9 @@ static const CRPCCommand commands[] =
     { "wallet_cluster",     "buildwalletclusters",   &buildwalletclusters,    {} },
     { "wallet_cluster",     "getwalletcluster",      &getwalletcluster,       {"address"} },
     { "wallet_cluster",     "geteffectivetrust",     &geteffectivetrust,      {"target","viewer"} },
+    { "dao",                "listdisputes",          &listdisputes,           {"status"} },
+    { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
+    { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","stake"} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)

@@ -90,6 +90,9 @@ public:
     // Flush database
     bool Flush();
     
+    // Get all keys with a given prefix
+    void GetAllKeys(const std::string& prefix, std::vector<std::string>& keys);
+    
 private:
     std::unique_ptr<CDBWrapper> db;
     

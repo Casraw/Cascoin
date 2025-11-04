@@ -71,6 +71,37 @@ body {
 .activity-placeholder { text-align: center; padding: 40px; color: var(--text-secondary); }
 .badge { padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
 .badge-danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+.badge-success { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+.badge-warning { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+.disputes-container { display: flex; flex-direction: column; gap: 16px; max-height: 600px; overflow-y: auto; }
+.dispute-card { background: var(--bg-color); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; transition: all 0.2s ease; }
+.dispute-card:hover { border-color: var(--primary-color); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.1); }
+.dispute-card.resolved { opacity: 0.7; }
+.dispute-header { display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px; }
+.dispute-title { font-size: 1rem; font-weight: 600; color: var(--text-color); margin-bottom: 4px; }
+.dispute-meta { font-size: 0.85rem; color: var(--text-secondary); }
+.dispute-reason { font-style: italic; color: var(--text-secondary); margin: 8px 0; padding: 8px; background: rgba(16, 185, 129, 0.05); border-left: 3px solid var(--primary-color); }
+.dispute-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 12px 0; }
+.dispute-stat { text-align: center; padding: 8px; background: rgba(16, 185, 129, 0.05); border-radius: 6px; }
+.dispute-stat-label { font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 4px; }
+.dispute-stat-value { font-size: 1.1rem; font-weight: 600; color: var(--primary-color); }
+.dispute-stat-value.slash { color: #ef4444; }
+.dispute-stat-value.keep { color: #10b981; }
+.dispute-progress { height: 24px; background: var(--bg-color); border-radius: 12px; overflow: hidden; display: flex; margin: 12px 0; border: 1px solid var(--border-color); }
+.dispute-progress-slash { background: linear-gradient(90deg, #ef4444, #dc2626); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.75rem; font-weight: 600; transition: width 0.3s ease; }
+.dispute-progress-keep { background: linear-gradient(90deg, #10b981, #059669); display: flex; align-items: center; justify-content: center; color: white; font-size: 0.75rem; font-weight: 600; transition: width 0.3s ease; }
+.dispute-actions { display: flex; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); }
+.dispute-vote-btn { flex: 1; padding: 10px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; justify-content: center; gap: 6px; }
+.dispute-vote-btn.slash { background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 2px solid #ef4444; }
+.dispute-vote-btn.slash:hover { background: #ef4444; color: white; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); }
+.dispute-vote-btn.keep { background: rgba(16, 185, 129, 0.2); color: #10b981; border: 2px solid #10b981; }
+.dispute-vote-btn.keep:hover { background: #10b981; color: white; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
+.dispute-vote-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.dispute-details-btn { background: transparent; border: 1px solid var(--border-color); color: var(--text-color); padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+.dispute-details-btn:hover { border-color: var(--primary-color); color: var(--primary-color); }
+.dispute-votes-list { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color); max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+.dispute-votes-list.expanded { max-height: 400px; overflow-y: auto; }
+.dispute-vote-item { display: flex; justify-content: space-between; padding: 8px; margin-bottom: 4px; background: rgba(16, 185, 129, 0.03); border-radius: 4px; }
 .stats-table { width: 100%; border-collapse: collapse; }
 .stats-table td { padding: 12px; border-bottom: 1px solid var(--border-color); }
 .stats-table td:first-child { color: var(--text-secondary); }
@@ -291,6 +322,40 @@ body {
                 <p class="text-muted" style="margin-top: 15px; text-align: center;">
                     HAT v2 = Hybrid Adaptive Trust with multi-layer defense against Sybil attacks
                 </p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h2>⚖️ DAO Disputes
+                    <span class="tooltip info-icon">?
+                        <span class="tooltiptext">
+                            <strong>Decentralized Dispute Resolution</strong><br>
+                            When bonded votes are challenged, DAO members vote to decide:<br>
+                            • <strong>Slash</strong>: Remove the bond (vote was fake/malicious)<br>
+                            • <strong>Keep</strong>: Return the bond (vote was honest)<br><br>
+                            <strong>How it works:</strong><br>
+                            1. Someone challenges a vote (requires bond)<br>
+                            2. DAO members stake CAS and vote<br>
+                            3. Majority decision wins (weighted by stake)<br>
+                            4. Winner's bond is returned, loser loses bond<br><br>
+                            <strong>Requirements to vote:</strong><br>
+                            • High reputation (trust score)<br>
+                            • Active participation<br>
+                            • Minimum 0.1 CAS stake per vote
+                        </span>
+                    </span>
+                </h2>
+                <button class="btn-secondary" onclick="refreshDisputes()">🔄 Refresh</button>
+            </div>
+            <div class="card-body">
+                <div class="info-box">
+                    <strong>🏛️ Community Governance:</strong> Help decide if challenged votes were honest or malicious. Your stake determines your voting power.
+                </div>
+                
+                <div id="disputesList" class="disputes-container">
+                    <div class="activity-placeholder">Loading disputes...</div>
+                </div>
             </div>
         </div>
 
@@ -656,6 +721,7 @@ class CVMDashboard {
             this.updateConnectionStatus(true, 'Connected');
             await this.loadTrustGraphStats();
             await this.loadRecentActivity();
+            await this.loadDisputes();
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
         } catch (error) {
             console.error('Failed to load data:', error);
@@ -734,6 +800,150 @@ class CVMDashboard {
             console.error('Failed to load recent activity:', error);
             document.getElementById('recentActivity').innerHTML = 
                 '<div class="activity-placeholder">Failed to load activity</div>';
+        }
+    }
+    
+    async loadDisputes() {
+        try {
+            const result = await this.rpcCall('listdisputes', ['active']);
+            console.log('Disputes:', result);
+            
+            const disputesDiv = document.getElementById('disputesList');
+            if (!result || !result.disputes || result.disputes.length === 0) {
+                disputesDiv.innerHTML = '<div class="activity-placeholder">✅ No active disputes - All votes are honest!</div>';
+                return;
+            }
+            
+            let html = '';
+            result.disputes.forEach(dispute => {
+                const totalStake = parseFloat(dispute.total_stake_support) + parseFloat(dispute.total_stake_oppose);
+                const supportPercent = totalStake > 0 ? (parseFloat(dispute.total_stake_support) / totalStake * 100) : 0;
+                const opposePercent = totalStake > 0 ? (parseFloat(dispute.total_stake_oppose) / totalStake * 100) : 0;
+                
+                const date = new Date(dispute.created_time * 1000).toLocaleString();
+                const voteTxShort = dispute.original_vote_tx.substring(0, 10) + '...' + dispute.original_vote_tx.substring(dispute.original_vote_tx.length - 6);
+                const disputeIdShort = dispute.dispute_id.substring(0, 10) + '...' + dispute.dispute_id.substring(dispute.dispute_id.length - 6);
+                
+                const resolvedBadge = dispute.resolved ? 
+                    `<span class="badge ${dispute.slash_decision ? 'badge-danger' : 'badge-success'}">${dispute.slash_decision ? 'SLASHED' : 'KEPT'}</span>` : 
+                    '<span class="badge badge-warning">ACTIVE</span>';
+                
+                html += `
+                    <div class="dispute-card ${dispute.resolved ? 'resolved' : ''}" data-dispute-id="${dispute.dispute_id}">
+                        <div class="dispute-header">
+                            <div>
+                                <div class="dispute-title">
+                                    ⚖️ Dispute #${disputeIdShort}
+                                    ${resolvedBadge}
+                                </div>
+                                <div class="dispute-meta">
+                                    Vote TX: <code>${voteTxShort}</code><br>
+                                    Challenger: ${dispute.challenger}<br>
+                                    Created: ${date}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        ${dispute.challenge_reason ? `<div class="dispute-reason">"${dispute.challenge_reason}"</div>` : ''}
+                        
+                        <div class="dispute-stats">
+                            <div class="dispute-stat">
+                                <div class="dispute-stat-label">Challenge Bond</div>
+                                <div class="dispute-stat-value">${dispute.challenge_bond} CAS</div>
+                            </div>
+                            <div class="dispute-stat">
+                                <div class="dispute-stat-label">DAO Votes</div>
+                                <div class="dispute-stat-value">${dispute.dao_votes}</div>
+                            </div>
+                            <div class="dispute-stat">
+                                <div class="dispute-stat-label">Slash Support</div>
+                                <div class="dispute-stat-value slash">${dispute.total_stake_support} CAS</div>
+                            </div>
+                            <div class="dispute-stat">
+                                <div class="dispute-stat-label">Keep Support</div>
+                                <div class="dispute-stat-value keep">${dispute.total_stake_oppose} CAS</div>
+                            </div>
+                        </div>
+                        
+                        <div class="dispute-progress">
+                            <div class="dispute-progress-slash" style="width: ${supportPercent}%">
+                                ${supportPercent > 15 ? supportPercent.toFixed(1) + '% Slash' : ''}
+                            </div>
+                            <div class="dispute-progress-keep" style="width: ${opposePercent}%">
+                                ${opposePercent > 15 ? opposePercent.toFixed(1) + '% Keep' : ''}
+                            </div>
+                        </div>
+                        
+                        ${!dispute.resolved ? `
+                        <div class="dispute-actions">
+                            <button class="dispute-vote-btn slash" onclick="window.dashboard.voteOnDispute('${dispute.dispute_id}', true)">
+                                ❌ Vote: SLASH (Remove Bond)
+                            </button>
+                            <button class="dispute-vote-btn keep" onclick="window.dashboard.voteOnDispute('${dispute.dispute_id}', false)">
+                                ✅ Vote: KEEP (Return Bond)
+                            </button>
+                        </div>
+                        <div style="text-align: center; margin-top: 8px;">
+                            <button class="dispute-details-btn" onclick="window.dashboard.showDisputeDetails('${dispute.dispute_id}')">
+                                📊 View All Votes
+                            </button>
+                        </div>
+                        ` : ''}
+                    </div>
+                `;
+            });
+            
+            disputesDiv.innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load disputes:', error);
+            document.getElementById('disputesList').innerHTML = 
+                '<div class="activity-placeholder">Failed to load disputes</div>';
+        }
+    }
+    
+    async voteOnDispute(disputeId, supportSlash) {
+        const stake = prompt(`How much CAS do you want to stake?\n\nYour stake determines your voting power.\nMinimum: 0.1 CAS\nRecommended: 1.0 - 5.0 CAS\n\nVoting: ${supportSlash ? 'SLASH (Remove Bond)' : 'KEEP (Return Bond)'}`, '1.0');
+        
+        if (!stake) return;
+        
+        const stakeAmount = parseFloat(stake);
+        if (isNaN(stakeAmount) || stakeAmount < 0.1) {
+            alert('Invalid stake amount. Minimum is 0.1 CAS');
+            return;
+        }
+        
+        try {
+            const result = await this.rpcCall('votedispute', [disputeId, supportSlash, stakeAmount]);
+            alert(`✅ Vote recorded successfully!\n\nDispute: ${result.dispute_id}\nYour Vote: ${supportSlash ? 'SLASH' : 'KEEP'}\nStake: ${result.stake} CAS`);
+            await this.loadDisputes(); // Reload disputes
+        } catch (error) {
+            alert(`❌ Failed to vote: ${error.message}`);
+        }
+    }
+    
+    async showDisputeDetails(disputeId) {
+        try {
+            const dispute = await this.rpcCall('getdispute', [disputeId]);
+            
+            let votesHtml = '<h3>DAO Member Votes:</h3>';
+            if (dispute.dao_votes && dispute.dao_votes.length > 0) {
+                dispute.dao_votes.forEach(vote => {
+                    const voteIcon = vote.support_slash ? '❌ SLASH' : '✅ KEEP';
+                    const voteClass = vote.support_slash ? 'slash' : 'keep';
+                    votesHtml += `
+                        <div class="dispute-vote-item">
+                            <span>${vote.dao_member.substring(0, 12)}...</span>
+                            <span class="dispute-stat-value ${voteClass}">${voteIcon} (${vote.stake} CAS)</span>
+                        </div>
+                    `;
+                });
+            } else {
+                votesHtml += '<p style="text-align: center; color: var(--text-secondary);">No votes yet</p>';
+            }
+            
+            alert(`Dispute Details:\n\nDispute ID: ${dispute.dispute_id}\nOriginal Vote: ${dispute.original_vote_tx}\nChallenger: ${dispute.challenger}\nChallenge Bond: ${dispute.challenge_bond} CAS\n\nDAO Votes: ${dispute.dao_votes ? dispute.dao_votes.length : 0}\nSlash Support: ${dispute.total_stake_support} CAS\nKeep Support: ${dispute.total_stake_oppose} CAS\n\n${dispute.resolved ? 'Status: RESOLVED\nDecision: ' + (dispute.slash_decision ? 'SLASHED' : 'KEPT') : 'Status: ACTIVE - Voting in progress'}`);
+        } catch (error) {
+            alert(`Failed to load dispute details: ${error.message}`);
         }
     }
     
@@ -1673,6 +1883,13 @@ function refreshGraph() {
     if (window.loadRealTrustGraph) {
         console.log('Refreshing wallet cluster graph...');
         window.loadRealTrustGraph();
+    }
+}
+
+function refreshDisputes() {
+    if (window.dashboard) {
+        console.log('Refreshing disputes...');
+        window.dashboard.loadDisputes();
     }
 }
 

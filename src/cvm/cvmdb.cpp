@@ -267,6 +267,26 @@ bool CVMDatabase::Batch::Commit() {
     return database.GetDB().WriteBatch(batch);
 }
 
+void CVMDatabase::GetAllKeys(const std::string& prefix, std::vector<std::string>& keys) {
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    pcursor->Seek(prefix);
+    
+    while (pcursor->Valid()) {
+        std::string key;
+        if (!pcursor->GetKey(key)) {
+            break;
+        }
+        
+        // Check if key starts with prefix
+        if (key.compare(0, prefix.length(), prefix) != 0) {
+            break;  // No more keys with this prefix
+        }
+        
+        keys.push_back(key);
+        pcursor->Next();
+    }
+}
+
 // Global functions
 bool InitCVMDatabase(const fs::path& datadir, size_t nCacheSize) {
     try {
