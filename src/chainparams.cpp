@@ -526,7 +526,11 @@ public:
 static std::unique_ptr<CChainParams> globalChainParams;
 
 const CChainParams &Params() {
-    assert(globalChainParams);
+    // Thread-safe check: Wait for globalChainParams to be initialized
+    // This can happen during early startup when multiple threads are starting
+    if (!globalChainParams) {
+        throw std::runtime_error("Error: Params() called before SelectParams()");
+    }
     return *globalChainParams;
 }
 

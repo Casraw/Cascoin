@@ -622,10 +622,12 @@ void BeeKeeper(const CChainParams& chainparams) {
     LogPrintf("BeeKeeper: Thread started\n");
     RenameThread("hive-beekeeper");
 
-    int height;
+    int height = 0;
     {
         LOCK(cs_main);
-        height = chainActive.Tip()->nHeight;
+        if (chainActive.Tip()) {
+            height = chainActive.Tip()->nHeight;
+        }
     }
 
     try {
@@ -637,6 +639,10 @@ void BeeKeeper(const CChainParams& chainparams) {
             int newHeight;
             {
                 LOCK(cs_main);
+                // Check if blockchain is initialized
+                if (!chainActive.Tip()) {
+                    continue; // Wait for blockchain initialization
+                }
                 newHeight = chainActive.Tip()->nHeight;
             }
             if (newHeight != height) {
@@ -670,6 +676,9 @@ void AbortWatchThread(int height) {
         int newHeight;
         {
             LOCK(cs_main);
+            if (!chainActive.Tip()) {
+                continue; // Wait for blockchain initialization
+            }
             newHeight = chainActive.Tip()->nHeight;
         }
 
@@ -1072,6 +1081,10 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     // Make sure the new block's not stale
     {
         LOCK(cs_main);
+        if (!chainActive.Tip()) {
+            LogPrintf("BusyBees: Blockchain not initialized yet.\n");
+            return false;
+        }
         if (pblock->hashPrevBlock != chainActive.Tip()->GetBlockHash()) {
             LogPrintf("BusyBees: Generated block is stale.\n");
             return false;

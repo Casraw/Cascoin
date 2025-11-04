@@ -43,10 +43,19 @@ void WalletClusterer::BuildClusters()
     int analyzed_count = 0;
     int block_count = 0;
     
+    // Get consensus params once (safer if Params() is not yet initialized)
+    const Consensus::Params* consensusParams = nullptr;
+    try {
+        consensusParams = &(Params().GetConsensus());
+    } catch (...) {
+        LogPrintf("WalletClusterer: Chain params not initialized yet, cannot build clusters\n");
+        return;
+    }
+    
     while (pindex) {
         try {
             CBlock block;
-            if (ReadBlockFromDisk(block, pindex, Params().GetConsensus())) {
+            if (ReadBlockFromDisk(block, pindex, *consensusParams)) {
                 block_count++;
                 for (const CTransactionRef& tx : block.vtx) {
                     // Skip coinbase
@@ -76,11 +85,19 @@ void WalletClusterer::BuildClusters()
 
 void WalletClusterer::AnalyzeTransaction(const uint256& txid)
 {
+    // Get consensus params (with safety check)
+    const Consensus::Params* consensusParams = nullptr;
+    try {
+        consensusParams = &(Params().GetConsensus());
+    } catch (...) {
+        return;  // Chain params not initialized
+    }
+    
     // Get transaction
     CTransactionRef tx;
     uint256 hashBlock;
     
-    if (!GetTransaction(txid, tx, Params().GetConsensus(), hashBlock)) {
+    if (!GetTransaction(txid, tx, *consensusParams, hashBlock)) {
         return;
     }
     
@@ -92,7 +109,7 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
         CTransactionRef prev_tx;
         uint256 prev_block;
         
-        if (GetTransaction(txin.prevout.hash, prev_tx, Params().GetConsensus(), prev_block)) {
+        if (GetTransaction(txin.prevout.hash, prev_tx, *consensusParams, prev_block)) {
             if (txin.prevout.n < prev_tx->vout.size()) {
                 const CTxOut& prev_out = prev_tx->vout[txin.prevout.n];
                 

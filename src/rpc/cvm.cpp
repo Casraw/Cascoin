@@ -873,6 +873,8 @@ UniValue listtrustrelations(const JSONRPCRequest& request)
                 edgeObj.pushKV("weight", edge.trustWeight);
                 edgeObj.pushKV("bond_amount", ValueFromAmount(edge.bondAmount));
                 edgeObj.pushKV("timestamp", (int64_t)edge.timestamp);
+                edgeObj.pushKV("reason", edge.reason);
+                edgeObj.pushKV("slashed", edge.slashed);
                 
                 edgesArray.push_back(edgeObj);
                 

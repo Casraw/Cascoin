@@ -44,6 +44,11 @@ void InitCVMDashboardHandlers() {
     // Also register root path for convenience
     RegisterHTTPHandler("/cvm", false, CVMDashboardRequestHandler);
     
-    LogPrintf("CVM Dashboard available at http://localhost:%d/dashboard/\n", 
-              gArgs.GetArg("-rpcport", BaseParams().RPCPort()));
+    // Use BaseParams() instead of Params() for safety during early initialization
+    try {
+        LogPrintf("CVM Dashboard available at http://localhost:%d/dashboard/\n", 
+                  gArgs.GetArg("-rpcport", BaseParams().RPCPort()));
+    } catch (const std::exception& e) {
+        LogPrintf("CVM Dashboard: Could not get RPC port (chain params not initialized yet): %s\n", e.what());
+    }
 }

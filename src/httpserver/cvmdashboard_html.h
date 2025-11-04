@@ -55,9 +55,22 @@ body {
 .card-body { padding: 20px; }
 .graph-container { min-height: 400px; display: flex; align-items: center; justify-content: center; background: var(--bg-color); border-radius: 8px; }
 .graph-placeholder { text-align: center; color: var(--text-secondary); }
-.activity-list { display: flex; flex-direction: column; gap: 12px; }
-.activity-item { padding: 12px; background: var(--bg-color); border-radius: 8px; border-left: 3px solid var(--primary-color); }
+.activity-list { display: flex; flex-direction: column; gap: 12px; max-height: 500px; overflow-y: auto; }
+.activity-item { padding: 12px; background: var(--bg-color); border-radius: 8px; border-left: 3px solid var(--primary-color); display: flex; gap: 12px; transition: all 0.2s ease; }
+.activity-item:hover { background: rgba(16, 185, 129, 0.05); transform: translateX(2px); }
+.activity-icon { font-size: 1.5rem; display: flex; align-items: center; }
+.activity-content { flex: 1; min-width: 0; }
+.activity-type { font-weight: 600; color: var(--primary-color); margin-bottom: 4px; }
+.activity-desc { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 4px; }
+.activity-reason { color: var(--text-color); font-style: italic; opacity: 0.8; }
+.activity-time { color: var(--text-secondary); font-size: 0.8rem; }
+.activity-trust { border-left-color: rgba(16, 185, 129, 0.8); }
+.activity-vote-pos { border-left-color: rgba(34, 197, 94, 0.8); }
+.activity-vote { border-left-color: rgba(59, 130, 246, 0.8); }
+.activity-report { border-left-color: rgba(239, 68, 68, 0.8); }
 .activity-placeholder { text-align: center; padding: 40px; color: var(--text-secondary); }
+.badge { padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+.badge-danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
 .stats-table { width: 100%; border-collapse: collapse; }
 .stats-table td { padding: 12px; border-bottom: 1px solid var(--border-color); }
 .stats-table td:first-child { color: var(--text-secondary); }
@@ -642,10 +655,85 @@ class CVMDashboard {
         try {
             this.updateConnectionStatus(true, 'Connected');
             await this.loadTrustGraphStats();
+            await this.loadRecentActivity();
             document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
         } catch (error) {
             console.error('Failed to load data:', error);
             this.updateConnectionStatus(false, 'Connection Failed: ' + error.message);
+        }
+    }
+    
+    async loadRecentActivity() {
+        try {
+            const result = await this.rpcCall('listtrustrelations', [20]);
+            console.log('Recent activity:', result);
+            
+            const activityDiv = document.getElementById('recentActivity');
+            if (!result || !result.edges || result.edges.length === 0) {
+                activityDiv.innerHTML = '<div class="activity-placeholder">No recent activity</div>';
+                return;
+            }
+            
+            // Sort by timestamp descending (newest first)
+            const edges = result.edges.sort((a, b) => b.timestamp - a.timestamp);
+            
+            let html = '';
+            edges.forEach(edge => {
+                const date = new Date(edge.timestamp * 1000);
+                const timeStr = date.toLocaleString();
+                
+                // Determine type and icon
+                let typeLabel = '';
+                let typeIcon = '';
+                let typeClass = '';
+                
+                if (edge.weight >= 80) {
+                    typeLabel = 'Trust Relation';
+                    typeIcon = '🤝';
+                    typeClass = 'activity-trust';
+                } else if (edge.weight >= 50) {
+                    typeLabel = 'Positive Vote';
+                    typeIcon = '✅';
+                    typeClass = 'activity-vote-pos';
+                } else if (edge.weight > 0) {
+                    typeLabel = 'Reputation Vote';
+                    typeIcon = '⭐';
+                    typeClass = 'activity-vote';
+                } else {
+                    typeLabel = 'Negative Report';
+                    typeIcon = '⚠️';
+                    typeClass = 'activity-report';
+                }
+                
+                // Truncate addresses
+                const fromShort = edge.from.substring(0, 8) + '...' + edge.from.substring(edge.from.length - 6);
+                const toShort = edge.to.substring(0, 8) + '...' + edge.to.substring(edge.to.length - 6);
+                
+                // Show reason if available
+                const reason = edge.reason ? `<br><span class="activity-reason">"${edge.reason}"</span>` : '';
+                const slashed = edge.slashed ? ' <span class="badge badge-danger">SLASHED</span>' : '';
+                
+                html += `
+                    <div class="activity-item ${typeClass}">
+                        <div class="activity-icon">${typeIcon}</div>
+                        <div class="activity-content">
+                            <div class="activity-type">${typeLabel}${slashed}</div>
+                            <div class="activity-desc">
+                                <strong>${fromShort}</strong> → <strong>${toShort}</strong>
+                                (Weight: ${edge.weight})
+                                ${reason}
+                            </div>
+                            <div class="activity-time">${timeStr}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            activityDiv.innerHTML = html;
+        } catch (error) {
+            console.error('Failed to load recent activity:', error);
+            document.getElementById('recentActivity').innerHTML = 
+                '<div class="activity-placeholder">Failed to load activity</div>';
         }
     }
     
@@ -904,17 +992,70 @@ class TrustGraphViz {
         const lg = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         const ng = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         
-        // Draw links with gradient
-        this.links.forEach(l => {
+        // Draw links with labels
+        this.links.forEach((l, idx) => {
             if (!l.source || !l.target) return;
+            
+            // Determine edge type, color and label
+            const edgeType = l.type || 'trust';
+            const edgeLabel = l.label || '';
+            let edgeColor = 'rgba(255, 255, 255, 0.4)';
+            let displayLabel = edgeLabel;
+            
+            // Set color based on type
+            if (edgeType === 'trust') {
+                edgeColor = 'rgba(16, 185, 129, 0.6)'; // Green
+                if (!displayLabel) displayLabel = '🤝 Trust';
+            } else if (edgeType === 'vote_positive') {
+                edgeColor = 'rgba(34, 197, 94, 0.6)'; // Bright green
+                if (!displayLabel) displayLabel = '✅ Vote';
+            } else if (edgeType === 'vote') {
+                edgeColor = 'rgba(59, 130, 246, 0.6)'; // Blue
+                if (!displayLabel) displayLabel = '⭐ Vote';
+            } else if (edgeType === 'negative') {
+                edgeColor = 'rgba(239, 68, 68, 0.6)'; // Red
+                if (!displayLabel) displayLabel = '⚠️ Report';
+            }
+            
+            // Show slashed status
+            if (l.slashed) {
+                displayLabel += ' ❌';
+                edgeColor = 'rgba(127, 29, 29, 0.8)'; // Dark red
+            }
+            
+            // Add count if multiple
+            if (l.count && l.count > 1) {
+                displayLabel += ` (×${l.count})`;
+            }
+            
+            // Draw line
             const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', l.source.x); line.setAttribute('y1', l.source.y);
-            line.setAttribute('x2', l.target.x); line.setAttribute('y2', l.target.y);
-            line.setAttribute('stroke', 'rgba(255, 255, 255, 0.4)');
-            line.setAttribute('stroke-width', Math.max(2, Math.sqrt(l.weight / 10) || 2));
+            line.setAttribute('x1', l.source.x); 
+            line.setAttribute('y1', l.source.y);
+            line.setAttribute('x2', l.target.x); 
+            line.setAttribute('y2', l.target.y);
+            line.setAttribute('stroke', edgeColor);
+            line.setAttribute('stroke-width', Math.max(2, Math.sqrt(Math.abs(l.weight) / 10) || 2));
             line.setAttribute('stroke-linecap', 'round');
             line.style.transition = 'all 0.3s ease';
+            line.style.cursor = 'pointer';
+            line.setAttribute('data-label', displayLabel);
             lg.appendChild(line);
+            
+            // Draw label on hover
+            line.onmouseenter = (e) => {
+                line.setAttribute('stroke-width', Math.max(4, Math.sqrt(Math.abs(l.weight) / 10) * 1.5));
+                line.setAttribute('stroke', edgeColor.replace('0.6', '1.0'));
+                
+                // Show tooltip-like label
+                this.showEdgeLabel(displayLabel, e);
+            };
+            
+            line.onmouseleave = () => {
+                line.setAttribute('stroke-width', Math.max(2, Math.sqrt(Math.abs(l.weight) / 10) || 2));
+                line.setAttribute('stroke', edgeColor);
+                this.hideTooltip();
+            };
         });
         
         // Draw nodes with beautiful effects
@@ -1068,6 +1209,13 @@ class TrustGraphViz {
     
     hideTooltip() {
         this.tooltip.style.opacity = '0';
+    }
+    
+    showEdgeLabel(label, event) {
+        this.tooltip.innerHTML = `<strong>${label}</strong>`;
+        this.tooltip.style.opacity = '1';
+        this.tooltip.style.left = (event.pageX + 15) + 'px';
+        this.tooltip.style.top = (event.pageY - 15) + 'px';
     }
     
     showModal(node) {
@@ -1645,18 +1793,42 @@ document.addEventListener('DOMContentLoaded', () => {
                 
                 const edgeKey = `${fromCluster}->${toCluster}`;
                 
+                // Determine edge type and label from weight and reason
+                let edgeType = 'trust';
+                let edgeLabel = edge.reason || '';
+                
+                if (edge.weight >= 80) {
+                    edgeType = 'trust';
+                    edgeLabel = edgeLabel || 'Trust Relation';
+                } else if (edge.weight >= 50) {
+                    edgeType = 'vote_positive';
+                    edgeLabel = edgeLabel || 'Positive Vote';
+                } else if (edge.weight > 0) {
+                    edgeType = 'vote';
+                    edgeLabel = edgeLabel || 'Reputation Vote';
+                } else {
+                    edgeType = 'negative';
+                    edgeLabel = edgeLabel || 'Negative Report';
+                }
+                
                 if (!clusterEdges.has(edgeKey)) {
                     clusterEdges.set(edgeKey, {
                         source: fromCluster,
                         target: toCluster,
                         weight: edge.weight,
-                        count: 1
+                        count: 1,
+                        type: edgeType,
+                        label: edgeLabel,
+                        slashed: edge.slashed || false
                     });
                 } else {
                     // Aggregate multiple edges between same clusters
                     const existing = clusterEdges.get(edgeKey);
                     existing.weight = Math.max(existing.weight, edge.weight);
                     existing.count++;
+                    if (!existing.label && edgeLabel) {
+                        existing.label = edgeLabel;
+                    }
                 }
             });
             
