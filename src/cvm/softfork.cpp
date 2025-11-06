@@ -410,11 +410,12 @@ bool CVMBondedVoteData::Deserialize(const std::vector<uint8_t>& data) {
 }
 
 std::vector<uint8_t> CVMDAODisputeData::Serialize() const {
+    // Keep OP_RETURN payload <= 80 bytes: omit human-readable reason here.
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-    ss << originalVoteTxHash;
-    ss << challenger;
-    ss << challengeBond;
-    ss << timestamp;
+    ss << originalVoteTxHash;   // 32 bytes
+    ss << challenger;           // 20 bytes
+    ss << challengeBond;        // 8 bytes
+    ss << timestamp;            // 4 bytes
     return std::vector<uint8_t>(ss.begin(), ss.end());
 }
 

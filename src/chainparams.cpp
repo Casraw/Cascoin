@@ -455,6 +455,16 @@ public:
         consensus.powTypeLimits.emplace_back(uint256S("0x000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // sha256d limit
         consensus.powTypeLimits.emplace_back(uint256S("0x000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // MinotaurX limit
 
+        // Cascoin: Hive: Consensus Fields (regtest specific defaults)
+        consensus.minBeeCost = 10000;
+        consensus.beeCostFactor = 2500;
+        consensus.beeGestationBlocks = 48*24;               // reasonable default
+        consensus.beeLifespanBlocks = 48*24*14;             // reasonable default
+        consensus.hiveTargetAdjustAggression = 30;
+        consensus.hiveBlockSpacingTarget = 2;
+        consensus.hiveBlockSpacingTargetTypical = 3;
+        consensus.hiveBlockSpacingTargetTypical_1_1 = 2;
+
         // Cascoin: Rialto-related consensus fields
         consensus.nickCreationAddress = "tKJjaPcSS3nXYBN4QmmYnSanr9oUhSXAZB";        // Nick creation address (regtest uses same as testnet)
         consensus.nickCreationCost3Char     = 100000000000; // Minimum costs to register a nick
@@ -526,10 +536,10 @@ public:
 static std::unique_ptr<CChainParams> globalChainParams;
 
 const CChainParams &Params() {
-    // Thread-safe check: Wait for globalChainParams to be initialized
-    // This can happen during early startup when multiple threads are starting
-    if (!globalChainParams) {
-        throw std::runtime_error("Error: Params() called before SelectParams()");
+    // Be robust against early thread startup: wait until SelectParams() ran
+    // instead of throwing across threads which can terminate the process.
+    while (!globalChainParams) {
+        MilliSleep(1); // avoid busy spin; utiltime.h provides MilliSleep
     }
     return *globalChainParams;
 }

@@ -689,5 +689,209 @@ CMutableTransaction CVMTransactionBuilder::BuildBondedVoteTransaction(
     return tx;
 }
 
+CMutableTransaction CVMTransactionBuilder::BuildDisputeTransaction(
+    CWallet* wallet,
+    const uint256& originalVoteTx,
+    CAmount challengeBond,
+    const std::string& reason,
+    CAmount& fee,
+    std::string& error
+) {
+    CMutableTransaction tx;
+    
+    if (!wallet) {
+        error = "Wallet not available";
+        return tx;
+    }
+    
+    // Validate parameters
+    if (challengeBond < COIN / 10) {
+        error = "Challenge bond must be at least 0.1 CAS";
+        return tx;
+    }
+    
+    LOCK2(cs_main, wallet->cs_wallet);
+    
+    // 1. Get challenger's address for bond script
+    CPubKey challengerKey;
+    if (!wallet->GetKeyFromPool(challengerKey)) {
+        error = "Failed to get key from wallet";
+        return tx;
+    }
+    uint160 challengerAddress = challengerKey.GetID();
+    
+    // 2. Build CVM dispute data
+    CVMDAODisputeData disputeData;
+    disputeData.challenger = challengerAddress;
+    disputeData.originalVoteTxHash = originalVoteTx;
+    disputeData.challengeBond = challengeBond;
+    disputeData.reason = reason.substr(0, 64); // Max 64 chars
+    disputeData.timestamp = static_cast<uint32_t>(GetTime());
+    
+    // 3. Create OP_RETURN output with dispute data
+    std::vector<uint8_t> disputeBytes = disputeData.Serialize();
+    CScript cvmScript = BuildCVMOpReturn(CVMOpType::DAO_DISPUTE, disputeBytes);
+    
+    CTxOut cvmOutput(0, cvmScript);
+    tx.vout.push_back(cvmOutput);
+    
+    // 4. Create bond script and add challenge bond output
+    CScript bondScript = CreateBondScript(challengerAddress, 2880); // 2880 blocks = ~2 days
+    if (!AddBondOutput(tx, bondScript, challengeBond)) {
+        error = "Failed to add challenge bond output";
+        return CMutableTransaction();
+    }
+    
+    // 5. Estimate fee
+    CAmount estimatedFee = CalculateFee(tx);
+    CAmount totalNeeded = estimatedFee + challengeBond + DUST_THRESHOLD;
+    
+    // 6. Select coins
+    std::vector<COutput> selectedCoins;
+    CAmount totalSelected = 0;
+    
+    if (!SelectCoins(wallet, totalNeeded, nullptr, selectedCoins, totalSelected)) {
+        error = strprintf("Insufficient funds: need %s", FormatMoney(totalNeeded));
+        return CMutableTransaction();
+    }
+    
+    // 7. Add inputs
+    for (const COutput& coin : selectedCoins) {
+        CTxIn input(coin.tx->GetHash(), coin.i);
+        tx.vin.push_back(input);
+    }
+    
+    // 8. Calculate actual fee and change
+    CAmount actualFee = CalculateFee(tx);
+    CAmount change = totalSelected - actualFee - challengeBond;
+    
+    // 9. Add change output if not dust
+    if (change > DUST_THRESHOLD) {
+        if (!AddChangeOutput(tx, wallet, change)) {
+            error = "Failed to add change output";
+            return CMutableTransaction();
+        }
+        // Recalculate
+        actualFee = CalculateFee(tx);
+        change = totalSelected - actualFee - challengeBond;
+        if (change < 0) {
+            error = "Insufficient funds after adding change";
+            return CMutableTransaction();
+        }
+    } else {
+        actualFee = totalSelected - challengeBond;
+    }
+    
+    fee = actualFee;
+    
+    LogPrintf("CVM: Built dispute transaction: challenger=%s, vote_tx=%s, bond=%s, fee=%s\n",
+              HexStr(challengerAddress), originalVoteTx.ToString(),
+              FormatMoney(challengeBond), FormatMoney(fee));
+    
+    return tx;
+}
+
+CMutableTransaction CVMTransactionBuilder::BuildDisputeVoteTransaction(
+    CWallet* wallet,
+    const uint256& disputeId,
+    bool supportSlash,
+    CAmount stake,
+    CAmount& fee,
+    std::string& error
+) {
+    CMutableTransaction tx;
+    
+    if (!wallet) {
+        error = "Wallet not available";
+        return tx;
+    }
+    
+    // Validate parameters
+    if (stake < COIN / 10) {
+        error = "Stake must be at least 0.1 CAS";
+        return tx;
+    }
+    
+    LOCK2(cs_main, wallet->cs_wallet);
+    
+    // 1. Get voter's address for stake script
+    CPubKey voterKey;
+    if (!wallet->GetKeyFromPool(voterKey)) {
+        error = "Failed to get key from wallet";
+        return tx;
+    }
+    uint160 voterAddress = voterKey.GetID();
+    
+    // 2. Build CVM dispute vote data
+    CVMDAOVoteData voteData;
+    voteData.daoMember = voterAddress;
+    voteData.disputeId = disputeId;
+    voteData.supportSlash = supportSlash;
+    voteData.stake = stake;
+    voteData.timestamp = static_cast<uint32_t>(GetTime());
+    
+    // 3. Create OP_RETURN output with vote data
+    std::vector<uint8_t> voteBytes = voteData.Serialize();
+    CScript cvmScript = BuildCVMOpReturn(CVMOpType::DAO_VOTE, voteBytes);
+    
+    CTxOut cvmOutput(0, cvmScript);
+    tx.vout.push_back(cvmOutput);
+    
+    // 4. Create stake script and add stake output
+    CScript stakeScript = CreateBondScript(voterAddress, 2880); // 2880 blocks = ~2 days
+    if (!AddBondOutput(tx, stakeScript, stake)) {
+        error = "Failed to add stake output";
+        return CMutableTransaction();
+    }
+    
+    // 5. Estimate fee
+    CAmount estimatedFee = CalculateFee(tx);
+    CAmount totalNeeded = estimatedFee + stake + DUST_THRESHOLD;
+    
+    // 6. Select coins
+    std::vector<COutput> selectedCoins;
+    CAmount totalSelected = 0;
+    
+    if (!SelectCoins(wallet, totalNeeded, nullptr, selectedCoins, totalSelected)) {
+        error = strprintf("Insufficient funds: need %s", FormatMoney(totalNeeded));
+        return CMutableTransaction();
+    }
+    
+    // 7. Add inputs
+    for (const COutput& coin : selectedCoins) {
+        CTxIn input(coin.tx->GetHash(), coin.i);
+        tx.vin.push_back(input);
+    }
+    
+    // 8. Calculate actual fee and change
+    CAmount actualFee = CalculateFee(tx);
+    CAmount change = totalSelected - actualFee - stake;
+    
+    // 9. Add change output if not dust
+    if (change > DUST_THRESHOLD) {
+        if (!AddChangeOutput(tx, wallet, change)) {
+            error = "Failed to add change output";
+            return CMutableTransaction();
+        }
+        // Recalculate
+        actualFee = CalculateFee(tx);
+        change = totalSelected - actualFee - stake;
+        if (change < 0) {
+            error = "Insufficient funds after adding change";
+            return CMutableTransaction();
+        }
+    } else {
+        actualFee = totalSelected - stake;
+    }
+    
+    fee = actualFee;
+    
+    LogPrintf("CVM: Built dispute vote transaction: voter=%s, dispute=%s, slash=%d, stake=%s, fee=%s\n",
+              HexStr(voterAddress), disputeId.ToString(), supportSlash,
+              FormatMoney(stake), FormatMoney(fee));
+    
+    return tx;
+}
+
 } // namespace CVM
 

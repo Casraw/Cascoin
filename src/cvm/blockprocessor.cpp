@@ -19,9 +19,6 @@ void CVMBlockProcessor::ProcessBlock(
     int height,
     CVMDatabase& db
 ) {
-    LogPrintf("CVM: Processing block %d with %d transactions\n", 
-             height, block.vtx.size());
-    
     int cvmTxCount = 0;
     
     // Process all transactions in block
@@ -31,14 +28,10 @@ void CVMBlockProcessor::ProcessBlock(
             continue;
         }
         
-        LogPrintf("CVM: Checking TX %s for CVM OP_RETURN\n", tx->GetHash().ToString());
-        
         // Check if transaction contains CVM data
         int cvmOutputIndex = FindCVMOpReturn(*tx);
-        LogPrintf("CVM: FindCVMOpReturn returned %d for TX %s\n", cvmOutputIndex, tx->GetHash().ToString());
         
         if (cvmOutputIndex >= 0) {
-            LogPrintf("CVM: Found CVM TX at output %d, processing...\n", cvmOutputIndex);
             ProcessTransaction(*tx, height, db);
             cvmTxCount++;
         }

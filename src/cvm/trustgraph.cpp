@@ -427,19 +427,41 @@ bool TrustGraph::SlashVote(const uint256& voteTxHash, const uint256& slashTxHash
 }
 
 bool TrustGraph::CreateDispute(const DAODispute& dispute) {
-    // Store dispute (placeholder)
-    LogPrint(BCLog::ALL, "TrustGraph: Would store dispute in database\n");
-    
+    // Serialize dispute
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << dispute;
+    std::vector<uint8_t> bytes(ss.begin(), ss.end());
+
+    // Primary key
+    std::string key = std::string("dispute_") + dispute.disputeId.ToString();
+    if (!database.WriteGeneric(key, bytes)) {
+        LogPrintf("TrustGraph: Failed to store dispute %s\n", dispute.disputeId.ToString());
+        return false;
+    }
+
+    // Index by vote tx for quick lookup (optional)
+    std::string idx = std::string("dispute_by_vote_") + dispute.originalVoteTx.ToString();
+    database.WriteGeneric(idx, bytes);
+
     LogPrintf("TrustGraph: Created dispute %s for vote %s\n",
               dispute.disputeId.ToString(), dispute.originalVoteTx.ToString());
-    
     return true;
 }
 
 bool TrustGraph::GetDispute(const uint256& disputeId, DAODispute& dispute) const {
-    // Placeholder: In production, would read from database
-    LogPrint(BCLog::ALL, "TrustGraph: Would read dispute from database\n");
-    return false; // Not found for now
+    std::string key = std::string("dispute_") + disputeId.ToString();
+    std::vector<uint8_t> data;
+    if (!database.ReadGeneric(key, data)) {
+        return false;
+    }
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> dispute;
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraph: Failed to deserialize dispute: %s\n", e.what());
+        return false;
+    }
 }
 
 bool TrustGraph::VoteOnDispute(
@@ -471,8 +493,15 @@ bool TrustGraph::VoteOnDispute(
     dispute.daoVotes[daoMember] = support;
     dispute.daoStakes[daoMember] = stake;
     
-    // Update in database (placeholder)
-    LogPrint(BCLog::ALL, "TrustGraph: Would update dispute in database\n");
+    // Update in database
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << dispute;
+    std::vector<uint8_t> bytes(ss.begin(), ss.end());
+    std::string key = std::string("dispute_") + disputeId.ToString();
+    if (!database.WriteGeneric(key, bytes)) {
+        LogPrintf("TrustGraph: Failed to update dispute %s\n", disputeId.ToString());
+        return false;
+    }
     
     LogPrint(BCLog::ALL, "TrustGraph: DAO vote recorded: %s on dispute %s (support: %d, stake: %d)\n",
              daoMember.ToString(), disputeId.ToString(), support, stake);
@@ -527,8 +556,15 @@ bool TrustGraph::ResolveDispute(const uint256& disputeId) {
     dispute.slashDecision = slashDecision;
     dispute.resolvedTime = GetTime();
     
-    // Store updated dispute (placeholder)
-    LogPrint(BCLog::ALL, "TrustGraph: Would store updated dispute in database\n");
+    // Store updated dispute
+    CDataStream ss2(SER_DISK, CLIENT_VERSION);
+    ss2 << dispute;
+    std::vector<uint8_t> bytes2(ss2.begin(), ss2.end());
+    std::string key = std::string("dispute_") + disputeId.ToString();
+    if (!database.WriteGeneric(key, bytes2)) {
+        LogPrintf("TrustGraph: Failed to store resolved dispute %s\n", disputeId.ToString());
+        return false;
+    }
     
     // If slash decision, slash the vote
     if (slashDecision) {

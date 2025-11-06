@@ -160,6 +160,58 @@ public:
     );
     
     /**
+     * Build DAO dispute creation transaction
+     * 
+     * Creates a transaction with:
+     * - Input(s): Funding from wallet (fee + challenge bond)
+     * - Output 0: OP_RETURN with dispute data
+     * - Output 1: Challenge bond output (locked P2SH)
+     * - Output 2: Change back to wallet
+     * 
+     * @param wallet Wallet to fund transaction
+     * @param originalVoteTx Transaction hash of vote being disputed
+     * @param challengeBond CAS to lock as challenge bond
+     * @param reason Human-readable challenge reason
+     * @param fee Returns calculated fee
+     * @param error Returns error message if fails
+     * @return Transaction (empty if failed)
+     */
+    static CMutableTransaction BuildDisputeTransaction(
+        CWallet* wallet,
+        const uint256& originalVoteTx,
+        CAmount challengeBond,
+        const std::string& reason,
+        CAmount& fee,
+        std::string& error
+    );
+    
+    /**
+     * Build DAO dispute vote transaction
+     * 
+     * Creates a transaction with:
+     * - Input(s): Funding from wallet (fee + stake)
+     * - Output 0: OP_RETURN with dispute vote data
+     * - Output 1: Stake output (locked P2SH)
+     * - Output 2: Change back to wallet
+     * 
+     * @param wallet Wallet to fund transaction
+     * @param disputeId Dispute ID being voted on
+     * @param supportSlash true=slash, false=keep
+     * @param stake CAS to stake (voting power)
+     * @param fee Returns calculated fee
+     * @param error Returns error message if fails
+     * @return Transaction (empty if failed)
+     */
+    static CMutableTransaction BuildDisputeVoteTransaction(
+        CWallet* wallet,
+        const uint256& disputeId,
+        bool supportSlash,
+        CAmount stake,
+        CAmount& fee,
+        std::string& error
+    );
+    
+    /**
      * Sign a CVM transaction
      * 
      * @param wallet Wallet with keys

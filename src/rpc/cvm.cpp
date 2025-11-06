@@ -1796,12 +1796,15 @@ UniValue listdisputes(const JSONRPCRequest& request)
     UniValue result(UniValue::VOBJ);
     UniValue disputesArray(UniValue::VARR);
     
-    // Get all dispute keys from database
-    std::vector<std::string> keys;
-    CVM::g_cvmdb->GetAllKeys("dispute_", keys);
+    // Get all dispute keys from database (prefix scan)
+    std::vector<std::string> keys = CVM::g_cvmdb->ListKeysWithPrefix("dispute_");
     
     int count = 0;
     for (const auto& key : keys) {
+        // Skip secondary index entries
+        if (key.compare(0, std::string("dispute_by_vote_").size(), "dispute_by_vote_") == 0) {
+            continue;
+        }
         std::vector<uint8_t> data;
         if (CVM::g_cvmdb->ReadGeneric(key, data)) {
             try {
@@ -1944,6 +1947,118 @@ UniValue getdispute(const JSONRPCRequest& request)
 }
 
 /**
+ * createdispute - Create a DAO dispute to challenge a bonded vote
+ */
+UniValue createdispute(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+            "createdispute \"vote_txid\" [bond] [reason]\n"
+            "\nChallenge a bonded vote as malicious. Creates a DAO dispute.\n"
+            "\nArguments:\n"
+            "1. vote_txid        (string, required) Transaction ID of bonded vote to challenge\n"
+            "2. bond             (numeric, optional) Challenge bond amount (default: 1.0 CAS)\n"
+            "3. reason           (string, optional) Reason for challenge (max 64 chars)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"hash\",\n"
+            "  \"dispute_id\": \"hash\",\n"
+            "  \"vote_tx\": \"hash\",\n"
+            "  \"bond\": n,\n"
+            "  \"fee\": n\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("createdispute", "\"abc123...\" 2.0 \"Fake vote\"")
+            + HelpExampleCli("createdispute", "\"abc123...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    
+    uint256 voteTxId = ParseHashV(request.params[0], "vote_txid");
+    
+    // Parse bond amount
+    CAmount challengeBond = COIN; // Default 1.0 CAS
+    if (request.params.size() > 1 && !request.params[1].isNull()) {
+        challengeBond = AmountFromValue(request.params[1]);
+    }
+    
+    if (challengeBond < COIN / 10) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Minimum challenge bond is 0.1 CAS");
+    }
+    
+    // Parse reason
+    std::string reason = "";
+    if (request.params.size() > 2 && !request.params[2].isNull()) {
+        reason = request.params[2].get_str();
+    }
+    
+    // Build on-chain transaction
+    std::string error;
+    CAmount fee;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildDisputeTransaction(
+        pwallet, voteTxId, challengeBond, reason, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast to network
+    CTransactionRef tx = MakeTransactionRef(mtx);
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to broadcast transaction: " + error);
+    }
+    
+    // The dispute ID is the transaction hash
+    uint256 disputeId = txid;
+
+    // Persist dispute immediately (so listdisputes works pre-confirmation)
+    try {
+        if (CVM::g_cvmdb) {
+            CVM::TrustGraph tg(*CVM::g_cvmdb);
+            CVM::DAODispute rec;
+            rec.disputeId = disputeId;
+            rec.originalVoteTx = voteTxId;
+            // Best effort: we don't resolve challenger here; the block processor will fill authoritative values
+            rec.challenger = uint160();
+            rec.challengeBond = challengeBond;
+            rec.challengeReason = reason;
+            rec.createdTime = GetTime();
+            rec.resolved = false;
+            tg.CreateDispute(rec);
+        }
+    } catch (...) {
+        // Non-fatal: persistence will still occur on block connect
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.ToString());
+    result.pushKV("dispute_id", disputeId.ToString());
+    result.pushKV("vote_tx", voteTxId.ToString());
+    result.pushKV("bond", ValueFromAmount(challengeBond));
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("status", "Dispute created and broadcast to network");
+    
+    return result;
+}
+
+/**
  * votedispute - Vote on a DAO dispute as a DAO member
  */
 UniValue votedispute(const JSONRPCRequest& request)
@@ -1953,14 +2068,14 @@ UniValue votedispute(const JSONRPCRequest& request)
         return NullUniValue;
     }
     
-    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
         throw std::runtime_error(
-            "votedispute \"dispute_id\" support_slash \"from_address\" [stake]\n"
+            "votedispute \"dispute_id\" support_slash [from_address] [stake]\n"
             "\nVote on a DAO dispute as a DAO member.\n"
             "\nArguments:\n"
             "1. dispute_id       (string, required) The dispute ID\n"
-            "2. support_slash    (boolean, required) true = slash the vote, false = keep the vote\n"
-            "3. from_address     (string, required) Vote from this address\n"
+            "2. support_slash    (boolean, required) true/false (also accepts 1/0, yes/no)\n"
+            "3. from_address     (string, optional) Any standard address (P2PKH, P2SH, P2WPKH)\n"
             "4. stake            (numeric, optional) Amount of CAS to stake (default: 1.0)\n"
             "\nResult:\n"
             "{\n"
@@ -1981,17 +2096,42 @@ UniValue votedispute(const JSONRPCRequest& request)
     LOCK2(cs_main, pwallet->cs_wallet);
     
     uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
-    bool supportSlash = request.params[1].get_bool();
-    
-    // Get voter address (required)
-    CTxDestination voterDest = DecodeDestination(request.params[2].get_str());
-    if (!IsValidDestination(voterDest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    // Accept flexible boolean formats: true/false, 1/0, "true"/"false"/"yes"/"no"
+    bool supportSlash = false;
+    if (request.params[1].isBool()) {
+        supportSlash = request.params[1].get_bool();
+    } else if (request.params[1].isNum()) {
+        supportSlash = request.params[1].get_int() != 0;
+    } else if (request.params[1].isStr()) {
+        std::string s = request.params[1].get_str();
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        supportSlash = (s == "true" || s == "1" || s == "yes" || s == "y");
+    } else {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "support_slash must be boolean/0-1/yes-no");
     }
     
-    // Get stake amount (optional, default 1.0 CAS)
+    // Optional parameters: from_address and stake
+    CTxDestination voterDest; bool haveDest = false;
     CAmount stake = COIN;
-    if (request.params.size() > 3 && !request.params[3].isNull()) {
+    if (request.params.size() >= 3 && !request.params[2].isNull()) {
+        if (request.params[2].isStr()) {
+            std::string s = request.params[2].get_str();
+            voterDest = DecodeDestination(s);
+            if (IsValidDestination(voterDest)) {
+                haveDest = true;
+            } else {
+                // If not a valid address, accept numeric-as-string stake (e.g. "0.5")
+                try {
+                    stake = AmountFromValue(request.params[2]);
+                } catch (...) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address or stake");
+                }
+            }
+        } else if (request.params[2].isNum()) {
+            stake = AmountFromValue(request.params[2]);
+        }
+    }
+    if (request.params.size() >= 4 && !request.params[3].isNull()) {
         stake = AmountFromValue(request.params[3]);
     }
     
@@ -1999,24 +2139,64 @@ UniValue votedispute(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Minimum stake is 0.1 CAS");
     }
     
-    const CKeyID* keyID = boost::get<CKeyID>(&voterDest);
-    if (!keyID) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address does not refer to a key");
+    uint160 voterAddress;
+    if (haveDest) {
+        const CKeyID* keyID = boost::get<CKeyID>(&voterDest);
+        const CScriptID* scid = boost::get<CScriptID>(&voterDest);
+#if defined(ENABLE_WALLET)
+        const WitnessV0KeyHash* wkh = boost::get<WitnessV0KeyHash>(&voterDest);
+#else
+        const void* wkh = nullptr;
+#endif
+        if (keyID)       voterAddress = uint160(*keyID);
+        else if (scid)   voterAddress = uint160(*scid);
+        else if (wkh)    voterAddress = uint160(*wkh);
+        else             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unsupported address type for identity (use P2PKH/P2SH/P2WPKH)");
+    } else {
+        CPubKey fresh;
+        if (!pwallet->GetKeyFromPool(fresh)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to get key from wallet");
+        }
+        voterAddress = fresh.GetID();
+        voterDest = CKeyID(fresh.GetID());
     }
-    uint160 voterAddress(*keyID);
     
-    // Vote on dispute
+    // Build on-chain transaction
+    std::string error;
+    CAmount fee;
+    CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildDisputeVoteTransaction(
+        pwallet, disputeId, supportSlash, stake, fee, error
+    );
+    
+    if (mtx.vin.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to build transaction: " + error);
+    }
+    
+    // Sign transaction
+    if (!CVM::CVMTransactionBuilder::SignTransaction(pwallet, mtx, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign transaction: " + error);
+    }
+    
+    // Broadcast to network
+    CTransactionRef tx = MakeTransactionRef(mtx);
+    uint256 txid;
+    if (!CVM::CVMTransactionBuilder::BroadcastTransaction(*tx, txid, error)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to broadcast transaction: " + error);
+    }
+    
+    // Also record in database (for fast lookups)
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
-    if (!trustGraph.VoteOnDispute(disputeId, voterAddress, supportSlash, stake)) {
-        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to record vote");
-    }
+    trustGraph.VoteOnDispute(disputeId, voterAddress, supportSlash, stake);
     
+    // Build result
     UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", txid.ToString());
     result.pushKV("dispute_id", disputeId.ToString());
     result.pushKV("voter", EncodeDestination(voterDest));
     result.pushKV("support_slash", supportSlash);
     result.pushKV("stake", ValueFromAmount(stake));
-    result.pushKV("status", "Vote recorded successfully");
+    result.pushKV("fee", ValueFromAmount(fee));
+    result.pushKV("status", "Vote broadcast to network");
     
     return result;
 }
@@ -2047,6 +2227,7 @@ static const CRPCCommand commands[] =
     { "wallet_cluster",     "buildwalletclusters",   &buildwalletclusters,    {} },
     { "wallet_cluster",     "getwalletcluster",      &getwalletcluster,       {"address"} },
     { "wallet_cluster",     "geteffectivetrust",     &geteffectivetrust,      {"target","viewer"} },
+    { "dao",                "createdispute",         &createdispute,          {"vote_txid","bond","reason"} },
     { "dao",                "listdisputes",          &listdisputes,           {"status"} },
     { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
     { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","from_address","stake"} },

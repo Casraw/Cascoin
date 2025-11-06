@@ -154,6 +154,7 @@ struct CVMDAODisputeData {
     uint256 originalVoteTxHash;    // Vote being disputed
     uint160 challenger;            // Who challenges
     CAmount challengeBond;         // Challenger's bond
+    std::string reason;            // Challenge reason (max 64 chars)
     uint32_t timestamp;
     
     std::vector<uint8_t> Serialize() const;

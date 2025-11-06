@@ -290,6 +290,11 @@ UniValue generatetoaddress(const JSONRPCRequest& request)
         );
 
     int nGenerate = request.params[0].get_int();
+    // Safety guard: extremely large nblocks responses can exhaust memory/HTTP worker.
+    // Encourage batching instead of single huge responses.
+    if (nGenerate > 50000) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "nblocks too large; please use batches of 50000 or less");
+    }
     uint64_t nMaxTries = 1000000;
     if (!request.params[2].isNull()) {
         nMaxTries = request.params[2].get_int();
