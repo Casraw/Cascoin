@@ -74,6 +74,11 @@ public:
     int64_t GetTimestamp() const { return timestamp; }
     
     // Execution state
+    // Undefine Windows ERROR macro to avoid conflicts
+    #ifdef ERROR
+    #undef ERROR
+    #endif
+    
     enum class Status {
         RUNNING,
         STOPPED,
@@ -84,7 +89,7 @@ public:
         STACK_UNDERFLOW,
         INVALID_OPCODE,
         INVALID_JUMP,
-        ERROR
+        VM_ERROR  // Renamed from ERROR to avoid Windows macro conflict
     };
     
     void SetStatus(Status s) { status = s; }

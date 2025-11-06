@@ -21,13 +21,13 @@ CVM::~CVM() {
 bool CVM::Execute(const std::vector<uint8_t>& code, VMState& state, ContractStorage* storage) {
     if (code.empty()) {
         state.SetError("Empty bytecode");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
     if (code.size() > MAX_CODE_SIZE) {
         state.SetError("Code size exceeds maximum");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
@@ -163,20 +163,20 @@ bool CVM::HandlePush(const std::vector<uint8_t>& code, VMState& state) {
     size_t pc = state.GetPC();
     if (pc + 1 >= code.size()) {
         state.SetError("PUSH: Not enough bytes for size");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
     uint8_t size = code[pc + 1];
     if (size == 0 || size > 32) {
         state.SetError("PUSH: Invalid size");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
     if (pc + 2 + size > code.size()) {
         state.SetError("PUSH: Not enough bytes for value");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
@@ -346,7 +346,7 @@ bool CVM::HandleJump(OpCode opcode, const std::vector<uint8_t>& code, VMState& s
 bool CVM::HandleStorage(OpCode opcode, VMState& state, ContractStorage* storage) {
     if (!storage) {
         state.SetError("Storage: No storage backend");
-        state.SetStatus(VMState::Status::ERROR);
+        state.SetStatus(VMState::Status::VM_ERROR);
         return false;
     }
     
