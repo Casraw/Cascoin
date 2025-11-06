@@ -1014,6 +1014,58 @@ else
   fi
 fi
 
+dnl EVMC (Ethereum Virtual Machine C API) check
+AC_ARG_ENABLE([evmc],
+  [AS_HELP_STRING([--disable-evmc],
+  [disable EVMC support for EVM compatibility (enabled by default)])],
+  [use_evmc=$enableval],
+  [use_evmc=yes])
+
+if test "x$use_evmc" = "xyes"; then
+  if test x$use_pkgconfig = xyes; then
+    m4_ifdef(
+      [PKG_CHECK_MODULES],
+      [
+        PKG_CHECK_MODULES([EVMC], [evmc >= 10.0.0], [have_evmc=yes], [have_evmc=no])
+        if test "x$have_evmc" = "xyes"; then
+          PKG_CHECK_MODULES([EVMONE], [evmone >= 0.10.0], [have_evmone=yes], [have_evmone=no])
+        fi
+      ],
+      [have_evmc=no]
+    )
+  else
+    AC_CHECK_HEADER([evmc/evmc.h], [
+      AC_CHECK_LIB([evmc], [evmc_create_example_vm], [
+        EVMC_LIBS="-levmc"
+        have_evmc=yes
+        AC_CHECK_HEADER([evmone/evmone.h], [
+          AC_CHECK_LIB([evmone], [evmone_create], [
+            EVMONE_LIBS="-levmone"
+            have_evmone=yes
+          ], [have_evmone=no])
+        ], [have_evmone=no])
+      ], [have_evmc=no])
+    ], [have_evmc=no])
+  fi
+
+  if test "x$have_evmc" = "xyes" && test "x$have_evmone" = "xyes"; then
+    AC_DEFINE([ENABLE_EVMC], [1], [Define to 1 to enable EVMC support])
+    EVMC_CFLAGS="$EVMC_CFLAGS $EVMONE_CFLAGS"
+    EVMC_LIBS="$EVMC_LIBS $EVMONE_LIBS"
+  else
+    if test "x$use_evmc" = "xyes"; then
+      AC_MSG_ERROR([EVMC or evmone libraries not found. Install EVMC >= 10.0.0 and evmone >= 0.10.0, or use --disable-evmc])
+    fi
+    use_evmc=no
+    AC_DEFINE([ENABLE_EVMC], [0], [Define to 1 to enable EVMC support])
+  fi
+else
+  AC_DEFINE([ENABLE_EVMC], [0], [Define to 1 to enable EVMC support])
+fi
+
+AC_SUBST(EVMC_CFLAGS)
+AC_SUBST(EVMC_LIBS)
+
 save_CXXFLAGS="${CXXFLAGS}"
 CXXFLAGS="${CXXFLAGS} ${CRYPTO_CFLAGS} ${SSL_CFLAGS}"
 AC_CHECK_DECLS([EVP_MD_CTX_new],,,[AC_INCLUDES_DEFAULT
@@ -1348,6 +1400,7 @@ if test x$bitcoin_enable_qt != xno; then
     echo "    with qr     = $use_qr"
 fi
 echo "  with zmq      = $use_zmq"
+echo "  with evmc     = $use_evmc"
 echo "  with test     = $use_tests"
 echo "  with bench    = $use_bench"
 echo "  with upnp     = $use_upnp"

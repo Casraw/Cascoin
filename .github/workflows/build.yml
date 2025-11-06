@@ -44,11 +44,102 @@ jobs:
             qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
             libqt6core5compat6-dev \
             binutils ccache \
-            libdb-dev libdb++-dev || true
+            libdb-dev libdb++-dev \
+            cmake git || true
           # Fallback: install all Boost dev libs if specific ones are insufficient on this runner
           sudo apt-get install -y libboost-all-dev || true
           # Try specific BDB package name if the generic one isn't available
           sudo apt-get install -y libdb5.3++-dev || true
+
+      - name: Build and install EVMC and evmone
+        shell: bash
+        run: |
+          # Install additional dependencies for EVMC/evmone
+          sudo apt-get install -y \
+            cmake git build-essential \
+            libgmp-dev \
+            ninja-build || true
+          
+          # Build EVMC
+          echo "Building EVMC..."
+          cd /tmp
+          rm -rf evmc evmone  # Clean up any existing directories
+          git clone --recursive https://github.com/ethereum/evmc.git
+          cd evmc
+          git checkout v12.1.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMC_TESTING=OFF \
+            -DEVMC_TOOLS=OFF \
+            -DEVMC_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Build evmone
+          echo "Building evmone..."
+          cd /tmp
+          git clone --recursive https://github.com/ethereum/evmone.git
+          cd evmone
+          git checkout v0.18.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMONE_TESTING=OFF \
+            -DEVMONE_FUZZING=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Update library cache and verify installation
+          sudo ldconfig
+          
+          # Create pkg-config files (required for configure script)
+          echo "Creating pkg-config files..."
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          
+          # Create EVMC pkg-config file
+          sudo tee /usr/local/lib/pkgconfig/evmc.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmc
+          Description: Ethereum Virtual Machine Connector
+          Version: 12.1.0
+          Libs: -L${libdir} -levmc-loader -levmc-instructions
+          Cflags: -I${includedir}
+          EOF
+          
+          # Create evmone pkg-config file
+          sudo tee /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmone
+          Description: Fast Ethereum Virtual Machine implementation
+          Version: 0.18.0
+          Requires: evmc
+          Libs: -L${libdir} -levmone
+          Cflags: -I${includedir}
+          EOF
+          
+          # Verify EVMC installation
+          echo "Verifying EVMC installation..."
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          pkg-config --exists evmc && echo "✓ EVMC pkg-config found" || echo "✗ EVMC pkg-config not found"
+          pkg-config --exists evmone && echo "✓ evmone pkg-config found" || echo "✗ evmone pkg-config not found"
+          pkg-config --modversion evmc || echo "EVMC version not available"
+          pkg-config --modversion evmone || echo "evmone version not available"
+          ls -la /usr/local/lib/libevmc* || echo "EVMC libraries not found in /usr/local/lib"
+          ls -la /usr/local/lib/libevmone* || echo "evmone libraries not found in /usr/local/lib"
+          ls -la /usr/local/include/evmc/ || echo "EVMC headers not found in /usr/local/include"
 
       - name: Ensure ccache directory exists
         shell: bash
@@ -72,21 +163,37 @@ jobs:
         shell: bash
         run: ./autogen.sh
 
-      - name: Configure (Qt6 GUI, wallet, incompatible BDB)
+      - name: Configure (Qt6 GUI, wallet, incompatible BDB, EVMC)
         shell: bash
         run: |
+          # Set PKG_CONFIG_PATH to find EVMC
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Verify EVMC can be found
+          echo "Checking EVMC availability..."
+          pkg-config --exists evmc && echo "✓ EVMC found via pkg-config" || echo "✗ EVMC not found via pkg-config"
+          pkg-config --modversion evmc || echo "Could not get EVMC version"
+          
           CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
           MOC=/usr/lib/qt6/libexec/moc \
           UIC=/usr/lib/qt6/libexec/uic \
           RCC=/usr/lib/qt6/libexec/rcc \
           LRELEASE=/usr/lib/qt6/bin/lrelease \
           LUPDATE=/usr/lib/qt6/bin/lupdate \
+          PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" \
           ./configure \
             --with-gui=qt6 \
             --with-boost=/usr \
             --with-boost-libdir=/usr/lib/x86_64-linux-gnu \
             --enable-wallet \
+            --enable-evmc \
+            --with-evmc=/usr/local \
+            --with-evmone=/usr/local \
             --with-incompatible-bdb
+          
+          # Check if EVMC was properly detected
+          echo "Checking configure results for EVMC..."
+          grep -i "evmc" config.log | tail -10 || echo "No EVMC entries in config.log"
 
       - name: Build
         shell: bash

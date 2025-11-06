@@ -18,7 +18,7 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS)
+BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS)
 
 BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
 BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
@@ -193,7 +193,12 @@ BITCOIN_CORE_H = \
   cvm/graphanalysis.h \
   cvm/securehat.h \
   cvm/walletcluster.h \
-  cvm/cvmtx.h
+  cvm/cvmtx.h \
+  cvm/evmc_host.h \
+  cvm/trust_context.h \
+  cvm/bytecode_detector.h \
+  cvm/enhanced_vm.h \
+  cvm/evm_engine.h
 
 
 obj/build.h: FORCE
@@ -263,6 +268,11 @@ libbitcoin_server_a_SOURCES = \
   cvm/securehat.cpp \
   cvm/walletcluster.cpp \
   cvm/cvmtx.cpp \
+  cvm/evmc_host.cpp \
+  cvm/trust_context.cpp \
+  cvm/bytecode_detector.cpp \
+  cvm/enhanced_vm.cpp \
+  cvm/evm_engine.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 
@@ -505,7 +515,7 @@ cascoind_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(EVMC_LIBS)
 
 # bitcoin-cli binary #
 cascoin_cli_SOURCES = bitcoin-cli.cpp
@@ -523,7 +533,7 @@ cascoin_cli_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO)
 
-cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(EVMC_LIBS)
 #
 
 # bitcoin-tx binary #
@@ -544,7 +554,7 @@ cascoin_tx_LDADD = \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1)
 
-cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS)
 #
 
 # bitcoinconsensus library #
@@ -557,7 +567,7 @@ if GLIBC_BACK_COMPAT
 endif
 
 libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
-libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
+libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS) $(EVMC_LIBS)
 libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
