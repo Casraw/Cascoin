@@ -2043,7 +2043,9 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                                REJECT_INVALID, "bad-cb-amount");
 
     // Cascoin: Ensure that lastScryptBlock+1 coinbase TX pays to the premine address
-    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1) {
+    // Skip this check for regtest as it uses generatetoaddress
+    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1 && 
+        chainparams.NetworkIDString() != "regtest") {
         if (block.vtx[0]->vout[0].scriptPubKey.size() == 1) {
             LogPrintf("ConnectBlock(): allowing mine\n");
         } else if (block.vtx[0]->vout[0].scriptPubKey != chainparams.GetConsensus().premineOutputScript) {
