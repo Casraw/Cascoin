@@ -2,10 +2,11 @@ name: Build Cascoin (Qt6 GUI + Wallet)
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ '*' ]
     tags:
       - 'v*'
   pull_request:
+    branches: [ '*' ]
   workflow_dispatch:
     inputs:
       publish:
@@ -15,6 +16,11 @@ on:
       tag:
         description: 'Tag-Name (bei manueller Ausführung)'
         required: false
+      skip_release:
+        description: 'Release-Job überspringen?'
+        required: false
+        default: 'true'
+        type: boolean
 
 jobs:
   build-linux:
@@ -373,7 +379,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-build
+          name: cascoin-linux-build-${{ github.ref_name }}
           path: |
             src/qt/*-qt
             src/*coind
@@ -384,7 +390,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution
+          name: cascoin-linux-x86_64-distribution-${{ github.ref_name }}
           path: |
             cascoin-linux-x86_64-distribution-*.tar.gz
           if-no-files-found: warn
@@ -393,7 +399,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-debug
+          name: cascoin-linux-debug-${{ github.ref_name }}
           path: |
             src/qt/*.debug
             src/*.debug
@@ -570,7 +576,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-build
+          name: cascoin-windows-${{ env.HOST }}-build-${{ github.ref_name }}
           path: |
             src/qt/*-qt.exe
             src/*coind.exe
@@ -584,7 +590,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-debug
+          name: cascoin-windows-${{ env.HOST }}-debug-${{ github.ref_name }}
           path: |
             src/*.exe.debug
             src/qt/*.exe.debug
@@ -596,7 +602,12 @@ jobs:
     needs:
       - build-linux
       - build-windows
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: |
+      (github.event_name == 'workflow_dispatch' && !inputs.skip_release) ||
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'push' && 
+       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && 
+       contains(github.event.head_commit.message, '[release]'))
     permissions:
       contents: write
     steps:
@@ -624,7 +635,7 @@ jobs:
       - name: Download Linux distribution artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution
+          name: cascoin-linux-x86_64-distribution-${{ github.ref_name }}
           path: release/linux
 
       - name: Normalize Linux artifact filename
@@ -641,7 +652,7 @@ jobs:
       - name: Download Windows build artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-windows-x86_64-w64-mingw32-build
+          name: cascoin-windows-x86_64-w64-mingw32-build-${{ github.ref_name }}
           path: release/windows
 
       - name: Package Windows ZIP
