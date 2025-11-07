@@ -29,63 +29,178 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build tools (no sudo for dependencies)
+      - name: Install dependencies (apt)
         shell: bash
         run: |
-          # Only install essential build tools that are typically available
-          # Dependencies will be built via depends system
-          command -v autoconf || echo "autoconf not found"
-          command -v automake || echo "automake not found"
-          command -v libtool || echo "libtool not found"
-          command -v make || echo "make not found"
-          command -v g++ || echo "g++ not found"
-          command -v pkg-config || echo "pkg-config not found"
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool build-essential pkg-config curl ca-certificates \
+            libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev \
+            libboost-test-dev libboost-thread-dev libboost-program-options-dev libboost-dev \
+            libssl-dev libzmq3-dev libminiupnpc-dev \
+            libprotobuf-dev protobuf-compiler \
+            libqrencode-dev \
+            libsqlite3-dev \
+            qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
+            libqt6core5compat6-dev \
+            binutils ccache \
+            libdb-dev libdb++-dev \
+            cmake git || true
+          # Fallback: install all Boost dev libs if specific ones are insufficient on this runner
+          sudo apt-get install -y libboost-all-dev || true
+          # Try specific BDB package name if the generic one isn't available
+          sudo apt-get install -y libdb5.3++-dev || true
 
-      - name: Prepare depends cache directories
+      - name: Build and install EVMC and evmone
         shell: bash
         run: |
-          mkdir -p depends/built depends/work depends/sources depends/sdk-sources
+          # Install additional dependencies for EVMC/evmone
+          sudo apt-get install -y \
+            cmake git build-essential \
+            libgmp-dev \
+            ninja-build || true
+          
+          # Build EVMC
+          echo "Building EVMC..."
+          cd /tmp
+          rm -rf evmc evmone  # Clean up any existing directories
+          git clone --recursive https://github.com/ethereum/evmc.git
+          cd evmc
+          git checkout v12.1.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMC_TESTING=OFF \
+            -DEVMC_TOOLS=OFF \
+            -DEVMC_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Build evmone
+          echo "Building evmone..."
+          cd /tmp
+          git clone --recursive https://github.com/ethereum/evmone.git
+          cd evmone
+          git checkout v0.18.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMONE_TESTING=OFF \
+            -DEVMONE_FUZZING=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Update library cache and verify installation
+          sudo ldconfig
+          
+          # Create pkg-config files (required for configure script)
+          echo "Creating pkg-config files..."
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          
+          # Create EVMC pkg-config file
+          sudo tee /usr/local/lib/pkgconfig/evmc.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmc
+          Description: Ethereum Virtual Machine Connector
+          Version: 12.1.0
+          Libs: -L${libdir} -levmc-loader -levmc-instructions
+          Cflags: -I${includedir}
+          EOF
+          
+          # Create evmone pkg-config file
+          sudo tee /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmone
+          Description: Fast Ethereum Virtual Machine implementation
+          Version: 0.18.0
+          Requires: evmc
+          Libs: -L${libdir} -levmone
+          Cflags: -I${includedir}
+          EOF
+          
+          # Verify EVMC installation
+          echo "Verifying EVMC installation..."
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          pkg-config --exists evmc && echo "✓ EVMC pkg-config found" || echo "✗ EVMC pkg-config not found"
+          pkg-config --exists evmone && echo "✓ evmone pkg-config found" || echo "✗ evmone pkg-config not found"
+          pkg-config --modversion evmc || echo "EVMC version not available"
+          pkg-config --modversion evmone || echo "evmone version not available"
+          ls -la /usr/local/lib/libevmc* || echo "EVMC libraries not found in /usr/local/lib"
+          ls -la /usr/local/lib/libevmone* || echo "evmone libraries not found in /usr/local/lib"
+          ls -la /usr/local/include/evmc/ || echo "EVMC headers not found in /usr/local/include"
 
-      - name: Cache depends (sources)
+      - name: Ensure ccache directory exists
+        shell: bash
+        run: mkdir -p ~/.ccache
+
+      - name: Cache ccache
         uses: actions/cache@v4
         with:
-          path: |
-            depends/sources
-            depends/sdk-sources
-          key: depends-sources-linux-${{ hashFiles('depends/packages/*.mk') }}
-
-      - name: Cache depends (built packages)
-        uses: actions/cache@v4
-        with:
-          path: depends/built
-          key: depends-built-linux-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
+          path: ~/.ccache
+          key: ccache-${{ runner.os }}-gcc-${{ hashFiles('configure.ac', 'src/**/*.cpp', 'src/**/*.h') }}
           restore-keys: |
-            depends-built-linux-
+            ccache-${{ runner.os }}-gcc-
 
-      - name: Build depends (Linux native)
+      - name: Configure ccache
         shell: bash
         run: |
-          make -C depends -j"$(nproc)"
-          ls -lah depends/x86_64-pc-linux-gnu || ls -lah depends/*linux* || true
+          ccache --zero-stats || true
+          ccache --max-size=2G || true
 
       - name: Autogen
         shell: bash
         run: ./autogen.sh
 
-      - name: Configure (Qt6 GUI, wallet, using depends)
+      - name: Configure (Qt6 GUI, wallet, incompatible BDB, EVMC)
         shell: bash
         run: |
-          export CONFIG_SITE="$PWD/depends/x86_64-pc-linux-gnu/share/config.site"
-          CFLAGS="-g" CXXFLAGS="-g" \
+          # Set PKG_CONFIG_PATH to find EVMC
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Verify EVMC can be found
+          echo "Checking EVMC availability..."
+          pkg-config --exists evmc && echo "✓ EVMC found via pkg-config" || echo "✗ EVMC not found via pkg-config"
+          pkg-config --modversion evmc || echo "Could not get EVMC version"
+          
+          CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
+          MOC=/usr/lib/qt6/libexec/moc \
+          UIC=/usr/lib/qt6/libexec/uic \
+          RCC=/usr/lib/qt6/libexec/rcc \
+          LRELEASE=/usr/lib/qt6/bin/lrelease \
+          LUPDATE=/usr/lib/qt6/bin/lupdate \
+          PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" \
           ./configure \
-            --prefix=$PWD/depends/x86_64-pc-linux-gnu \
             --with-gui=qt6 \
+            --with-boost=/usr \
+            --with-boost-libdir=/usr/lib/x86_64-linux-gnu \
             --enable-wallet \
+            --enable-evmc \
+            --with-evmc=/usr/local \
+            --with-evmone=/usr/local \
             --with-incompatible-bdb
+          
+          # Check if EVMC was properly detected
+          echo "Checking configure results for EVMC..."
+          grep -i "evmc" config.log | tail -10 || echo "No EVMC entries in config.log"
 
       - name: Build
         shell: bash
-        run: make -j"$(nproc)"
+        run: |
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          make -j"$(nproc)"
 
       - name: Strip binaries (non-fatal) and keep debug symbols
         shell: bash
@@ -406,17 +521,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check build tools availability
+      - name: Install cross-compile and depends prerequisites (apt)
         shell: bash
         run: |
-          # Verify essential build tools are available
-          # These are typically pre-installed on self-hosted runners
-          command -v autoconf || echo "Warning: autoconf not found"
-          command -v automake || echo "Warning: automake not found"
-          command -v libtool || echo "Warning: libtool not found"
-          command -v make || echo "Warning: make not found"
-          command -v x86_64-w64-mingw32-g++ || echo "Warning: mingw cross-compiler not found"
-          command -v python3 || echo "Warning: python3 not found"
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake libtool build-essential pkg-config curl ca-certificates \
+            g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+            zip unzip cmake gperf \
+            python3 bsdextrautils faketime libfaketime \
+            rsync git \
+            qt6-tools-dev qt6-tools-dev-tools
 
       - name: Prepare depends cache directories
         shell: bash
@@ -479,16 +594,35 @@ jobs:
         shell: bash
         run: ./autogen.sh
 
-      - name: Configure (Windows ${HOST}, Qt6 GUI, wallet, using depends)
+      - name: Configure (Windows ${HOST}, Qt6 GUI, wallet, incompatible BDB)
         shell: bash
         run: |
           export CONFIG_SITE="$PWD/depends/${HOST}/share/config.site"
+          echo "=== Checking Qt6 tools from depends ==="
+          ls -la "$PWD/depends/${HOST}/native/libexec/" | head -10
+          echo "=== Checking Qt6 libraries ==="
+          ls -la "$PWD/depends/x86_64-w64-mingw32/lib/" | grep -i qt || echo "No Qt libraries found"
+          echo "=== Checking Qt6 includes ==="
+          ls -la "$PWD/depends/x86_64-w64-mingw32/include/" | grep -i qt || echo "No Qt includes found"
+          echo "=== Running configure ==="
           CFLAGS="-g -D_WIN32_WINNT=0x0601" CXXFLAGS="-g -D_WIN32_WINNT=0x0601" \
+          export PATH=/usr/lib/qt6/bin:$PATH
+          CPPFLAGS="-I$PWD/depends/x86_64-w64-mingw32/include" \
+          LDFLAGS="-L$PWD/depends/x86_64-w64-mingw32/lib" \
+          PKG_CONFIG_PATH="$PWD/depends/x86_64-w64-mingw32/lib/pkgconfig" \
           ./configure \
-            --prefix=$PWD/depends/${HOST} \
+            --prefix=$PWD/depends/x86_64-w64-mingw32 \
+            --host=x86_64-w64-mingw32 \
+            --disable-tests \
+            --disable-bench \
             --with-gui=qt6 \
-            --enable-wallet \
+            --with-qt-incdir=$PWD/depends/x86_64-w64-mingw32/include \
+            --with-qt-libdir=$PWD/depends/x86_64-w64-mingw32/lib \
+            --with-qt-bindir=$PWD/depends/x86_64-w64-mingw32/native/libexec:/usr/lib/qt6/bin \
             --with-incompatible-bdb
+          echo "=== Configure completed, checking config.log for Qt6 detection ==="
+          grep -A 5 -B 5 "checking for Qt" config.log || echo "Qt check not found in config.log"
+          grep -A 5 -B 5 "GUI.*qt" config.log || echo "GUI check not found in config.log"
       - name: Build (Windows ${HOST})
         shell: bash
         run: |
