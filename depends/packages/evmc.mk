@@ -1,8 +1,8 @@
 package=evmc
-$(package)_version=10.1.1
+$(package)_version=12.1.0
 $(package)_download_path=https://github.com/ethereum/evmc/archive/refs/tags/
 $(package)_file_name=v$($(package)_version).tar.gz
-$(package)_sha256_hash=8d5c6b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c
+$(package)_sha256_hash=0d5458015bf38a5358fad04cc290d21ec40122d1eb6420e0b33ae25546984bcd
 $(package)_dependencies=
 
 define $(package)_set_vars

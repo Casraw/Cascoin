@@ -1,8 +1,8 @@
 package=evmone
-$(package)_version=0.11.0
+$(package)_version=0.18.0
 $(package)_download_path=https://github.com/ethereum/evmone/archive/refs/tags/
 $(package)_file_name=v$($(package)_version).tar.gz
-$(package)_sha256_hash=b8c6b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c8b4b8c
+$(package)_sha256_hash=e9f1f43c82d8b5675b7e8b2c0ce7ffba808508475ebf59c9dc9700c3379dcd93
 $(package)_dependencies=evmc
 
 define $(package)_set_vars
