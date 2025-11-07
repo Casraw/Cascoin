@@ -16,6 +16,27 @@
 #include <map>
 #include <memory>
 
+// Forward declarations
+class CCoinsViewCache;
+class CBlockIndex;
+
+// Comparison operators for EVMC types (needed for std::map) - must be in global namespace
+inline bool operator<(const evmc_address& a, const evmc_address& b) {
+    return std::memcmp(a.bytes, b.bytes, sizeof(a.bytes)) < 0;
+}
+
+inline bool operator<(const evmc_bytes32& a, const evmc_bytes32& b) {
+    return std::memcmp(a.bytes, b.bytes, sizeof(a.bytes)) < 0;
+}
+
+inline bool operator==(const evmc_address& a, const evmc_address& b) {
+    return std::memcmp(a.bytes, b.bytes, sizeof(a.bytes)) == 0;
+}
+
+inline bool operator==(const evmc_bytes32& a, const evmc_bytes32& b) {
+    return std::memcmp(a.bytes, b.bytes, sizeof(a.bytes)) == 0;
+}
+
 namespace CVM {
 
 /**
@@ -28,7 +49,8 @@ namespace CVM {
  */
 class EVMCHost {
 public:
-    EVMCHost(CVMDatabase* db, const TrustContext& trust_ctx);
+    EVMCHost(CVMDatabase* db, const TrustContext& trust_ctx, 
+             CCoinsViewCache* coins_view = nullptr, CBlockIndex* block_index = nullptr);
     ~EVMCHost();
 
     // Main execution interface
@@ -91,6 +113,10 @@ public:
     evmc_bytes32 Uint256ToEvmcBytes32(const uint256& value);
     evmc_uint256be Uint256ToEvmcUint256be(const uint256& value);
     uint256 EvmcUint256beToUint256(const evmc_uint256be& value);
+    
+    // Contract address generation
+    uint160 GenerateContractAddress(const uint160& sender, uint64_t nonce);
+    uint160 GenerateCreate2Address(const uint160& sender, const uint256& salt, const uint256& code_hash);
 
 private:
     // EVMC callback implementations
@@ -101,7 +127,7 @@ private:
     static size_t get_code_size_fn(evmc_host_context* context, const evmc_address* address);
     static evmc_bytes32 get_code_hash_fn(evmc_host_context* context, const evmc_address* address);
     static size_t copy_code_fn(evmc_host_context* context, const evmc_address* address, size_t code_offset, uint8_t* buffer_data, size_t buffer_size);
-    static void selfdestruct_fn(evmc_host_context* context, const evmc_address* address, const evmc_address* beneficiary);
+    static bool selfdestruct_fn(evmc_host_context* context, const evmc_address* address, const evmc_address* beneficiary);
     static struct evmc_result call_fn(evmc_host_context* context, const evmc_message* msg);
     static struct evmc_tx_context get_tx_context_fn(evmc_host_context* context);
     static evmc_bytes32 get_block_hash_fn(evmc_host_context* context, int64_t number);
@@ -117,6 +143,10 @@ private:
     // State management
     CVMDatabase* database;
     TrustContext trust_context;
+    
+    // Blockchain state access
+    CCoinsViewCache* coins_view;  // For UTXO/balance queries
+    CBlockIndex* block_index;     // For block hash lookups
     
     // Block context
     struct BlockContext {

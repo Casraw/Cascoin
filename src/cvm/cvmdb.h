@@ -46,6 +46,7 @@ public:
     // Contract management
     bool WriteContract(const uint160& address, const Contract& contract);
     bool ReadContract(const uint160& address, Contract& contract);
+    bool LoadContract(const uint160& address, std::vector<uint8_t>& code);
     bool DeleteContract(const uint160& address);
     std::vector<uint160> ListContracts();
     

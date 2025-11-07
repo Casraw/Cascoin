@@ -8,11 +8,23 @@
 #include <cvm/reputation.h>
 #include <cvm/contract.h>
 #include <cvm/trustgraph.h>
+#include <cvm/enhanced_vm.h>
+#include <cvm/trust_context.h>
+#include <cvm/gas_allowance.h>
+#include <cvm/sustainable_gas.h>
+#include <cvm/gas_subsidy.h>
 #include <util.h>
 #include <utilmoneystr.h>
 #include <hash.h>
+#include <timedata.h>
 
 namespace CVM {
+
+// Global gas allowance tracker
+static GasAllowanceTracker g_gasAllowanceTracker;
+
+// Global gas subsidy tracker
+static GasSubsidyTracker g_gasSubsidyTracker;
 
 void CVMBlockProcessor::ProcessBlock(
     const CBlock& block,
@@ -37,9 +49,12 @@ void CVMBlockProcessor::ProcessBlock(
         }
     }
     
-    if (cvmTxCount > 0) {
-        LogPrintf("CVM: Processed %d CVM transactions in block %d\n", 
-                  cvmTxCount, height);
+    // Distribute pending rebates
+    int rebatesDistributed = g_gasSubsidyTracker.DistributePendingRebates(height);
+    
+    if (cvmTxCount > 0 || rebatesDistributed > 0) {
+        LogPrintf("CVM: Processed %d CVM transactions in block %d, Distributed %d rebates\n", 
+                  cvmTxCount, height, rebatesDistributed);
     }
 }
 
@@ -183,33 +198,109 @@ void CVMBlockProcessor::ProcessDeploy(
     int height,
     CVMDatabase& db
 ) {
-    LogPrint(BCLog::ALL, "CVM: Processing contract deployment: hash=%s\n", 
+    LogPrint(BCLog::CVM, "CVM: Processing contract deployment: hash=%s\n", 
              deployData.codeHash.ToString());
     
-    // Generate contract address from tx hash + output index
-    // (Similar to Ethereum contract address generation)
-    uint160 contractAddress;
-    {
+    // Extract deployer address from transaction inputs
+    uint160 deployer;
+    if (!tx.vin.empty()) {
+        // Get deployer from first input (simplified - would need proper address extraction)
         CHashWriter hw(SER_GETHASH, 0);
-        hw << tx.GetHash();
-        hw << uint32_t(0); // Output index
+        hw << tx.vin[0].prevout;
         uint256 hash = hw.GetHash();
-        memcpy(contractAddress.begin(), hash.begin(), 20);
+        memcpy(deployer.begin(), hash.begin(), 20);
     }
     
-    // Create contract record
-    Contract contract;
-    contract.address = contractAddress;
-    contract.deploymentHeight = height;
-    contract.deploymentTx = tx.GetHash();
-    // Note: Actual bytecode would be stored separately or in witness data
-    // For now, we just store the hash
+    // Get bytecode from transaction (stored in OP_RETURN or witness data)
+    std::vector<uint8_t> bytecode = deployData.bytecode;
+    if (bytecode.empty()) {
+        LogPrintf("CVM Warning: Empty bytecode in deployment tx %s\n", tx.GetHash().ToString());
+        return;
+    }
     
-    // Store contract
-    db.WriteContract(contractAddress, contract);
-    
-    LogPrintf("CVM: Contract deployed - Address: %s, CodeHash: %s, Height: %d\n",
-              contractAddress.ToString(), deployData.codeHash.ToString(), height);
+    try {
+        // Initialize trust context
+        auto trust_ctx = std::make_shared<TrustContext>(&db);
+        
+        // Check if deployer is eligible for free gas
+        cvm::SustainableGasSystem gasSystem;
+        bool useFreeGas = gasSystem.IsEligibleForFreeGas(
+            static_cast<uint8_t>(trust_ctx->GetCallerReputation())
+        );
+        
+        // If eligible for free gas, check and deduct from allowance
+        if (useFreeGas) {
+            if (g_gasAllowanceTracker.HasSufficientAllowance(
+                deployer, deployData.gasLimit, *trust_ctx, height)) {
+                LogPrint(BCLog::CVM, "CVM: Using free gas for deployment (address has sufficient allowance)\n");
+            } else {
+                useFreeGas = false;
+                LogPrint(BCLog::CVM, "CVM: Free gas allowance exhausted, will charge for deployment\n");
+            }
+        }
+        
+        // Initialize Enhanced VM with blockchain state
+        // Note: In full integration, would pass CCoinsViewCache and CBlockIndex
+        auto enhanced_vm = std::make_unique<EnhancedVM>(&db, trust_ctx);
+        
+        // Deploy contract using Enhanced VM
+        auto result = enhanced_vm->DeployContract(
+            bytecode,
+            deployData.constructorData,
+            deployData.gasLimit,
+            deployer,
+            0, // deploy value (would come from transaction)
+            height,
+            uint256(), // block hash (would come from block)
+            GetTime()
+        );
+        
+        if (result.success) {
+            // Deduct gas from allowance if using free gas
+            if (useFreeGas) {
+                g_gasAllowanceTracker.DeductGas(deployer, result.gas_used, height);
+            }
+            
+            // Check if operation is beneficial and apply subsidy
+            bool isBeneficial = gasSystem.IsNetworkBeneficialOperation(0, *trust_ctx);
+            if (isBeneficial) {
+                uint64_t subsidy = g_gasSubsidyTracker.CalculateSubsidy(
+                    result.gas_used, *trust_ctx, true
+                );
+                
+                if (subsidy > 0) {
+                    g_gasSubsidyTracker.ApplySubsidy(
+                        tx.GetHash(), deployer, result.gas_used, subsidy, *trust_ctx, height
+                    );
+                    
+                    // Queue rebate for distribution
+                    g_gasSubsidyTracker.QueueRebate(
+                        deployer, subsidy, height, "beneficial_deployment"
+                    );
+                }
+            }
+            
+            LogPrintf("CVM: Contract deployed successfully - Address: %s, GasUsed: %d, FreeGas: %s, Subsidy: %s, Height: %d\n",
+                      deployData.codeHash.ToString(), result.gas_used, 
+                      useFreeGas ? "yes" : "no", isBeneficial ? "yes" : "no", height);
+            
+            // Contract is already stored by Enhanced VM
+            // Update deployment metadata
+            Contract contract;
+            if (db.ReadContract(deployer, contract)) { // Get the deployed contract
+                contract.deploymentHeight = height;
+                contract.deploymentTx = tx.GetHash();
+                db.WriteContract(contract.address, contract);
+            }
+        } else {
+            LogPrintf("CVM Warning: Contract deployment failed - Error: %s, Tx: %s\n",
+                      result.error, tx.GetHash().ToString());
+        }
+        
+    } catch (const std::exception& e) {
+        LogPrintf("CVM Error: Exception during contract deployment: %s, Tx: %s\n",
+                  e.what(), tx.GetHash().ToString());
+    }
 }
 
 void CVMBlockProcessor::ProcessCall(
@@ -218,7 +309,7 @@ void CVMBlockProcessor::ProcessCall(
     int height,
     CVMDatabase& db
 ) {
-    LogPrint(BCLog::ALL, "CVM: Processing contract call to %s\n", 
+    LogPrint(BCLog::CVM, "CVM: Processing contract call to %s\n", 
              callData.contractAddress.ToString());
     
     // Check if contract exists
@@ -228,17 +319,98 @@ void CVMBlockProcessor::ProcessCall(
         return;
     }
     
-    // TODO: Execute contract call
-    // For now, just log it
-    LogPrintf("CVM: Contract call - Contract: %s, GasLimit: %d, Tx: %s\n",
-              callData.contractAddress.ToString(), callData.gasLimit, 
-              tx.GetHash().ToString());
+    // Extract caller address from transaction inputs
+    uint160 caller;
+    if (!tx.vin.empty()) {
+        // Get caller from first input (simplified - would need proper address extraction)
+        CHashWriter hw(SER_GETHASH, 0);
+        hw << tx.vin[0].prevout;
+        uint256 hash = hw.GetHash();
+        memcpy(caller.begin(), hash.begin(), 20);
+    }
     
-    // In full implementation:
-    // 1. Load contract bytecode
-    // 2. Execute with CVM
-    // 3. Update storage
-    // 4. Consume gas
+    try {
+        // Initialize trust context
+        auto trust_ctx = std::make_shared<TrustContext>(&db);
+        
+        // Check if caller is eligible for free gas
+        cvm::SustainableGasSystem gasSystem;
+        bool useFreeGas = gasSystem.IsEligibleForFreeGas(
+            static_cast<uint8_t>(trust_ctx->GetCallerReputation())
+        );
+        
+        // If eligible for free gas, check and deduct from allowance
+        if (useFreeGas) {
+            if (g_gasAllowanceTracker.HasSufficientAllowance(
+                caller, callData.gasLimit, *trust_ctx, height)) {
+                LogPrint(BCLog::CVM, "CVM: Using free gas for contract call (address has sufficient allowance)\n");
+            } else {
+                useFreeGas = false;
+                LogPrint(BCLog::CVM, "CVM: Free gas allowance exhausted, will charge for call\n");
+            }
+        }
+        
+        // Initialize Enhanced VM with blockchain state
+        // Note: In full integration, would pass CCoinsViewCache and CBlockIndex
+        auto enhanced_vm = std::make_unique<EnhancedVM>(&db, trust_ctx);
+        
+        // Execute contract call using Enhanced VM
+        auto result = enhanced_vm->CallContract(
+            callData.contractAddress,
+            callData.callData,
+            callData.gasLimit,
+            caller,
+            0, // call value (would come from transaction)
+            height,
+            uint256(), // block hash (would come from block)
+            GetTime()
+        );
+        
+        if (result.success) {
+            // Deduct gas from allowance if using free gas
+            if (useFreeGas) {
+                g_gasAllowanceTracker.DeductGas(caller, result.gas_used, height);
+            }
+            
+            // Check if operation is beneficial and apply subsidy
+            bool isBeneficial = gasSystem.IsNetworkBeneficialOperation(0, *trust_ctx);
+            if (isBeneficial) {
+                uint64_t subsidy = g_gasSubsidyTracker.CalculateSubsidy(
+                    result.gas_used, *trust_ctx, true
+                );
+                
+                if (subsidy > 0) {
+                    g_gasSubsidyTracker.ApplySubsidy(
+                        tx.GetHash(), caller, result.gas_used, subsidy, *trust_ctx, height
+                    );
+                    
+                    // Queue rebate for distribution
+                    g_gasSubsidyTracker.QueueRebate(
+                        caller, subsidy, height, "beneficial_call"
+                    );
+                }
+            }
+            
+            LogPrintf("CVM: Contract call successful - Contract: %s, GasUsed: %d, FreeGas: %s, Subsidy: %s, Tx: %s\n",
+                      callData.contractAddress.ToString(), result.gas_used,
+                      useFreeGas ? "yes" : "no", isBeneficial ? "yes" : "no", tx.GetHash().ToString());
+            
+            // Log any events emitted
+            if (!result.logs.empty()) {
+                LogPrint(BCLog::CVM, "CVM: Contract emitted %d log entries\n", result.logs.size());
+            }
+            
+            // Storage updates are already committed by Enhanced VM
+        } else {
+            LogPrintf("CVM Warning: Contract call failed - Error: %s, Contract: %s, Tx: %s\n",
+                      result.error, callData.contractAddress.ToString(), 
+                      tx.GetHash().ToString());
+        }
+        
+    } catch (const std::exception& e) {
+        LogPrintf("CVM Error: Exception during contract call: %s, Contract: %s, Tx: %s\n",
+                  e.what(), callData.contractAddress.ToString(), tx.GetHash().ToString());
+    }
 }
 
 bool CVMBlockProcessor::ProcessTrustEdge(

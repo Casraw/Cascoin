@@ -1039,10 +1039,10 @@ if test "x$use_evmc" = "xyes"; then
         EVMC_LIBS="-levmc"
         have_evmc=yes
         AC_CHECK_HEADER([evmone/evmone.h], [
-          AC_CHECK_LIB([evmone], [evmone_create], [
-            EVMONE_LIBS="-levmone"
+          AC_CHECK_LIB([evmone], [evmc_create_evmone], [
+            EVMONE_LIBS="-levmone -levmc-loader"
             have_evmone=yes
-          ], [have_evmone=no])
+          ], [have_evmone=no], [-levmc-loader])
         ], [have_evmone=no])
       ], [have_evmc=no])
     ], [have_evmc=no])

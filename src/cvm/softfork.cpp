@@ -106,6 +106,7 @@ std::vector<uint8_t> CVMDeployData::Serialize() const {
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << codeHash;
     ss << gasLimit;
+    ss << static_cast<uint8_t>(format);
     ss << metadata;
     return std::vector<uint8_t>(ss.begin(), ss.end());
 }
@@ -115,6 +116,19 @@ bool CVMDeployData::Deserialize(const std::vector<uint8_t>& data) {
         CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
         ss >> codeHash;
         ss >> gasLimit;
+        
+        // Try to read format byte (for backward compatibility)
+        if (ss.size() > 0) {
+            uint8_t formatByte;
+            ss >> formatByte;
+            // Map old format values to new enum
+            if (formatByte == 0x01) format = BytecodeFormat::CVM_NATIVE;
+            else if (formatByte == 0x02) format = BytecodeFormat::EVM_BYTECODE;
+            else format = BytecodeFormat::UNKNOWN;
+        } else {
+            format = BytecodeFormat::UNKNOWN;  // Default for old transactions
+        }
+        
         ss >> metadata;
         return true;
     } catch (...) {
@@ -127,6 +141,7 @@ std::vector<uint8_t> CVMCallData::Serialize() const {
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << contractAddress;
     ss << gasLimit;
+    ss << static_cast<uint8_t>(format);
     ss << callData;
     return std::vector<uint8_t>(ss.begin(), ss.end());
 }
@@ -136,6 +151,19 @@ bool CVMCallData::Deserialize(const std::vector<uint8_t>& data) {
         CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
         ss >> contractAddress;
         ss >> gasLimit;
+        
+        // Try to read format byte (for backward compatibility)
+        if (ss.size() > 0) {
+            uint8_t formatByte;
+            ss >> formatByte;
+            // Map old format values to new enum
+            if (formatByte == 0x01) format = BytecodeFormat::CVM_NATIVE;
+            else if (formatByte == 0x02) format = BytecodeFormat::EVM_BYTECODE;
+            else format = BytecodeFormat::UNKNOWN;
+        } else {
+            format = BytecodeFormat::UNKNOWN;  // Default for old transactions
+        }
+        
         ss >> callData;
         return true;
     } catch (...) {
@@ -456,6 +484,180 @@ bool CVMDAOVoteData::Deserialize(const std::vector<uint8_t>& data) {
         LogPrintf("CVM: Failed to deserialize CVMDAOVoteData: %s\n", e.what());
         return false;
     }
+}
+
+// EVM Transaction Validation
+
+bool ValidateEVMDeployment(const CTransaction& tx, 
+                          const CVMDeployData& deployData,
+                          int height,
+                          std::string& error)
+{
+    // Check bytecode format
+    if (deployData.format == BytecodeFormat::CVM_NATIVE) {
+        error = "EVM deployment with CVM format specified";
+        return false;
+    }
+    
+    // Check gas limit (EVM uses same limits as CVM)
+    if (deployData.gasLimit == 0) {
+        error = "Gas limit cannot be zero";
+        return false;
+    }
+    
+    if (deployData.gasLimit > MAX_GAS_PER_TX) {
+        error = "Gas limit exceeds maximum (" + std::to_string(MAX_GAS_PER_TX) + ")";
+        return false;
+    }
+    
+    // Check bytecode hash
+    if (deployData.codeHash.IsNull()) {
+        error = "Code hash cannot be null";
+        return false;
+    }
+    
+    // Validate bytecode if provided
+    if (!deployData.bytecode.empty()) {
+        // Check bytecode size (24KB max)
+        const size_t MAX_CONTRACT_SIZE = 24 * 1024;
+        if (deployData.bytecode.size() > MAX_CONTRACT_SIZE) {
+            error = "Bytecode exceeds maximum size (" + std::to_string(MAX_CONTRACT_SIZE) + " bytes)";
+            return false;
+        }
+        
+        // Verify code hash matches
+        uint256 computedHash = Hash(deployData.bytecode.begin(), deployData.bytecode.end());
+        if (computedHash != deployData.codeHash) {
+            error = "Code hash mismatch";
+            return false;
+        }
+        
+        // Auto-detect format if not specified
+        if (deployData.format == BytecodeFormat::UNKNOWN) {
+            // Will be detected by BytecodeDetector during execution
+            LogPrintf("CVM: Auto-detecting bytecode format for deployment\n");
+        }
+    }
+    
+    // Check reputation requirement (if database available)
+    if (g_cvmdb) {
+        // Get deployer address from transaction inputs
+        // Note: This is a simplified check - full implementation would extract actual deployer
+        uint8_t minReputation = 50;  // Minimum reputation for contract deployment
+        
+        // TODO: Extract deployer address from tx inputs and check reputation
+        // For now, we'll allow deployment (reputation check can be added later)
+    }
+    
+    return true;
+}
+
+bool ValidateEVMCall(const CTransaction& tx,
+                    const CVMCallData& callData,
+                    int height,
+                    std::string& error)
+{
+    // Check contract address
+    if (callData.contractAddress.IsNull()) {
+        error = "Contract address cannot be null";
+        return false;
+    }
+    
+    // Check gas limit
+    if (callData.gasLimit == 0) {
+        error = "Gas limit cannot be zero";
+        return false;
+    }
+    
+    if (callData.gasLimit > MAX_GAS_PER_TX) {
+        error = "Gas limit exceeds maximum (" + std::to_string(MAX_GAS_PER_TX) + ")";
+        return false;
+    }
+    
+    // Check if contract exists (if database available)
+    if (g_cvmdb) {
+        Contract contract;
+        if (!g_cvmdb->ReadContract(callData.contractAddress, contract)) {
+            error = "Contract does not exist";
+            return false;
+        }
+        
+        // Verify format matches if specified
+        if (callData.format != BytecodeFormat::UNKNOWN) {
+            // TODO: Check contract format matches expected format
+            // This would require storing format in contract metadata
+        }
+    }
+    
+    return true;
+}
+
+bool IsEVMTransaction(const CTransaction& tx)
+{
+    int cvmOutputIndex = FindCVMOpReturn(tx);
+    if (cvmOutputIndex < 0) {
+        return false;
+    }
+    
+    CVMOpType opType;
+    std::vector<uint8_t> data;
+    if (!ParseCVMOpReturn(tx.vout[cvmOutputIndex], opType, data)) {
+        return false;
+    }
+    
+    // Check for explicit EVM operations
+    if (opType == CVMOpType::EVM_DEPLOY || opType == CVMOpType::EVM_CALL) {
+        return true;
+    }
+    
+    // Check for generic operations with EVM format
+    if (opType == CVMOpType::CONTRACT_DEPLOY) {
+        CVMDeployData deployData;
+        if (deployData.Deserialize(data)) {
+            return deployData.format == BytecodeFormat::EVM_BYTECODE;
+        }
+    } else if (opType == CVMOpType::CONTRACT_CALL) {
+        CVMCallData callData;
+        if (callData.Deserialize(data)) {
+            return callData.format == BytecodeFormat::EVM_BYTECODE;
+        }
+    }
+    
+    return false;
+}
+
+BytecodeFormat GetTransactionBytecodeFormat(const CTransaction& tx)
+{
+    int cvmOutputIndex = FindCVMOpReturn(tx);
+    if (cvmOutputIndex < 0) {
+        return BytecodeFormat::UNKNOWN;
+    }
+    
+    CVMOpType opType;
+    std::vector<uint8_t> data;
+    if (!ParseCVMOpReturn(tx.vout[cvmOutputIndex], opType, data)) {
+        return BytecodeFormat::UNKNOWN;
+    }
+    
+    // Check operation type
+    if (opType == CVMOpType::EVM_DEPLOY || opType == CVMOpType::EVM_CALL) {
+        return BytecodeFormat::EVM_BYTECODE;
+    }
+    
+    // Parse data to get format
+    if (opType == CVMOpType::CONTRACT_DEPLOY) {
+        CVMDeployData deployData;
+        if (deployData.Deserialize(data)) {
+            return deployData.format;
+        }
+    } else if (opType == CVMOpType::CONTRACT_CALL) {
+        CVMCallData callData;
+        if (callData.Deserialize(data)) {
+            return callData.format;
+        }
+    }
+    
+    return BytecodeFormat::UNKNOWN;
 }
 
 } // namespace CVM

@@ -16,7 +16,16 @@
 #include <cvm/graphanalysis.h>
 #include <cvm/securehat.h>
 #include <cvm/walletcluster.h>
+#include <cvm/gas_allowance.h>
+#include <cvm/sustainable_gas.h>
+#include <cvm/trust_context.h>
+#include <cvm/tx_priority.h>
+#include <cvm/gas_subsidy.h>
+#include <cvm/resource_manager.h>
+#include <cvm/cleanup_manager.h>
+#include <cvm/evm_rpc.h>
 #include <validation.h>
+#include <txmempool.h>
 #include <util.h>
 #include <base58.h>
 #include <utilstrencodings.h>
@@ -26,6 +35,7 @@
 #include <wallet/rpcwallet.h>
 #include <hash.h>
 #include <core_io.h>
+#include <policy/policy.h>
 
 /**
  * RPC commands for CVM (Cascoin Virtual Machine) and Reputation System
@@ -385,6 +395,494 @@ UniValue listreputations(const JSONRPCRequest& request)
     
     // Note: Would need to iterate database to list reputations
     // Simplified for now
+    
+    return result;
+}
+
+UniValue getgasallowance(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getgasallowance \"address\"\n"
+            "\nGet free gas allowance information for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) Address to query\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",           (string) Address\n"
+            "  \"reputation\": n,             (numeric) Current reputation score\n"
+            "  \"eligible\": true|false,      (boolean) Eligible for free gas (80+ reputation)\n"
+            "  \"dailyallowance\": n,         (numeric) Daily gas allowance\n"
+            "  \"used\": n,                   (numeric) Gas used today\n"
+            "  \"remaining\": n,              (numeric) Gas remaining today\n"
+            "  \"lastrenewal\": n             (numeric) Block height of last renewal\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getgasallowance", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+            + HelpExampleRpc("getgasallowance", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse address
+    std::string addressStr = request.params[0].get_str();
+    
+    // Convert to uint160
+    std::vector<unsigned char> addressData;
+    if (!DecodeBase58(addressStr.c_str(), addressData) || addressData.size() != 25) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    memcpy(address.begin(), &addressData[1], 20);
+    
+    // Get current block height
+    int64_t currentHeight = chainActive.Height();
+    
+    // Initialize trust context
+    auto trust_ctx = std::make_shared<CVM::TrustContext>(CVM::g_cvmdb.get());
+    
+    // Create gas allowance tracker (temporary instance for query)
+    CVM::GasAllowanceTracker tracker;
+    
+    // Get allowance state
+    auto state = tracker.GetAllowanceState(address, *trust_ctx, currentHeight);
+    
+    // Check eligibility
+    cvm::SustainableGasSystem gasSystem;
+    bool eligible = gasSystem.IsEligibleForFreeGas(state.reputation);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addressStr);
+    result.pushKV("reputation", (int)state.reputation);
+    result.pushKV("eligible", eligible);
+    result.pushKV("dailyallowance", (int64_t)state.dailyAllowance);
+    result.pushKV("used", (int64_t)state.usedToday);
+    result.pushKV("remaining", (int64_t)(state.dailyAllowance - state.usedToday));
+    result.pushKV("lastrenewal", state.lastRenewalBlock);
+    
+    return result;
+}
+
+UniValue getnetworkcongestion(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "getnetworkcongestion\n"
+            "\nGet current network congestion level and transaction prioritization info.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"congestion\": n,              (numeric) Network congestion level (0-100)\n"
+            "  \"mempoolsize\": n,             (numeric) Current mempool size\n"
+            "  \"maxmempoolsize\": n,          (numeric) Maximum mempool size\n"
+            "  \"prioritization\": \"xxx\",      (string) Current prioritization mode\n"
+            "  \"highrepthreshold\": n         (numeric) Reputation threshold for high priority\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getnetworkcongestion", "")
+            + HelpExampleRpc("getnetworkcongestion", "")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Create priority manager
+    CVM::TransactionPriorityManager priorityMgr;
+    
+    // Get mempool size
+    size_t mempoolSize = mempool.size();
+    size_t maxMempoolSize = gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
+    
+    // Update congestion
+    priorityMgr.UpdateNetworkCongestion(mempoolSize, maxMempoolSize);
+    uint8_t congestion = priorityMgr.GetNetworkCongestion();
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("congestion", (int)congestion);
+    result.pushKV("mempoolsize", (int64_t)mempoolSize);
+    result.pushKV("maxmempoolsize", (int64_t)maxMempoolSize);
+    
+    // Determine prioritization mode based on congestion
+    std::string prioritizationMode;
+    if (congestion >= 80) {
+        prioritizationMode = "strict";  // Only high-reputation transactions
+    } else if (congestion >= 50) {
+        prioritizationMode = "moderate";  // Prioritize high-reputation
+    } else {
+        prioritizationMode = "normal";  // All transactions accepted
+    }
+    result.pushKV("prioritization", prioritizationMode);
+    result.pushKV("highrepthreshold", 70);  // 70+ reputation for high priority
+    
+    return result;
+}
+
+UniValue getgassubsidies(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getgassubsidies \"address\"\n"
+            "\nGet gas subsidy information for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) Address to query\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",           (string) Address\n"
+            "  \"totalsubsidies\": n,         (numeric) Total subsidies received\n"
+            "  \"pendingrebates\": n          (numeric) Pending rebates\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getgassubsidies", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+            + HelpExampleRpc("getgassubsidies", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse address
+    std::string addressStr = request.params[0].get_str();
+    
+    // Convert to uint160
+    std::vector<unsigned char> addressData;
+    if (!DecodeBase58(addressStr.c_str(), addressData) || addressData.size() != 25) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    memcpy(address.begin(), &addressData[1], 20);
+    
+    // Create subsidy tracker (temporary instance for query)
+    CVM::GasSubsidyTracker tracker;
+    
+    // Get subsidy info
+    uint64_t totalSubsidies = tracker.GetTotalSubsidies(address);
+    uint64_t pendingRebates = tracker.GetPendingRebates(address);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addressStr);
+    result.pushKV("totalsubsidies", (int64_t)totalSubsidies);
+    result.pushKV("pendingrebates", (int64_t)pendingRebates);
+    
+    return result;
+}
+
+UniValue creategaspool(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+        throw std::runtime_error(
+            "creategaspool \"poolid\" amount ( minreputation )\n"
+            "\nCreate a community gas pool.\n"
+            "\nArguments:\n"
+            "1. \"poolid\"        (string, required) Pool identifier\n"
+            "2. amount          (numeric, required) Initial amount\n"
+            "3. minreputation   (numeric, optional, default=30) Minimum reputation to use pool\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"poolid\": \"xxx\",            (string) Pool identifier\n"
+            "  \"amount\": n,                (numeric) Initial amount\n"
+            "  \"minreputation\": n          (numeric) Minimum reputation\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("creategaspool", "\"public-good\" 1000000 30")
+            + HelpExampleRpc("creategaspool", "\"public-good\", 1000000, 30")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse parameters
+    std::string poolId = request.params[0].get_str();
+    uint64_t amount = request.params[1].get_int64();
+    uint8_t minReputation = request.params.size() > 2 ? request.params[2].get_int() : 30;
+    
+    // Get current block height
+    int64_t currentHeight = chainActive.Height();
+    
+    // Create subsidy tracker (temporary instance)
+    CVM::GasSubsidyTracker tracker;
+    
+    // Create pool
+    tracker.CreateGasPool(poolId, amount, minReputation, currentHeight);
+    
+    // Save to database
+    tracker.SaveToDatabase(*CVM::g_cvmdb);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("poolid", poolId);
+    result.pushKV("amount", (int64_t)amount);
+    result.pushKV("minreputation", (int)minReputation);
+    
+    return result;
+}
+
+UniValue getgaspoolinfo(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getgaspoolinfo \"poolid\"\n"
+            "\nGet information about a gas pool.\n"
+            "\nArguments:\n"
+            "1. \"poolid\"    (string, required) Pool identifier\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"poolid\": \"xxx\",            (string) Pool identifier\n"
+            "  \"totalcontributed\": n,      (numeric) Total contributed\n"
+            "  \"totalused\": n,             (numeric) Total used\n"
+            "  \"remaining\": n,             (numeric) Remaining balance\n"
+            "  \"minreputation\": n,         (numeric) Minimum reputation\n"
+            "  \"createdheight\": n          (numeric) Block height created\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getgaspoolinfo", "\"public-good\"")
+            + HelpExampleRpc("getgaspoolinfo", "\"public-good\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse pool ID
+    std::string poolId = request.params[0].get_str();
+    
+    // Create subsidy tracker (temporary instance)
+    CVM::GasSubsidyTracker tracker;
+    tracker.LoadFromDatabase(*CVM::g_cvmdb);
+    
+    // Get pool info
+    CVM::GasSubsidyTracker::GasPool pool;
+    if (!tracker.GetPoolInfo(poolId, pool)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Gas pool not found");
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("poolid", poolId);
+    result.pushKV("totalcontributed", (int64_t)pool.totalContributed);
+    result.pushKV("totalused", (int64_t)pool.totalUsed);
+    result.pushKV("remaining", (int64_t)pool.remaining);
+    result.pushKV("minreputation", (int)pool.minReputation);
+    result.pushKV("createdheight", pool.createdHeight);
+    
+    return result;
+}
+
+UniValue estimategascost(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "estimategascost gaslimit ( \"address\" )\n"
+            "\nEstimate gas cost with reputation-based discounts.\n"
+            "\nArguments:\n"
+            "1. gaslimit      (numeric, required) Estimated gas limit\n"
+            "2. \"address\"     (string, optional) Address for reputation discount\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"gaslimit\": n,              (numeric) Gas limit\n"
+            "  \"basecost\": n,              (numeric) Base cost without discount\n"
+            "  \"reputation\": n,            (numeric) Address reputation (if provided)\n"
+            "  \"discount\": n,              (numeric) Discount percentage\n"
+            "  \"finalcost\": n,             (numeric) Final cost with discount\n"
+            "  \"freegaseligible\": bool     (boolean) Eligible for free gas\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("estimategascost", "100000")
+            + HelpExampleCli("estimategascost", "100000 \"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+            + HelpExampleRpc("estimategascost", "100000, \"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse gas limit
+    uint64_t gasLimit = request.params[0].get_int64();
+    
+    // Initialize gas system
+    cvm::SustainableGasSystem gasSystem;
+    
+    // Default values
+    uint8_t reputation = 0;
+    bool hasAddress = false;
+    
+    // Parse address if provided
+    if (request.params.size() > 1) {
+        std::string addressStr = request.params[1].get_str();
+        
+        // Convert to uint160
+        std::vector<unsigned char> addressData;
+    if (!DecodeBase58(addressStr.c_str(), addressData)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+        if (addressData.size() == 25) {
+            uint160 address;
+            memcpy(address.begin(), &addressData[1], 20);
+            
+            // Get reputation
+            auto trust_ctx = std::make_shared<CVM::TrustContext>(CVM::g_cvmdb.get());
+            reputation = static_cast<uint8_t>(trust_ctx->GetCallerReputation());
+            hasAddress = true;
+        }
+    }
+    
+    // Calculate base cost (simplified - using base gas price)
+    uint64_t baseCost = gasLimit * 10000000; // 0.01 gwei per gas
+    
+    // Calculate discount
+    double discountMultiplier = 1.0 - (reputation / 200.0); // 0.5 to 1.0
+    uint64_t finalCost = static_cast<uint64_t>(baseCost * discountMultiplier);
+    uint64_t discount = static_cast<uint64_t>((1.0 - discountMultiplier) * 100);
+    
+    // Check free gas eligibility
+    bool freeGasEligible = gasSystem.IsEligibleForFreeGas(reputation);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("gaslimit", (int64_t)gasLimit);
+    result.pushKV("basecost", (int64_t)baseCost);
+    
+    if (hasAddress) {
+        result.pushKV("reputation", (int)reputation);
+        result.pushKV("discount", (int)discount);
+    }
+    
+    result.pushKV("finalcost", (int64_t)finalCost);
+    result.pushKV("freegaseligible", freeGasEligible);
+    
+    return result;
+}
+
+UniValue createpriceguarantee(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
+        throw std::runtime_error(
+            "createpriceguarantee \"address\" guaranteedprice duration ( minreputation )\n"
+            "\nCreate a price guarantee for a business address.\n"
+            "\nArguments:\n"
+            "1. \"address\"         (string, required) Business address\n"
+            "2. guaranteedprice   (numeric, required) Guaranteed gas price\n"
+            "3. duration          (numeric, required) Duration in blocks\n"
+            "4. minreputation     (numeric, optional, default=50) Minimum reputation required\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",           (string) Business address\n"
+            "  \"guaranteedprice\": n,       (numeric) Guaranteed price\n"
+            "  \"duration\": n,              (numeric) Duration in blocks\n"
+            "  \"expiration\": n,            (numeric) Expiration block height\n"
+            "  \"minreputation\": n          (numeric) Minimum reputation\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("createpriceguarantee", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\" 5000000 100000 50")
+            + HelpExampleRpc("createpriceguarantee", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\", 5000000, 100000, 50")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse parameters
+    std::string addressStr = request.params[0].get_str();
+    uint64_t guaranteedPrice = request.params[1].get_int64();
+    uint64_t duration = request.params[2].get_int64();
+    uint8_t minReputation = request.params.size() > 3 ? request.params[3].get_int() : 50;
+    
+    // Convert to uint160
+    std::vector<unsigned char> addressData;
+    if (!DecodeBase58(addressStr.c_str(), addressData) || addressData.size() != 25) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    memcpy(address.begin(), &addressData[1], 20);
+    
+    // Get current block height
+    int64_t currentHeight = chainActive.Height();
+    int64_t expiration = currentHeight + duration;
+    
+    // Create price guarantee
+    cvm::SustainableGasSystem gasSystem;
+    gasSystem.CreatePriceGuarantee(address, guaranteedPrice, expiration, minReputation);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addressStr);
+    result.pushKV("guaranteedprice", (int64_t)guaranteedPrice);
+    result.pushKV("duration", (int64_t)duration);
+    result.pushKV("expiration", expiration);
+    result.pushKV("minreputation", (int)minReputation);
+    
+    return result;
+}
+
+UniValue getpriceguarantee(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getpriceguarantee \"address\"\n"
+            "\nGet price guarantee information for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) Address to query\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",           (string) Address\n"
+            "  \"hasguarantee\": bool,       (boolean) Has active guarantee\n"
+            "  \"guaranteedprice\": n,       (numeric) Guaranteed price (if active)\n"
+            "  \"expiration\": n,            (numeric) Expiration height (if active)\n"
+            "  \"blocksremaining\": n        (numeric) Blocks until expiration (if active)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getpriceguarantee", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+            + HelpExampleRpc("getpriceguarantee", "\"DXG7YxPgz8vPKpEj9ZfU5nQRh6oM2\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse address
+    std::string addressStr = request.params[0].get_str();
+    
+    // Convert to uint160
+    std::vector<unsigned char> addressData;
+    if (!DecodeBase58(addressStr.c_str(), addressData) || addressData.size() != 25) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    memcpy(address.begin(), &addressData[1], 20);
+    
+    // Get current block height
+    int64_t currentHeight = chainActive.Height();
+    
+    // Check for price guarantee with expiration check
+    cvm::SustainableGasSystem gasSystem;
+    cvm::PriceGuarantee guarantee;
+    bool hasGuarantee = gasSystem.GetPriceGuaranteeInfo(address, guarantee);
+    
+    // Check if expired
+    if (hasGuarantee && currentHeight >= static_cast<int64_t>(guarantee.expirationBlock)) {
+        hasGuarantee = false;
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addressStr);
+    result.pushKV("hasguarantee", hasGuarantee);
+    
+    if (hasGuarantee) {
+        result.pushKV("guaranteedprice", (int64_t)guarantee.guaranteedPrice);
+        result.pushKV("expiration", (int64_t)guarantee.expirationBlock);
+        result.pushKV("blocksremaining", (int64_t)(guarantee.expirationBlock - currentHeight));
+        result.pushKV("minreputation", (int)guarantee.minReputation);
+    }
     
     return result;
 }
@@ -2201,6 +2699,298 @@ UniValue votedispute(const JSONRPCRequest& request)
     return result;
 }
 
+/**
+ * Get resource statistics for an address
+ */
+UniValue getresourcestats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getresourcestats \"address\"\n"
+            "\nGet resource allocation statistics for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The Cascoin address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"reputation\": n,                    (numeric) Reputation score (0-100)\n"
+            "  \"execution_priority\": {             (object) Execution priority info\n"
+            "    \"priority\": n,                    (numeric) Priority score (0-100)\n"
+            "    \"can_preempt\": true|false,        (boolean) Can preempt other executions\n"
+            "    \"max_execution_time_ms\": n        (numeric) Max execution time in milliseconds\n"
+            "  },\n"
+            "  \"rate_limit\": {                     (object) Rate limiting info\n"
+            "    \"calls_per_minute\": n,            (numeric) Allowed calls per minute\n"
+            "    \"current_calls\": n,               (numeric) Current calls in window\n"
+            "    \"is_throttled\": true|false        (boolean) Currently throttled\n"
+            "  },\n"
+            "  \"storage\": {                        (object) Storage quota info\n"
+            "    \"quota_bytes\": n,                 (numeric) Storage quota in bytes\n"
+            "    \"usage_bytes\": n,                 (numeric) Current usage in bytes\n"
+            "    \"available_bytes\": n,             (numeric) Available storage\n"
+            "    \"usage_percent\": n                (numeric) Usage percentage\n"
+            "  },\n"
+            "  \"statistics\": {                     (object) Execution statistics\n"
+            "    \"total_executions\": n,            (numeric) Total contract executions\n"
+            "    \"total_execution_time_ms\": n,     (numeric) Total execution time\n"
+            "    \"avg_execution_time_ms\": n        (numeric) Average execution time\n"
+            "  }\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getresourcestats", "\"CXXXaddress\"")
+            + HelpExampleRpc("getresourcestats", "\"CXXXaddress\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
+    }
+
+    uint160 address = uint160(std::vector<unsigned char>(20, 0));
+    if (dest.type() == typeid(CKeyID)) {
+        CKeyID keyID = boost::get<CKeyID>(dest);
+        memcpy(address.begin(), keyID.begin(), 20);
+    } else if (dest.type() == typeid(CScriptID)) {
+        CScriptID scriptID = boost::get<CScriptID>(dest);
+        memcpy(address.begin(), scriptID.begin(), 20);
+    }
+
+    // Get resource manager (create if needed)
+    static CVM::ResourceManager resourceManager;
+    static bool initialized = false;
+    if (!initialized) {
+        resourceManager.Initialize(CVM::g_cvmdb.get(), nullptr);  // Storage will be added when available
+        initialized = true;
+    }
+
+    return resourceManager.GetResourceStats(address);
+}
+
+/**
+ * Get global resource statistics
+ */
+UniValue getglobalresourcestats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "getglobalresourcestats\n"
+            "\nGet global resource allocation statistics.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"rate_limiting\": {                  (object) Rate limiting statistics\n"
+            "    \"total_addresses\": n,             (numeric) Total addresses tracked\n"
+            "    \"throttled_addresses\": n,         (numeric) Currently throttled addresses\n"
+            "    \"total_calls_current_window\": n   (numeric) Total calls in current window\n"
+            "  },\n"
+            "  \"execution\": {                      (object) Execution statistics\n"
+            "    \"total_executions\": n,            (numeric) Total contract executions\n"
+            "    \"total_execution_time_ms\": n,     (numeric) Total execution time\n"
+            "    \"avg_execution_time_ms\": n        (numeric) Average execution time\n"
+            "  }\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getglobalresourcestats", "")
+            + HelpExampleRpc("getglobalresourcestats", "")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Get resource manager (create if needed)
+    static CVM::ResourceManager resourceManager;
+    static bool initialized = false;
+    if (!initialized) {
+        resourceManager.Initialize(CVM::g_cvmdb.get(), nullptr);
+        initialized = true;
+    }
+
+    return resourceManager.GetGlobalResourceStats();
+}
+
+/**
+ * Run garbage collection manually
+ */
+UniValue rungarbagecollection(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "rungarbagecollection\n"
+            "\nManually trigger garbage collection for contract cleanup.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"total_contracts_cleaned\": n,       (numeric) Total contracts cleaned\n"
+            "  \"total_storage_cleaned\": n,         (numeric) Total storage entries cleaned\n"
+            "  \"total_bytes_reclaimed\": n,         (numeric) Total bytes reclaimed\n"
+            "  \"last_cleanup_block\": n,            (numeric) Block height of cleanup\n"
+            "  \"low_reputation_cleanups\": n,       (numeric) Low-reputation cleanups\n"
+            "  \"inactive_cleanups\": n              (numeric) Inactive contract cleanups\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("rungarbagecollection", "")
+            + HelpExampleRpc("rungarbagecollection", "")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Get cleanup manager (create if needed)
+    static CVM::CleanupManager cleanupManager;
+    static bool initialized = false;
+    if (!initialized) {
+        cleanupManager.Initialize(CVM::g_cvmdb.get(), nullptr);
+        initialized = true;
+    }
+
+    // Get current block height
+    int64_t currentHeight = chainActive.Height();
+    
+    // Run garbage collection
+    auto stats = cleanupManager.RunGarbageCollection(currentHeight);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("total_contracts_cleaned", stats.totalContractsCleaned);
+    result.pushKV("total_storage_cleaned", stats.totalStorageCleaned);
+    result.pushKV("total_bytes_reclaimed", stats.totalBytesReclaimed);
+    result.pushKV("last_cleanup_block", stats.lastCleanupBlock);
+    result.pushKV("low_reputation_cleanups", stats.lowReputationCleanups);
+    result.pushKV("inactive_cleanups", stats.inactiveCleanups);
+    
+    return result;
+}
+
+/**
+ * Get cleanup statistics
+ */
+UniValue getcleanupstats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "getcleanupstats\n"
+            "\nGet cleanup statistics.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"total_contracts_cleaned\": n,       (numeric) Total contracts cleaned\n"
+            "  \"total_storage_cleaned\": n,         (numeric) Total storage entries cleaned\n"
+            "  \"total_bytes_reclaimed\": n,         (numeric) Total bytes reclaimed\n"
+            "  \"last_cleanup_block\": n,            (numeric) Block height of last cleanup\n"
+            "  \"low_reputation_cleanups\": n,       (numeric) Low-reputation cleanups\n"
+            "  \"inactive_cleanups\": n,             (numeric) Inactive contract cleanups\n"
+            "  \"min_reputation_threshold\": n,      (numeric) Minimum reputation threshold\n"
+            "  \"cleanup_interval_blocks\": n        (numeric) Blocks between cleanups\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getcleanupstats", "")
+            + HelpExampleRpc("getcleanupstats", "")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Get cleanup manager (create if needed)
+    static CVM::CleanupManager cleanupManager;
+    static bool initialized = false;
+    if (!initialized) {
+        cleanupManager.Initialize(CVM::g_cvmdb.get(), nullptr);
+        initialized = true;
+    }
+
+    auto stats = cleanupManager.GetStats();
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("total_contracts_cleaned", stats.totalContractsCleaned);
+    result.pushKV("total_storage_cleaned", stats.totalStorageCleaned);
+    result.pushKV("total_bytes_reclaimed", stats.totalBytesReclaimed);
+    result.pushKV("last_cleanup_block", stats.lastCleanupBlock);
+    result.pushKV("low_reputation_cleanups", stats.lowReputationCleanups);
+    result.pushKV("inactive_cleanups", stats.inactiveCleanups);
+    result.pushKV("min_reputation_threshold", (int)CVM::CleanupManager::GetMinReputationThreshold());
+    result.pushKV("cleanup_interval_blocks", 1000);  // Default interval
+    
+    return result;
+}
+
+/**
+ * Get contract cleanup info
+ */
+UniValue getcontractcleanupinfo(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getcontractcleanupinfo \"contractaddress\"\n"
+            "\nGet cleanup information for a contract.\n"
+            "\nArguments:\n"
+            "1. \"contractaddress\"    (string, required) The contract address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"contract_address\": \"xxx\",        (string) Contract address\n"
+            "  \"deployer\": \"xxx\",                (string) Deployer address\n"
+            "  \"deployer_reputation\": n,          (numeric) Deployer reputation\n"
+            "  \"deployment_block\": n,             (numeric) Deployment block height\n"
+            "  \"last_access_block\": n,            (numeric) Last access block height\n"
+            "  \"storage_size\": n,                 (numeric) Storage size in bytes\n"
+            "  \"is_marked_for_cleanup\": bool,     (boolean) Marked for cleanup\n"
+            "  \"inactivity_blocks\": n,            (numeric) Blocks since last access\n"
+            "  \"inactivity_threshold\": n          (numeric) Inactivity threshold for cleanup\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getcontractcleanupinfo", "\"CXXXcontractaddress\"")
+            + HelpExampleRpc("getcontractcleanupinfo", "\"CXXXcontractaddress\"")
+        );
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Parse contract address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid contract address");
+    }
+
+    uint160 contractAddr = uint160(std::vector<unsigned char>(20, 0));
+    if (dest.type() == typeid(CKeyID)) {
+        CKeyID keyID = boost::get<CKeyID>(dest);
+        memcpy(contractAddr.begin(), keyID.begin(), 20);
+    } else if (dest.type() == typeid(CScriptID)) {
+        CScriptID scriptID = boost::get<CScriptID>(dest);
+        memcpy(contractAddr.begin(), scriptID.begin(), 20);
+    }
+
+    // Get cleanup manager (create if needed)
+    static CVM::CleanupManager cleanupManager;
+    static bool initialized = false;
+    if (!initialized) {
+        cleanupManager.Initialize(CVM::g_cvmdb.get(), nullptr);
+        initialized = true;
+    }
+
+    auto info = cleanupManager.GetContractInfo(contractAddr);
+    int64_t currentHeight = chainActive.Height();
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("contract_address", request.params[0].get_str());
+    result.pushKV("deployer", EncodeDestination(CTxDestination(CKeyID(info.deployer))));
+    result.pushKV("deployer_reputation", (int)info.deployerReputation);
+    result.pushKV("deployment_block", info.deploymentBlock);
+    result.pushKV("last_access_block", info.lastAccessBlock);
+    result.pushKV("storage_size", info.storageSize);
+    result.pushKV("is_marked_for_cleanup", info.isMarkedForCleanup);
+    result.pushKV("inactivity_blocks", currentHeight - info.lastAccessBlock);
+    result.pushKV("inactivity_threshold", CVM::CleanupManager::GetInactivityThreshold(info.deployerReputation));
+    
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -2210,6 +3000,14 @@ static const CRPCCommand commands[] =
     { "cvm",                "getcontractinfo",       &getcontractinfo,        {"contractaddress"} },
     { "cvm",                "sendcvmcontract",       &sendcvmcontract,        {"bytecode","gaslimit"} },
     { "reputation",         "getreputation",         &getreputation,          {"address"} },
+    { "reputation",         "getgasallowance",       &getgasallowance,        {"address"} },
+    { "reputation",         "getnetworkcongestion",  &getnetworkcongestion,   {} },
+    { "reputation",         "getgassubsidies",       &getgassubsidies,        {"address"} },
+    { "reputation",         "creategaspool",         &creategaspool,          {"poolid","amount","minreputation"} },
+    { "reputation",         "getgaspoolinfo",        &getgaspoolinfo,         {"poolid"} },
+    { "reputation",         "estimategascost",       &estimategascost,        {"gaslimit","address"} },
+    { "reputation",         "createpriceguarantee",  &createpriceguarantee,   {"address","guaranteedprice","duration","minreputation"} },
+    { "reputation",         "getpriceguarantee",     &getpriceguarantee,      {"address"} },
     { "reputation",         "votereputation",        &votereputation,         {"address","vote","reason","proof"} },
     { "reputation",         "sendcvmvote",           &sendcvmvote,            {"address","vote","reason"} },
     { "reputation",         "listreputations",       &listreputations,        {"threshold","count"} },
@@ -2231,6 +3029,33 @@ static const CRPCCommand commands[] =
     { "dao",                "listdisputes",          &listdisputes,           {"status"} },
     { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
     { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","from_address","stake"} },
+    { "resource",           "getresourcestats",      &getresourcestats,       {"address"} },
+    { "resource",           "getglobalresourcestats",&getglobalresourcestats, {} },
+    { "cleanup",            "rungarbagecollection",  &rungarbagecollection,   {} },
+    { "cleanup",            "getcleanupstats",       &getcleanupstats,        {} },
+    { "cleanup",            "getcontractcleanupinfo",&getcontractcleanupinfo, {"contractaddress"} },
+    // Cascoin RPC methods for CVM/EVM (primary/standard names)
+    { "cas",                "cas_sendTransaction",   &eth_sendTransaction,    {"transaction"} },
+    { "cas",                "cas_call",              &eth_call,               {"call","block"} },
+    { "cas",                "cas_estimateGas",       &eth_estimateGas,        {"transaction"} },
+    { "cas",                "cas_getCode",           &eth_getCode,            {"address","block"} },
+    { "cas",                "cas_getStorageAt",      &eth_getStorageAt,       {"address","position","block"} },
+    { "cas",                "cas_getTransactionReceipt", &eth_getTransactionReceipt, {"txhash"} },
+    { "cas",                "cas_blockNumber",       &eth_blockNumber,        {} },
+    { "cas",                "cas_getBalance",        &eth_getBalance,         {"address","block"} },
+    { "cas",                "cas_getTransactionCount", &eth_getTransactionCount, {"address","block"} },
+    { "cas",                "cas_gasPrice",          &eth_gasPrice,           {} },
+    // Ethereum-compatible aliases for tool compatibility (MetaMask, Web3.js, etc.)
+    { "eth",                "eth_sendTransaction",   &eth_sendTransaction,    {"transaction"} },
+    { "eth",                "eth_call",              &eth_call,               {"call","block"} },
+    { "eth",                "eth_estimateGas",       &eth_estimateGas,        {"transaction"} },
+    { "eth",                "eth_getCode",           &eth_getCode,            {"address","block"} },
+    { "eth",                "eth_getStorageAt",      &eth_getStorageAt,       {"address","position","block"} },
+    { "eth",                "eth_getTransactionReceipt", &eth_getTransactionReceipt, {"txhash"} },
+    { "eth",                "eth_blockNumber",       &eth_blockNumber,        {} },
+    { "eth",                "eth_getBalance",        &eth_getBalance,         {"address","block"} },
+    { "eth",                "eth_getTransactionCount", &eth_getTransactionCount, {"address","block"} },
+    { "eth",                "eth_gasPrice",          &eth_gasPrice,           {} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)

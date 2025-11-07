@@ -50,6 +50,10 @@ public:
     void SetCallerReputation(uint32_t reputation) { caller_reputation = reputation; }
     void SetContractReputation(uint32_t reputation) { contract_reputation = reputation; }
     
+    // Getters for current context
+    uint32_t GetCallerReputation() const { return caller_reputation; }
+    uint32_t GetContractReputation() const { return contract_reputation; }
+    
     // Cross-chain trust
     void AddCrossChainAttestation(const uint160& address, const std::string& chain, uint32_t reputation);
     uint32_t GetCrossChainReputation(const uint160& address, const std::string& chain) const;

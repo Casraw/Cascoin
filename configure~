@@ -34370,33 +34370,33 @@ then :
 if test "x$ac_cv_header_evmone_evmone_h" = xyes
 then :
 
-          { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmone_create in -levmone" >&5
-printf %s "checking for evmone_create in -levmone... " >&6; }
-if test ${ac_cv_lib_evmone_evmone_create+y}
+          { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmc_create_evmone in -levmone" >&5
+printf %s "checking for evmc_create_evmone in -levmone... " >&6; }
+if test ${ac_cv_lib_evmone_evmc_create_evmone+y}
 then :
   printf %s "(cached) " >&6
 else case e in #(
   e) ac_check_lib_save_LIBS=$LIBS
-LIBS="-levmone  $LIBS"
+LIBS="-levmone -levmc-loader $LIBS"
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
 namespace conftest {
-  extern "C" int evmone_create ();
+  extern "C" int evmc_create_evmone ();
 }
 int
 main (void)
 {
-return conftest::evmone_create ();
+return conftest::evmc_create_evmone ();
   ;
   return 0;
 }
 _ACEOF
 if ac_fn_cxx_try_link "$LINENO"
 then :
-  ac_cv_lib_evmone_evmone_create=yes
+  ac_cv_lib_evmone_evmc_create_evmone=yes
 else case e in #(
-  e) ac_cv_lib_evmone_evmone_create=no ;;
+  e) ac_cv_lib_evmone_evmc_create_evmone=no ;;
 esac
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.beam \
@@ -34404,12 +34404,12 @@ rm -f core conftest.err conftest.$ac_objext conftest.beam \
 LIBS=$ac_check_lib_save_LIBS ;;
 esac
 fi
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_evmone_evmone_create" >&5
-printf "%s\n" "$ac_cv_lib_evmone_evmone_create" >&6; }
-if test "x$ac_cv_lib_evmone_evmone_create" = xyes
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_evmone_evmc_create_evmone" >&5
+printf "%s\n" "$ac_cv_lib_evmone_evmc_create_evmone" >&6; }
+if test "x$ac_cv_lib_evmone_evmc_create_evmone" = xyes
 then :
 
-            EVMONE_LIBS="-levmone"
+            EVMONE_LIBS="-levmone -levmc-loader"
             have_evmone=yes
 
 else case e in #(

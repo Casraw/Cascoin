@@ -11,6 +11,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/trust_context.h>
 #include <cvm/evmc_host.h>
+#include <cvm/sustainable_gas.h>
 #include <uint256.h>
 #include <evmc/evmc.h>
 #include <evmc/utils.h>
@@ -20,6 +21,11 @@
 #include <string>
 
 namespace CVM {
+
+// EVM Constants
+static constexpr size_t MAX_BYTECODE_SIZE = 24576; // 24KB max contract size
+static constexpr size_t MAX_MEMORY_SIZE = 1024 * 1024; // 1MB
+// MAX_STACK_SIZE is defined in vmstate.h
 
 /**
  * EVM Engine Execution Result
@@ -165,6 +171,8 @@ public:
     // Testing and validation
     bool TestTrustEnhancedOperations();
     bool TestTrustAwareMemoryAndStack();
+    bool TestReputationEnhancedControlFlow();
+    bool TestTrustIntegratedCryptography();
 
 private:
     // EVMC VM instance management
@@ -251,6 +259,7 @@ private:
     bool VerifyReputationSignature(const std::vector<uint8_t>& signature, const uint160& signer);
     uint256 ComputeTrustEnhancedHash(const std::vector<uint8_t>& data, const uint160& caller);
     bool GenerateReputationBasedKey(const uint160& address, std::vector<uint8_t>& key);
+    bool GenerateTrustAwareRandomNumber(const uint160& caller, uint256& random_number);
     
     // Cross-chain trust operations
     bool ValidateCrossChainTrustAttestation(const std::vector<uint8_t>& attestation);
@@ -259,6 +268,8 @@ private:
     
     // Error handling and validation
     EVMExecutionResult CreateErrorResult(evmc_status_code status, const std::string& error);
+    EVMExecutionResult HandleTrustAwareException(evmc_status_code status, const std::string& error,
+                                                 const uint160& caller, uint64_t gas_used, uint64_t gas_left);
     bool ValidateExecutionParameters(const evmc_message& msg, const std::vector<uint8_t>& bytecode);
     void HandleTrustRelatedError(const std::string& error, const uint160& caller);
     
@@ -276,6 +287,7 @@ private:
     CVMDatabase* database;
     std::shared_ptr<TrustContext> trust_context;
     std::unique_ptr<EVMCHost> evmc_host;
+    std::unique_ptr<cvm::SustainableGasSystem> gas_system;
     
     // EVM instance
     evmc_vm* evm_instance;

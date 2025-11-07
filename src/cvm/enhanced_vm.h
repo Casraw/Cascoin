@@ -9,6 +9,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/trust_context.h>
 #include <cvm/bytecode_detector.h>
+#include <cvm/enhanced_storage.h>
 #include <uint256.h>
 #include <vector>
 #include <memory>

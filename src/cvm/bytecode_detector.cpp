@@ -621,8 +621,169 @@ std::vector<uint8_t> CreateHybridContract(const std::vector<uint8_t>& evm_code, 
 }
 
 std::string DisassembleBytecode(const std::vector<uint8_t>& bytecode, BytecodeFormat format) {
-    // TODO: Implement disassembly for debugging
-    return "Disassembly not implemented";
+    if (bytecode.empty()) {
+        return "Empty bytecode";
+    }
+    
+    std::string disassembly;
+    disassembly += "Bytecode Disassembly (" + FormatToString(format) + ")\n";
+    disassembly += "Size: " + std::to_string(bytecode.size()) + " bytes\n";
+    disassembly += "----------------------------------------\n";
+    
+    if (format == BytecodeFormat::EVM_BYTECODE || format == BytecodeFormat::HYBRID) {
+        // EVM disassembly
+        for (size_t i = 0; i < bytecode.size(); ) {
+            uint8_t opcode = bytecode[i];
+            disassembly += strprintf("%04x: %02x ", i, opcode);
+            
+            // Decode EVM opcodes
+            if (opcode >= 0x60 && opcode <= 0x7f) {
+                // PUSH opcodes
+                uint8_t push_size = opcode - 0x5f;
+                disassembly += strprintf("PUSH%d ", push_size);
+                
+                if (i + push_size < bytecode.size()) {
+                    disassembly += "0x";
+                    for (uint8_t j = 0; j < push_size && i + 1 + j < bytecode.size(); ++j) {
+                        disassembly += strprintf("%02x", bytecode[i + 1 + j]);
+                    }
+                    i += 1 + push_size;
+                } else {
+                    disassembly += "[INCOMPLETE]";
+                    i++;
+                }
+            } else {
+                // Other opcodes
+                std::string opcode_name = "UNKNOWN";
+                switch (opcode) {
+                    case 0x00: opcode_name = "STOP"; break;
+                    case 0x01: opcode_name = "ADD"; break;
+                    case 0x02: opcode_name = "MUL"; break;
+                    case 0x03: opcode_name = "SUB"; break;
+                    case 0x04: opcode_name = "DIV"; break;
+                    case 0x10: opcode_name = "LT"; break;
+                    case 0x11: opcode_name = "GT"; break;
+                    case 0x14: opcode_name = "EQ"; break;
+                    case 0x15: opcode_name = "ISZERO"; break;
+                    case 0x16: opcode_name = "AND"; break;
+                    case 0x17: opcode_name = "OR"; break;
+                    case 0x18: opcode_name = "XOR"; break;
+                    case 0x19: opcode_name = "NOT"; break;
+                    case 0x20: opcode_name = "SHA3"; break;
+                    case 0x30: opcode_name = "ADDRESS"; break;
+                    case 0x31: opcode_name = "BALANCE"; break;
+                    case 0x33: opcode_name = "CALLER"; break;
+                    case 0x34: opcode_name = "CALLVALUE"; break;
+                    case 0x35: opcode_name = "CALLDATALOAD"; break;
+                    case 0x36: opcode_name = "CALLDATASIZE"; break;
+                    case 0x50: opcode_name = "POP"; break;
+                    case 0x51: opcode_name = "MLOAD"; break;
+                    case 0x52: opcode_name = "MSTORE"; break;
+                    case 0x54: opcode_name = "SLOAD"; break;
+                    case 0x55: opcode_name = "SSTORE"; break;
+                    case 0x56: opcode_name = "JUMP"; break;
+                    case 0x57: opcode_name = "JUMPI"; break;
+                    case 0x5b: opcode_name = "JUMPDEST"; break;
+                    case 0x80: case 0x81: case 0x82: case 0x83:
+                    case 0x84: case 0x85: case 0x86: case 0x87:
+                    case 0x88: case 0x89: case 0x8a: case 0x8b:
+                    case 0x8c: case 0x8d: case 0x8e: case 0x8f:
+                        opcode_name = strprintf("DUP%d", opcode - 0x7f);
+                        break;
+                    case 0x90: case 0x91: case 0x92: case 0x93:
+                    case 0x94: case 0x95: case 0x96: case 0x97:
+                    case 0x98: case 0x99: case 0x9a: case 0x9b:
+                    case 0x9c: case 0x9d: case 0x9e: case 0x9f:
+                        opcode_name = strprintf("SWAP%d", opcode - 0x8f);
+                        break;
+                    case 0xa0: opcode_name = "LOG0"; break;
+                    case 0xa1: opcode_name = "LOG1"; break;
+                    case 0xa2: opcode_name = "LOG2"; break;
+                    case 0xa3: opcode_name = "LOG3"; break;
+                    case 0xa4: opcode_name = "LOG4"; break;
+                    case 0xf0: opcode_name = "CREATE"; break;
+                    case 0xf1: opcode_name = "CALL"; break;
+                    case 0xf2: opcode_name = "CALLCODE"; break;
+                    case 0xf3: opcode_name = "RETURN"; break;
+                    case 0xf4: opcode_name = "DELEGATECALL"; break;
+                    case 0xf5: opcode_name = "CREATE2"; break;
+                    case 0xfa: opcode_name = "STATICCALL"; break;
+                    case 0xfd: opcode_name = "REVERT"; break;
+                    case 0xfe: opcode_name = "INVALID"; break;
+                    case 0xff: opcode_name = "SELFDESTRUCT"; break;
+                }
+                disassembly += opcode_name;
+                i++;
+            }
+            disassembly += "\n";
+        }
+    } else if (format == BytecodeFormat::CVM_NATIVE) {
+        // CVM disassembly
+        for (size_t i = 0; i < bytecode.size(); ) {
+            uint8_t opcode = bytecode[i];
+            disassembly += strprintf("%04x: %02x ", i, opcode);
+            
+            std::string opcode_name = "UNKNOWN";
+            switch (opcode) {
+                case 0x01: opcode_name = "PUSH"; break;
+                case 0x02: opcode_name = "POP"; break;
+                case 0x03: opcode_name = "DUP"; break;
+                case 0x04: opcode_name = "SWAP"; break;
+                case 0x10: opcode_name = "ADD"; break;
+                case 0x11: opcode_name = "SUB"; break;
+                case 0x12: opcode_name = "MUL"; break;
+                case 0x13: opcode_name = "DIV"; break;
+                case 0x14: opcode_name = "MOD"; break;
+                case 0x20: opcode_name = "AND"; break;
+                case 0x21: opcode_name = "OR"; break;
+                case 0x22: opcode_name = "XOR"; break;
+                case 0x23: opcode_name = "NOT"; break;
+                case 0x30: opcode_name = "EQ"; break;
+                case 0x31: opcode_name = "NE"; break;
+                case 0x32: opcode_name = "LT"; break;
+                case 0x33: opcode_name = "GT"; break;
+                case 0x40: opcode_name = "JUMP"; break;
+                case 0x41: opcode_name = "JUMPI"; break;
+                case 0x42: opcode_name = "CALL"; break;
+                case 0x43: opcode_name = "RETURN"; break;
+                case 0x44: opcode_name = "STOP"; break;
+                case 0x50: opcode_name = "SLOAD"; break;
+                case 0x51: opcode_name = "SSTORE"; break;
+                case 0x60: opcode_name = "SHA256"; break;
+                case 0x61: opcode_name = "VERIFY_SIG"; break;
+                case 0x70: opcode_name = "ADDRESS"; break;
+                case 0x71: opcode_name = "BALANCE"; break;
+                case 0x72: opcode_name = "CALLER"; break;
+                case 0x73: opcode_name = "CALLVALUE"; break;
+                case 0x74: opcode_name = "TIMESTAMP"; break;
+                case 0x75: opcode_name = "BLOCKHASH"; break;
+                case 0x76: opcode_name = "BLOCKHEIGHT"; break;
+                case 0x80: opcode_name = "GAS"; break;
+                case 0x90: opcode_name = "LOG"; break;
+                case 0x91: opcode_name = "REVERT"; break;
+            }
+            
+            disassembly += opcode_name;
+            
+            // Handle PUSH opcode with data
+            if (opcode == 0x01 && i + 1 < bytecode.size()) {
+                uint8_t size = bytecode[i + 1];
+                disassembly += strprintf(" size=%d data=0x", size);
+                for (uint8_t j = 0; j < size && i + 2 + j < bytecode.size(); ++j) {
+                    disassembly += strprintf("%02x", bytecode[i + 2 + j]);
+                }
+                i += 2 + size;
+            } else {
+                i++;
+            }
+            disassembly += "\n";
+        }
+    } else {
+        disassembly += "Unknown format - raw hex dump:\n";
+        disassembly += BytecodeToHex(bytecode);
+    }
+    
+    return disassembly;
 }
 
 std::string BytecodeToHex(const std::vector<uint8_t>& bytecode) {
@@ -644,13 +805,260 @@ std::vector<uint8_t> HexToBytecode(const std::string& hex) {
 }
 
 bool IsBytecodeOptimized(const std::vector<uint8_t>& bytecode, BytecodeFormat format) {
-    // TODO: Implement optimization detection
-    return false;
+    if (bytecode.empty()) {
+        return false;
+    }
+    
+    // Check for common optimization patterns
+    bool has_optimizations = false;
+    
+    if (format == BytecodeFormat::EVM_BYTECODE || format == BytecodeFormat::HYBRID) {
+        // EVM optimization checks
+        
+        // 1. Check for redundant PUSH/POP sequences
+        bool has_redundant_pushpop = false;
+        for (size_t i = 0; i < bytecode.size() - 1; ++i) {
+            if ((bytecode[i] >= 0x60 && bytecode[i] <= 0x7f) && bytecode[i + 1] == 0x50) {
+                has_redundant_pushpop = true;
+                break;
+            }
+        }
+        
+        // 2. Check for unnecessary DUP operations
+        bool has_unnecessary_dup = false;
+        for (size_t i = 0; i < bytecode.size() - 1; ++i) {
+            if ((bytecode[i] >= 0x80 && bytecode[i] <= 0x8f) && bytecode[i + 1] == 0x50) {
+                has_unnecessary_dup = true;
+                break;
+            }
+        }
+        
+        // 3. Check for dead code after RETURN/STOP/REVERT
+        bool has_dead_code = false;
+        for (size_t i = 0; i < bytecode.size() - 1; ++i) {
+            if (bytecode[i] == 0xf3 || bytecode[i] == 0x00 || bytecode[i] == 0xfd) {
+                // Check if there's code after (excluding JUMPDEST)
+                if (i + 1 < bytecode.size() && bytecode[i + 1] != 0x5b) {
+                    has_dead_code = true;
+                    break;
+                }
+            }
+        }
+        
+        // Bytecode is considered optimized if it doesn't have these issues
+        has_optimizations = !has_redundant_pushpop && !has_unnecessary_dup && !has_dead_code;
+        
+        // 4. Check for efficient PUSH usage (using smallest PUSH size)
+        bool uses_efficient_push = true;
+        for (size_t i = 0; i < bytecode.size(); ) {
+            uint8_t opcode = bytecode[i];
+            if (opcode >= 0x60 && opcode <= 0x7f) {
+                uint8_t push_size = opcode - 0x5f;
+                if (i + push_size < bytecode.size()) {
+                    // Check if a smaller PUSH could be used
+                    bool all_zero = true;
+                    for (uint8_t j = 0; j < push_size - 1; ++j) {
+                        if (bytecode[i + 1 + j] != 0) {
+                            all_zero = false;
+                            break;
+                        }
+                    }
+                    if (all_zero && push_size > 1) {
+                        uses_efficient_push = false;
+                        break;
+                    }
+                    i += 1 + push_size;
+                } else {
+                    i++;
+                }
+            } else {
+                i++;
+            }
+        }
+        
+        has_optimizations = has_optimizations && uses_efficient_push;
+        
+    } else if (format == BytecodeFormat::CVM_NATIVE) {
+        // CVM optimization checks
+        
+        // 1. Check for redundant register operations
+        bool has_redundant_ops = false;
+        for (size_t i = 0; i < bytecode.size() - 1; ++i) {
+            if (bytecode[i] == 0x01 && bytecode[i + 1] == 0x02) { // PUSH followed by POP
+                has_redundant_ops = true;
+                break;
+            }
+        }
+        
+        // 2. Check for efficient data packing
+        bool uses_efficient_packing = true;
+        for (size_t i = 0; i < bytecode.size(); ) {
+            if (bytecode[i] == 0x01 && i + 1 < bytecode.size()) { // PUSH
+                uint8_t size = bytecode[i + 1];
+                if (size > 32) { // Invalid size
+                    uses_efficient_packing = false;
+                    break;
+                }
+                i += 2 + size;
+            } else {
+                i++;
+            }
+        }
+        
+        has_optimizations = !has_redundant_ops && uses_efficient_packing;
+    }
+    
+    return has_optimizations;
 }
 
 std::vector<uint8_t> OptimizeBytecode(const std::vector<uint8_t>& bytecode, BytecodeFormat format) {
-    // TODO: Implement bytecode optimization
-    return bytecode;
+    if (bytecode.empty()) {
+        return bytecode;
+    }
+    
+    std::vector<uint8_t> optimized;
+    
+    if (format == BytecodeFormat::EVM_BYTECODE || format == BytecodeFormat::HYBRID) {
+        // EVM bytecode optimization
+        
+        for (size_t i = 0; i < bytecode.size(); ) {
+            uint8_t opcode = bytecode[i];
+            
+            // Optimization 1: Remove redundant PUSH/POP sequences
+            if ((opcode >= 0x60 && opcode <= 0x7f) && i + 1 < bytecode.size()) {
+                uint8_t push_size = opcode - 0x5f;
+                if (i + 1 + push_size < bytecode.size() && bytecode[i + 1 + push_size] == 0x50) {
+                    // Skip PUSH and following POP
+                    i += 2 + push_size;
+                    continue;
+                }
+            }
+            
+            // Optimization 2: Remove unnecessary DUP followed by POP
+            if ((opcode >= 0x80 && opcode <= 0x8f) && i + 1 < bytecode.size() && bytecode[i + 1] == 0x50) {
+                // Skip DUP and POP
+                i += 2;
+                continue;
+            }
+            
+            // Optimization 3: Remove dead code after RETURN/STOP/REVERT
+            if (opcode == 0xf3 || opcode == 0x00 || opcode == 0xfd) {
+                optimized.push_back(opcode);
+                i++;
+                // Skip until next JUMPDEST
+                while (i < bytecode.size() && bytecode[i] != 0x5b) {
+                    i++;
+                }
+                continue;
+            }
+            
+            // Optimization 4: Use smallest PUSH size
+            if (opcode >= 0x60 && opcode <= 0x7f) {
+                uint8_t push_size = opcode - 0x5f;
+                if (i + push_size < bytecode.size()) {
+                    // Find actual size needed
+                    uint8_t actual_size = push_size;
+                    for (uint8_t j = 0; j < push_size - 1; ++j) {
+                        if (bytecode[i + 1 + j] != 0) {
+                            break;
+                        }
+                        actual_size--;
+                    }
+                    
+                    if (actual_size < push_size && actual_size > 0) {
+                        // Use smaller PUSH
+                        optimized.push_back(0x5f + actual_size);
+                        for (uint8_t j = push_size - actual_size; j < push_size; ++j) {
+                            optimized.push_back(bytecode[i + 1 + j]);
+                        }
+                        i += 1 + push_size;
+                        continue;
+                    }
+                }
+            }
+            
+            // No optimization applied, copy as-is
+            optimized.push_back(opcode);
+            
+            // Handle PUSH data
+            if (opcode >= 0x60 && opcode <= 0x7f) {
+                uint8_t push_size = opcode - 0x5f;
+                for (uint8_t j = 0; j < push_size && i + 1 + j < bytecode.size(); ++j) {
+                    optimized.push_back(bytecode[i + 1 + j]);
+                }
+                i += 1 + push_size;
+            } else {
+                i++;
+            }
+        }
+        
+    } else if (format == BytecodeFormat::CVM_NATIVE) {
+        // CVM bytecode optimization
+        
+        for (size_t i = 0; i < bytecode.size(); ) {
+            uint8_t opcode = bytecode[i];
+            
+            // Optimization 1: Remove redundant PUSH/POP sequences
+            if (opcode == 0x01 && i + 1 < bytecode.size()) { // PUSH
+                uint8_t size = bytecode[i + 1];
+                if (i + 2 + size < bytecode.size() && bytecode[i + 2 + size] == 0x02) { // Followed by POP
+                    // Skip PUSH and POP
+                    i += 3 + size;
+                    continue;
+                }
+            }
+            
+            // Optimization 2: Optimize PUSH data size
+            if (opcode == 0x01 && i + 1 < bytecode.size()) {
+                uint8_t size = bytecode[i + 1];
+                if (size > 0 && size <= 32 && i + 2 + size <= bytecode.size()) {
+                    // Find actual size needed (remove leading zeros)
+                    uint8_t actual_size = size;
+                    for (uint8_t j = 0; j < size - 1; ++j) {
+                        if (bytecode[i + 2 + j] != 0) {
+                            break;
+                        }
+                        actual_size--;
+                    }
+                    
+                    if (actual_size < size && actual_size > 0) {
+                        // Use smaller size
+                        optimized.push_back(0x01); // PUSH
+                        optimized.push_back(actual_size);
+                        for (uint8_t j = size - actual_size; j < size; ++j) {
+                            optimized.push_back(bytecode[i + 2 + j]);
+                        }
+                        i += 2 + size;
+                        continue;
+                    }
+                }
+            }
+            
+            // No optimization applied, copy as-is
+            optimized.push_back(opcode);
+            
+            // Handle PUSH data
+            if (opcode == 0x01 && i + 1 < bytecode.size()) {
+                uint8_t size = bytecode[i + 1];
+                optimized.push_back(size);
+                for (uint8_t j = 0; j < size && i + 2 + j < bytecode.size(); ++j) {
+                    optimized.push_back(bytecode[i + 2 + j]);
+                }
+                i += 2 + size;
+            } else {
+                i++;
+            }
+        }
+        
+    } else {
+        // Unknown format, return as-is
+        return bytecode;
+    }
+    
+    LogPrint(BCLog::CVM, "BytecodeUtils: Optimized bytecode from %d to %d bytes\n",
+             bytecode.size(), optimized.size());
+    
+    return optimized;
 }
 
 } // namespace BytecodeUtils

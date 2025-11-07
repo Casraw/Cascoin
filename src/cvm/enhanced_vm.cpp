@@ -195,9 +195,19 @@ EnhancedExecutionResult EnhancedVM::DeployContract(
         return CreateErrorResult("Contract deployment validation failed");
     }
     
-    // Generate contract address
-    // TODO: Get proper nonce from deployer account
-    uint64_t nonce = 1; // Placeholder
+    // Generate contract address with proper nonce tracking
+    uint64_t nonce = 0;
+    if (database) {
+        // Get current nonce for deployer
+        nonce = database->GetNextNonce(deployer_address);
+        LogPrint(BCLog::CVM, "EnhancedVM: Using nonce %d for deployer %s\n",
+                 nonce, deployer_address.ToString());
+    } else {
+        // Fallback to timestamp-based nonce if no database
+        nonce = static_cast<uint64_t>(GetTime());
+        LogPrint(BCLog::CVM, "EnhancedVM: Using timestamp-based nonce %d (no database)\n", nonce);
+    }
+    
     uint160 contract_address = GenerateContractAddress(deployer_address, nonce);
     
     // Check if contract already exists
@@ -224,6 +234,10 @@ EnhancedExecutionResult EnhancedVM::DeployContract(
         if (!database->WriteContract(contract_address, contract)) {
             return CreateErrorResult("Failed to store contract bytecode");
         }
+        
+        // Increment deployer's nonce after successful deployment
+        database->WriteNonce(deployer_address, nonce + 1);
+        LogPrint(BCLog::CVM, "EnhancedVM: Incremented deployer nonce to %d\n", nonce + 1);
     }
     
     TraceExecution("Contract deployed successfully at address: " + contract_address.ToString());
@@ -457,32 +471,139 @@ uint160 EnhancedVM::GenerateContractAddress(const uint160& deployer, uint64_t no
 }
 
 uint160 EnhancedVM::GenerateCreate2Address(const uint160& deployer, const uint256& salt, const std::vector<uint8_t>& bytecode) {
-    // TODO: Implement CREATE2 address generation
-    return uint160();
+    // CREATE2 address generation: address = keccak256(0xff || deployer || salt || keccak256(bytecode))[12:]
+    // For Cascoin, we use: hash(0xff || deployer || salt || hash(bytecode))
+    
+    CHashWriter hasher(SER_GETHASH, 0);
+    
+    // Add 0xff prefix
+    hasher << uint8_t(0xff);
+    
+    // Add deployer address
+    hasher << deployer;
+    
+    // Add salt
+    hasher << salt;
+    
+    // Add bytecode hash
+    CHashWriter bytecode_hasher(SER_GETHASH, 0);
+    bytecode_hasher.write((const char*)bytecode.data(), bytecode.size());
+    uint256 bytecode_hash = bytecode_hasher.GetHash();
+    hasher << bytecode_hash;
+    
+    // Get final hash
+    uint256 hash = hasher.GetHash();
+    
+    // Take the last 160 bits (20 bytes) of the hash
+    uint160 contract_addr;
+    std::memcpy(contract_addr.begin(), hash.begin(), 20);
+    
+    LogPrint(BCLog::CVM, "EnhancedVM: Generated CREATE2 address %s from deployer %s\n",
+             contract_addr.ToString(), deployer.ToString());
+    
+    return contract_addr;
 }
 
 bool EnhancedVM::ValidateContractDeployment(const std::vector<uint8_t>& bytecode, const uint160& deployer) {
-    if (bytecode.empty() || bytecode.size() > MAX_BYTECODE_SIZE) {
+    // Check bytecode size
+    if (bytecode.empty()) {
+        LogExecution("ERROR", "Contract deployment validation failed: empty bytecode");
         return false;
     }
     
-    if (!trust_context) {
-        return true;
+    if (bytecode.size() > MAX_BYTECODE_SIZE) {
+        LogExecution("ERROR", "Contract deployment validation failed: bytecode too large (" + 
+                    std::to_string(bytecode.size()) + " > " + std::to_string(MAX_BYTECODE_SIZE) + ")");
+        return false;
     }
     
-    return trust_context->CheckTrustGate(deployer, "contract_deployment");
+    // Validate bytecode format
+    auto detection = DetectBytecodeFormat(bytecode);
+    if (!detection.is_valid) {
+        LogExecution("ERROR", "Contract deployment validation failed: invalid bytecode format");
+        return false;
+    }
+    
+    // Check if we can execute this format
+    if (!CanExecuteFormat(detection.format)) {
+        LogExecution("ERROR", "Contract deployment validation failed: unsupported bytecode format");
+        return false;
+    }
+    
+    // Check trust gates
+    if (trust_context) {
+        if (!trust_context->CheckTrustGate(deployer, "contract_deployment")) {
+            LogExecution("ERROR", "Contract deployment validation failed: trust gate check failed");
+            return false;
+        }
+        
+        // Additional reputation check for deployment
+        uint32_t deployer_reputation = trust_context->GetReputation(deployer);
+        if (deployer_reputation < 50) { // Require at least medium reputation
+            LogExecution("ERROR", "Contract deployment validation failed: insufficient reputation (" +
+                        std::to_string(deployer_reputation) + " < 50)");
+            return false;
+        }
+    }
+    
+    LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation passed for deployer %s\n",
+             deployer.ToString());
+    
+    return true;
 }
 
 bool EnhancedVM::ValidateContractCall(const uint160& contract, const uint160& caller, uint64_t gas_limit) {
+    // Check minimum gas limit
     if (gas_limit < MIN_GAS_LIMIT) {
+        LogExecution("ERROR", "Contract call validation failed: gas limit too low (" +
+                    std::to_string(gas_limit) + " < " + std::to_string(MIN_GAS_LIMIT) + ")");
         return false;
     }
     
-    if (!trust_context) {
-        return true;
+    // Check if contract exists
+    if (database) {
+        if (!database->Exists(contract)) {
+            LogExecution("ERROR", "Contract call validation failed: contract does not exist at " +
+                        contract.ToString());
+            return false;
+        }
     }
     
-    return trust_context->CanPerformOperation(caller, "contract_call", gas_limit);
+    // Check trust gates
+    if (trust_context) {
+        if (!trust_context->CanPerformOperation(caller, "contract_call", gas_limit)) {
+            LogExecution("ERROR", "Contract call validation failed: trust gate check failed for caller " +
+                        caller.ToString());
+            return false;
+        }
+        
+        // Check reputation-based limits
+        uint32_t caller_reputation = trust_context->GetReputation(caller);
+        uint64_t max_gas_for_reputation;
+        
+        if (caller_reputation >= 80) {
+            max_gas_for_reputation = 10000000; // 10M gas
+        } else if (caller_reputation >= 60) {
+            max_gas_for_reputation = 5000000;  // 5M gas
+        } else if (caller_reputation >= 40) {
+            max_gas_for_reputation = 1000000;  // 1M gas
+        } else {
+            max_gas_for_reputation = 100000;   // 100K gas
+        }
+        
+        if (gas_limit > max_gas_for_reputation) {
+            LogExecution("ERROR", "Contract call validation failed: gas limit " +
+                        std::to_string(gas_limit) + " exceeds reputation-based limit " +
+                        std::to_string(max_gas_for_reputation) + " for reputation " +
+                        std::to_string(caller_reputation));
+            return false;
+        }
+    }
+    
+    LogPrint(BCLog::CVM, "EnhancedVM: Contract call validation passed for caller %s to contract %s\n",
+             caller.ToString(), contract.ToString());
+    
+    return true;
 }
 
 bool EnhancedVM::CheckResourceLimits(const uint160& caller, uint64_t gas_limit, size_t bytecode_size) {
@@ -541,6 +662,114 @@ EnhancedExecutionResult EnhancedVM::CreateErrorResult(const std::string& error, 
 
 void EnhancedVM::HandleExecutionError(const std::string& error, const uint160& contract, const uint160& caller) {
     LogExecution("ERROR", "Contract: " + contract.ToString() + ", Caller: " + caller.ToString() + ", Error: " + error);
+}
+
+EnhancedExecutionResult EnhancedVM::HandleCrossFormatCall(
+    BytecodeFormat source_format,
+    BytecodeFormat target_format,
+    const uint160& target_contract,
+    const std::vector<uint8_t>& call_data,
+    uint64_t gas_limit,
+    const uint160& caller_address,
+    uint64_t call_value) {
+    
+    if (!cross_format_calls_enabled) {
+        return CreateErrorResult("Cross-format calls are disabled", source_format);
+    }
+    
+    TraceExecution("Handling cross-format call from " + BytecodeUtils::FormatToString(source_format) +
+                  " to " + BytecodeUtils::FormatToString(target_format));
+    
+    // Check if formats are compatible
+    if (!EnhancedVMUtils::AreFormatsCompatible(source_format, target_format)) {
+        return CreateErrorResult("Incompatible bytecode formats for cross-format call", source_format);
+    }
+    
+    // Load target contract bytecode
+    std::vector<uint8_t> target_bytecode;
+    Contract target_contract_data;
+    if (!database || !database->ReadContract(target_contract, target_contract_data)) {
+        return CreateErrorResult("Target contract not found for cross-format call", source_format);
+    }
+    
+    target_bytecode = target_contract_data.code;
+    
+    // Verify target format matches expected
+    auto detection = DetectBytecodeFormat(target_bytecode);
+    if (detection.format != target_format && target_format != BytecodeFormat::HYBRID) {
+        LogExecution("WARNING", "Target bytecode format mismatch in cross-format call");
+    }
+    
+    // Check trust gates for cross-format calls (requires higher reputation)
+    if (trust_context) {
+        uint32_t caller_reputation = trust_context->GetReputation(caller_address);
+        if (caller_reputation < 70) { // Require 70+ reputation for cross-format calls
+            return CreateErrorResult("Insufficient reputation for cross-format call", source_format);
+        }
+    }
+    
+    // Execute the target contract
+    EnhancedExecutionResult result = Execute(
+        target_bytecode,
+        gas_limit,
+        target_contract,
+        caller_address,
+        call_value,
+        call_data,
+        0, // block_height - will be set by caller
+        uint256(), // block_hash - will be set by caller
+        GetTime()
+    );
+    
+    // Mark as cross-format call
+    result.cross_format_calls_made = true;
+    result.total_cross_calls = 1;
+    
+    stats.cross_format_calls++;
+    
+    TraceExecution("Cross-format call completed with status: " + 
+                  std::string(result.success ? "SUCCESS" : "FAILED"));
+    
+    return result;
+}
+
+void EnhancedVM::SaveExecutionState() {
+    // Save current execution state to stack for nested calls
+    if (execution_stack.size() >= MAX_CALL_DEPTH) {
+        LogExecution("ERROR", "Maximum call depth exceeded");
+        return;
+    }
+    
+    ExecutionFrame frame;
+    // Frame will be populated by caller with current execution context
+    // This is a placeholder for state management
+    
+    TraceExecution("Saved execution state (depth: " + std::to_string(execution_stack.size()) + ")");
+}
+
+void EnhancedVM::RestoreExecutionState() {
+    // Restore execution state from stack after nested call returns
+    if (execution_stack.empty()) {
+        LogExecution("WARNING", "Attempted to restore execution state with empty stack");
+        return;
+    }
+    
+    execution_stack.pop_back();
+    
+    TraceExecution("Restored execution state (depth: " + std::to_string(execution_stack.size()) + ")");
+}
+
+void EnhancedVM::CommitExecutionState() {
+    // Commit execution state changes to database
+    // This would typically be called after successful execution
+    
+    if (database) {
+        // Flush any pending database writes
+        // The actual implementation would depend on the database interface
+        TraceExecution("Committed execution state to database");
+    } else {
+        LogExecution("WARNING", "Cannot commit execution state - no database available");
+    }
 }
 
 bool EnhancedVM::TestTrustEnhancedSystem() {

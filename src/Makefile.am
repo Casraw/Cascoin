@@ -198,7 +198,20 @@ BITCOIN_CORE_H = \
   cvm/trust_context.h \
   cvm/bytecode_detector.h \
   cvm/enhanced_vm.h \
-  cvm/evm_engine.h
+  cvm/evm_engine.h \
+  cvm/enhanced_storage.h \
+  cvm/sustainable_gas.h \
+  cvm/gas_allowance.h \
+  cvm/tx_priority.h \
+  cvm/gas_subsidy.h \
+  cvm/reputation_signature.h \
+  cvm/resource_manager.h \
+  cvm/cleanup_manager.h \
+  cvm/mempool_manager.h \
+  cvm/fee_calculator.h \
+  cvm/mempool_priority.h \
+  cvm/block_validator.h \
+  cvm/evm_rpc.h
 
 
 obj/build.h: FORCE
@@ -273,6 +286,20 @@ libbitcoin_server_a_SOURCES = \
   cvm/bytecode_detector.cpp \
   cvm/enhanced_vm.cpp \
   cvm/evm_engine.cpp \
+  cvm/enhanced_storage.cpp \
+  cvm/sustainable_gas.cpp \
+  cvm/gas_allowance.cpp \
+  cvm/tx_priority.cpp \
+  cvm/gas_subsidy.cpp \
+  cvm/reputation_signature.cpp \
+  cvm/resource_manager.cpp \
+  cvm/cleanup_manager.cpp \
+  cvm/mempool_manager.cpp \
+  cvm/fee_calculator.cpp \
+  cvm/mempool_priority.cpp \
+  cvm/block_validator.cpp \
+  cvm/evm_rpc.cpp \
+  cvm/mempool_manager.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

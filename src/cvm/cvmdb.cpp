@@ -97,6 +97,15 @@ bool CVMDatabase::ReadContract(const uint160& address, Contract& contract) {
     return db->Read(dbKey, contract);
 }
 
+bool CVMDatabase::LoadContract(const uint160& address, std::vector<uint8_t>& code) {
+    Contract contract;
+    if (ReadContract(address, contract)) {
+        code = contract.code;
+        return true;
+    }
+    return false;
+}
+
 bool CVMDatabase::DeleteContract(const uint160& address) {
     std::string dbKey = std::string(1, DB_CONTRACT) + 
                        std::string((char*)address.begin(), 20);
