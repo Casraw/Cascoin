@@ -14,6 +14,7 @@
 #include <cvm/enhanced_vm.h>
 #include <cvm/fee_calculator.h>
 #include <cvm/gas_subsidy.h>
+#include <cvm/receipt.h>
 
 class CValidationState;
 class CBlockIndex;

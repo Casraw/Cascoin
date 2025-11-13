@@ -25,6 +25,7 @@ enum DeploymentPos
     DEPLOYMENT_HIVE_1_1,    // Cascoin: Hive: 1.1 Deployment
     DEPLOYMENT_MINOTAURX,   // Cascoin: MinotaurX+Hive1.2: Deployment
     DEPLOYMENT_RIALTO,      // Cascoin: Rialto: Deployment
+    DEPLOYMENT_CVM_EVM,     // Cascoin: CVM-EVM: Deployment of enhanced CVM with EVM compatibility and trust-aware features
 
     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in versionbits.cpp
     MAX_VERSION_BITS_DEPLOYMENTS

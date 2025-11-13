@@ -23,7 +23,7 @@ namespace CVM {
 struct StorageOperation {
     enum class Type {
         STORE,
-        DELETE
+        REMOVE  // Changed from DELETE to avoid Windows macro conflict
     };
     
     Type type;

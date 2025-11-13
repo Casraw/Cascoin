@@ -317,3 +317,50 @@ void ShutdownCVMDatabase() {
 
 } // namespace CVM
 
+
+// Receipt management
+bool CVMDatabase::WriteReceipt(const uint256& txHash, const TransactionReceipt& receipt) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Write(key, receipt);
+}
+
+bool CVMDatabase::ReadReceipt(const uint256& txHash, TransactionReceipt& receipt) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Read(key, receipt);
+}
+
+bool CVMDatabase::HasReceipt(const uint256& txHash) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Exists(key);
+}
+
+bool CVMDatabase::DeleteReceipt(const uint256& txHash) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Erase(key);
+}
+
+bool CVMDatabase::WriteBlockReceipts(const uint256& blockHash, const std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_RECEIPT_BLOCK) + blockHash.ToString();
+    return db->Write(key, txHashes);
+}
+
+bool CVMDatabase::ReadBlockReceipts(const uint256& blockHash, std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_RECEIPT_BLOCK) + blockHash.ToString();
+    return db->Read(key, txHashes);
+}
+
+bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {
+    // This is a simplified implementation
+    // In production, you'd want to iterate through receipts and check block numbers
+    // For now, we'll just log that pruning was requested
+    LogPrintf("CVM: Receipt pruning requested for blocks before %d\n", beforeBlockNumber);
+    
+    // TODO: Implement actual pruning logic
+    // This would involve:
+    // 1. Iterating through all receipts
+    // 2. Checking their block numbers
+    // 3. Deleting receipts older than beforeBlockNumber
+    // 4. Updating block receipt indices
+    
+    return true;
+}

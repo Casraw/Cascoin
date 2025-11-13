@@ -34325,33 +34325,54 @@ fi
 if test "x$ac_cv_header_evmc_evmc_h" = xyes
 then :
 
-      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmc_create_example_vm in -levmc" >&5
-printf %s "checking for evmc_create_example_vm in -levmc... " >&6; }
-if test ${ac_cv_lib_evmc_evmc_create_example_vm+y}
+      # For cross-compilation, AC_CHECK_LIB doesn't work well
+      # Check if we're cross-compiling and just verify headers exist
+      if test "x$cross_compiling" = "xyes"; then
+        ac_fn_cxx_check_header_compile "$LINENO" "evmone/evmone.h" "ac_cv_header_evmone_evmone_h" "$ac_includes_default"
+if test "x$ac_cv_header_evmone_evmone_h" = xyes
+then :
+
+          EVMC_LIBS="-levmc-loader"
+          EVMONE_LIBS="-levmone -levmc-loader -levmc-instructions"
+          have_evmc=yes
+          have_evmone=yes
+
+else case e in #(
+  e)
+          have_evmc=no
+          have_evmone=no
+         ;;
+esac
+fi
+
+      else
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmc_load in -levmc-loader" >&5
+printf %s "checking for evmc_load in -levmc-loader... " >&6; }
+if test ${ac_cv_lib_evmc_loader_evmc_load+y}
 then :
   printf %s "(cached) " >&6
 else case e in #(
   e) ac_check_lib_save_LIBS=$LIBS
-LIBS="-levmc  $LIBS"
+LIBS="-levmc-loader  $LIBS"
 cat confdefs.h - <<_ACEOF >conftest.$ac_ext
 /* end confdefs.h.  */
 
 namespace conftest {
-  extern "C" int evmc_create_example_vm ();
+  extern "C" int evmc_load ();
 }
 int
 main (void)
 {
-return conftest::evmc_create_example_vm ();
+return conftest::evmc_load ();
   ;
   return 0;
 }
 _ACEOF
 if ac_fn_cxx_try_link "$LINENO"
 then :
-  ac_cv_lib_evmc_evmc_create_example_vm=yes
+  ac_cv_lib_evmc_loader_evmc_load=yes
 else case e in #(
-  e) ac_cv_lib_evmc_evmc_create_example_vm=no ;;
+  e) ac_cv_lib_evmc_loader_evmc_load=no ;;
 esac
 fi
 rm -f core conftest.err conftest.$ac_objext conftest.beam \
@@ -34359,18 +34380,18 @@ rm -f core conftest.err conftest.$ac_objext conftest.beam \
 LIBS=$ac_check_lib_save_LIBS ;;
 esac
 fi
-{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_evmc_evmc_create_example_vm" >&5
-printf "%s\n" "$ac_cv_lib_evmc_evmc_create_example_vm" >&6; }
-if test "x$ac_cv_lib_evmc_evmc_create_example_vm" = xyes
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_evmc_loader_evmc_load" >&5
+printf "%s\n" "$ac_cv_lib_evmc_loader_evmc_load" >&6; }
+if test "x$ac_cv_lib_evmc_loader_evmc_load" = xyes
 then :
 
-        EVMC_LIBS="-levmc"
-        have_evmc=yes
-        ac_fn_cxx_check_header_compile "$LINENO" "evmone/evmone.h" "ac_cv_header_evmone_evmone_h" "$ac_includes_default"
+          EVMC_LIBS="-levmc-loader"
+          have_evmc=yes
+          ac_fn_cxx_check_header_compile "$LINENO" "evmone/evmone.h" "ac_cv_header_evmone_evmone_h" "$ac_includes_default"
 if test "x$ac_cv_header_evmone_evmone_h" = xyes
 then :
 
-          { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmc_create_evmone in -levmone" >&5
+            { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for evmc_create_evmone in -levmone" >&5
 printf %s "checking for evmc_create_evmone in -levmone... " >&6; }
 if test ${ac_cv_lib_evmone_evmc_create_evmone+y}
 then :
@@ -34409,8 +34430,8 @@ printf "%s\n" "$ac_cv_lib_evmone_evmc_create_evmone" >&6; }
 if test "x$ac_cv_lib_evmone_evmc_create_evmone" = xyes
 then :
 
-            EVMONE_LIBS="-levmone -levmc-loader"
-            have_evmone=yes
+              EVMONE_LIBS="-levmone -levmc-loader"
+              have_evmone=yes
 
 else case e in #(
   e) have_evmone=no ;;
@@ -34429,6 +34450,7 @@ else case e in #(
 esac
 fi
 
+      fi
 
 else case e in #(
   e) have_evmc=no ;;

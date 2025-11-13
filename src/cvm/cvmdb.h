@@ -7,6 +7,7 @@
 
 #include <cvm/vmstate.h>
 #include <cvm/contract.h>
+#include <cvm/receipt.h>
 #include <dbwrapper.h>
 #include <uint256.h>
 #include <map>
@@ -22,6 +23,8 @@ static const char DB_STORAGE = 'S';           // Contract storage: 'S' + address
 static const char DB_NONCE = 'N';             // Account nonce: 'N' + address -> nonce
 static const char DB_BALANCE = 'B';           // Contract balance: 'B' + address -> balance
 static const char DB_CONTRACT_LIST = 'L';     // List of all contracts
+static const char DB_RECEIPT = 'R';           // Transaction receipt: 'R' + txhash -> TransactionReceipt
+static const char DB_RECEIPT_BLOCK = 'X';     // Block receipts index: 'X' + blockhash -> vector<txhash>
 
 /**
  * CVMDatabase - LevelDB-backed storage for CVM state
@@ -58,6 +61,19 @@ public:
     // Balance management (for contracts that hold value)
     bool WriteBalance(const uint160& address, uint64_t balance);
     bool ReadBalance(const uint160& address, uint64_t& balance);
+    
+    // Receipt management
+    bool WriteReceipt(const uint256& txHash, const TransactionReceipt& receipt);
+    bool ReadReceipt(const uint256& txHash, TransactionReceipt& receipt);
+    bool HasReceipt(const uint256& txHash);
+    bool DeleteReceipt(const uint256& txHash);
+    
+    // Block receipt index (for efficient block-based queries)
+    bool WriteBlockReceipts(const uint256& blockHash, const std::vector<uint256>& txHashes);
+    bool ReadBlockReceipts(const uint256& blockHash, std::vector<uint256>& txHashes);
+    
+    // Receipt pruning (delete receipts older than specified block height)
+    bool PruneReceipts(uint32_t beforeBlockNumber);
     
     // Generic key-value storage (for Web-of-Trust and other extensions)
     bool WriteGeneric(const std::string& key, const std::vector<uint8_t>& value);

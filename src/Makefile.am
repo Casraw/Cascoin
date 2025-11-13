@@ -298,6 +298,8 @@ libbitcoin_server_a_SOURCES = \
   cvm/fee_calculator.cpp \
   cvm/mempool_priority.cpp \
   cvm/block_validator.cpp \
+  cvm/activation.cpp \
+  cvm/receipt.cpp \
   cvm/evm_rpc.cpp \
   cvm/mempool_manager.cpp \
   rpc/cvm.cpp \
@@ -542,7 +544,11 @@ cascoind_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(EVMC_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+
+if ENABLE_EVMC
+cascoind_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 
 # bitcoin-cli binary #
 cascoin_cli_SOURCES = bitcoin-cli.cpp
@@ -560,7 +566,11 @@ cascoin_cli_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CRYPTO)
 
-cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(EVMC_LIBS)
+cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+
+if ENABLE_EVMC
+cascoin_cli_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoin-tx binary #
@@ -581,7 +591,11 @@ cascoin_tx_LDADD = \
   $(LIBBITCOIN_CRYPTO) \
   $(LIBSECP256K1)
 
-cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS)
+cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+
+if ENABLE_EVMC
+cascoin_tx_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoinconsensus library #
@@ -594,7 +608,11 @@ if GLIBC_BACK_COMPAT
 endif
 
 libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
-libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS) $(EVMC_LIBS)
+libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
+
+if ENABLE_EVMC
+libbitcoinconsensus_la_LIBADD += -levmone -levmc-loader -levmc-instructions
+endif
 libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 

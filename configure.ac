@@ -1035,16 +1035,30 @@ if test "x$use_evmc" = "xyes"; then
     )
   else
     AC_CHECK_HEADER([evmc/evmc.h], [
-      AC_CHECK_LIB([evmc], [evmc_create_example_vm], [
-        EVMC_LIBS="-levmc"
-        have_evmc=yes
+      # For cross-compilation, AC_CHECK_LIB doesn't work well
+      # Check if we're cross-compiling and just verify headers exist
+      if test "x$cross_compiling" = "xyes"; then
         AC_CHECK_HEADER([evmone/evmone.h], [
-          AC_CHECK_LIB([evmone], [evmc_create_evmone], [
-            EVMONE_LIBS="-levmone -levmc-loader"
-            have_evmone=yes
-          ], [have_evmone=no], [-levmc-loader])
-        ], [have_evmone=no])
-      ], [have_evmc=no])
+          EVMC_LIBS="-levmc-loader"
+          EVMONE_LIBS="-levmone -levmc-loader -levmc-instructions"
+          have_evmc=yes
+          have_evmone=yes
+        ], [
+          have_evmc=no
+          have_evmone=no
+        ])
+      else
+        AC_CHECK_LIB([evmc-loader], [evmc_load], [
+          EVMC_LIBS="-levmc-loader"
+          have_evmc=yes
+          AC_CHECK_HEADER([evmone/evmone.h], [
+            AC_CHECK_LIB([evmone], [evmc_create_evmone], [
+              EVMONE_LIBS="-levmone -levmc-loader"
+              have_evmone=yes
+            ], [have_evmone=no], [-levmc-loader])
+          ], [have_evmone=no])
+        ], [have_evmc=no])
+      fi
     ], [have_evmc=no])
   fi
 
@@ -1277,6 +1291,7 @@ AM_CONDITIONAL([ENABLE_TESTS],[test x$BUILD_TEST = xyes])
 AM_CONDITIONAL([ENABLE_QT],[test x$bitcoin_enable_qt = xyes])
 AM_CONDITIONAL([ENABLE_QT_TESTS],[test x$BUILD_TEST_QT = xyes])
 AM_CONDITIONAL([ENABLE_BENCH],[test x$use_bench = xyes])
+AM_CONDITIONAL([ENABLE_EVMC],[test x$use_evmc = xyes])
 AM_CONDITIONAL([USE_QRCODE], [test x$use_qr = xyes])
 AM_CONDITIONAL([USE_SSE2], [test x$use_sse2 = xyes])
 AM_CONDITIONAL([USE_LCOV],[test x$use_lcov = xyes])

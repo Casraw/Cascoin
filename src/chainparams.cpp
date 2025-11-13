@@ -122,6 +122,11 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nStartTime = 2000000000;               // Far future (2033)
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nTimeout = 2000000000 + 31536000;      // Start + 1 year
 
+        // Cascoin: CVM-EVM: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = 1750000000;  // ~March 2025 - Start signaling for CVM-EVM enhancement
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = 1750000000 + 31536000;  // Start + 1 year
+
         // Cascoin fields
         consensus.powForkTime = 0;                 // Time of PoW hash method change
         consensus.lastScryptBlock = -1;                // Height of last scrypt block
@@ -293,6 +298,11 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nStartTime = 2000000000;               // Feb 14, 2024
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;      // Start + 1 year
 
+        // Cascoin: CVM-EVM: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = 1745000000;  // ~February 2025 - Earlier activation for testnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = 1745000000 + 31536000;  // Start + 1 year
+
         // Cascoin fields
         consensus.powForkTime = 0;                 // Time of PoW hash method change (block 50)
         consensus.lastScryptBlock = 0;                     // Height of last scrypt block
@@ -435,6 +445,9 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].bit = 1;
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
 
         // Cascoin fields
         consensus.powForkTime = 1543765622;                 // Time of PoW hash method change (block 100)

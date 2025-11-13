@@ -38,6 +38,11 @@ const struct VBDeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION_B
     {
         /*.name =*/ "rialto",
         /*.gbt_force =*/ true,
+    },
+    // Cascoin: CVM-EVM: Deployment
+    {
+        /*.name =*/ "cvm_evm",
+        /*.gbt_force =*/ true,
     }
 };
 
