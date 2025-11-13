@@ -18,34 +18,205 @@ This document outlines the design for enhancing Cascoin's Virtual Machine (CVM) 
 ### High-Level Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Enhanced CVM Engine                      │
-├─────────────────────────────────────────────────────────────┤
-│  ┌─────────────────┐    ┌─────────────────────────────────┐ │
-│  │   Bytecode      │    │      Trust Context Manager     │ │
-│  │   Dispatcher    │◄──►│   - Reputation Injection       │ │
-│  │                 │    │   - Trust Score Caching        │ │
-│  └─────────────────┘    │   - Cross-chain Trust Bridge   │ │
-│           │              └─────────────────────────────────┘ │
-│           ▼                                                  │
-│  ┌─────────────────┐    ┌─────────────────────────────────┐ │
-│  │  CVM Engine     │    │       EVM Engine               │ │
-│  │  (Register)     │    │       (Stack)                  │ │
-│  │  - 40+ opcodes  │    │       - 140+ opcodes           │ │
-│  │  - Trust native │    │       - Trust enhanced         │ │
-│  └─────────────────┘    └─────────────────────────────────┘ │
-│           │                           │                      │
-│           └───────────┬───────────────┘                      │
-│                       ▼                                      │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │            Enhanced Storage Layer                       │ │
-│  │  - EVM-compatible 32-byte keys/values                  │ │
-│  │  - Trust-score caching                                 │ │
-│  │  - Cross-format storage access                         │ │
-│  │  - Reputation-weighted costs                           │ │
-│  └─────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    Enhanced CVM Engine with HAT v2 Consensus            │
+├─────────────────────────────────────────────────────────────────────────┤
+│  ┌─────────────────┐    ┌──────────────────────────────────────────┐   │
+│  │   Bytecode      │    │   HAT v2 Consensus Validator             │   │
+│  │   Dispatcher    │◄──►│   - Random Validator Selection           │   │
+│  │                 │    │   - Challenge-Response Protocol          │   │
+│  └─────────────────┘    │   - Reputation Verification (min 10)     │   │
+│           │              │   - DAO Dispute Resolution               │   │
+│           │              └──────────────────────────────────────────┘   │
+│           │              ┌──────────────────────────────────────────┐   │
+│           │              │      Trust Context Manager               │   │
+│           │         ┌───►│   - Reputation Injection                 │   │
+│           │         │    │   - Trust Score Caching                  │   │
+│           │         │    │   - Cross-chain Trust Bridge             │   │
+│           │         │    └──────────────────────────────────────────┘   │
+│           ▼         │                                                    │
+│  ┌─────────────────┐    ┌─────────────────────────────────┐            │
+│  │  CVM Engine     │    │       EVM Engine               │             │
+│  │  (Register)     │    │       (Stack)                  │             │
+│  │  - 40+ opcodes  │    │       - 140+ opcodes           │             │
+│  │  - Trust native │    │       - Trust enhanced         │             │
+│  └─────────────────┘    └─────────────────────────────────┘            │
+│           │                           │                                 │
+│           └───────────┬───────────────┘                                 │
+│                       ▼                                                 │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │            Enhanced Storage Layer                                │  │
+│  │  - EVM-compatible 32-byte keys/values                           │  │
+│  │  - Trust-score caching                                          │  │
+│  │  - Cross-format storage access                                  │  │
+│  │  - Reputation-weighted costs                                    │  │
+│  │  - Consensus validation records                                 │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
+
+### HAT v2 Consensus Validation System
+
+The enhanced CVM introduces a revolutionary consensus mechanism that validates transaction reputation claims through distributed verification before block inclusion. This prevents reputation fraud and ensures trust scores are accurate across the network.
+
+#### Consensus Flow
+
+```
+Transaction Submission → Random Validator Selection → Challenge-Response Protocol
+                                                              ↓
+                                                    Reputation Verification
+                                                              ↓
+                                    ┌─────────────────────────┴─────────────────────────┐
+                                    │                                                   │
+                              Consensus Reached                              Consensus Failed
+                            (10+ validators agree)                        (Disputed reputation)
+                                    │                                                   │
+                            Mempool Acceptance                                  DAO Dispute
+                                    │                                                   │
+                            Block Mining Eligible                          Resolution Vote
+                                                                                        │
+                                                                    ┌───────────────────┴────────────────┐
+                                                                    │                                    │
+                                                            DAO Approves                         DAO Rejects
+                                                                    │                                    │
+                                                        Mempool Acceptance                    Permanent Rejection
+                                                                                              (Blockchain Record)
+```
+
+#### Key Components
+
+**1. Self-Reported HAT v2 Score**
+- Transaction submitters include their complete HAT v2 score in transaction metadata
+- Score includes timestamp and cryptographic signature
+- Submitter claims their reputation based on their local trust graph perspective
+
+**2. Random Validator Selection**
+- Minimum 10 validators required (configurable, open-ended maximum)
+- Validators randomly selected from active network nodes
+- Selection uses deterministic randomness based on transaction hash + block height
+- Each validator has unique trust graph perspective (personalized reputation)
+- No fixed validator set - prevents collusion and gaming
+
+**3. Challenge-Response Protocol**
+- Only selected validators can respond to validation requests
+- Validators receive cryptographically signed challenge for specific transaction
+- Response must include validator's calculated HAT v2 score for the address
+- Response includes validator's signature and trust graph metadata
+- Timeout mechanism (30 seconds) for non-responsive validators
+
+**4. Reputation Verification Process**
+- Each validator independently calculates HAT v2 score from their perspective
+- Validators compare self-reported score against their calculation
+- **Trust Graph Awareness**:
+  - If validator has WoT connection: ±5 points tolerance (accounts for path differences)
+  - If validator has NO WoT connection: Can only verify non-WoT components (behavior, economic, temporal)
+  - Validators with no connection weight their vote lower (0.5x) or ABSTAIN if score heavily relies on WoT
+  - Multiple validators ensure diverse trust graph coverage
+- Validators vote: ACCEPT, REJECT, or ABSTAIN (if insufficient data)
+- Vote includes confidence level based on trust graph connectivity
+
+**5. Consensus Threshold**
+- Minimum 10 validator responses required
+- **Weighted Voting System**:
+  - Validators with WoT connection: Full vote weight (1.0x)
+  - Validators without WoT connection: Reduced weight (0.5x) or ABSTAIN
+  - Vote confidence factored into consensus calculation
+- Consensus reached when weighted 70%+ validators ACCEPT
+- Disputed if weighted 30%+ validators REJECT
+- Abstentions don't count toward threshold
+- System ensures mix of validators with and without WoT connections for balanced verification
+
+**6. DAO Dispute Resolution**
+- Disputed transactions automatically escalated to DAO
+- DAO members review trust graph evidence from validators
+- Stake-weighted voting on transaction validity
+- Resolution options: APPROVE (accept to mempool), REJECT (permanent ban), INVESTIGATE (request more data)
+- Rejected transactions recorded on-chain as fraud attempts
+
+#### Mempool Integration
+
+**Transaction States:**
+- `PENDING_VALIDATION`: Awaiting validator responses
+- `VALIDATED`: Consensus reached, eligible for mining
+- `DISPUTED`: Sent to DAO for resolution
+- `REJECTED`: DAO rejected, removed from mempool
+- `FRAUD_RECORDED`: Permanently recorded as fraud attempt
+
+**Mempool Priority:**
+- Validated transactions prioritized by HAT v2 score
+- Disputed transactions held in separate pool
+- Rejected transactions trigger reputation penalty
+
+#### Trust Graph Diversity Handling
+
+**Validators Without WoT Connection:**
+
+Since HAT v2 scores are personalized based on each node's trust graph, validators may not have a Web-of-Trust connection to the transaction sender. The system handles this intelligently:
+
+**Component-Based Verification:**
+- HAT v2 score broken into components: WoT (40%), Behavior (30%), Economic (20%), Temporal (10%)
+- Validators without WoT connection can still verify:
+  - **Behavior Score**: Transaction patterns, contract interactions, network activity
+  - **Economic Score**: Stake amounts, transaction volumes, economic participation
+  - **Temporal Score**: Account age, activity consistency, reputation decay
+- Validators WITH WoT connection verify all components including trust paths
+
+**Weighted Voting System:**
+- Validators with WoT connection: Full vote weight (1.0x)
+- Validators without WoT connection: Reduced weight (0.5x) based on verifiable components
+- Vote confidence score: 1.0 (full WoT), 0.6 (partial components), 0.0 (abstain)
+- Consensus calculation uses weighted votes to account for verification capability
+
+**Diverse Validator Selection:**
+- Random selection ensures mix of validators with different trust graph perspectives
+- Some validators will have WoT connections, others won't
+- This diversity prevents gaming - can't fake all components across all validators
+- Minimum 10 validators ensures statistical significance despite varying connectivity
+
+**Minimum WoT Coverage Requirement:**
+- If fewer than 3 validators have WoT connection, request additional validators
+- Ensures at least 30% of validators can verify WoT component
+- Prevents acceptance based solely on non-WoT components
+- Automatic escalation to DAO if insufficient WoT coverage after extended validator selection
+
+**Example Scenario:**
+```
+Transaction: Alice claims HAT v2 score of 85
+- Validator 1 (has WoT to Alice): Calculates 83 → ACCEPT (within ±5)
+- Validator 2 (no WoT to Alice): Verifies behavior=28, economic=18, temporal=9 → ACCEPT (non-WoT components match)
+- Validator 3 (has WoT to Alice): Calculates 87 → ACCEPT
+- Validator 4 (no WoT to Alice): Verifies behavior=30, economic=19, temporal=9 → ACCEPT
+- Validator 5 (has WoT to Alice): Calculates 45 → REJECT (WoT component very different)
+...
+Weighted consensus: 75% ACCEPT → Transaction validated
+```
+
+**Benefits:**
+- Prevents WoT-only fraud (behavior/economic components must also match)
+- Accounts for legitimate trust graph differences
+- Ensures comprehensive verification across multiple dimensions
+- Makes fraud expensive - must fake multiple independent components
+
+#### Anti-Gaming Mechanisms
+
+**Validator Accountability:**
+- Validators stake reputation on their responses
+- False validations result in reputation penalties
+- Consistent accurate validations increase validator reputation
+- Validator selection weighted by historical accuracy
+
+**Sybil Resistance:**
+- Random selection prevents validator prediction
+- Challenge-response prevents pre-computed responses
+- Cryptographic signatures prevent impersonation
+- Cross-reference with wallet clustering analysis
+
+**Collusion Prevention:**
+- Minimum 10 validators makes collusion expensive
+- Random selection changes per transaction
+- DAO oversight for disputed cases
+- Economic penalties for coordinated fraud
+- Component-based verification prevents partial collusion
 
 ### Bytecode Format Detection
 
@@ -116,7 +287,234 @@ private:
 };
 ```
 
-### 3. Trust Context Manager (`src/cvm/trust_context.h/cpp`)
+### 3. HAT v2 Consensus Validator (`src/cvm/hat_consensus.h/cpp`)
+
+Implements the distributed reputation verification system with challenge-response protocol:
+
+```cpp
+class HATConsensusValidator {
+public:
+    // Transaction validation initiation
+    ValidationRequest InitiateValidation(const CTransaction& tx, const HATv2Score& selfReportedScore);
+    
+    // Random validator selection
+    std::vector<uint160> SelectRandomValidators(const uint256& txHash, int blockHeight, 
+                                                int minValidators = 10);
+    
+    // Challenge-response protocol
+    bool SendValidationChallenge(const uint160& validatorNode, const ValidationRequest& request);
+    ValidationResponse ReceiveValidationResponse(const uint160& validatorNode, 
+                                                 const std::vector<uint8_t>& signature);
+    
+    // Reputation verification with trust graph awareness
+    bool VerifyHATv2Score(const uint160& address, const HATv2Score& selfReported, 
+                         const HATv2Score& validatorCalculated);
+    ValidationVote CalculateValidatorVote(const HATv2Score& selfReported, 
+                                         const HATv2Score& calculated,
+                                         bool hasWoTConnection);
+    
+    // Trust graph connectivity check
+    bool HasWoTConnection(const uint160& validatorAddr, const uint160& targetAddr);
+    double CalculateVoteConfidence(const uint160& validatorAddr, const uint160& targetAddr);
+    HATv2ComponentScores CalculateNonWoTComponents(const uint160& address);
+    
+    // Consensus determination
+    ConsensusResult DetermineConsensus(const std::vector<ValidationResponse>& responses);
+    bool HasConsensusThreshold(const std::vector<ValidationVote>& votes);
+    bool HasMinimumWoTCoverage(const std::vector<ValidationResponse>& responses);
+    void RequestAdditionalValidators(const uint256& txHash, int additionalCount);
+    
+    // DAO dispute escalation
+    DisputeCase CreateDisputeCase(const CTransaction& tx, 
+                                 const std::vector<ValidationResponse>& responses);
+    bool EscalateToDAO(const DisputeCase& dispute);
+    
+    // DAO resolution handling
+    void ProcessDAOResolution(const uint256& disputeId, DAOResolution resolution);
+    void RecordFraudAttempt(const uint160& address, const CTransaction& tx);
+    
+    // Validator accountability
+    void UpdateValidatorReputation(const uint160& validator, bool accurateValidation);
+    double GetValidatorAccuracyScore(const uint160& validator);
+    
+    // Mempool state management
+    void UpdateMempoolState(const uint256& txHash, TransactionState newState);
+    TransactionState GetTransactionState(const uint256& txHash);
+    
+    // Anti-gaming mechanisms
+    bool DetectValidatorCollusion(const std::vector<ValidationResponse>& responses);
+    bool CheckValidatorStake(const uint160& validator);
+    void PenalizeInvalidValidator(const uint160& validator, PenaltyReason reason);
+    
+private:
+    std::unique_ptr<RandomnessOracle> randomOracle;
+    std::unique_ptr<DAOInterface> daoInterface;
+    std::unique_ptr<HATv2Calculator> hatCalculator;
+    
+    // Validator tracking
+    std::map<uint160, ValidatorStats> validatorHistory;
+    std::map<uint256, ValidationSession> activeValidations;
+    
+    // Dispute management
+    std::map<uint256, DisputeCase> activeDisputes;
+    std::vector<FraudRecord> fraudAttempts;
+    
+    // Configuration
+    int minValidators = 10;
+    double consensusThreshold = 0.70;  // 70% agreement
+    int scoreTolerance = 5;  // ±5 points
+    int validationTimeout = 30;  // 30 seconds
+};
+
+struct HATv2Score {
+    uint8_t overallScore;  // 0-100
+    uint64_t timestamp;
+    std::vector<uint8_t> signature;
+    uint256 trustGraphHash;  // Hash of trust graph state
+    
+    // Component breakdown for validators without WoT connection
+    HATv2ComponentScores components;
+    
+    // Metadata for verification
+    uint32_t trustPathCount;
+    uint32_t behaviorDataPoints;
+    uint64_t lastActivityBlock;
+};
+
+struct HATv2ComponentScores {
+    uint8_t wotScore;        // Web-of-Trust component (0-100)
+    uint8_t behaviorScore;   // Behavior metrics component (0-100)
+    uint8_t economicScore;   // Economic factors component (0-100)
+    uint8_t temporalScore;   // Temporal factors component (0-100)
+    
+    // Weights for each component (sum to 1.0)
+    double wotWeight;
+    double behaviorWeight;
+    double economicWeight;
+    double temporalWeight;
+};
+
+struct ValidationRequest {
+    uint256 txHash;
+    uint160 senderAddress;
+    HATv2Score selfReportedScore;
+    uint64_t requestTimestamp;
+    std::vector<uint8_t> challengeNonce;  // Prevents replay attacks
+    std::vector<uint160> selectedValidators;
+};
+
+struct ValidationResponse {
+    uint160 validatorAddress;
+    uint256 txHash;
+    HATv2Score calculatedScore;
+    ValidationVote vote;
+    std::vector<uint8_t> signature;
+    uint64_t responseTimestamp;
+    
+    // Trust graph connectivity
+    bool hasWoTConnection;
+    double voteConfidence;  // 0.0-1.0, lower if no WoT connection
+    
+    // Trust graph evidence (empty if no connection)
+    std::vector<TrustPath> relevantPaths;
+    uint256 trustGraphHash;
+    
+    // Component verification (for validators without WoT)
+    HATv2ComponentScores verifiedComponents;
+    std::vector<ComponentVerificationStatus> componentStatus;
+};
+
+struct ComponentVerificationStatus {
+    std::string componentName;  // "wot", "behavior", "economic", "temporal"
+    bool canVerify;             // Can this validator verify this component?
+    uint8_t calculatedValue;    // Validator's calculated value
+    uint8_t reportedValue;      // Self-reported value
+    bool matches;               // Within tolerance?
+};
+
+enum class ValidationVote {
+    ACCEPT,      // Score within tolerance
+    REJECT,      // Score significantly different
+    ABSTAIN      // Insufficient data to validate
+};
+
+enum class TransactionState {
+    PENDING_VALIDATION,
+    VALIDATED,
+    DISPUTED,
+    REJECTED,
+    FRAUD_RECORDED
+};
+
+struct ConsensusResult {
+    bool consensusReached;
+    double acceptanceRate;
+    double rejectionRate;
+    int totalResponses;
+    bool requiresDAOReview;
+    std::vector<ValidationResponse> responses;
+};
+
+struct DisputeCase {
+    uint256 disputeId;
+    uint256 txHash;
+    uint160 senderAddress;
+    HATv2Score selfReportedScore;
+    std::vector<ValidationResponse> validatorResponses;
+    uint64_t creationTimestamp;
+    DisputeStatus status;
+};
+
+enum class DisputeStatus {
+    PENDING,
+    UNDER_REVIEW,
+    RESOLVED_APPROVED,
+    RESOLVED_REJECTED,
+    REQUIRES_INVESTIGATION
+};
+
+struct DAOResolution {
+    uint256 disputeId;
+    ResolutionType resolution;
+    uint64_t voteCount;
+    double approvalRate;
+    std::string reasoning;
+};
+
+enum class ResolutionType {
+    APPROVE,        // Accept transaction to mempool
+    REJECT,         // Permanently reject and record fraud
+    INVESTIGATE     // Request additional validator data
+};
+
+struct ValidatorStats {
+    uint160 validatorAddress;
+    uint32_t totalValidations;
+    uint32_t accurateValidations;
+    uint32_t inaccurateValidations;
+    double accuracyScore;
+    uint64_t lastValidationBlock;
+    uint64_t reputationStake;
+};
+
+struct FraudRecord {
+    uint160 fraudsterAddress;
+    uint256 txHash;
+    HATv2Score claimedScore;
+    HATv2Score actualScore;
+    uint64_t detectionBlock;
+    std::vector<uint160> detectingValidators;
+};
+
+enum class PenaltyReason {
+    FALSE_VALIDATION,
+    COLLUSION_DETECTED,
+    TIMEOUT_VIOLATION,
+    SIGNATURE_FRAUD
+};
+```
+
+### 4. Trust Context Manager (`src/cvm/trust_context.h/cpp`)
 
 Manages reputation data injection and trust-aware operations:
 
@@ -148,7 +546,7 @@ struct TrustContext {
 };
 ```
 
-### 4. Enhanced Storage System (`src/cvm/enhanced_storage.h/cpp`)
+### 5. Enhanced Storage System (`src/cvm/enhanced_storage.h/cpp`)
 
 Unified storage interface supporting both CVM and EVM formats with trust-aware features:
 
@@ -215,7 +613,7 @@ struct TrustTaggedRegion {
 };
 ```
 
-### 5. Sustainable Gas System (`src/cvm/sustainable_gas.h/cpp`)
+### 6. Sustainable Gas System (`src/cvm/sustainable_gas.h/cpp`)
 
 Reputation-based gas pricing with anti-congestion and predictable cost mechanisms:
 
@@ -294,7 +692,7 @@ struct RateLimitState {
 };
 ```
 
-### 6. Cross-Chain Trust Bridge (`src/cvm/cross_chain_bridge.h/cpp`)
+### 7. Cross-Chain Trust Bridge (`src/cvm/cross_chain_bridge.h/cpp`)
 
 Integration with LayerZero and CCIP for cross-chain trust attestations:
 
@@ -345,7 +743,7 @@ struct ChainTrustScore {
 };
 ```
 
-### 7. Developer Tooling Integration (`src/cvm/dev_tools.h/cpp`)
+### 8. Developer Tooling Integration (`src/cvm/dev_tools.h/cpp`)
 
 Comprehensive tooling support for trust-aware contract development:
 
@@ -397,7 +795,7 @@ struct TrustScenario {
 };
 ```
 
-### 8. Performance Optimization Engine (`src/cvm/performance_engine.h/cpp`)
+### 9. Performance Optimization Engine (`src/cvm/performance_engine.h/cpp`)
 
 JIT compilation and performance optimization for trust-aware operations:
 
@@ -455,7 +853,7 @@ struct ExecutionStats {
 };
 ```
 
-### 9. EIP Standards Integration (`src/cvm/eip_integration.h/cpp`)
+### 10. EIP Standards Integration (`src/cvm/eip_integration.h/cpp`)
 
 Support for Ethereum Improvement Proposals with trust enhancements:
 
@@ -481,6 +879,206 @@ private:
     std::map<uint16_t, EIPImplementation> supportedEIPs;
     ReputationBaseFeeCalculator baseFeeCalculator;
 };
+```
+
+## HAT v2 Consensus Integration Points
+
+### Mempool Integration (`src/cvm/mempool_manager.h/cpp`)
+
+The HAT v2 consensus validator integrates with the existing mempool system:
+
+```cpp
+class EnhancedMempoolManager {
+public:
+    // Transaction acceptance with HAT v2 validation
+    bool AcceptTransaction(const CTransaction& tx) {
+        // Extract self-reported HAT v2 score
+        HATv2Score selfReported = ExtractHATv2Score(tx);
+        
+        // Initiate consensus validation
+        ValidationRequest request = hatConsensus->InitiateValidation(tx, selfReported);
+        
+        // Select random validators
+        auto validators = hatConsensus->SelectRandomValidators(tx.GetHash(), 
+                                                               chainActive.Height());
+        
+        // Send challenges to validators
+        for (const auto& validator : validators) {
+            hatConsensus->SendValidationChallenge(validator, request);
+        }
+        
+        // Mark as pending validation
+        hatConsensus->UpdateMempoolState(tx.GetHash(), TransactionState::PENDING_VALIDATION);
+        
+        return true;  // Accepted for validation
+    }
+    
+    // Process validator responses
+    void ProcessValidatorResponse(const ValidationResponse& response) {
+        auto session = GetValidationSession(response.txHash);
+        session->AddResponse(response);
+        
+        // Check if we have enough responses
+        if (session->HasMinimumResponses()) {
+            ConsensusResult result = hatConsensus->DetermineConsensus(session->responses);
+            
+            if (result.consensusReached) {
+                // Consensus reached - mark as validated
+                hatConsensus->UpdateMempoolState(response.txHash, 
+                                                TransactionState::VALIDATED);
+                PrioritizeForMining(response.txHash);
+            } else if (result.requiresDAOReview) {
+                // Disputed - escalate to DAO
+                DisputeCase dispute = hatConsensus->CreateDisputeCase(
+                    GetTransaction(response.txHash), result.responses);
+                hatConsensus->EscalateToDAO(dispute);
+                hatConsensus->UpdateMempoolState(response.txHash, 
+                                                TransactionState::DISPUTED);
+            }
+        }
+    }
+    
+    // DAO resolution callback
+    void OnDAOResolution(const uint256& disputeId, DAOResolution resolution) {
+        hatConsensus->ProcessDAOResolution(disputeId, resolution);
+        
+        auto dispute = hatConsensus->GetDisputeCase(disputeId);
+        
+        switch (resolution.resolution) {
+            case ResolutionType::APPROVE:
+                hatConsensus->UpdateMempoolState(dispute.txHash, 
+                                                TransactionState::VALIDATED);
+                PrioritizeForMining(dispute.txHash);
+                break;
+                
+            case ResolutionType::REJECT:
+                hatConsensus->UpdateMempoolState(dispute.txHash, 
+                                                TransactionState::REJECTED);
+                hatConsensus->RecordFraudAttempt(dispute.senderAddress, 
+                                                GetTransaction(dispute.txHash));
+                RemoveFromMempool(dispute.txHash);
+                break;
+                
+            case ResolutionType::INVESTIGATE:
+                // Request additional validators
+                RequestAdditionalValidation(dispute.txHash);
+                break;
+        }
+    }
+    
+private:
+    std::unique_ptr<HATConsensusValidator> hatConsensus;
+    std::map<uint256, ValidationSession> validationSessions;
+};
+```
+
+### Block Validation Integration (`src/cvm/block_validator.h/cpp`)
+
+Blocks can only include transactions with validated reputation:
+
+```cpp
+class EnhancedBlockValidator {
+public:
+    // Validate block transactions have consensus
+    bool ValidateBlock(const CBlock& block) {
+        for (const auto& tx : block.vtx) {
+            // Skip coinbase
+            if (tx.IsCoinBase()) continue;
+            
+            // Check transaction has validated reputation
+            TransactionState state = hatConsensus->GetTransactionState(tx.GetHash());
+            
+            if (state != TransactionState::VALIDATED) {
+                return error("Block contains unvalidated transaction: %s", 
+                           tx.GetHash().ToString());
+            }
+            
+            // Verify HAT v2 score is still valid (not expired)
+            HATv2Score score = ExtractHATv2Score(tx);
+            if (!IsScoreValid(score, block.nTime)) {
+                return error("Block contains expired reputation score: %s", 
+                           tx.GetHash().ToString());
+            }
+        }
+        
+        return true;
+    }
+    
+    // Record fraud attempts in blockchain
+    void RecordFraudInBlock(CBlock& block, const std::vector<FraudRecord>& frauds) {
+        // Add fraud records as special transactions
+        for (const auto& fraud : frauds) {
+            CTransaction fraudTx = CreateFraudRecordTransaction(fraud);
+            block.vtx.push_back(fraudTx);
+        }
+    }
+    
+private:
+    std::unique_ptr<HATConsensusValidator> hatConsensus;
+};
+```
+
+### Network Protocol Integration (`src/net_processing.cpp`)
+
+New P2P messages for consensus validation:
+
+```cpp
+// Message types
+static const char* VALIDATION_CHALLENGE = "valchallenge";
+static const char* VALIDATION_RESPONSE = "valresponse";
+static const char* DAO_DISPUTE = "daodispute";
+static const char* DAO_RESOLUTION = "daoresolution";
+
+// Handle validation challenge
+void ProcessValidationChallenge(CNode* pfrom, const ValidationRequest& request) {
+    // Verify we are a selected validator
+    if (!IsSelectedValidator(request, GetLocalAddress())) {
+        return;  // Ignore if not selected
+    }
+    
+    // Calculate HAT v2 score from our perspective
+    HATv2Score calculated = CalculateHATv2Score(request.senderAddress);
+    
+    // Check WoT connectivity
+    bool hasWoT = hatConsensus->HasWoTConnection(GetLocalAddress(), 
+                                                 request.senderAddress);
+    double confidence = hatConsensus->CalculateVoteConfidence(GetLocalAddress(),
+                                                              request.senderAddress);
+    
+    // Determine vote based on connectivity
+    ValidationVote vote = hatConsensus->CalculateValidatorVote(
+        request.selfReportedScore, calculated, hasWoT);
+    
+    // Create response with connectivity info
+    ValidationResponse response;
+    response.validatorAddress = GetLocalAddress();
+    response.txHash = request.txHash;
+    response.calculatedScore = calculated;
+    response.vote = vote;
+    response.hasWoTConnection = hasWoT;
+    response.voteConfidence = confidence;
+    
+    // Add component verification details
+    if (!hasWoT) {
+        // Verify non-WoT components only
+        response.verifiedComponents = hatConsensus->CalculateNonWoTComponents(
+            request.senderAddress);
+        response.componentStatus = CompareComponents(request.selfReportedScore.components,
+                                                     response.verifiedComponents);
+    } else {
+        // Full verification including WoT
+        response.relevantPaths = GetTrustPaths(GetLocalAddress(), request.senderAddress);
+        response.trustGraphHash = CalculateTrustGraphHash();
+    }
+    
+    response.signature = SignResponse(response);
+    
+    // Send response
+    pfrom->PushMessage(VALIDATION_RESPONSE, response);
+    
+    // Update validator stats
+    hatConsensus->UpdateValidatorReputation(GetLocalAddress(), true);
+}
 ```
 
 ## Data Models
@@ -866,6 +1464,26 @@ public:
     void TestStorageCompatibility();
     void TestEVMCIntegration();
     
+    // HAT v2 consensus tests
+    void TestRandomValidatorSelection();
+    void TestChallengeResponseProtocol();
+    void TestReputationVerification();
+    void TestConsensusThreshold();
+    void TestDAODisputeEscalation();
+    void TestDAOResolutionProcessing();
+    void TestValidatorAccountability();
+    void TestFraudDetection();
+    void TestCollusionPrevention();
+    void TestValidatorPenalties();
+    void TestMempoolStateTransitions();
+    void TestBlockValidationWithConsensus();
+    void TestNetworkProtocolMessages();
+    void TestValidatorTimeouts();
+    void TestScoreToleranceThresholds();
+    void TestMultiplePerspectiveValidation();
+    void TestFraudRecordStorage();
+    void TestValidatorReputationTracking();
+    
     // Security and consensus tests (Requirement 10)
     void TestDeterministicExecution();
     void TestReputationManipulationPrevention();
@@ -920,6 +1538,50 @@ public:
 4. **Gas Pool Management**: Efficient allocation of subsidized gas
 
 ## Security Considerations
+
+### HAT v2 Consensus Security
+
+1. **Random Validator Selection Security**:
+   - Deterministic randomness prevents prediction
+   - Minimum 10 validators makes collusion expensive
+   - Selection algorithm uses transaction hash + block height
+   - No validator can know selection in advance
+
+2. **Challenge-Response Security**:
+   - Cryptographic nonces prevent replay attacks
+   - Only selected validators can respond
+   - Signatures prevent impersonation
+   - Timeout mechanism prevents DoS
+
+3. **Reputation Fraud Prevention**:
+   - Multiple independent validators verify scores
+   - ±5 point tolerance accounts for trust graph differences
+   - Fraud attempts permanently recorded on-chain
+   - Reputation penalties for fraudsters
+
+4. **Validator Accountability**:
+   - Historical accuracy tracking
+   - Reputation stake requirements
+   - Penalties for false validations
+   - Rewards for accurate validations
+
+5. **DAO Dispute Security**:
+   - Stake-weighted voting prevents Sybil attacks
+   - Evidence-based resolution process
+   - Transparent on-chain records
+   - Appeal mechanism for edge cases
+
+6. **Collusion Detection**:
+   - Statistical analysis of validator responses
+   - Pattern detection for coordinated fraud
+   - Cross-reference with wallet clustering
+   - Economic penalties for collusion
+
+7. **Network Partition Resilience**:
+   - Validators from diverse network segments
+   - Timeout handling for unreachable validators
+   - Fallback to DAO for insufficient responses
+   - Graceful degradation under attack
 
 ### Trust System Security
 
@@ -1021,9 +1683,11 @@ contract TrustAwareLending {
 
 ## Conclusion
 
-The CVM-EVM enhancement creates a revolutionary hybrid virtual machine that transforms blockchain economics through trust-aware computing. By combining full Ethereum compatibility with native reputation integration, this design enables a new paradigm where trust replaces high fees as the primary mechanism for network security and resource allocation.
+The CVM-EVM enhancement creates a revolutionary hybrid virtual machine that transforms blockchain economics through trust-aware computing and distributed reputation consensus. By combining full Ethereum compatibility with native reputation integration and HAT v2 consensus validation, this design enables a new paradigm where trust replaces high fees as the primary mechanism for network security and resource allocation.
 
 ### Key Architectural Innovations
+
+**HAT v2 Consensus Validation**: Revolutionary distributed reputation verification system where transactions require validation from minimum 10 randomly selected nodes before block inclusion, preventing reputation fraud through challenge-response protocol and DAO dispute resolution.
 
 **Trust-First Design**: Every VM operation automatically considers reputation context, making trust a first-class citizen in smart contract execution rather than an afterthought.
 
@@ -1035,6 +1699,10 @@ The CVM-EVM enhancement creates a revolutionary hybrid virtual machine that tran
 
 ### Revolutionary Features
 
+- **Distributed Reputation Consensus**: Minimum 10 random validators verify HAT v2 scores before transaction acceptance, with DAO dispute resolution for contested cases
+- **Challenge-Response Protocol**: Cryptographically secured validation system where only selected validators can respond, preventing collusion and gaming
+- **Fraud Prevention System**: Reputation fraud attempts permanently recorded on-chain with automatic penalties
+- **Validator Accountability**: Historical accuracy tracking with reputation stakes and economic incentives for honest validation
 - **Automatic Trust Context Injection**: Every contract call receives reputation data without developer intervention
 - **Trust-Aware Memory and Stack Operations**: Data structures automatically incorporate reputation for enhanced security
 - **Reputation-Enhanced Control Flow**: Program execution branches based on trust levels without explicit checks
@@ -1047,10 +1715,25 @@ The CVM-EVM enhancement creates a revolutionary hybrid virtual machine that tran
 
 This enhancement positions Cascoin as the foundational infrastructure for the next generation of decentralized applications where:
 
-1. **Trust Replaces Fees**: Network security through reputation rather than economic barriers
-2. **Reputation Becomes Programmable**: Smart contracts natively understand and utilize trust
-3. **Cross-Chain Trust Becomes Reality**: Reputation travels seamlessly across blockchain networks
-4. **Sustainable DeFi Emerges**: Low-cost, trust-aware financial protocols for global adoption
-5. **Developer Experience Excels**: Familiar tools enhanced with trust-aware capabilities
+1. **Consensus-Validated Reputation**: First blockchain with distributed reputation verification at the consensus layer, preventing fraud before it reaches blocks
+2. **Trust Replaces Fees**: Network security through reputation rather than economic barriers
+3. **Reputation Becomes Programmable**: Smart contracts natively understand and utilize trust
+4. **Cross-Chain Trust Becomes Reality**: Reputation travels seamlessly across blockchain networks
+5. **Sustainable DeFi Emerges**: Low-cost, trust-aware financial protocols for global adoption
+6. **Developer Experience Excels**: Familiar tools enhanced with trust-aware capabilities
+7. **DAO-Governed Trust**: Community oversight of disputed reputation claims through transparent on-chain governance
 
-The design maintains full backward compatibility while introducing transformative capabilities that make Cascoin the premier platform for trust-aware decentralized applications. By solving Ethereum's scalability and cost problems through reputation rather than complex Layer 2 solutions, Cascoin offers a fundamentally superior approach to blockchain economics.
+The design maintains full backward compatibility while introducing transformative capabilities that make Cascoin the premier platform for trust-aware decentralized applications. By solving Ethereum's scalability and cost problems through reputation rather than complex Layer 2 solutions, and by preventing reputation fraud through distributed consensus validation, Cascoin offers a fundamentally superior approach to blockchain economics and trust management.
+
+### HAT v2 Consensus Advantages
+
+The distributed reputation validation system provides unique benefits:
+
+- **Fraud Prevention**: Reputation fraud detected before block inclusion
+- **Multiple Perspectives**: Each validator has unique trust graph view, ensuring comprehensive validation
+- **Economic Security**: Validator accountability through reputation stakes
+- **Decentralized Governance**: DAO resolution for edge cases and disputes
+- **Transparent Audit Trail**: All fraud attempts recorded on-chain
+- **Sybil Resistance**: Random validator selection prevents gaming
+- **Scalable Validation**: Open-ended validator count adapts to network size
+- **Fair Consensus**: 70% threshold balances security with trust graph diversity

@@ -7,6 +7,7 @@
 
 #include <uint256.h>
 #include <serialize.h>
+#include <univalue.h>
 #include <vector>
 #include <string>
 

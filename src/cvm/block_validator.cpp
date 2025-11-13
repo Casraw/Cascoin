@@ -5,6 +5,7 @@
 #include <cvm/block_validator.h>
 #include <cvm/cvm.h>
 #include <cvm/trust_context.h>
+#include <cvm/hat_consensus.h>
 #include <consensus/validation.h>
 #include <validation.h>
 #include <util.h>
@@ -16,6 +17,7 @@ namespace CVM {
 
 BlockValidator::BlockValidator()
     : m_db(nullptr)
+    , m_hatValidator(nullptr)
 {
     // VM and other components will be initialized in Initialize() method
     // when database is available
@@ -631,6 +633,69 @@ uint160 BlockValidator::GetSenderAddress(const CTransaction& tx, CCoinsViewCache
              scriptPubKey.size());
     
     return uint160();
+}
+
+// ===== HAT v2 Consensus Integration =====
+
+void BlockValidator::SetHATConsensusValidator(HATConsensusValidator* validator) {
+    m_hatValidator = validator;
+}
+
+bool BlockValidator::ValidateBlockHATConsensus(const CBlock& block, std::string& error) {
+    if (!m_hatValidator) {
+        // If no HAT validator, skip validation
+        return true;
+    }
+    
+    for (const auto& tx : block.vtx) {
+        // Skip coinbase
+        if (tx->IsCoinBase()) {
+            continue;
+        }
+        
+        // Check if CVM/EVM transaction
+        int cvmOutputIndex = FindCVMOpReturn(*tx);
+        if (cvmOutputIndex < 0) {
+            continue;  // Not a CVM/EVM transaction
+        }
+        
+        // Check transaction has validated reputation
+        TransactionState state = m_hatValidator->GetTransactionState(tx->GetHash());
+        
+        if (state != TransactionState::VALIDATED) {
+            error = strprintf("Block contains unvalidated transaction: %s (state: %d)",
+                            tx->GetHash().ToString(), (int)state);
+            return false;
+        }
+        
+        // TODO: Verify HAT v2 score is still valid (not expired)
+        // This would require extracting the self-reported score from the transaction
+    }
+    
+    return true;
+}
+
+bool BlockValidator::RecordFraudInBlock(CBlock& block, const std::vector<FraudRecord>& fraudRecords) {
+    // TODO: Implement fraud record transactions
+    // This would create special transactions that encode fraud records
+    // For now, just log
+    
+    for (const auto& fraud : fraudRecords) {
+        LogPrint(BCLog::CVM, "BlockValidator: Recording fraud by %s in block (penalty: %d points)\n",
+                 fraud.fraudsterAddress.ToString(), fraud.reputationPenalty);
+    }
+    
+    return true;
+}
+
+std::vector<FraudRecord> BlockValidator::ExtractFraudRecords(const CBlock& block) {
+    std::vector<FraudRecord> fraudRecords;
+    
+    // TODO: Implement fraud record extraction from block transactions
+    // This would parse special fraud record transactions
+    // For now, return empty vector
+    
+    return fraudRecords;
 }
 
 } // namespace CVM

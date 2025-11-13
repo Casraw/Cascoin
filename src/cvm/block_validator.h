@@ -255,12 +255,58 @@ public:
      */
     const BlockValidationResult& GetLastResult() const { return m_lastResult; }
     
+    // ===== HAT v2 Consensus Integration =====
+    
+    /**
+     * Set HAT consensus validator
+     * 
+     * @param validator HAT consensus validator instance
+     */
+    void SetHATConsensusValidator(class HATConsensusValidator* validator);
+    
+    /**
+     * Validate block transactions have completed HAT consensus
+     * 
+     * Checks that all CVM/EVM transactions in block have:
+     * - Completed HAT v2 validation (not PENDING_VALIDATION)
+     * - Been approved (VALIDATED state, not REJECTED or DISPUTED)
+     * 
+     * @param block Block to validate
+     * @param error Output error message
+     * @return true if all transactions validated
+     */
+    bool ValidateBlockHATConsensus(const CBlock& block, std::string& error);
+    
+    /**
+     * Record fraud attempts in block
+     * 
+     * Adds fraud records as special transactions in block.
+     * Called during block creation (mining).
+     * 
+     * @param block Block to add fraud records to
+     * @param fraudRecords Fraud records to include
+     * @return true if records added successfully
+     */
+    bool RecordFraudInBlock(CBlock& block, const std::vector<struct FraudRecord>& fraudRecords);
+    
+    /**
+     * Extract fraud records from block
+     * 
+     * Parses fraud records from block transactions.
+     * Called during block validation.
+     * 
+     * @param block Block to extract from
+     * @return Vector of fraud records
+     */
+    std::vector<struct FraudRecord> ExtractFraudRecords(const CBlock& block);
+    
 private:
     CVMDatabase* m_db;
     std::shared_ptr<TrustContext> m_trustContext;
     std::unique_ptr<EnhancedVM> m_vm;
     std::unique_ptr<FeeCalculator> m_feeCalculator;
     std::unique_ptr<GasSubsidyTracker> m_gasSubsidyTracker;
+    class HATConsensusValidator* m_hatValidator;  // HAT consensus validator
     
     BlockValidationResult m_lastResult;
     

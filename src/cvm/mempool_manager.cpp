@@ -7,9 +7,13 @@
 #include <cvm/reputation.h>
 #include <cvm/cvm.h>
 #include <cvm/trust_context.h>
+#include <cvm/hat_consensus.h>
+#include <chain.h>
 #include <util.h>
 #include <utiltime.h>
 #include <univalue.h>
+
+extern CChain chainActive;
 
 namespace CVM {
 
@@ -23,6 +27,7 @@ MempoolManager::MempoolManager()
     , m_gasAllowanceManager(std::make_unique<GasAllowanceTracker>())
     , m_gasSubsidyManager(std::make_unique<GasSubsidyTracker>())
     , m_gasSystem(std::make_unique<cvm::SustainableGasSystem>())
+    , m_hatValidator(nullptr)
     , m_totalValidated(0)
     , m_totalAccepted(0)
     , m_totalRejected(0)
@@ -435,6 +440,92 @@ uint64_t MempoolManager::ExtractGasLimit(const CTransaction& tx)
     }
     
     return 0;
+}
+
+// ===== HAT v2 Consensus Integration =====
+
+void MempoolManager::SetHATConsensusValidator(HATConsensusValidator* validator) {
+    m_hatValidator = validator;
+}
+
+bool MempoolManager::InitiateHATValidation(
+    const CTransaction& tx,
+    const HATv2Score& selfReportedScore)
+{
+    if (!m_hatValidator) {
+        LogPrint(BCLog::CVM, "MempoolManager: HAT validator not set\n");
+        return false;
+    }
+    
+    // Initiate validation
+    ValidationRequest request = m_hatValidator->InitiateValidation(tx, selfReportedScore);
+    
+    // Select random validators
+    std::vector<uint160> validators = m_hatValidator->SelectRandomValidators(
+        tx.GetHash(), chainActive.Height());
+    
+    // Send challenges to validators
+    for (const auto& validator : validators) {
+        m_hatValidator->SendValidationChallenge(validator, request);
+    }
+    
+    LogPrint(BCLog::CVM, "MempoolManager: Initiated HAT validation for tx %s with %zu validators\n",
+             tx.GetHash().ToString(), validators.size());
+    
+    return true;
+}
+
+bool MempoolManager::ProcessValidatorResponse(const ValidationResponse& response) {
+    if (!m_hatValidator) {
+        return false;
+    }
+    
+    // Process response through HAT validator
+    if (!m_hatValidator->ProcessValidatorResponse(response)) {
+        return false;
+    }
+    
+    // Check if we have enough responses to determine consensus
+    // This would require accessing the validation session
+    // For now, just log the response
+    LogPrint(BCLog::CVM, "MempoolManager: Processed validator response for tx %s from %s\n",
+             response.txHash.ToString(), response.validatorAddress.ToString());
+    
+    return true;
+}
+
+bool MempoolManager::IsHATValidationComplete(const uint256& txHash) {
+    if (!m_hatValidator) {
+        return true;  // If no HAT validator, consider complete
+    }
+    
+    TransactionState state = m_hatValidator->GetTransactionState(txHash);
+    return (state == TransactionState::VALIDATED || state == TransactionState::REJECTED);
+}
+
+TransactionState MempoolManager::GetHATValidationState(const uint256& txHash) {
+    if (!m_hatValidator) {
+        return TransactionState::VALIDATED;  // Default to validated if no HAT validator
+    }
+    
+    return m_hatValidator->GetTransactionState(txHash);
+}
+
+bool MempoolManager::HandleDAOResolution(const uint256& txHash, bool approved) {
+    if (!m_hatValidator) {
+        return false;
+    }
+    
+    // Update transaction state based on DAO decision
+    if (approved) {
+        m_hatValidator->UpdateMempoolState(txHash, TransactionState::VALIDATED);
+        LogPrint(BCLog::CVM, "MempoolManager: DAO approved tx %s\n", txHash.ToString());
+    } else {
+        m_hatValidator->UpdateMempoolState(txHash, TransactionState::REJECTED);
+        LogPrint(BCLog::CVM, "MempoolManager: DAO rejected tx %s\n", txHash.ToString());
+    }
+    
+    return true;
 }
 
 } // namespace CVM

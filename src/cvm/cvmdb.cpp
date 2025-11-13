@@ -315,9 +315,6 @@ void ShutdownCVMDatabase() {
     }
 }
 
-} // namespace CVM
-
-
 // Receipt management
 bool CVMDatabase::WriteReceipt(const uint256& txHash, const TransactionReceipt& receipt) {
     std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
@@ -364,3 +361,5 @@ bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {
     
     return true;
 }
+
+} // namespace CVM

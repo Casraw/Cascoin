@@ -703,6 +703,8 @@ USE_SSE2_FALSE
 USE_SSE2_TRUE
 USE_QRCODE_FALSE
 USE_QRCODE_TRUE
+ENABLE_EVMC_FALSE
+ENABLE_EVMC_TRUE
 ENABLE_BENCH_FALSE
 ENABLE_BENCH_TRUE
 ENABLE_QT_TESTS_FALSE
@@ -35132,6 +35134,14 @@ else
   ENABLE_BENCH_FALSE=
 fi
 
+ if test x$use_evmc = xyes; then
+  ENABLE_EVMC_TRUE=
+  ENABLE_EVMC_FALSE='#'
+else
+  ENABLE_EVMC_TRUE='#'
+  ENABLE_EVMC_FALSE=
+fi
+
  if test x$use_qr = xyes; then
   USE_QRCODE_TRUE=
   USE_QRCODE_FALSE='#'
@@ -35530,6 +35540,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${ENABLE_BENCH_TRUE}" && test -z "${ENABLE_BENCH_FALSE}"; then
   as_fn_error $? "conditional \"ENABLE_BENCH\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${ENABLE_EVMC_TRUE}" && test -z "${ENABLE_EVMC_FALSE}"; then
+  as_fn_error $? "conditional \"ENABLE_EVMC\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${USE_QRCODE_TRUE}" && test -z "${USE_QRCODE_FALSE}"; then

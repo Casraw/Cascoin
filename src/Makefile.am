@@ -300,8 +300,11 @@ libbitcoin_server_a_SOURCES = \
   cvm/block_validator.cpp \
   cvm/activation.cpp \
   cvm/receipt.cpp \
+  cvm/address_index.cpp \
+  cvm/nonce_manager.cpp \
   cvm/evm_rpc.cpp \
-  cvm/mempool_manager.cpp \
+  cvm/hat_consensus.cpp \
+  cvm/consensus_validator.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

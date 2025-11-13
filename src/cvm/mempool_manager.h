@@ -21,6 +21,8 @@
 namespace CVM {
 
 class CVMDatabase;
+class HATConsensusValidator;
+enum class TransactionState;
 
 /**
  * CVM Mempool Manager
@@ -230,12 +232,70 @@ public:
      */
     std::map<TransactionPriorityManager::PriorityLevel, uint64_t> GetPriorityDistribution();
     
+    // ===== HAT v2 Consensus Integration =====
+    
+    /**
+     * Set HAT consensus validator
+     * 
+     * @param validator HAT consensus validator instance
+     */
+    void SetHATConsensusValidator(class HATConsensusValidator* validator);
+    
+    /**
+     * Initiate HAT v2 validation for transaction
+     * 
+     * Called when transaction enters mempool with self-reported reputation.
+     * Triggers distributed validation process.
+     * 
+     * @param tx Transaction
+     * @param selfReportedScore Sender's claimed HAT v2 score
+     * @return true if validation initiated successfully
+     */
+    bool InitiateHATValidation(
+        const CTransaction& tx,
+        const struct HATv2Score& selfReportedScore
+    );
+    
+    /**
+     * Process validator response for a transaction
+     * 
+     * @param response Validator's response
+     * @return true if processed successfully
+     */
+    bool ProcessValidatorResponse(const struct ValidationResponse& response);
+    
+    /**
+     * Check if transaction has completed HAT validation
+     * 
+     * @param txHash Transaction hash
+     * @return true if validation complete (approved or rejected)
+     */
+    bool IsHATValidationComplete(const uint256& txHash);
+    
+    /**
+     * Get HAT validation state for transaction
+     * 
+     * @param txHash Transaction hash
+     * @return Transaction state (PENDING_VALIDATION, VALIDATED, DISPUTED, REJECTED)
+     */
+    TransactionState GetHATValidationState(const uint256& txHash);
+    
+    /**
+     * Handle DAO resolution for disputed transaction
+     * 
+     * @param txHash Transaction hash
+     * @param approved DAO decision (true = approved, false = rejected)
+     * @return true if handled successfully
+     */
+    bool HandleDAOResolution(const uint256& txHash, bool approved);
+    
 private:
     CVMDatabase* m_db;
     std::unique_ptr<TransactionPriorityManager> m_priorityManager;
     std::unique_ptr<GasAllowanceTracker> m_gasAllowanceManager;
     std::unique_ptr<GasSubsidyTracker> m_gasSubsidyManager;
     std::unique_ptr<cvm::SustainableGasSystem> m_gasSystem;
+    class HATConsensusValidator* m_hatValidator;  // HAT consensus validator
     
     // Rate limiting
     std::map<uint160, int64_t> m_lastSubmission;

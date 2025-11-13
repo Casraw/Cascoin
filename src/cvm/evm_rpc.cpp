@@ -11,6 +11,7 @@
 #include <cvm/softfork.h>
 #include <cvm/txbuilder.h>
 #include <cvm/trust_context.h>
+#include <cvm/address_index.h>
 #include <validation.h>
 #include <chainparams.h>
 #include <util.h>
@@ -242,7 +243,7 @@ UniValue cas_estimateGas(const JSONRPCRequest& request)
             // Get reputation
             if (CVM::g_cvmdb) {
                 auto trustContext = std::make_shared<CVM::TrustContext>(CVM::g_cvmdb.get());
-                uint8_t reputation = trustContext->CalculateReputationScore(senderAddr);
+                uint32_t reputation = trustContext->GetReputation(senderAddr);
                 
                 // Apply discount (50% for 80+ reputation)
                 if (reputation >= 80) {
@@ -418,7 +419,44 @@ UniValue cas_getTransactionReceipt(const JSONRPCRequest& request)
         return NullUniValue;
     }
     
-    // Con
+    // Convert receipt to JSON
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("transactionHash", Uint256ToHex(receipt.transactionHash));
+    result.pushKV("transactionIndex", strprintf("0x%x", receipt.transactionIndex));
+    result.pushKV("blockHash", Uint256ToHex(receipt.blockHash));
+    result.pushKV("blockNumber", strprintf("0x%x", receipt.blockNumber));
+    result.pushKV("from", AddressToHex(receipt.from));
+    result.pushKV("to", receipt.to.IsNull() ? "" : AddressToHex(receipt.to));
+    result.pushKV("contractAddress", receipt.contractAddress.IsNull() ? "" : AddressToHex(receipt.contractAddress));
+    result.pushKV("gasUsed", strprintf("0x%llx", (unsigned long long)receipt.gasUsed));
+    result.pushKV("cumulativeGasUsed", strprintf("0x%llx", (unsigned long long)receipt.cumulativeGasUsed));
+    result.pushKV("status", receipt.status ? "0x1" : "0x0");
+    
+    // Add logs
+    UniValue logs(UniValue::VARR);
+    for (const auto& log : receipt.logs) {
+        UniValue logObj(UniValue::VOBJ);
+        logObj.pushKV("address", AddressToHex(log.address));
+        
+        UniValue topics(UniValue::VARR);
+        for (const auto& topic : log.topics) {
+            topics.push_back(Uint256ToHex(topic));
+        }
+        logObj.pushKV("topics", topics);
+        logObj.pushKV("data", "0x" + HexStr(log.data));
+        logs.push_back(logObj);
+    }
+    result.pushKV("logs", logs);
+    
+    // Add Cascoin-specific fields
+    UniValue cascoin(UniValue::VOBJ);
+    cascoin.pushKV("senderReputation", receipt.senderReputation);
+    cascoin.pushKV("reputationDiscount", (uint64_t)receipt.reputationDiscount);
+    cascoin.pushKV("usedFreeGas", receipt.usedFreeGas);
+    result.pushKV("cascoin", cascoin);
+    
+    return result;
+}
 
 UniValue cas_getBalance(const JSONRPCRequest& request)
 {
@@ -427,17 +465,33 @@ UniValue cas_getBalance(const JSONRPCRequest& request)
             "cas_getBalance \"address\" ( \"block\" )\n"
             "\nGet CAS balance for an address.\n"
             "\nArguments:\n"
-            "1. address         (string, required) Address\n"
+            "1. address         (string, required) Address (hex format)\n"
             "2. block           (string, optional) Block number or \"latest\" (default: \"latest\")\n"
             "\nResult:\n"
-            "n                           (numeric) Balance in satoshis (wei)\n"
+            "\"balance\"                 (string) Balance in satoshis (wei) as hex string\n"
+            "\nNote: Returns balance from UTXO set. For contract balances, use contract-specific methods.\n"
             "\nExamples:\n"
             + HelpExampleCli("cas_getBalance", "\"0x...\"")
             + HelpExampleRpc("cas_getBalance", "\"0x...\"")
         );
 
-    // TODO: Requires UTXO indexing by address
-    throw JSONRPCError(RPC_METHOD_NOT_FOUND, "cas_getBalance requires UTXO indexing (not yet implemented)");
+    std::string addressStr = request.params[0].get_str();
+    
+    // Parse address
+    uint160 address = ParseAddress(addressStr);
+    
+    // Check if address index is available
+    if (!CVM::g_addressIndex) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Address index not initialized");
+    }
+    
+    // Get balance from address index
+    CAmount balance = CVM::g_addressIndex->GetAddressBalance(address);
+    
+    // Return balance as hex string (Ethereum-compatible)
+    std::stringstream ss;
+    ss << "0x" << std::hex << balance;
+    return ss.str();
 }
 
 UniValue cas_getTransactionCount(const JSONRPCRequest& request)
@@ -446,18 +500,37 @@ UniValue cas_getTransactionCount(const JSONRPCRequest& request)
         throw std::runtime_error(
             "cas_getTransactionCount \"address\" ( \"block\" )\n"
             "\nGet transaction count (nonce) for an address.\n"
+            "\nThis returns the number of transactions sent from an address.\n"
+            "For contracts, this is used for CREATE2 address generation.\n"
             "\nArguments:\n"
-            "1. address         (string, required) Address\n"
+            "1. address         (string, required) Address (hex format)\n"
             "2. block           (string, optional) Block number or \"latest\" (default: \"latest\")\n"
             "\nResult:\n"
-            "n                           (numeric) Transaction count\n"
+            "\"count\"                   (string) Transaction count as hex string\n"
+            "\nNote: This is the nonce value used for the next transaction from this address.\n"
             "\nExamples:\n"
             + HelpExampleCli("cas_getTransactionCount", "\"0x...\"")
             + HelpExampleRpc("cas_getTransactionCount", "\"0x...\"")
         );
 
-    // TODO: Requires nonce tracking per address
-    throw JSONRPCError(RPC_METHOD_NOT_FOUND, "cas_getTransactionCount requires nonce tracking (not yet implemented)");
+    std::string addressStr = request.params[0].get_str();
+    
+    // Parse address
+    uint160 address = ParseAddress(addressStr);
+    
+    // Get nonce from database
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    uint64_t nonce = 0;
+    if (!CVM::g_cvmdb->ReadNonce(address, nonce)) {
+        // Address has no transactions yet, nonce is 0
+        nonce = 0;
+    }
+    
+    // Return nonce as hex string (Ethereum-compatible)
+    return strprintf("0x%llx", (unsigned long long)nonce);
 }
 
 // ===== Ethereum-Compatible Aliases (eth_*) =====

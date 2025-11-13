@@ -5,6 +5,7 @@
 #include <cvm/receipt.h>
 #include <univalue.h>
 #include <utilstrencodings.h>
+#include <tinyformat.h>
 
 namespace CVM {
 
@@ -14,15 +15,15 @@ UniValue TransactionReceipt::ToJSON() const
     
     // Ethereum-compatible fields
     result.pushKV("transactionHash", transactionHash.GetHex());
-    result.pushKV("transactionIndex", HexStr(transactionIndex));
+    result.pushKV("transactionIndex", strprintf("0x%x", transactionIndex));
     result.pushKV("blockHash", blockHash.GetHex());
-    result.pushKV("blockNumber", HexStr(blockNumber));
+    result.pushKV("blockNumber", strprintf("0x%x", blockNumber));
     result.pushKV("from", from.GetHex());
     result.pushKV("to", to.IsNull() ? "" : to.GetHex());
     result.pushKV("contractAddress", contractAddress.IsNull() ? "" : contractAddress.GetHex());
-    result.pushKV("gasUsed", HexStr(gasUsed));
-    result.pushKV("cumulativeGasUsed", HexStr(cumulativeGasUsed));
-    result.pushKV("status", HexStr(status));
+    result.pushKV("gasUsed", strprintf("0x%llx", (unsigned long long)gasUsed));
+    result.pushKV("cumulativeGasUsed", strprintf("0x%llx", (unsigned long long)cumulativeGasUsed));
+    result.pushKV("status", strprintf("0x%x", status));
     
     // Logs array
     UniValue logsArray(UniValue::VARR);
@@ -31,12 +32,12 @@ UniValue TransactionReceipt::ToJSON() const
         UniValue logObj(UniValue::VOBJ);
         
         logObj.pushKV("address", log.address.GetHex());
-        logObj.pushKV("logIndex", HexStr(i));
-        logObj.pushKV("transactionIndex", HexStr(transactionIndex));
+        logObj.pushKV("logIndex", strprintf("0x%x", (unsigned int)i));
+        logObj.pushKV("transactionIndex", strprintf("0x%x", transactionIndex));
         logObj.pushKV("transactionHash", transactionHash.GetHex());
         logObj.pushKV("blockHash", blockHash.GetHex());
-        logObj.pushKV("blockNumber", HexStr(blockNumber));
-        logObj.pushKV("data", HexStr(log.data));
+        logObj.pushKV("blockNumber", strprintf("0x%x", blockNumber));
+        logObj.pushKV("data", "0x" + HexStr(log.data));
         
         UniValue topicsArray(UniValue::VARR);
         for (const auto& topic : log.topics) {
