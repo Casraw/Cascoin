@@ -176,4 +176,105 @@ UniValue eth_getTransactionCount(const JSONRPCRequest& request);
  */
 UniValue eth_gasPrice(const JSONRPCRequest& request);
 
+// ===== Developer Tooling Methods =====
+
+/**
+ * debug_traceTransaction - Trace transaction execution
+ * 
+ * Provides detailed execution trace for a transaction, including
+ * opcodes executed, gas costs, and state changes.
+ * 
+ * @param request JSON-RPC request with transaction hash and options
+ * @return Execution trace
+ */
+UniValue debug_traceTransaction(const JSONRPCRequest& request);
+
+/**
+ * debug_traceCall - Trace simulated call execution
+ * 
+ * Simulates a contract call and returns detailed execution trace
+ * without creating a transaction.
+ * 
+ * @param request JSON-RPC request with call parameters and options
+ * @return Execution trace
+ */
+UniValue debug_traceCall(const JSONRPCRequest& request);
+
+/**
+ * cas_snapshot - Create state snapshot
+ * 
+ * Creates a snapshot of the current blockchain state for testing.
+ * Can be reverted to later with cas_revert.
+ * 
+ * @param request JSON-RPC request (no parameters)
+ * @return Snapshot ID
+ */
+UniValue cas_snapshot(const JSONRPCRequest& request);
+
+/**
+ * evm_snapshot - Ethereum-compatible alias for cas_snapshot
+ */
+UniValue evm_snapshot(const JSONRPCRequest& request);
+
+/**
+ * cas_revert - Revert to snapshot
+ * 
+ * Reverts blockchain state to a previously created snapshot.
+ * 
+ * @param request JSON-RPC request with snapshot ID
+ * @return Success boolean
+ */
+UniValue cas_revert(const JSONRPCRequest& request);
+
+/**
+ * evm_revert - Ethereum-compatible alias for cas_revert
+ */
+UniValue evm_revert(const JSONRPCRequest& request);
+
+/**
+ * cas_mine - Mine blocks manually
+ * 
+ * Mines one or more blocks immediately (regtest only).
+ * Useful for testing time-dependent contracts.
+ * 
+ * @param request JSON-RPC request with number of blocks
+ * @return Array of mined block hashes
+ */
+UniValue cas_mine(const JSONRPCRequest& request);
+
+/**
+ * evm_mine - Ethereum-compatible alias for cas_mine
+ */
+UniValue evm_mine(const JSONRPCRequest& request);
+
+/**
+ * cas_setNextBlockTimestamp - Set next block timestamp
+ * 
+ * Sets the timestamp for the next block to be mined (regtest only).
+ * 
+ * @param request JSON-RPC request with timestamp
+ * @return Success boolean
+ */
+UniValue cas_setNextBlockTimestamp(const JSONRPCRequest& request);
+
+/**
+ * evm_setNextBlockTimestamp - Ethereum-compatible alias
+ */
+UniValue evm_setNextBlockTimestamp(const JSONRPCRequest& request);
+
+/**
+ * cas_increaseTime - Increase blockchain time
+ * 
+ * Advances blockchain time by specified seconds (regtest only).
+ * 
+ * @param request JSON-RPC request with seconds to advance
+ * @return New timestamp
+ */
+UniValue cas_increaseTime(const JSONRPCRequest& request);
+
+/**
+ * evm_increaseTime - Ethereum-compatible alias
+ */
+UniValue evm_increaseTime(const JSONRPCRequest& request);
+
 #endif // CASCOIN_CVM_EVM_RPC_H

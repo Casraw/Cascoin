@@ -145,8 +145,8 @@ This specification outlines the enhancement of Cascoin's Virtual Machine (CVM) t
 3. THE CVM SHALL implement proper access controls for trust score modifications
 4. THE CVM SHALL provide audit trails for all reputation-affecting operations
 5. THE CVM SHALL maintain backward compatibility with existing CVM contracts
-### R
-equirement 11: Trust-Aware Memory and Stack Operations
+
+### Requirement 11: Trust-Aware Memory and Stack Operations
 
 **User Story:** As a smart contract developer, I want memory and stack operations to be reputation-aware, so that data structures can automatically incorporate trust information and enable reputation-based data processing.
 

@@ -1031,6 +1031,20 @@ public:
                            std::string& strFailReason, const CCoinControl& coin_control, bool sign = true);
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey, CConnman* connman, CValidationState& state);
 
+    /**
+     * CVM/EVM Contract Transaction Creation
+     * Create transactions for deploying and calling smart contracts
+     */
+    bool CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
+                                            const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
+                                            CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                            const CCoinControl& coin_control = CCoinControl());
+    
+    bool CreateContractCallTransaction(const uint160& contractAddress, const std::vector<uint8_t>& callData,
+                                       uint64_t gasLimit, CAmount value, CWalletTx& wtxNew,
+                                       CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                       const CCoinControl& coin_control = CCoinControl());
+
     void ListAccountCreditDebit(const std::string& strAccount, std::list<CAccountingEntry>& entries);
     bool AddAccountingEntry(const CAccountingEntry&);
     bool AddAccountingEntry(const CAccountingEntry&, CWalletDB *pwalletdb);

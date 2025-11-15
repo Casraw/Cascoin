@@ -30,6 +30,8 @@
 #include <utilmoneystr.h>
 #include <wallet/fees.h>
 #include <rialto.h>  // Cascoin: Rialto: For IsValidNick()
+#include <cvm/softfork.h>  // Cascoin: CVM/EVM contract transactions
+#include <cvm/cvm.h>  // Cascoin: CVM constants and validation
 
 #include <assert.h>
 #include <future>
@@ -4879,3 +4881,148 @@ CTxDestination CWallet::AddAndGetDestinationForScript(const CScript& script, Out
     }
 }
 
+
+/**
+ * Create a transaction for deploying a smart contract (CVM or EVM)
+ * This creates a soft-fork compatible OP_RETURN transaction
+ */
+bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
+                                                  const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
+                                                  CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                                  const CCoinControl& coin_control)
+{
+    // Validate bytecode
+    if (bytecode.empty()) {
+        strFailReason = "Contract bytecode cannot be empty";
+        return false;
+    }
+    
+    if (bytecode.size() > CVM::MAX_CONTRACT_SIZE) {
+        strFailReason = strprintf("Contract bytecode exceeds maximum size (%d bytes)", CVM::MAX_CONTRACT_SIZE);
+        return false;
+    }
+    
+    // Validate gas limit
+    if (gasLimit == 0) {
+        strFailReason = "Gas limit must be greater than zero";
+        return false;
+    }
+    
+    if (gasLimit > CVM::MAX_GAS_PER_TX) {
+        strFailReason = strprintf("Gas limit exceeds maximum (%d)", CVM::MAX_GAS_PER_TX);
+        return false;
+    }
+    
+    // Validate bytecode format
+    std::string error;
+    if (!CVM::ValidateContractCode(bytecode, error)) {
+        strFailReason = "Invalid contract bytecode: " + error;
+        return false;
+    }
+    
+    // Create deployment data structure
+    CVM::CVMDeployData deployData;
+    deployData.bytecode = bytecode;
+    deployData.gasLimit = gasLimit;
+    deployData.initData = initData;
+    deployData.format = CVM::BytecodeFormat::AUTO;  // Auto-detect format
+    
+    // Build OP_RETURN output with deployment data (Soft Fork compatible!)
+    std::vector<uint8_t> deployBytes = deployData.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::CONTRACT_DEPLOY, deployBytes);
+    
+    // Create recipient for OP_RETURN output (zero value)
+    std::vector<CRecipient> vecSend;
+    CRecipient recipient = {cvmScript, 0, false};
+    vecSend.push_back(recipient);
+    
+    // Create the transaction using standard CreateTransaction
+    // This handles coin selection, fee calculation, change output, and signing
+    int nChangePosInOut = -1;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, coin_control, true);
+    
+    if (!result) {
+        return false;
+    }
+    
+    LogPrintf("CVM: Created contract deployment transaction, bytecode size: %d, gas limit: %d, fee: %s\n",
+              bytecode.size(), gasLimit, FormatMoney(nFeeRet));
+    
+    return true;
+}
+
+/**
+ * Create a transaction for calling a smart contract function
+ * This creates a soft-fork compatible OP_RETURN transaction
+ */
+bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, const std::vector<uint8_t>& callData,
+                                            uint64_t gasLimit, CAmount value, CWalletTx& wtxNew,
+                                            CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                            const CCoinControl& coin_control)
+{
+    // Validate contract address
+    if (contractAddress.IsNull()) {
+        strFailReason = "Contract address cannot be null";
+        return false;
+    }
+    
+    // Validate gas limit
+    if (gasLimit == 0) {
+        strFailReason = "Gas limit must be greater than zero";
+        return false;
+    }
+    
+    if (gasLimit > CVM::MAX_GAS_PER_TX) {
+        strFailReason = strprintf("Gas limit exceeds maximum (%d)", CVM::MAX_GAS_PER_TX);
+        return false;
+    }
+    
+    // Validate value
+    if (value < 0) {
+        strFailReason = "Value cannot be negative";
+        return false;
+    }
+    
+    // Create call data structure
+    CVM::CVMCallData callDataStruct;
+    callDataStruct.contractAddress = contractAddress;
+    callDataStruct.callData = callData;
+    callDataStruct.gasLimit = gasLimit;
+    callDataStruct.value = value;
+    
+    // Build OP_RETURN output with call data (Soft Fork compatible!)
+    std::vector<uint8_t> callBytes = callDataStruct.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::CONTRACT_CALL, callBytes);
+    
+    // Create recipients
+    std::vector<CRecipient> vecSend;
+    
+    // OP_RETURN output (zero value)
+    CRecipient opReturnRecipient = {cvmScript, 0, false};
+    vecSend.push_back(opReturnRecipient);
+    
+    // If sending value to contract, add a second output
+    // Note: In the actual implementation, this value would be locked and
+    // transferred to the contract during execution
+    if (value > 0) {
+        // Create a script that locks the value for the contract
+        // For now, we'll use a simple P2PKH to a derived address
+        // In production, this should be a special script type
+        CScript valueScript = CScript() << OP_RETURN << ToByteVector(contractAddress);
+        CRecipient valueRecipient = {valueScript, value, false};
+        vecSend.push_back(valueRecipient);
+    }
+    
+    // Create the transaction using standard CreateTransaction
+    int nChangePosInOut = -1;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, coin_control, true);
+    
+    if (!result) {
+        return false;
+    }
+    
+    LogPrintf("CVM: Created contract call transaction, contract: %s, gas limit: %d, value: %s, fee: %s\n",
+              contractAddress.ToString(), gasLimit, FormatMoney(value), FormatMoney(nFeeRet));
+    
+    return true;
+}

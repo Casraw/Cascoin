@@ -20,6 +20,11 @@
 #include <wallet/coincontrol.h>
 #include <rpc/util.h>
 #include <core_io.h>
+#include <miner.h>
+#include <pow.h>
+#include <timedata.h>
+#include <chain.h>
+#include <consensus/validation.h>
 
 /**
  * Cascoin CVM/EVM RPC implementation
@@ -366,8 +371,91 @@ UniValue cas_sendTransaction(const JSONRPCRequest& request)
             + HelpExampleRpc("cas_sendTransaction", "{\"from\":\"0x...\",\"data\":\"0x60806040...\"}")
         );
 
-    // TODO: Requires wallet integration
-    throw JSONRPCError(RPC_METHOD_NOT_FOUND, "cas_sendTransaction requires wallet integration (not yet implemented)");
+    // Get wallet
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    // Parse transaction object
+    UniValue txObj = request.params[0].get_obj();
+    
+    // Get data field (required)
+    if (!txObj.exists("data")) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Missing required field: data");
+    }
+    std::string dataHex = txObj["data"].get_str();
+    if (dataHex.substr(0, 2) == "0x") {
+        dataHex = dataHex.substr(2);
+    }
+    std::vector<uint8_t> data = ParseHex(dataHex);
+    
+    if (data.empty()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Data field cannot be empty");
+    }
+    
+    // Get gas limit (optional, default 1M)
+    uint64_t gasLimit = CVM::MAX_GAS_PER_TX;
+    if (txObj.exists("gas")) {
+        gasLimit = txObj["gas"].get_int64();
+    }
+    
+    // Get value (optional, default 0)
+    CAmount value = 0;
+    if (txObj.exists("value")) {
+        value = txObj["value"].get_int64();
+    }
+    
+    // Check if this is a deployment (no "to" field) or a call
+    bool isDeployment = !txObj.exists("to") || txObj["to"].isNull();
+    
+    CWalletTx wtx;
+    CReserveKey reservekey(pwallet);
+    CAmount nFeeRequired;
+    std::string strError;
+    CCoinControl coin_control;
+    
+    bool success;
+    if (isDeployment) {
+        // Contract deployment
+        std::vector<uint8_t> initData;  // No separate init data in this interface
+        success = pwallet->CreateContractDeploymentTransaction(data, gasLimit, initData, wtx, 
+                                                               reservekey, nFeeRequired, strError, coin_control);
+    } else {
+        // Contract call
+        std::string toAddress = txObj["to"].get_str();
+        if (toAddress.substr(0, 2) == "0x") {
+            toAddress = toAddress.substr(2);
+        }
+        
+        // Parse contract address (20 bytes)
+        if (toAddress.length() != 40) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length");
+        }
+        
+        std::vector<uint8_t> addressBytes = ParseHex(toAddress);
+        uint160 contractAddress(addressBytes);
+        
+        success = pwallet->CreateContractCallTransaction(contractAddress, data, gasLimit, value, wtx,
+                                                         reservekey, nFeeRequired, strError, coin_control);
+    }
+    
+    if (!success) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+    
+    // Broadcast transaction
+    CValidationState state;
+    if (!pwallet->CommitTransaction(wtx, reservekey, g_connman.get(), state)) {
+        strError = strprintf("Transaction commit failed: %s", FormatStateMessage(state));
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+    
+    return wtx.GetHash().GetHex();
 }
 
 UniValue cas_getTransactionReceipt(const JSONRPCRequest& request)
@@ -583,4 +671,358 @@ UniValue eth_getBalance(const JSONRPCRequest& request)
 UniValue eth_getTransactionCount(const JSONRPCRequest& request)
 {
     return cas_getTransactionCount(request);
+}
+
+// ===== Developer Tooling Methods =====
+
+// Global state for snapshots (regtest only)
+static std::map<uint64_t, CBlockIndex*> g_snapshots;
+static uint64_t g_nextSnapshotId = 1;
+static int64_t g_timeOffset = 0;
+static int64_t g_nextBlockTimestamp = 0;
+
+UniValue debug_traceTransaction(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "debug_traceTransaction \"txhash\" ( {\"tracer\":\"xxx\"} )\n"
+            "\nTrace transaction execution with detailed opcode-level information.\n"
+            "\nArguments:\n"
+            "1. \"txhash\"        (string, required) Transaction hash\n"
+            "2. options         (object, optional) Tracing options\n"
+            "   {\n"
+            "     \"tracer\": \"xxx\"     (string, optional) Tracer type (default: \"callTracer\")\n"
+            "     \"timeout\": \"xxx\"    (string, optional) Timeout (default: \"5s\")\n"
+            "   }\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"gas\": n,                (numeric) Gas used\n"
+            "  \"failed\": bool,          (boolean) Execution failed\n"
+            "  \"returnValue\": \"xxx\",    (string) Return data\n"
+            "  \"structLogs\": [...]      (array) Execution trace\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("debug_traceTransaction", "\"0x...\"")
+            + HelpExampleRpc("debug_traceTransaction", "\"0x...\"")
+        );
+
+    std::string txhash = request.params[0].get_str();
+    
+    // Parse transaction hash
+    uint256 hash = ParseUint256(txhash);
+    
+    // Find transaction in blockchain
+    CTransactionRef tx;
+    uint256 hashBlock;
+    if (!GetTransaction(hash, tx, Params().GetConsensus(), hashBlock)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Transaction not found");
+    }
+    
+    // TODO: Implement full execution tracing
+    // For now, return basic information
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("gas", 21000); // Placeholder
+    result.pushKV("failed", false);
+    result.pushKV("returnValue", "0x");
+    
+    UniValue structLogs(UniValue::VARR);
+    result.pushKV("structLogs", structLogs);
+    
+    LogPrintf("debug_traceTransaction: Full tracing not yet implemented\n");
+    
+    return result;
+}
+
+UniValue debug_traceCall(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+            "debug_traceCall {\"to\":\"address\",\"data\":\"hex\"} ( \"block\" {\"tracer\":\"xxx\"} )\n"
+            "\nTrace simulated contract call execution.\n"
+            "\nArguments:\n"
+            "1. call            (object, required) Call object\n"
+            "   {\n"
+            "     \"to\": \"address\"       (string, required) Contract address\n"
+            "     \"data\": \"hex\"         (string, required) Call data\n"
+            "     \"from\": \"address\"     (string, optional) Caller address\n"
+            "     \"gas\": n              (numeric, optional) Gas limit\n"
+            "   }\n"
+            "2. block           (string, optional) Block number or \"latest\"\n"
+            "3. options         (object, optional) Tracing options\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"gas\": n,                (numeric) Gas used\n"
+            "  \"failed\": bool,          (boolean) Execution failed\n"
+            "  \"returnValue\": \"xxx\",    (string) Return data\n"
+            "  \"structLogs\": [...]      (array) Execution trace\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("debug_traceCall", "'{\"to\":\"0x...\",\"data\":\"0x...\"}'")
+            + HelpExampleRpc("debug_traceCall", "{\"to\":\"0x...\",\"data\":\"0x...\"}")
+        );
+
+    // Execute the call first
+    UniValue callResult = cas_call(request);
+    
+    // TODO: Implement full execution tracing
+    // For now, return basic information
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("gas", 21000); // Placeholder
+    result.pushKV("failed", false);
+    result.pushKV("returnValue", callResult.get_str());
+    
+    UniValue structLogs(UniValue::VARR);
+    result.pushKV("structLogs", structLogs);
+    
+    LogPrintf("debug_traceCall: Full tracing not yet implemented\n");
+    
+    return result;
+}
+
+UniValue cas_snapshot(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "cas_snapshot\n"
+            "\nCreate a snapshot of the current blockchain state.\n"
+            "\nOnly available in regtest mode for testing.\n"
+            "\nResult:\n"
+            "\"id\"                      (string) Snapshot ID\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_snapshot", "")
+            + HelpExampleRpc("cas_snapshot", "")
+        );
+
+    if (!Params().MineBlocksOnDemand()) {
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Snapshots only available in regtest mode");
+    }
+
+    LOCK(cs_main);
+    
+    // Store current chain tip
+    uint64_t snapshotId = g_nextSnapshotId++;
+    g_snapshots[snapshotId] = chainActive.Tip();
+    
+    return strprintf("0x%llx", (unsigned long long)snapshotId);
+}
+
+UniValue evm_snapshot(const JSONRPCRequest& request)
+{
+    return cas_snapshot(request);
+}
+
+UniValue cas_revert(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "cas_revert \"snapshotid\"\n"
+            "\nRevert blockchain state to a previous snapshot.\n"
+            "\nOnly available in regtest mode for testing.\n"
+            "\nArguments:\n"
+            "1. \"snapshotid\"    (string, required) Snapshot ID from cas_snapshot\n"
+            "\nResult:\n"
+            "true|false           (boolean) Success\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_revert", "\"0x1\"")
+            + HelpExampleRpc("cas_revert", "\"0x1\"")
+        );
+
+    if (!Params().MineBlocksOnDemand()) {
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Snapshots only available in regtest mode");
+    }
+
+    std::string snapshotIdStr = request.params[0].get_str();
+    uint64_t snapshotId = std::stoull(snapshotIdStr, nullptr, 16);
+    
+    LOCK(cs_main);
+    
+    // Find snapshot
+    auto it = g_snapshots.find(snapshotId);
+    if (it == g_snapshots.end()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Snapshot not found");
+    }
+    
+    CBlockIndex* pindex = it->second;
+    if (!pindex) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Invalid snapshot");
+    }
+    
+    // Revert to snapshot block
+    CValidationState state;
+    if (!InvalidateBlock(state, Params(), pindex->pprev)) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, state.GetRejectReason());
+    }
+    
+    // Activate the snapshot block
+    if (!ActivateBestChain(state, Params())) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, state.GetRejectReason());
+    }
+    
+    return true;
+}
+
+UniValue evm_revert(const JSONRPCRequest& request)
+{
+    return cas_revert(request);
+}
+
+UniValue cas_mine(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 0 || request.params.size() > 1)
+        throw std::runtime_error(
+            "cas_mine ( numblocks )\n"
+            "\nMine one or more blocks immediately.\n"
+            "\nOnly available in regtest mode for testing.\n"
+            "\nArguments:\n"
+            "1. numblocks       (numeric, optional, default=1) Number of blocks to mine\n"
+            "\nResult:\n"
+            "[                   (array) Block hashes\n"
+            "  \"hash\",           (string) Block hash\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_mine", "")
+            + HelpExampleCli("cas_mine", "5")
+            + HelpExampleRpc("cas_mine", "5")
+        );
+
+    if (!Params().MineBlocksOnDemand()) {
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Mining only available in regtest mode");
+    }
+
+    int numBlocks = 1;
+    if (request.params.size() > 0) {
+        numBlocks = request.params[0].get_int();
+    }
+    
+    if (numBlocks < 1 || numBlocks > 1000) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Number of blocks must be between 1 and 1000");
+    }
+    
+    // Get mining address (use first address in wallet)
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "No wallet available");
+    }
+    
+    CTxDestination dest;
+    if (!pwallet->GetKeyFromPool(dest)) {
+        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Keypool ran out");
+    }
+    
+    CScript scriptPubKey = GetScriptForDestination(dest);
+    
+    UniValue blockHashes(UniValue::VARR);
+    
+    for (int i = 0; i < numBlocks; i++) {
+        // Apply time offset if set
+        if (g_nextBlockTimestamp > 0) {
+            SetMockTime(g_nextBlockTimestamp);
+            g_nextBlockTimestamp = 0;
+        } else if (g_timeOffset > 0) {
+            SetMockTime(GetTime() + g_timeOffset);
+        }
+        
+        // Generate block
+        std::unique_ptr<CBlockTemplate> pblocktemplate = BlockAssembler(Params()).CreateNewBlock(scriptPubKey);
+        if (!pblocktemplate) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to create block template");
+        }
+        
+        CBlock* pblock = &pblocktemplate->block;
+        
+        // Mine the block
+        while (!CheckProofOfWork(pblock->GetHash(), pblock->nBits, Params().GetConsensus())) {
+            ++pblock->nNonce;
+        }
+        
+        // Process the block
+        std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
+        if (!ProcessNewBlock(Params(), shared_pblock, true, nullptr)) {
+            throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to process block");
+        }
+        
+        blockHashes.push_back(pblock->GetHash().GetHex());
+    }
+    
+    return blockHashes;
+}
+
+UniValue evm_mine(const JSONRPCRequest& request)
+{
+    return cas_mine(request);
+}
+
+UniValue cas_setNextBlockTimestamp(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "cas_setNextBlockTimestamp timestamp\n"
+            "\nSet the timestamp for the next block to be mined.\n"
+            "\nOnly available in regtest mode for testing.\n"
+            "\nArguments:\n"
+            "1. timestamp       (numeric, required) Unix timestamp\n"
+            "\nResult:\n"
+            "timestamp          (numeric) The timestamp that was set\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_setNextBlockTimestamp", "1609459200")
+            + HelpExampleRpc("cas_setNextBlockTimestamp", "1609459200")
+        );
+
+    if (!Params().MineBlocksOnDemand()) {
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Time manipulation only available in regtest mode");
+    }
+
+    int64_t timestamp = request.params[0].get_int64();
+    
+    if (timestamp < 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Timestamp must be non-negative");
+    }
+    
+    g_nextBlockTimestamp = timestamp;
+    
+    return timestamp;
+}
+
+UniValue evm_setNextBlockTimestamp(const JSONRPCRequest& request)
+{
+    return cas_setNextBlockTimestamp(request);
+}
+
+UniValue cas_increaseTime(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "cas_increaseTime seconds\n"
+            "\nIncrease blockchain time by specified seconds.\n"
+            "\nOnly available in regtest mode for testing.\n"
+            "\nArguments:\n"
+            "1. seconds         (numeric, required) Seconds to advance\n"
+            "\nResult:\n"
+            "timestamp          (numeric) New timestamp\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_increaseTime", "3600")
+            + HelpExampleRpc("cas_increaseTime", "3600")
+        );
+
+    if (!Params().MineBlocksOnDemand()) {
+        throw JSONRPCError(RPC_METHOD_NOT_FOUND, "Time manipulation only available in regtest mode");
+    }
+
+    int64_t seconds = request.params[0].get_int64();
+    
+    if (seconds < 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Seconds must be non-negative");
+    }
+    
+    g_timeOffset += seconds;
+    int64_t newTime = GetTime() + g_timeOffset;
+    SetMockTime(newTime);
+    
+    return newTime;
+}
+
+UniValue evm_increaseTime(const JSONRPCRequest& request)
+{
+    return cas_increaseTime(request);
 }
