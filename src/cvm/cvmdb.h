@@ -53,6 +53,15 @@ public:
     bool DeleteContract(const uint160& address);
     std::vector<uint160> ListContracts();
     
+    // Convenience methods for RPC
+    bool GetContractCode(const uint160& address, std::vector<uint8_t>& code) {
+        return LoadContract(address, code);
+    }
+    
+    bool GetContractMetadata(const uint160& address, Contract& metadata) {
+        return ReadContract(address, metadata);
+    }
+    
     // Nonce management
     bool WriteNonce(const uint160& address, uint64_t nonce);
     bool ReadNonce(const uint160& address, uint64_t& nonce);

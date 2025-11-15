@@ -39,6 +39,38 @@ struct BytecodeDetectionResult {
 };
 
 /**
+ * Bytecode Analysis Result
+ * Detailed analysis of bytecode structure and features
+ */
+struct BytecodeAnalysis {
+    std::vector<std::string> opcodes;      // List of opcodes found
+    std::vector<std::string> features;     // Detected features (e.g., "DELEGATECALL", "CREATE2")
+    size_t code_size;                      // Size of code section
+    size_t data_size;                      // Size of data section
+    bool has_constructor;                  // Has constructor code
+    bool has_fallback;                     // Has fallback function
+    std::map<std::string, size_t> opcode_frequency;  // Opcode usage statistics
+    
+    BytecodeAnalysis() : code_size(0), data_size(0), has_constructor(false), has_fallback(false) {}
+};
+
+/**
+ * Contract Metadata
+ * Extended metadata about a deployed contract
+ */
+struct ContractMetadata {
+    uint160 deployer;          // Address that deployed the contract
+    uint32_t deployHeight;     // Block height of deployment
+    uint256 deployTxid;        // Transaction ID of deployment
+    uint64_t gasUsed;          // Gas used for deployment
+    BytecodeFormat format;     // Bytecode format
+    std::string name;          // Optional contract name
+    std::string version;       // Optional contract version
+    
+    ContractMetadata() : deployHeight(0), gasUsed(0), format(BytecodeFormat::UNKNOWN) {}
+};
+
+/**
  * Bytecode Format Detector
  * 
  * Analyzes bytecode to determine whether it's CVM native format,
@@ -65,6 +97,7 @@ public:
     // Analysis utilities
     std::vector<uint8_t> ExtractEVMPortion(const std::vector<uint8_t>& hybrid_bytecode);
     std::vector<uint8_t> ExtractCVMPortion(const std::vector<uint8_t>& hybrid_bytecode);
+    BytecodeAnalysis AnalyzeBytecode(const std::vector<uint8_t>& bytecode);
     
     // Configuration
     void SetConfidenceThreshold(double threshold) { confidence_threshold = threshold; }

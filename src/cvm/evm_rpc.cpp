@@ -25,6 +25,10 @@
 #include <timedata.h>
 #include <chain.h>
 #include <consensus/validation.h>
+#include <net.h>
+
+// Global connection manager
+extern std::unique_ptr<CConnman> g_connman;
 
 /**
  * Cascoin CVM/EVM RPC implementation
@@ -424,7 +428,7 @@ UniValue cas_sendTransaction(const JSONRPCRequest& request)
         // Contract deployment
         std::vector<uint8_t> initData;  // No separate init data in this interface
         success = pwallet->CreateContractDeploymentTransaction(data, gasLimit, initData, wtx, 
-                                                               reservekey, nFeeRequired, strError, coin_control);
+                                                               reservekey, nFeeRequired, strError, &coin_control);
     } else {
         // Contract call
         std::string toAddress = txObj["to"].get_str();
@@ -441,7 +445,7 @@ UniValue cas_sendTransaction(const JSONRPCRequest& request)
         uint160 contractAddress(addressBytes);
         
         success = pwallet->CreateContractCallTransaction(contractAddress, data, gasLimit, value, wtx,
-                                                         reservekey, nFeeRequired, strError, coin_control);
+                                                         reservekey, nFeeRequired, strError, &coin_control);
     }
     
     if (!success) {
@@ -905,11 +909,12 @@ UniValue cas_mine(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_ERROR, "No wallet available");
     }
     
-    CTxDestination dest;
-    if (!pwallet->GetKeyFromPool(dest)) {
+    CPubKey newKey;
+    if (!pwallet->GetKeyFromPool(newKey)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Keypool ran out");
     }
     
+    CTxDestination dest = newKey.GetID();
     CScript scriptPubKey = GetScriptForDestination(dest);
     
     UniValue blockHashes(UniValue::VARR);

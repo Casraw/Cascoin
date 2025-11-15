@@ -13,6 +13,10 @@
 
 namespace CVM {
 
+// CVM Limits and Constants (additional to vmstate.h)
+static constexpr size_t MAX_CONTRACT_SIZE = 24576;       // 24KB maximum contract size
+static constexpr size_t MAX_CALL_DEPTH = 256;            // Maximum call depth
+
 /**
  * Cascoin Virtual Machine (CVM)
  * 

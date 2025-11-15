@@ -27,6 +27,7 @@
 #include <cvm/bytecode_detector.h>
 #include <cvm/enhanced_vm.h>
 #include <validation.h>
+#include <consensus/validation.h>
 #include <txmempool.h>
 #include <util.h>
 #include <base58.h>
@@ -38,6 +39,10 @@
 #include <hash.h>
 #include <core_io.h>
 #include <policy/policy.h>
+#include <net.h>
+
+// Global connection manager
+extern std::unique_ptr<CConnman> g_connman;
 
 /**
  * RPC commands for CVM (Cascoin Virtual Machine) and Reputation System
@@ -120,7 +125,7 @@ UniValue deploycontract(const JSONRPCRequest& request)
     CCoinControl coin_control;
     
     bool success = pwallet->CreateContractDeploymentTransaction(bytecode, gasLimit, initData, wtx,
-                                                                reservekey, nFeeRequired, strError, coin_control);
+                                                                reservekey, nFeeRequired, strError, &coin_control);
     
     if (!success) {
         throw JSONRPCError(RPC_WALLET_ERROR, strError);
@@ -244,7 +249,7 @@ UniValue callcontract(const JSONRPCRequest& request)
     CCoinControl coin_control;
     
     bool success = pwallet->CreateContractCallTransaction(contractAddr, callData, gasLimit, value, wtx,
-                                                          reservekey, nFeeRequired, strError, coin_control);
+                                                          reservekey, nFeeRequired, strError, &coin_control);
     
     if (!success) {
         throw JSONRPCError(RPC_WALLET_ERROR, strError);
@@ -324,8 +329,8 @@ UniValue getcontractinfo(const JSONRPCRequest& request)
     CVM::BytecodeDetectionResult detection = detector.DetectFormat(bytecode);
     
     // Get contract metadata
-    CVM::ContractMetadata metadata;
-    bool hasMetadata = CVM::g_cvmdb->GetContractMetadata(contractAddr, metadata);
+    CVM::Contract contract;
+    bool hasMetadata = CVM::g_cvmdb->GetContractMetadata(contractAddr, contract);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -356,9 +361,9 @@ UniValue getcontractinfo(const JSONRPCRequest& request)
     
     // Add metadata if available
     if (hasMetadata) {
-        result.pushKV("deploy_height", (int64_t)metadata.deployHeight);
-        result.pushKV("deploy_txid", metadata.deployTxid.GetHex());
-        result.pushKV("deployer", "0x" + metadata.deployer.GetHex());
+        result.pushKV("deploy_height", (int64_t)contract.deploymentHeight);
+        result.pushKV("deploy_txid", contract.deploymentTx.GetHex());
+        result.pushKV("deployer", "0x" + contract.address.GetHex());
     }
     
     // Add opcode analysis for EVM contracts
@@ -3469,7 +3474,7 @@ UniValue cas_getTrustContext(const JSONRPCRequest& request)
     
     // Get trust graph info
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
-    auto trustPaths = trustGraph.GetTrustPaths(address, 3);  // Max depth 3
+    auto trustPaths = trustGraph.FindTrustPaths(address, address, 3);  // Max depth 3
     
     // Build result
     UniValue result(UniValue::VOBJ);

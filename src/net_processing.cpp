@@ -1032,17 +1032,10 @@ static uint32_t GetTransactionReputation(const CTransaction& tx)
     }
     
     try {
-        // Get sender address from transaction
-        uint160 sender = CVM::GetTransactionSender(tx);
-        if (sender.IsNull()) {
-            return 50; // Default if sender cannot be determined
-        }
-        
-        // Get reputation from trust context
-        auto trust_ctx = std::make_shared<CVM::TrustContext>(CVM::g_cvmdb.get());
-        uint32_t reputation = trust_ctx->GetReputation(sender);
-        
-        return reputation;
+        // For now, return default reputation
+        // TODO: Implement proper sender extraction from transaction inputs
+        // This would require access to UTXO set to resolve input addresses
+        return 50; // Default reputation
     } catch (const std::exception& e) {
         LogPrint(BCLog::NET, "Error getting transaction reputation: %s\n", e.what());
         return 50; // Default on error

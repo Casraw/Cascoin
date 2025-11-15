@@ -279,7 +279,7 @@ std::vector<uint160> HATConsensusValidator::SelectRandomValidators(
     return validators;
 }
 
-bool HATConsensusValidator::SendValidationChallenge(
+bool CVM::HATConsensusValidator::SendValidationChallenge(
     const uint160& validator,
     const ValidationRequest& request)
 {
@@ -292,7 +292,7 @@ bool HATConsensusValidator::SendValidationChallenge(
     return true;
 }
 
-bool HATConsensusValidator::ProcessValidatorResponse(const ValidationResponse& response) {
+bool CVM::HATConsensusValidator::ProcessValidatorResponse(const ValidationResponse& response) {
     // Check rate limiting (anti-spam)
     if (IsValidatorRateLimited(response.validatorAddress)) {
         LogPrint(BCLog::CVM, "HAT Consensus: Validator %s is rate-limited, ignoring response\n",
@@ -449,7 +449,7 @@ DisputeCase HATConsensusValidator::CreateDisputeCase(
     return dispute;
 }
 
-bool HATConsensusValidator::EscalateToDAO(const DisputeCase& dispute) {
+bool CVM::HATConsensusValidator::EscalateToDAO(const DisputeCase& dispute) {
     // Store dispute case
     if (!WriteToDatabase(database, MakeDBKey(DB_DISPUTE_CASE, dispute.disputeId), dispute)) {
         return false;
@@ -466,7 +466,7 @@ bool HATConsensusValidator::EscalateToDAO(const DisputeCase& dispute) {
     return true;
 }
 
-bool HATConsensusValidator::ProcessDAOResolution(
+bool CVM::HATConsensusValidator::ProcessDAOResolution(
     const uint256& disputeId,
     const DAODispute& resolution)
 {
@@ -521,7 +521,7 @@ bool HATConsensusValidator::ProcessDAOResolution(
     return true;
 }
 
-bool HATConsensusValidator::RecordFraudAttempt(
+bool CVM::HATConsensusValidator::RecordFraudAttempt(
     const uint160& fraudsterAddress,
     const CTransaction& tx,
     const HATv2Score& claimedScore,
@@ -587,7 +587,7 @@ bool HATConsensusValidator::RecordFraudAttempt(
     return true;
 }
 
-bool HATConsensusValidator::UpdateValidatorReputation(
+bool CVM::HATConsensusValidator::UpdateValidatorReputation(
     const uint160& validator,
     bool accurate)
 {
@@ -628,7 +628,7 @@ TransactionState HATConsensusValidator::GetTransactionState(const uint256& txHas
     return state;
 }
 
-bool HATConsensusValidator::UpdateMempoolState(
+bool CVM::HATConsensusValidator::UpdateMempoolState(
     const uint256& txHash,
     TransactionState state)
 {
@@ -641,7 +641,7 @@ DisputeCase HATConsensusValidator::GetDisputeCase(const uint256& disputeId) {
     return dispute;
 }
 
-bool HATConsensusValidator::HasWoTConnection(
+bool CVM::HATConsensusValidator::HasWoTConnection(
     const uint160& validator,
     const uint160& target)
 {
@@ -650,7 +650,7 @@ bool HATConsensusValidator::HasWoTConnection(
     return !paths.empty();
 }
 
-double HATConsensusValidator::CalculateVoteConfidence(
+double CVM::HATConsensusValidator::CalculateVoteConfidence(
     const uint160& validator,
     const uint160& target)
 {
@@ -751,7 +751,7 @@ ValidatorStats HATConsensusValidator::GetValidatorStats(const uint160& validator
 
 // Private methods
 
-bool HATConsensusValidator::IsEligibleValidator(const uint160& address) {
+bool CVM::HATConsensusValidator::IsEligibleValidator(const uint160& address) {
     // Check minimum reputation
     ValidatorStats stats = GetValidatorStats(address);
     if (stats.validatorReputation < 70) {
@@ -786,7 +786,7 @@ uint256 HATConsensusValidator::GenerateRandomSeed(const uint256& txHash, int blo
     return ss.GetHash();
 }
 
-bool HATConsensusValidator::ScoresMatch(
+bool CVM::HATConsensusValidator::ScoresMatch(
     const HATv2Score& score1,
     const HATv2Score& score2,
     int16_t tolerance)
@@ -794,7 +794,7 @@ bool HATConsensusValidator::ScoresMatch(
     return std::abs(score1.finalScore - score2.finalScore) <= tolerance;
 }
 
-void HATConsensusValidator::CalculateWeightedVotes(
+void CVM::HATConsensusValidator::CalculateWeightedVotes(
     const std::vector<ValidationResponse>& responses,
     double& weightedAccept,
     double& weightedReject,
@@ -826,7 +826,7 @@ void HATConsensusValidator::CalculateWeightedVotes(
     }
 }
 
-bool HATConsensusValidator::MeetsWoTCoverage(const std::vector<ValidationResponse>& responses) {
+bool CVM::HATConsensusValidator::MeetsWoTCoverage(const std::vector<ValidationResponse>& responses) {
     if (responses.empty()) {
         return false;
     }
@@ -844,13 +844,11 @@ bool HATConsensusValidator::MeetsWoTCoverage(const std::vector<ValidationRespons
     return wotRatio >= WOT_COVERAGE_THRESHOLD;
 }
 
-} // namespace CVM
-
 // ============================================================================
 // P2P Network Protocol Implementation
 // ============================================================================
 
-void HATConsensusValidator::ProcessValidationRequest(
+void CVM::HATConsensusValidator::ProcessValidationRequest(
     const ValidationRequest& request,
     CNode* pfrom,
     CConnman* connman)
@@ -876,7 +874,8 @@ void HATConsensusValidator::ProcessValidationRequest(
     
     if (hasWoT) {
         // Calculate full score with WoT component
-        calculatedScore.finalScore = secureHAT.CalculateHATScore(request.senderAddress);
+        // Use sender as both target and viewer for self-assessment
+        calculatedScore.finalScore = secureHAT.CalculateFinalTrust(request.senderAddress, request.senderAddress);
         // TODO: Get component breakdown from SecureHAT
         calculatedScore.behaviorScore = 0;  // Placeholder
         calculatedScore.wotScore = 0;       // Placeholder
@@ -920,7 +919,7 @@ void HATConsensusValidator::ProcessValidationRequest(
              (int)vote, confidence);
 }
 
-void HATConsensusValidator::ProcessDAODispute(
+void CVM::HATConsensusValidator::ProcessDAODispute(
     const DisputeCase& dispute,
     CNode* pfrom,
     CConnman* connman)
@@ -939,7 +938,7 @@ void HATConsensusValidator::ProcessDAODispute(
     std::vector<uint8_t> data;
     CVectorWriter writer(SER_DISK, CLIENT_VERSION, data, 0);
     writer << dispute;
-    database.Write(key, data);
+    database.WriteGeneric(key, data);
     
     // Escalate to DAO through TrustGraph
     bool success = EscalateToDAO(dispute);
@@ -953,7 +952,7 @@ void HATConsensusValidator::ProcessDAODispute(
     }
 }
 
-void HATConsensusValidator::ProcessDAOResolution(
+void CVM::HATConsensusValidator::ProcessDAOResolution(
     const uint256& disputeId,
     bool approved,
     uint64_t resolutionTimestamp)
@@ -978,7 +977,7 @@ void HATConsensusValidator::ProcessDAOResolution(
     std::vector<uint8_t> data;
     CVectorWriter writer(SER_DISK, CLIENT_VERSION, data, 0);
     writer << dispute;
-    database.Write(key, data);
+    database.WriteGeneric(key, data);
     
     // Update transaction state in mempool
     if (approved) {
@@ -1000,7 +999,7 @@ void HATConsensusValidator::ProcessDAOResolution(
     }
 }
 
-void HATConsensusValidator::BroadcastValidationChallenge(
+void CVM::HATConsensusValidator::BroadcastValidationChallenge(
     const ValidationRequest& request,
     const std::vector<uint160>& validators,
     CConnman* connman)
@@ -1025,7 +1024,7 @@ void HATConsensusValidator::BroadcastValidationChallenge(
              sentCount, validators.size());
 }
 
-void HATConsensusValidator::SendValidationResponse(
+void CVM::HATConsensusValidator::SendValidationResponse(
     const ValidationResponse& response,
     CConnman* connman)
 {
@@ -1047,7 +1046,7 @@ void HATConsensusValidator::SendValidationResponse(
     });
 }
 
-void HATConsensusValidator::BroadcastDAODispute(
+void CVM::HATConsensusValidator::BroadcastDAODispute(
     const DisputeCase& dispute,
     CConnman* connman)
 {
@@ -1067,7 +1066,7 @@ void HATConsensusValidator::BroadcastDAODispute(
     });
 }
 
-void HATConsensusValidator::BroadcastDAOResolution(
+void CVM::HATConsensusValidator::BroadcastDAOResolution(
     const uint256& disputeId,
     bool approved,
     uint64_t resolutionTimestamp,
@@ -1093,13 +1092,11 @@ void HATConsensusValidator::BroadcastDAOResolution(
     });
 }
 
-} // namespace CVM
-
 // ============================================================================
 // Validator Communication and Response Collection
 // ============================================================================
 
-std::vector<ValidationResponse> HATConsensusValidator::CollectValidatorResponses(
+std::vector<CVM::ValidationResponse> CVM::HATConsensusValidator::CollectValidatorResponses(
     const uint256& txHash,
     uint32_t timeoutSeconds)
 {
@@ -1147,7 +1144,7 @@ std::vector<ValidationResponse> HATConsensusValidator::CollectValidatorResponses
     return session.responses;
 }
 
-bool HATConsensusValidator::HasValidationTimedOut(const uint256& txHash) {
+bool CVM::HATConsensusValidator::HasValidationTimedOut(const uint256& txHash) {
     ValidationSession session;
     if (!ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session)) {
         return true;  // No session = timed out
@@ -1159,7 +1156,7 @@ bool HATConsensusValidator::HasValidationTimedOut(const uint256& txHash) {
     return elapsedTime >= VALIDATION_TIMEOUT;
 }
 
-void HATConsensusValidator::HandleNonResponsiveValidators(
+void CVM::HATConsensusValidator::HandleNonResponsiveValidators(
     const uint256& txHash,
     const std::vector<uint160>& selectedValidators)
 {
@@ -1203,7 +1200,7 @@ void HATConsensusValidator::HandleNonResponsiveValidators(
     }
 }
 
-bool HATConsensusValidator::IsValidatorRateLimited(const uint160& validatorAddress) {
+bool CVM::HATConsensusValidator::IsValidatorRateLimited(const uint160& validatorAddress) {
     uint64_t currentTime = GetTime();
     
     auto it = validatorRateLimits.find(validatorAddress);
@@ -1232,7 +1229,7 @@ bool HATConsensusValidator::IsValidatorRateLimited(const uint160& validatorAddre
     return false;
 }
 
-void HATConsensusValidator::RecordValidationMessage(const uint160& validatorAddress) {
+void CVM::HATConsensusValidator::RecordValidationMessage(const uint160& validatorAddress) {
     uint64_t currentTime = GetTime();
     
     auto it = validatorRateLimits.find(validatorAddress);
@@ -1260,7 +1257,7 @@ void HATConsensusValidator::RecordValidationMessage(const uint160& validatorAddr
     }
 }
 
-CNode* HATConsensusValidator::GetValidatorPeer(
+CNode* CVM::HATConsensusValidator::GetValidatorPeer(
     const uint160& validatorAddress,
     CConnman* connman)
 {
@@ -1278,7 +1275,7 @@ CNode* HATConsensusValidator::GetValidatorPeer(
     return nullptr;
 }
 
-bool HATConsensusValidator::SendChallengeToValidator(
+bool CVM::HATConsensusValidator::SendChallengeToValidator(
     const uint160& validatorAddress,
     const ValidationRequest& request,
     CConnman* connman)

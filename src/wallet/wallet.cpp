@@ -32,6 +32,7 @@
 #include <rialto.h>  // Cascoin: Rialto: For IsValidNick()
 #include <cvm/softfork.h>  // Cascoin: CVM/EVM contract transactions
 #include <cvm/cvm.h>  // Cascoin: CVM constants and validation
+#include <cvm/contract.h>  // Cascoin: CVM contract validation
 
 #include <assert.h>
 #include <future>
@@ -4889,7 +4890,7 @@ CTxDestination CWallet::AddAndGetDestinationForScript(const CScript& script, Out
 bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
                                                   const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
                                                   CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
-                                                  const CCoinControl& coin_control)
+                                                  const CCoinControl* coin_control)
 {
     // Validate bytecode
     if (bytecode.empty()) {
@@ -4924,8 +4925,9 @@ bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& by
     CVM::CVMDeployData deployData;
     deployData.bytecode = bytecode;
     deployData.gasLimit = gasLimit;
-    deployData.initData = initData;
-    deployData.format = CVM::BytecodeFormat::AUTO;  // Auto-detect format
+    deployData.constructorData = initData;
+    deployData.format = CVM::BytecodeFormat::UNKNOWN;  // Will be auto-detected
+    deployData.codeHash = Hash(bytecode.begin(), bytecode.end());
     
     // Build OP_RETURN output with deployment data (Soft Fork compatible!)
     std::vector<uint8_t> deployBytes = deployData.Serialize();
@@ -4939,7 +4941,9 @@ bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& by
     // Create the transaction using standard CreateTransaction
     // This handles coin selection, fee calculation, change output, and signing
     int nChangePosInOut = -1;
-    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, coin_control, true);
+    CCoinControl defaultControl;
+    const CCoinControl& controlRef = coin_control ? *coin_control : defaultControl;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
     
     if (!result) {
         return false;
@@ -4958,7 +4962,7 @@ bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& by
 bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, const std::vector<uint8_t>& callData,
                                             uint64_t gasLimit, CAmount value, CWalletTx& wtxNew,
                                             CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
-                                            const CCoinControl& coin_control)
+                                            const CCoinControl* coin_control)
 {
     // Validate contract address
     if (contractAddress.IsNull()) {
@@ -4988,7 +4992,7 @@ bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, cons
     callDataStruct.contractAddress = contractAddress;
     callDataStruct.callData = callData;
     callDataStruct.gasLimit = gasLimit;
-    callDataStruct.value = value;
+    callDataStruct.format = CVM::BytecodeFormat::UNKNOWN;  // Will be auto-detected
     
     // Build OP_RETURN output with call data (Soft Fork compatible!)
     std::vector<uint8_t> callBytes = callDataStruct.Serialize();
@@ -5015,7 +5019,9 @@ bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, cons
     
     // Create the transaction using standard CreateTransaction
     int nChangePosInOut = -1;
-    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, coin_control, true);
+    CCoinControl defaultControl;
+    const CCoinControl& controlRef = coin_control ? *coin_control : defaultControl;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
     
     if (!result) {
         return false;

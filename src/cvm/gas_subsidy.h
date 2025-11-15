@@ -199,6 +199,13 @@ public:
     uint64_t GetPendingRebates(const uint160& address);
     
     /**
+     * Get all gas pools
+     * 
+     * @return Map of pool IDs to pool information
+     */
+    std::map<std::string, GasPool> GetAllPools() const { return gasPools; }
+    
+    /**
      * Load subsidy data from database
      * 
      * @param db Database to load from

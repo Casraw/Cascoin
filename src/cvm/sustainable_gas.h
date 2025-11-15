@@ -249,6 +249,14 @@ public:
     bool HasPriceGuarantee(const uint160& address, uint64_t& guaranteedPrice);
     
     /**
+     * Calculate reputation-based gas price multiplier
+     * 
+     * @param reputation Reputation score (0-255)
+     * @return Multiplier (0.5 to 1.0)
+     */
+    double CalculateReputationMultiplier(uint8_t reputation);
+    
+    /**
      * Check if address has active price guarantee (with expiration check)
      * 
      * @param address Business address
@@ -315,7 +323,6 @@ private:
     std::map<uint160, RateLimitState> rateLimits;
     
     // Helper methods
-    double CalculateReputationMultiplier(uint8_t reputation);
     uint64_t GetBaseOpcodeCost(uint8_t opcode);
     bool IsHighFrequencyOperation(uint8_t opcode);
     bool IsStorageIntensiveOperation(uint8_t opcode);

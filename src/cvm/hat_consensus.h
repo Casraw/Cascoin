@@ -183,7 +183,9 @@ struct ValidationResponse {
         READWRITE(txHash);
         READWRITE(validatorAddress);
         READWRITE(calculatedScore);
-        READWRITE((int&)vote);
+        unsigned char voteVal = static_cast<unsigned char>(vote);
+        READWRITE(voteVal);
+        vote = static_cast<ValidationVote>(voteVal);
         READWRITE(voteConfidence);
         READWRITE(hasWoTConnection);
         READWRITE(relevantPaths);

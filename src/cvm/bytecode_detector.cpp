@@ -1141,4 +1141,67 @@ void BytecodeDetectionCache::EvictOldEntries() {
     }
 }
 
+/**
+ * Analyze bytecode and extract detailed information
+ */
+BytecodeAnalysis BytecodeDetector::AnalyzeBytecode(const std::vector<uint8_t>& bytecode) {
+    BytecodeAnalysis analysis;
+    
+    if (bytecode.empty()) {
+        return analysis;
+    }
+    
+    // Detect format first
+    BytecodeDetectionResult detection = DetectFormat(bytecode);
+    
+    // Analyze based on format
+    if (detection.format == BytecodeFormat::EVM_BYTECODE) {
+        // Parse EVM opcodes
+        size_t pc = 0;
+        while (pc < bytecode.size()) {
+            uint8_t opcode = bytecode[pc];
+            
+            // Add opcode to list
+            analysis.opcodes.push_back(std::to_string(opcode));
+            
+            // Track opcode frequency
+            std::string opcode_name = std::to_string(opcode);
+            analysis.opcode_frequency[opcode_name]++;
+            
+            // Detect features
+            if (opcode == 0xf4) {  // DELEGATECALL
+                analysis.features.push_back("DELEGATECALL");
+            } else if (opcode == 0xf5) {  // CREATE2
+                analysis.features.push_back("CREATE2");
+            } else if (opcode == 0xff) {  // SELFDESTRUCT
+                analysis.features.push_back("SELFDESTRUCT");
+            }
+            
+            // Handle PUSH opcodes (0x60-0x7f)
+            if (opcode >= 0x60 && opcode <= 0x7f) {
+                size_t push_size = opcode - 0x5f;
+                pc += push_size;
+            }
+            
+            pc++;
+        }
+        
+        analysis.code_size = bytecode.size();
+        
+    } else if (detection.format == BytecodeFormat::CVM_NATIVE) {
+        // Parse CVM opcodes
+        for (size_t i = 0; i < bytecode.size(); ++i) {
+            uint8_t opcode = bytecode[i];
+            analysis.opcodes.push_back(std::to_string(opcode));
+            
+            std::string opcode_name = std::to_string(opcode);
+            analysis.opcode_frequency[opcode_name]++;
+        }
+        
+        analysis.code_size = bytecode.size();
+    }
+    
+    return analysis;
+}
+
 } // namespace CVM
