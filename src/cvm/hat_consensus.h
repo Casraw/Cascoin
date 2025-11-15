@@ -16,6 +16,10 @@
 #include <map>
 #include <set>
 
+// Forward declarations for P2P networking
+class CNode;
+class CConnman;
+
 namespace CVM {
 
 // Forward declarations
@@ -585,10 +589,204 @@ public:
      */
     ValidatorStats GetValidatorStats(const uint160& validator);
     
+    /**
+     * Process validation request from P2P network
+     * 
+     * Called when a VALCHALLENGE message is received.
+     * Calculates HAT v2 score and sends response.
+     * 
+     * @param request Validation request
+     * @param pfrom Peer that sent the request
+     * @param connman Connection manager
+     */
+    void ProcessValidationRequest(
+        const ValidationRequest& request,
+        CNode* pfrom,
+        CConnman* connman
+    );
+    
+    /**
+     * Process DAO dispute from P2P network
+     * 
+     * Called when a DAODISPUTE message is received.
+     * Validates and relays dispute to DAO members.
+     * 
+     * @param dispute Dispute case
+     * @param pfrom Peer that sent the dispute
+     * @param connman Connection manager
+     */
+    void ProcessDAODispute(
+        const DisputeCase& dispute,
+        CNode* pfrom,
+        CConnman* connman
+    );
+    
+    /**
+     * Process DAO resolution from P2P network
+     * 
+     * Called when a DAORESOLUTION message is received.
+     * Updates transaction state based on DAO decision.
+     * 
+     * @param disputeId Dispute ID
+     * @param approved DAO decision
+     * @param resolutionTimestamp Resolution timestamp
+     */
+    void ProcessDAOResolution(
+        const uint256& disputeId,
+        bool approved,
+        uint64_t resolutionTimestamp
+    );
+    
+    /**
+     * Broadcast validation challenge to validators
+     * 
+     * @param request Validation request
+     * @param validators List of validator addresses
+     * @param connman Connection manager
+     */
+    void BroadcastValidationChallenge(
+        const ValidationRequest& request,
+        const std::vector<uint160>& validators,
+        CConnman* connman
+    );
+    
+    /**
+     * Send validation response to originator
+     * 
+     * @param response Validation response
+     * @param connman Connection manager
+     */
+    void SendValidationResponse(
+        const ValidationResponse& response,
+        CConnman* connman
+    );
+    
+    /**
+     * Broadcast DAO dispute to network
+     * 
+     * @param dispute Dispute case
+     * @param connman Connection manager
+     */
+    void BroadcastDAODispute(
+        const DisputeCase& dispute,
+        CConnman* connman
+    );
+    
+    /**
+     * Broadcast DAO resolution to network
+     * 
+     * @param disputeId Dispute ID
+     * @param approved DAO decision
+     * @param resolutionTimestamp Resolution timestamp
+     * @param connman Connection manager
+     */
+    void BroadcastDAOResolution(
+        const uint256& disputeId,
+        bool approved,
+        uint64_t resolutionTimestamp,
+        CConnman* connman
+    );
+    
+    /**
+     * Collect validator responses for a transaction
+     * 
+     * Waits for responses from validators with timeout handling.
+     * 
+     * @param txHash Transaction hash
+     * @param timeoutSeconds Timeout in seconds (default: 30)
+     * @return Vector of collected responses
+     */
+    std::vector<ValidationResponse> CollectValidatorResponses(
+        const uint256& txHash,
+        uint32_t timeoutSeconds = VALIDATION_TIMEOUT
+    );
+    
+    /**
+     * Check if validation session has timed out
+     * 
+     * @param txHash Transaction hash
+     * @return true if session has timed out
+     */
+    bool HasValidationTimedOut(const uint256& txHash);
+    
+    /**
+     * Handle non-responsive validators
+     * 
+     * Updates validator reputation for validators that didn't respond.
+     * 
+     * @param txHash Transaction hash
+     * @param selectedValidators List of validators that were selected
+     */
+    void HandleNonResponsiveValidators(
+        const uint256& txHash,
+        const std::vector<uint160>& selectedValidators
+    );
+    
+    /**
+     * Check if validator is rate-limited
+     * 
+     * Implements anti-spam measures for validation messages.
+     * 
+     * @param validatorAddress Validator address
+     * @return true if validator is rate-limited
+     */
+    bool IsValidatorRateLimited(const uint160& validatorAddress);
+    
+    /**
+     * Record validation message from validator
+     * 
+     * Updates rate limiting counters.
+     * 
+     * @param validatorAddress Validator address
+     */
+    void RecordValidationMessage(const uint160& validatorAddress);
+    
+    /**
+     * Get validator peer node
+     * 
+     * Maps validator address to connected peer node.
+     * 
+     * @param validatorAddress Validator address
+     * @param connman Connection manager
+     * @return Peer node or nullptr if not found
+     */
+    CNode* GetValidatorPeer(
+        const uint160& validatorAddress,
+        CConnman* connman
+    );
+    
+    /**
+     * Send validation challenge to specific validator
+     * 
+     * Sends challenge to a specific validator peer.
+     * 
+     * @param validatorAddress Validator address
+     * @param request Validation request
+     * @param connman Connection manager
+     * @return true if sent successfully
+     */
+    bool SendChallengeToValidator(
+        const uint160& validatorAddress,
+        const ValidationRequest& request,
+        CConnman* connman
+    );
+    
 private:
     CVMDatabase& database;
     SecureHAT& secureHAT;
     TrustGraph& trustGraph;
+    
+    // Rate limiting for anti-spam
+    struct ValidatorRateLimit {
+        uint64_t lastMessageTime;
+        uint32_t messageCount;
+        uint64_t windowStart;
+    };
+    std::map<uint160, ValidatorRateLimit> validatorRateLimits;
+    
+    // Rate limiting parameters
+    static constexpr uint32_t RATE_LIMIT_WINDOW = 60;  // 60 seconds
+    static constexpr uint32_t MAX_MESSAGES_PER_WINDOW = 100;  // Max 100 messages per minute
     
 public:
     // Consensus parameters

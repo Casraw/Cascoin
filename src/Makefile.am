@@ -305,6 +305,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/evm_rpc.cpp \
   cvm/hat_consensus.cpp \
   cvm/consensus_validator.cpp \
+  cvm/trust_attestation.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

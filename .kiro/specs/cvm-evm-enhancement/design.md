@@ -106,14 +106,29 @@ Transaction Submission → Random Validator Selection → Challenge-Response Pro
 
 **4. Reputation Verification Process**
 - Each validator independently calculates HAT v2 score from their perspective
-- Validators compare self-reported score against their calculation
-- **Trust Graph Awareness**:
-  - If validator has WoT connection: ±5 points tolerance (accounts for path differences)
-  - If validator has NO WoT connection: Can only verify non-WoT components (behavior, economic, temporal)
-  - Validators with no connection weight their vote lower (0.5x) or ABSTAIN if score heavily relies on WoT
-  - Multiple validators ensure diverse trust graph coverage
+- Validators compare self-reported score against their calculation using **component-based verification**
+- **Component-Based Verification Logic**:
+  - **Validators WITH WoT connection**:
+    - Verify ALL components: WoT (40%), Behavior (30%), Economic (20%), Temporal (10%)
+    - WoT component: ±5 points tolerance (accounts for different trust graph perspectives)
+    - Non-WoT components: ±3 points tolerance per component (more objective, less variance)
+    - Vote ACCEPT if all components within tolerance
+    - Vote REJECT if any component exceeds tolerance significantly (>10 points difference)
+    - Vote confidence: 1.0 (full verification capability)
+  - **Validators WITHOUT WoT connection**:
+    - Can ONLY verify non-WoT components: Behavior (30%), Economic (20%), Temporal (10%)
+    - **WoT component is IGNORED** - not used in validation decision
+    - Each non-WoT component: ±3 points tolerance
+    - Vote ACCEPT if all verifiable components within tolerance
+    - Vote REJECT if any verifiable component exceeds tolerance (>8 points difference)
+    - Vote ABSTAIN if insufficient data for non-WoT components
+    - Vote confidence: 0.6 (partial verification capability)
+  - **Weighted Final Score Calculation**:
+    - For validators WITH WoT: Compare full final score (0-100) with ±8 points tolerance
+    - For validators WITHOUT WoT: Recalculate final score using ONLY non-WoT components (60% total weight)
+    - Self-reported score is adjusted to exclude WoT component for non-WoT validators
 - Validators vote: ACCEPT, REJECT, or ABSTAIN (if insufficient data)
-- Vote includes confidence level based on trust graph connectivity
+- Vote includes confidence level based on trust graph connectivity and component verification
 
 **5. Consensus Threshold**
 - Minimum 10 validator responses required
@@ -182,14 +197,57 @@ Since HAT v2 scores are personalized based on each node's trust graph, validator
 **Example Scenario:**
 ```
 Transaction: Alice claims HAT v2 score of 85
-- Validator 1 (has WoT to Alice): Calculates 83 → ACCEPT (within ±5)
-- Validator 2 (no WoT to Alice): Verifies behavior=28, economic=18, temporal=9 → ACCEPT (non-WoT components match)
-- Validator 3 (has WoT to Alice): Calculates 87 → ACCEPT
-- Validator 4 (no WoT to Alice): Verifies behavior=30, economic=19, temporal=9 → ACCEPT
-- Validator 5 (has WoT to Alice): Calculates 45 → REJECT (WoT component very different)
-...
-Weighted consensus: 75% ACCEPT → Transaction validated
+Components: WoT=34 (40%), Behavior=26 (30%), Economic=17 (20%), Temporal=8 (10%)
+
+Validator 1 (HAS WoT to Alice):
+  - Calculates: WoT=32, Behavior=27, Economic=17, Temporal=8
+  - WoT difference: 2 points (within ±5 tolerance) ✓
+  - Behavior difference: 1 point (within ±3 tolerance) ✓
+  - Economic difference: 0 points ✓
+  - Temporal difference: 0 points ✓
+  - Final score: 84 (within ±8 of claimed 85) ✓
+  - Vote: ACCEPT (confidence: 1.0)
+
+Validator 2 (NO WoT to Alice):
+  - WoT component: IGNORED (cannot verify)
+  - Calculates: Behavior=25, Economic=18, Temporal=8
+  - Behavior difference: 1 point (within ±3 tolerance) ✓
+  - Economic difference: 1 point (within ±3 tolerance) ✓
+  - Temporal difference: 0 points ✓
+  - Adjusted score (non-WoT only): 51/60 = 85% → 51 points (60% weight)
+  - Vote: ACCEPT (confidence: 0.6)
+
+Validator 3 (HAS WoT to Alice):
+  - Calculates: WoT=15, Behavior=26, Economic=17, Temporal=8
+  - WoT difference: 19 points (exceeds ±5 tolerance) ✗
+  - Final score: 66 (19 points below claimed 85) ✗
+  - Vote: REJECT (confidence: 1.0) - WoT component significantly different
+
+Validator 4 (NO WoT to Alice):
+  - WoT component: IGNORED
+  - Calculates: Behavior=26, Economic=17, Temporal=8
+  - All non-WoT components match perfectly ✓
+  - Vote: ACCEPT (confidence: 0.6)
+
+Validator 5 (HAS WoT to Alice):
+  - Calculates: WoT=33, Behavior=27, Economic=16, Temporal=8
+  - All components within tolerance ✓
+  - Final score: 84 ✓
+  - Vote: ACCEPT (confidence: 1.0)
+
+Weighted Consensus Calculation:
+- ACCEPT: Validator 1 (1.0) + Validator 2 (0.6) + Validator 4 (0.6) + Validator 5 (1.0) = 3.2
+- REJECT: Validator 3 (1.0) = 1.0
+- Total weight: 4.2
+- Acceptance rate: 3.2 / 4.2 = 76.2% → CONSENSUS REACHED (>70%)
+- Transaction VALIDATED
 ```
+
+**Key Improvements:**
+- Non-WoT validators don't penalize for WoT differences they can't verify
+- Component-based verification prevents false rejections
+- Weighted voting accounts for verification capability
+- Diverse validator perspectives ensure comprehensive validation
 
 **Benefits:**
 - Prevents WoT-only fraud (behavior/economic components must also match)
@@ -217,6 +275,20 @@ Weighted consensus: 75% ACCEPT → Transaction validated
 - DAO oversight for disputed cases
 - Economic penalties for coordinated fraud
 - Component-based verification prevents partial collusion
+
+**Eclipse Attack + Sybil Network Protection:**
+- **Network Topology Diversity**: Validators must come from different IP subnets (/16)
+- **Peer Connection Diversity**: Validators must have <50% peer overlap (prevents isolated Sybil networks)
+- **Validator History Requirements**: Minimum 10,000 blocks since first seen (~70 days)
+- **Validation History**: Minimum 50 previous validations with 85%+ accuracy
+- **Stake Concentration Limits**: No entity can control >20% of validator stake
+- **Cross-Validation Requirements**: Minimum 40% non-WoT validators required (prevents WoT-only Sybil attacks)
+- **Cross-Group Agreement**: WoT and non-WoT validators must agree within 60% (detects isolated networks)
+- **Stake Age Requirements**: Validator stake must be aged (1000+ blocks, ~7 days)
+- **Stake Source Diversity**: Stake must come from 3+ different sources
+- **Wallet Clustering Integration**: Detect validators controlled by same entity
+- **Behavioral Analysis**: Detect coordinated transaction timing and patterns
+- **Automatic DAO Escalation**: Escalate to DAO if Sybil network or Eclipse attack detected
 
 ### Bytecode Format Detection
 

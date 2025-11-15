@@ -34,12 +34,17 @@
 #include <cvm/softfork.h> // Cascoin: CVM/EVM transaction detection
 #include <cvm/trust_context.h> // Cascoin: Reputation-based relay
 #include <cvm/cvm.h> // Cascoin: CVM database
+#include <cvm/hat_consensus.h> // Cascoin: HAT v2 Consensus
+#include <cvm/trust_attestation.h> // Cascoin: Trust Attestation
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
 #endif
 
 std::atomic<int64_t> nTimeBestReceived(0); // Used only to inform the wallet of when we last received a block
+
+// Cascoin: HAT v2 Consensus - Global validator instance
+CVM::HATConsensusValidator* g_hatConsensusValidator = nullptr;
 
 struct IteratorComparator
 {
@@ -1105,6 +1110,68 @@ static void RelayTransaction(const CTransaction& tx, CConnman* connman)
             LogPrint(BCLog::NET, "Delayed relay for low-reputation transaction (rep=%d)\n", reputation);
         }
     });
+}
+
+// Cascoin: Trust Attestation - Cache for preventing duplicate relay
+static CCriticalSection cs_trustAttestationCache;
+static std::map<uint256, uint64_t> g_trustAttestationCache GUARDED_BY(cs_trustAttestationCache);
+static constexpr uint64_t ATTESTATION_CACHE_TIME = 3600;  // 1 hour
+
+// Cascoin: Trust Attestation - Process and relay trust attestation
+static void ProcessTrustAttestation(const CVM::TrustAttestation& attestation, CNode* pfrom, CConnman* connman)
+{
+    uint256 attestationHash = attestation.GetHash();
+    uint64_t currentTime = GetTime();
+    
+    // Check cache to prevent duplicate relay
+    {
+        LOCK(cs_trustAttestationCache);
+        auto it = g_trustAttestationCache.find(attestationHash);
+        if (it != g_trustAttestationCache.end()) {
+            // Already seen this attestation
+            if (currentTime - it->second < ATTESTATION_CACHE_TIME) {
+                LogPrint(BCLog::NET, "Trust Attestation: Duplicate attestation %s, not relaying\n",
+                         attestationHash.ToString());
+                return;
+            }
+            // Cache entry expired, update it
+            it->second = currentTime;
+        } else {
+            // New attestation, add to cache
+            g_trustAttestationCache[attestationHash] = currentTime;
+            
+            // Clean up old cache entries (keep cache size reasonable)
+            if (g_trustAttestationCache.size() > 10000) {
+                auto oldest = g_trustAttestationCache.begin();
+                for (auto it = g_trustAttestationCache.begin(); it != g_trustAttestationCache.end(); ) {
+                    if (currentTime - it->second > ATTESTATION_CACHE_TIME) {
+                        it = g_trustAttestationCache.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Store attestation in database (if CVM database available)
+    // TODO: Integrate with CVM database to store attestations
+    
+    LogPrint(BCLog::NET, "Trust Attestation: Processing attestation for %s (score=%d, source=%d)\n",
+             attestation.address.ToString(), attestation.trustScore, (int)attestation.source);
+    
+    // Relay to other peers (except origin)
+    if (connman) {
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode != pfrom && pnode->fSuccessfullyConnected) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::TRUSTATTEST, attestation));
+            }
+        });
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Relayed attestation %s to network\n",
+                 attestationHash.ToString());
+    }
 }
 
 // Cascoin: Rialto: Relay a Rialto message by adding to Rialto inventory for all peers apart from origin
@@ -3048,6 +3115,130 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         // ... and innocently relay
         CRialtoMessage message(strMsg);
         RelayRialtoMessage(message, connman, pfrom);
+    }
+
+    // Cascoin: HAT v2 Consensus - Validation Challenge
+    else if (strCommand == NetMsgType::VALCHALLENGE) {
+        CVM::ValidationRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validation challenge for tx %s from peer=%d\n", 
+                 request.txHash.ToString(), pfrom->GetId());
+        
+        // Process validation request and send response
+        // This will be handled by the HAT consensus validator
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessValidationRequest(request, pfrom, connman);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring challenge\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - Validation Response
+    else if (strCommand == NetMsgType::VALRESPONSE) {
+        CVM::ValidationResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validation response for tx %s from validator %s (peer=%d)\n",
+                 response.txHash.ToString(), response.validatorAddress.ToString(), pfrom->GetId());
+        
+        // Verify signature
+        if (!response.VerifySignature()) {
+            LogPrintf("HAT v2: Invalid signature on validation response from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Process validation response
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessValidatorResponse(response);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring response\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - DAO Dispute
+    else if (strCommand == NetMsgType::DAODISPUTE) {
+        CVM::DisputeCase dispute;
+        vRecv >> dispute;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received DAO dispute %s for tx %s from peer=%d\n",
+                 dispute.disputeId.ToString(), dispute.txHash.ToString(), pfrom->GetId());
+        
+        // Validate dispute case
+        if (dispute.validatorResponses.empty()) {
+            LogPrintf("HAT v2: Invalid dispute case (no validator responses) from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Process DAO dispute
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessDAODispute(dispute, pfrom, connman);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring dispute\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - DAO Resolution
+    else if (strCommand == NetMsgType::DAORESOLUTION) {
+        uint256 disputeId;
+        bool approved;
+        uint64_t resolutionTimestamp;
+        
+        vRecv >> disputeId >> approved >> resolutionTimestamp;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received DAO resolution for dispute %s (approved=%d) from peer=%d\n",
+                 disputeId.ToString(), approved, pfrom->GetId());
+        
+        // Process DAO resolution
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessDAOResolution(disputeId, approved, resolutionTimestamp);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring resolution\n");
+        }
+    }
+
+    // Cascoin: Trust Attestation - Cross-chain trust score update
+    else if (strCommand == NetMsgType::TRUSTATTEST) {
+        CVM::TrustAttestation attestation;
+        vRecv >> attestation;
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Received attestation for address %s (score=%d, source=%d) from peer=%d\n",
+                 attestation.address.ToString(), attestation.trustScore, (int)attestation.source, pfrom->GetId());
+        
+        // Verify signature
+        if (!attestation.VerifySignature()) {
+            LogPrintf("Trust Attestation: Invalid signature from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Verify trust score range
+        if (attestation.trustScore < 0 || attestation.trustScore > 100) {
+            LogPrintf("Trust Attestation: Invalid trust score %d from peer=%d, punishing\n",
+                     attestation.trustScore, pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Check timestamp (not too old, not in future)
+        uint64_t currentTime = GetTime();
+        if (attestation.timestamp > currentTime + 300) {  // Max 5 minutes in future
+            LogPrintf("Trust Attestation: Future timestamp from peer=%d, ignoring\n", pfrom->GetId());
+            return true;
+        }
+        if (currentTime - attestation.timestamp > 86400) {  // Max 24 hours old
+            LogPrint(BCLog::NET, "Trust Attestation: Stale attestation from peer=%d, ignoring\n", pfrom->GetId());
+            return true;
+        }
+        
+        // Process attestation (store and relay)
+        ProcessTrustAttestation(attestation, pfrom, connman);
     }
 
     else {

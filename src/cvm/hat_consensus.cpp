@@ -12,6 +12,9 @@
 #include <util.h>
 #include <key.h>
 #include <pubkey.h>
+#include <net.h>
+#include <netmessagemaker.h>
+#include <protocol.h>
 #include <algorithm>
 #include <cmath>
 
@@ -290,6 +293,16 @@ bool HATConsensusValidator::SendValidationChallenge(
 }
 
 bool HATConsensusValidator::ProcessValidatorResponse(const ValidationResponse& response) {
+    // Check rate limiting (anti-spam)
+    if (IsValidatorRateLimited(response.validatorAddress)) {
+        LogPrint(BCLog::CVM, "HAT Consensus: Validator %s is rate-limited, ignoring response\n",
+                 response.validatorAddress.ToString());
+        return false;
+    }
+    
+    // Record message for rate limiting
+    RecordValidationMessage(response.validatorAddress);
+    
     // Verify signature
     if (!response.VerifySignature()) {
         LogPrint(BCLog::CVM, "HAT Consensus: Invalid signature from validator %s\n",
@@ -316,6 +329,15 @@ bool HATConsensusValidator::ProcessValidatorResponse(const ValidationResponse& r
         LogPrint(BCLog::CVM, "HAT Consensus: Validation session timed out for tx %s\n",
                  response.txHash.ToString());
         return false;
+    }
+    
+    // Check for duplicate response
+    for (const auto& existingResponse : session.responses) {
+        if (existingResponse.validatorAddress == response.validatorAddress) {
+            LogPrint(BCLog::CVM, "HAT Consensus: Duplicate response from validator %s, ignoring\n",
+                     response.validatorAddress.ToString());
+            return false;
+        }
     }
     
     // Add response to session
@@ -820,6 +842,485 @@ bool HATConsensusValidator::MeetsWoTCoverage(const std::vector<ValidationRespons
     // Check if at least 30% have WoT connection
     double wotRatio = (double)wotValidators / responses.size();
     return wotRatio >= WOT_COVERAGE_THRESHOLD;
+}
+
+} // namespace CVM
+
+// ============================================================================
+// P2P Network Protocol Implementation
+// ============================================================================
+
+void HATConsensusValidator::ProcessValidationRequest(
+    const ValidationRequest& request,
+    CNode* pfrom,
+    CConnman* connman)
+{
+    LogPrint(BCLog::NET, "HAT v2: Processing validation request for tx %s from peer=%d\n",
+             request.txHash.ToString(), pfrom ? pfrom->GetId() : -1);
+    
+    // Verify challenge nonce
+    uint256 expectedNonce = ValidationRequest::GenerateChallengeNonce(
+        request.txHash, request.blockHeight);
+    if (request.challengeNonce != expectedNonce) {
+        LogPrintf("HAT v2: Invalid challenge nonce in validation request\n");
+        return;
+    }
+    
+    // Calculate our HAT v2 score for the sender
+    HATv2Score calculatedScore;
+    calculatedScore.address = request.senderAddress;
+    calculatedScore.timestamp = GetTime();
+    
+    // Check if we have WoT connection
+    bool hasWoT = HasWoTConnection(uint160(), request.senderAddress);
+    
+    if (hasWoT) {
+        // Calculate full score with WoT component
+        calculatedScore.finalScore = secureHAT.CalculateHATScore(request.senderAddress);
+        // TODO: Get component breakdown from SecureHAT
+        calculatedScore.behaviorScore = 0;  // Placeholder
+        calculatedScore.wotScore = 0;       // Placeholder
+        calculatedScore.economicScore = 0;  // Placeholder
+        calculatedScore.temporalScore = 0;  // Placeholder
+        calculatedScore.hasWoTConnection = true;
+    } else {
+        // Calculate only non-WoT components
+        calculatedScore = CalculateNonWoTComponents(request.senderAddress);
+        calculatedScore.hasWoTConnection = false;
+    }
+    
+    // Calculate our vote
+    ValidationVote vote = CalculateValidatorVote(
+        request.selfReportedScore,
+        calculatedScore,
+        hasWoT
+    );
+    
+    // Calculate vote confidence
+    double confidence = CalculateVoteConfidence(uint160(), request.senderAddress);
+    
+    // Create response
+    ValidationResponse response;
+    response.txHash = request.txHash;
+    response.validatorAddress = uint160(); // TODO: Get our validator address
+    response.calculatedScore = calculatedScore;
+    response.vote = vote;
+    response.voteConfidence = confidence;
+    response.hasWoTConnection = hasWoT;
+    response.challengeNonce = request.challengeNonce;
+    response.timestamp = GetTime();
+    
+    // TODO: Sign response with validator key
+    // response.Sign(validatorKey);
+    
+    // Send response back
+    SendValidationResponse(response, connman);
+    
+    LogPrint(BCLog::NET, "HAT v2: Sent validation response (vote=%d, confidence=%.2f)\n",
+             (int)vote, confidence);
+}
+
+void HATConsensusValidator::ProcessDAODispute(
+    const DisputeCase& dispute,
+    CNode* pfrom,
+    CConnman* connman)
+{
+    LogPrint(BCLog::NET, "HAT v2: Processing DAO dispute %s for tx %s\n",
+             dispute.disputeId.ToString(), dispute.txHash.ToString());
+    
+    // Validate dispute case
+    if (dispute.validatorResponses.empty()) {
+        LogPrintf("HAT v2: Invalid dispute case - no validator responses\n");
+        return;
+    }
+    
+    // Store dispute in database
+    std::string key = "dispute_" + dispute.disputeId.ToString();
+    std::vector<uint8_t> data;
+    CVectorWriter writer(SER_DISK, CLIENT_VERSION, data, 0);
+    writer << dispute;
+    database.Write(key, data);
+    
+    // Escalate to DAO through TrustGraph
+    bool success = EscalateToDAO(dispute);
+    if (success) {
+        LogPrint(BCLog::NET, "HAT v2: Successfully escalated dispute to DAO\n");
+        
+        // Relay dispute to other nodes
+        BroadcastDAODispute(dispute, connman);
+    } else {
+        LogPrintf("HAT v2: Failed to escalate dispute to DAO\n");
+    }
+}
+
+void HATConsensusValidator::ProcessDAOResolution(
+    const uint256& disputeId,
+    bool approved,
+    uint64_t resolutionTimestamp)
+{
+    LogPrint(BCLog::NET, "HAT v2: Processing DAO resolution for dispute %s (approved=%d)\n",
+             disputeId.ToString(), approved);
+    
+    // Load dispute case
+    DisputeCase dispute = GetDisputeCase(disputeId);
+    if (dispute.disputeId.IsNull()) {
+        LogPrintf("HAT v2: Dispute %s not found\n", disputeId.ToString());
+        return;
+    }
+    
+    // Update dispute with resolution
+    dispute.resolved = true;
+    dispute.approved = approved;
+    dispute.resolutionTimestamp = resolutionTimestamp;
+    
+    // Store updated dispute
+    std::string key = "dispute_" + disputeId.ToString();
+    std::vector<uint8_t> data;
+    CVectorWriter writer(SER_DISK, CLIENT_VERSION, data, 0);
+    writer << dispute;
+    database.Write(key, data);
+    
+    // Update transaction state in mempool
+    if (approved) {
+        UpdateMempoolState(dispute.txHash, TransactionState::VALIDATED);
+        LogPrint(BCLog::NET, "HAT v2: Transaction %s approved by DAO\n", dispute.txHash.ToString());
+    } else {
+        UpdateMempoolState(dispute.txHash, TransactionState::REJECTED);
+        
+        // Record fraud attempt
+        RecordFraudAttempt(
+            dispute.senderAddress,
+            CTransaction(), // TODO: Load transaction
+            dispute.selfReportedScore,
+            HATv2Score() // TODO: Calculate actual score
+        );
+        
+        LogPrint(BCLog::NET, "HAT v2: Transaction %s rejected by DAO, fraud recorded\n",
+                 dispute.txHash.ToString());
+    }
+}
+
+void HATConsensusValidator::BroadcastValidationChallenge(
+    const ValidationRequest& request,
+    const std::vector<uint160>& validators,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot broadcast validation challenge - no connection manager\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Broadcasting validation challenge for tx %s to %zu validators\n",
+             request.txHash.ToString(), validators.size());
+    
+    // Send challenge to each selected validator
+    uint32_t sentCount = 0;
+    for (const auto& validator : validators) {
+        if (SendChallengeToValidator(validator, request, connman)) {
+            sentCount++;
+        }
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Sent challenges to %u/%zu validators\n",
+             sentCount, validators.size());
+}
+
+void HATConsensusValidator::SendValidationResponse(
+    const ValidationResponse& response,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot send validation response - no connection manager\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Sending validation response for tx %s\n",
+             response.txHash.ToString());
+    
+    // Broadcast response to all connected nodes
+    // The originator will collect responses
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALRESPONSE, response));
+        }
+    });
+}
+
+void HATConsensusValidator::BroadcastDAODispute(
+    const DisputeCase& dispute,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot broadcast DAO dispute - no connection manager\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Broadcasting DAO dispute %s\n", dispute.disputeId.ToString());
+    
+    // Broadcast to all connected nodes
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::DAODISPUTE, dispute));
+        }
+    });
+}
+
+void HATConsensusValidator::BroadcastDAOResolution(
+    const uint256& disputeId,
+    bool approved,
+    uint64_t resolutionTimestamp,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot broadcast DAO resolution - no connection manager\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Broadcasting DAO resolution for dispute %s (approved=%d)\n",
+             disputeId.ToString(), approved);
+    
+    // Broadcast to all connected nodes
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+            ss << disputeId << approved << resolutionTimestamp;
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::DAORESOLUTION, 
+                    disputeId, approved, resolutionTimestamp));
+        }
+    });
+}
+
+} // namespace CVM
+
+// ============================================================================
+// Validator Communication and Response Collection
+// ============================================================================
+
+std::vector<ValidationResponse> HATConsensusValidator::CollectValidatorResponses(
+    const uint256& txHash,
+    uint32_t timeoutSeconds)
+{
+    LogPrint(BCLog::NET, "HAT v2: Collecting validator responses for tx %s (timeout=%ds)\n",
+             txHash.ToString(), timeoutSeconds);
+    
+    // Load validation session
+    ValidationSession session;
+    if (!ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session)) {
+        LogPrintf("HAT v2: No validation session found for tx %s\n", txHash.ToString());
+        return std::vector<ValidationResponse>();
+    }
+    
+    // Check if already completed
+    if (session.completed) {
+        LogPrint(BCLog::NET, "HAT v2: Validation session already completed\n");
+        return session.responses;
+    }
+    
+    // Check timeout
+    uint64_t currentTime = GetTime();
+    uint64_t elapsedTime = currentTime - session.startTime;
+    
+    if (elapsedTime >= timeoutSeconds) {
+        LogPrint(BCLog::NET, "HAT v2: Validation session timed out (%lus elapsed)\n", elapsedTime);
+        
+        // Mark session as completed
+        session.completed = true;
+        WriteToDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session);
+        
+        // Handle non-responsive validators
+        std::vector<uint160> selectedValidators = SelectRandomValidators(txHash, session.request.blockHeight);
+        HandleNonResponsiveValidators(txHash, selectedValidators);
+    }
+    
+    // Check if we have minimum responses
+    if (session.responses.size() >= MIN_VALIDATORS) {
+        LogPrint(BCLog::NET, "HAT v2: Collected %zu responses (minimum met)\n", session.responses.size());
+        
+        // Mark session as completed
+        session.completed = true;
+        WriteToDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session);
+    }
+    
+    return session.responses;
+}
+
+bool HATConsensusValidator::HasValidationTimedOut(const uint256& txHash) {
+    ValidationSession session;
+    if (!ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session)) {
+        return true;  // No session = timed out
+    }
+    
+    uint64_t currentTime = GetTime();
+    uint64_t elapsedTime = currentTime - session.startTime;
+    
+    return elapsedTime >= VALIDATION_TIMEOUT;
+}
+
+void HATConsensusValidator::HandleNonResponsiveValidators(
+    const uint256& txHash,
+    const std::vector<uint160>& selectedValidators)
+{
+    LogPrint(BCLog::NET, "HAT v2: Handling non-responsive validators for tx %s\n", txHash.ToString());
+    
+    // Load validation session
+    ValidationSession session;
+    if (!ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session)) {
+        return;
+    }
+    
+    // Create set of validators that responded
+    std::set<uint160> respondedValidators;
+    for (const auto& response : session.responses) {
+        respondedValidators.insert(response.validatorAddress);
+    }
+    
+    // Find non-responsive validators
+    for (const auto& validator : selectedValidators) {
+        if (respondedValidators.find(validator) == respondedValidators.end()) {
+            // Validator didn't respond - penalize reputation
+            ValidatorStats stats = GetValidatorStats(validator);
+            
+            // Increase abstention count
+            stats.abstentions++;
+            stats.totalValidations++;
+            stats.UpdateAccuracy();
+            
+            // Reduce validator reputation for non-responsiveness
+            stats.validatorReputation = std::max(0, stats.validatorReputation - 1);
+            
+            // Update last activity time
+            stats.lastActivityTime = GetTime();
+            
+            // Store updated stats
+            WriteToDatabase(database, MakeDBKey(DB_VALIDATOR_STATS, validator), stats);
+            
+            LogPrint(BCLog::NET, "HAT v2: Penalized non-responsive validator %s (rep=%d)\n",
+                     validator.ToString(), stats.validatorReputation);
+        }
+    }
+}
+
+bool HATConsensusValidator::IsValidatorRateLimited(const uint160& validatorAddress) {
+    uint64_t currentTime = GetTime();
+    
+    auto it = validatorRateLimits.find(validatorAddress);
+    if (it == validatorRateLimits.end()) {
+        // No rate limit record - not limited
+        return false;
+    }
+    
+    ValidatorRateLimit& limit = it->second;
+    
+    // Check if we're in a new window
+    if (currentTime - limit.windowStart >= RATE_LIMIT_WINDOW) {
+        // Reset window
+        limit.windowStart = currentTime;
+        limit.messageCount = 0;
+        return false;
+    }
+    
+    // Check if exceeded limit
+    if (limit.messageCount >= MAX_MESSAGES_PER_WINDOW) {
+        LogPrint(BCLog::NET, "HAT v2: Validator %s is rate-limited (%u messages in %lus)\n",
+                 validatorAddress.ToString(), limit.messageCount, currentTime - limit.windowStart);
+        return true;
+    }
+    
+    return false;
+}
+
+void HATConsensusValidator::RecordValidationMessage(const uint160& validatorAddress) {
+    uint64_t currentTime = GetTime();
+    
+    auto it = validatorRateLimits.find(validatorAddress);
+    if (it == validatorRateLimits.end()) {
+        // Create new rate limit record
+        ValidatorRateLimit limit;
+        limit.windowStart = currentTime;
+        limit.messageCount = 1;
+        limit.lastMessageTime = currentTime;
+        validatorRateLimits[validatorAddress] = limit;
+    } else {
+        ValidatorRateLimit& limit = it->second;
+        
+        // Check if we're in a new window
+        if (currentTime - limit.windowStart >= RATE_LIMIT_WINDOW) {
+            // Reset window
+            limit.windowStart = currentTime;
+            limit.messageCount = 1;
+        } else {
+            // Increment count
+            limit.messageCount++;
+        }
+        
+        limit.lastMessageTime = currentTime;
+    }
+}
+
+CNode* HATConsensusValidator::GetValidatorPeer(
+    const uint160& validatorAddress,
+    CConnman* connman)
+{
+    if (!connman) {
+        return nullptr;
+    }
+    
+    // TODO: Implement validator address → peer mapping
+    // For now, we broadcast to all peers and let them filter
+    // In production, we should maintain a map of validator addresses to peer IDs
+    
+    LogPrint(BCLog::NET, "HAT v2: Looking up peer for validator %s (not implemented)\n",
+             validatorAddress.ToString());
+    
+    return nullptr;
+}
+
+bool HATConsensusValidator::SendChallengeToValidator(
+    const uint160& validatorAddress,
+    const ValidationRequest& request,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot send challenge - no connection manager\n");
+        return false;
+    }
+    
+    // Check rate limiting
+    if (IsValidatorRateLimited(validatorAddress)) {
+        LogPrint(BCLog::NET, "HAT v2: Validator %s is rate-limited, skipping\n",
+                 validatorAddress.ToString());
+        return false;
+    }
+    
+    // Get validator peer
+    CNode* pnode = GetValidatorPeer(validatorAddress, connman);
+    
+    if (pnode) {
+        // Send to specific peer
+        connman->PushMessage(pnode,
+            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+        
+        LogPrint(BCLog::NET, "HAT v2: Sent challenge to validator %s (peer=%d)\n",
+                 validatorAddress.ToString(), pnode->GetId());
+        
+        return true;
+    } else {
+        // Fallback: broadcast to all peers
+        // In production, this should be replaced with targeted sending
+        LogPrint(BCLog::NET, "HAT v2: Broadcasting challenge (validator peer not found)\n");
+        
+        connman->ForEachNode([&](CNode* node) {
+            if (node->fSuccessfullyConnected) {
+                connman->PushMessage(node,
+                    CNetMsgMaker(node->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+            }
+        });
+        
+        return true;
+    }
 }
 
 } // namespace CVM

@@ -240,6 +240,17 @@ extern const char *BLOCKTXN;
 
 // Cascoin: Rialto: A Rialto message, sent in response to a getdata request.
 extern const char *RIALTO;
+
+// Cascoin: HAT v2 Consensus: Validation challenge message
+extern const char *VALCHALLENGE;
+// Cascoin: HAT v2 Consensus: Validation response message
+extern const char *VALRESPONSE;
+// Cascoin: HAT v2 Consensus: DAO dispute message
+extern const char *DAODISPUTE;
+// Cascoin: HAT v2 Consensus: DAO resolution message
+extern const char *DAORESOLUTION;
+// Cascoin: Trust Attestation: Cross-chain trust score update
+extern const char *TRUSTATTEST;
 };
 
 /* Get a vector of all valid message types (see above) */

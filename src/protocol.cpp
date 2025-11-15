@@ -40,6 +40,11 @@ const char *CMPCTBLOCK="cmpctblock";
 const char *GETBLOCKTXN="getblocktxn";
 const char *BLOCKTXN="blocktxn";
 const char *RIALTO="rialto";    // Cascoin: Rialto
+const char *VALCHALLENGE="valchallenge";  // Cascoin: HAT v2 Consensus
+const char *VALRESPONSE="valresponse";    // Cascoin: HAT v2 Consensus
+const char *DAODISPUTE="daodispute";      // Cascoin: HAT v2 Consensus
+const char *DAORESOLUTION="daoresolution"; // Cascoin: HAT v2 Consensus
+const char *TRUSTATTEST="trustattest";    // Cascoin: Trust Attestation
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -73,6 +78,11 @@ const static std::string allNetMessageTypes[] = {
     NetMsgType::GETBLOCKTXN,
     NetMsgType::BLOCKTXN,
     NetMsgType::RIALTO,     // Cascoin: Rialto
+    NetMsgType::VALCHALLENGE,   // Cascoin: HAT v2 Consensus
+    NetMsgType::VALRESPONSE,    // Cascoin: HAT v2 Consensus
+    NetMsgType::DAODISPUTE,     // Cascoin: HAT v2 Consensus
+    NetMsgType::DAORESOLUTION,  // Cascoin: HAT v2 Consensus
+    NetMsgType::TRUSTATTEST,    // Cascoin: Trust Attestation
 };
 const static std::vector<std::string> allNetMessageTypesVec(allNetMessageTypes, allNetMessageTypes+ARRAYLEN(allNetMessageTypes));
 
