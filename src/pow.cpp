@@ -547,10 +547,13 @@ bool GetNetworkHiveInfo(int& immatureBees, int& immatureBCTs, int& matureBees, i
         blockReward += blockReward >> 1;
 
     // Cascoin: Hive 1.1: Use correct typical spacing
-    if (IsHive11Enabled(pindexPrev, consensusParams))
-        potentialLifespanRewards = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
-    else
-        potentialLifespanRewards = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
+    if (IsHive11Enabled(pindexPrev, consensusParams)) {
+        if (consensusParams.hiveBlockSpacingTargetTypical_1_1 > 0)
+            potentialLifespanRewards = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
+    } else {
+        if (consensusParams.hiveBlockSpacingTargetTypical > 0)
+            potentialLifespanRewards = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
+    }
 
     if (recalcGraph) {
         for (int i = 0; i < totalBeeLifespan; i++) {

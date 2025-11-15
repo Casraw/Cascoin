@@ -19,6 +19,7 @@
 #include <fs.h>
 #include <httpserver.h>
 #include <httprpc.h>
+#include <httpserver/cvmdashboard.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -48,6 +49,7 @@
 #include <wallet/init.h>
 #endif
 #include <warnings.h>
+#include <cvm/cvmdb.h>  // Cascoin: CVM Database
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -253,6 +255,10 @@ void Shutdown()
         pcoinsdbview.reset();
         pblocktree.reset();
     }
+    
+    // Shutdown CVM database
+    CVM::ShutdownCVMDatabase();
+    
 #ifdef ENABLE_WALLET
     StopWallets();
 #endif
@@ -743,6 +749,15 @@ bool AppInitServers()
         return false;
     if (!StartHTTPServer())
         return false;
+    
+    // Cascoin: Initialize CVM Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard enabled - handlers registered\n");
+        InitCVMDashboardHandlers();
+    } else {
+        LogPrintf("CVM Dashboard disabled (use -cvmdashboard=1 to enable)\n");
+    }
+    
     return true;
 }
 
@@ -1638,6 +1653,13 @@ bool AppInitMain()
 #else
     LogPrintf("No wallet support compiled in!\n");
 #endif
+
+    // ********************************************************* Step 8a: initialize CVM (Cascoin Virtual Machine)
+    LogPrintf("Initializing CVM database...\n");
+    if (!CVM::InitCVMDatabase(GetDataDir())) {
+        return InitError(_("Failed to initialize CVM database"));
+    }
+    LogPrintf("CVM database initialized successfully\n");
 
     // ********************************************************* Step 9: data directory maintenance
 

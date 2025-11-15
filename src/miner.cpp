@@ -37,6 +37,7 @@
 #include <sync.h>           // Cascoin: Hive
 #include <boost/thread.hpp> // Cascoin: Hive: Mining optimisations
 #include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
+#include <cvm/mempool_priority.h>  // Cascoin: CVM/EVM reputation-based priority
 
 
 static CCriticalSection cs_solution_vars;
@@ -193,6 +194,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     // Cascoin: Don't include BCTs in hivemined blocks
     if (hiveProofScript)
         fIncludeBCTs = false;
+
+    // Cascoin: CVM/EVM - Add guaranteed inclusion transactions first (90+ reputation)
+    addGuaranteedInclusionTxs();
 
     addPackageTxs(nPackagesSelected, nDescendantsUpdated);
 
@@ -456,6 +460,67 @@ void BlockAssembler::SortForBlock(const CTxMemPool::setEntries& package, CTxMemP
     std::sort(sortedEntries.begin(), sortedEntries.end(), CompareTxIterByAncestorCount());
 }
 
+// Cascoin: CVM/EVM - Add guaranteed inclusion transactions (90+ reputation)
+// These transactions must be included in every block if they fit
+void BlockAssembler::addGuaranteedInclusionTxs()
+{
+    // Get all guaranteed inclusion transactions from mempool
+    CTxMemPool::setEntries guaranteed = CVM::BlockAssemblerPriorityHelper::GetGuaranteedInclusionTransactions(mempool);
+    
+    if (guaranteed.empty()) {
+        return;
+    }
+    
+    LogPrint(BCLog::CVM, "BlockAssembler: Found %d guaranteed inclusion transactions\n", guaranteed.size());
+    
+    // Sort by priority
+    std::vector<CTxMemPool::txiter> sortedGuaranteed = 
+        CVM::BlockAssemblerPriorityHelper::SortByPriority(guaranteed);
+    
+    // Try to add each guaranteed transaction
+    for (auto iter : sortedGuaranteed) {
+        // Skip if already in block
+        if (inBlock.count(iter)) {
+            continue;
+        }
+        
+        // Check if transaction fits in block
+        uint64_t packageSize = iter->GetSizeWithAncestors();
+        int64_t packageSigOpsCost = iter->GetSigOpCostWithAncestors();
+        
+        if (!TestPackage(packageSize, packageSigOpsCost)) {
+            LogPrint(BCLog::CVM, "BlockAssembler: Guaranteed inclusion tx %s doesn't fit in block\n",
+                     iter->GetTx().GetHash().ToString());
+            continue;
+        }
+        
+        // Get ancestors
+        CTxMemPool::setEntries ancestors;
+        uint64_t nNoLimit = std::numeric_limits<uint64_t>::max();
+        std::string dummy;
+        mempool.CalculateMemPoolAncestors(*iter, ancestors, nNoLimit, nNoLimit, nNoLimit, nNoLimit, dummy, false);
+        
+        onlyUnconfirmed(ancestors);
+        ancestors.insert(iter);
+        
+        // Test if all tx's are Final
+        if (!TestPackageTransactions(ancestors)) {
+            continue;
+        }
+        
+        // Add transaction and ancestors to block
+        std::vector<CTxMemPool::txiter> sortedEntries;
+        SortForBlock(ancestors, iter, sortedEntries);
+        
+        for (size_t i = 0; i < sortedEntries.size(); ++i) {
+            AddToBlock(sortedEntries[i]);
+        }
+        
+        LogPrint(BCLog::CVM, "BlockAssembler: Added guaranteed inclusion tx %s\n",
+                 iter->GetTx().GetHash().ToString());
+    }
+}
+
 // This transaction selection algorithm orders the mempool based
 // on feerate of a transaction including all unconfirmed ancestors.
 // Since we don't remove transactions from the mempool as we select them
@@ -622,10 +687,12 @@ void BeeKeeper(const CChainParams& chainparams) {
     LogPrintf("BeeKeeper: Thread started\n");
     RenameThread("hive-beekeeper");
 
-    int height;
+    int height = 0;
     {
         LOCK(cs_main);
-        height = chainActive.Tip()->nHeight;
+        if (chainActive.Tip()) {
+            height = chainActive.Tip()->nHeight;
+        }
     }
 
     try {
@@ -637,6 +704,10 @@ void BeeKeeper(const CChainParams& chainparams) {
             int newHeight;
             {
                 LOCK(cs_main);
+                // Check if blockchain is initialized
+                if (!chainActive.Tip()) {
+                    continue; // Wait for blockchain initialization
+                }
                 newHeight = chainActive.Tip()->nHeight;
             }
             if (newHeight != height) {
@@ -670,6 +741,9 @@ void AbortWatchThread(int height) {
         int newHeight;
         {
             LOCK(cs_main);
+            if (!chainActive.Tip()) {
+                continue; // Wait for blockchain initialization
+            }
             newHeight = chainActive.Tip()->nHeight;
         }
 
@@ -1072,6 +1146,10 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     // Make sure the new block's not stale
     {
         LOCK(cs_main);
+        if (!chainActive.Tip()) {
+            LogPrintf("BusyBees: Blockchain not initialized yet.\n");
+            return false;
+        }
         if (pblock->hashPrevBlock != chainActive.Tip()->GetBlockHash()) {
             LogPrintf("BusyBees: Generated block is stale.\n");
             return false;

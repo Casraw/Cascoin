@@ -25,6 +25,7 @@ enum DeploymentPos
     DEPLOYMENT_HIVE_1_1,    // Cascoin: Hive: 1.1 Deployment
     DEPLOYMENT_MINOTAURX,   // Cascoin: MinotaurX+Hive1.2: Deployment
     DEPLOYMENT_RIALTO,      // Cascoin: Rialto: Deployment
+    DEPLOYMENT_CVM_EVM,     // Cascoin: CVM-EVM: Deployment of enhanced CVM with EVM compatibility and trust-aware features
 
     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in versionbits.cpp
     MAX_VERSION_BITS_DEPLOYMENTS
@@ -130,6 +131,17 @@ struct Params {
     CAmount nickCreationCostStandard;
     CAmount nickCreationAntiDust;       // Portion of creation cost burnt in 2nd output
     //uint256 firstRialtoBlock;         // First block to consider for Rialto registrations (only required if launching without a UASF)
+
+    // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
+    int cvmActivationHeight;            // Block height at which CVM activates
+    uint64_t cvmMaxGasPerBlock;         // Maximum gas allowed per block
+    uint64_t cvmMaxGasPerTx;            // Maximum gas allowed per transaction
+    uint64_t cvmMaxCodeSize;            // Maximum contract bytecode size
+    
+    // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
+    int asrsActivationHeight;           // Block height at which ASRS activates
+    int64_t asrsMinVotingPower;         // Minimum voting power required to vote
+    int64_t asrsMaxScoreChange;         // Maximum reputation score change per vote
 };
 } // namespace Consensus
 

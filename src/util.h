@@ -106,6 +106,7 @@ namespace BCLog {
         HIVE        = (1 << 21),    // Cascoin: Hive logging
         MINOTAURX   = (1 << 22),    // Cascoin: MinotaurX+Hive1.2
         RIALTO      = (1 << 23),    // Cascoin: Rialto
+        CVM         = (1 << 24),    // Cascoin: CVM smart contracts
         ALL         = ~(uint32_t)0,
     };
 }
