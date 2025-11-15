@@ -223,6 +223,10 @@ struct CNodeState {
      * otherwise: whether this peer sends non-witnesses in cmpctblocks/blocktxns.
      */
     bool fSupportsDesiredCmpctVersion;
+    
+    // Cascoin: HAT v2 Consensus - Validator address for this peer
+    uint160 validatorAddress;
+    bool isValidator;
 
     /** State used to enforce CHAIN_SYNC_TIMEOUT
       * Only in effect for outbound, non-manual connections, with
@@ -278,6 +282,8 @@ struct CNodeState {
         fSupportsDesiredCmpctVersion = false;
         m_chain_sync = { 0, nullptr, false, false };
         m_last_block_announcement = 0;
+        validatorAddress.SetNull();
+        isValidator = false;
     }
 };
 
@@ -617,6 +623,12 @@ void PeerLogicValidation::FinalizeNode(NodeId nodeid, bool& fUpdateConnectionTim
     g_outbound_peers_with_protect_from_disconnect -= state->m_chain_sync.m_protect;
     assert(g_outbound_peers_with_protect_from_disconnect >= 0);
 
+    // Cascoin: HAT v2 Consensus - Unregister validator peer
+    if (state->isValidator && g_hatConsensusValidator) {
+        g_hatConsensusValidator->UnregisterValidatorPeer(nodeid);
+        LogPrint(BCLog::NET, "HAT v2: Unregistered validator peer=%d\n", nodeid);
+    }
+    
     mapNodeState.erase(nodeid);
 
     if (mapNodeState.empty()) {
@@ -3110,6 +3122,84 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         RelayRialtoMessage(message, connman, pfrom);
     }
 
+    // Cascoin: HAT v2 Consensus - Validator Address Announcement
+    else if (strCommand == NetMsgType::VALANNOUNCE) {
+        uint160 validatorAddress;
+        std::vector<uint8_t> validatorPubKey;
+        std::vector<uint8_t> signature;
+        
+        vRecv >> validatorAddress >> validatorPubKey >> signature;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validator announcement from peer=%d: %s\n",
+                 pfrom->GetId(), validatorAddress.ToString());
+        
+        // Verify the signature to ensure peer controls the validator address
+        if (validatorPubKey.empty() || signature.empty()) {
+            LogPrintf("HAT v2: Invalid validator announcement (missing pubkey or signature) from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Construct CPubKey from validator's public key
+        CPubKey pubkey(validatorPubKey.begin(), validatorPubKey.end());
+        
+        // Verify public key is valid
+        if (!pubkey.IsFullyValid()) {
+            LogPrintf("HAT v2: Invalid public key format in validator announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Verify the public key matches the validator address
+        CKeyID keyID = pubkey.GetID();
+        uint160 derivedAddress;
+        memcpy(derivedAddress.begin(), keyID.begin(), 20);
+        
+        if (derivedAddress != validatorAddress) {
+            LogPrintf("HAT v2: Public key does not match validator address in announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Create the message that was signed (hash of validator address)
+        uint256 messageHash = Hash(validatorAddress.begin(), validatorAddress.end());
+        
+        // Verify the signature
+        if (!pubkey.Verify(messageHash, signature)) {
+            LogPrintf("HAT v2: Invalid signature in validator announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "HAT v2: Signature verified successfully for validator %s\n",
+                 validatorAddress.ToString());
+        
+        // Register validator peer
+        if (g_hatConsensusValidator) {
+            LOCK(cs_main);
+            CNodeState* state = State(pfrom->GetId());
+            if (state) {
+                state->validatorAddress = validatorAddress;
+                state->isValidator = true;
+                
+                g_hatConsensusValidator->RegisterValidatorPeer(pfrom->GetId(), validatorAddress);
+                
+                LogPrint(BCLog::NET, "HAT v2: Registered validator %s for peer=%d\n",
+                         validatorAddress.ToString(), pfrom->GetId());
+            }
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring announcement\n");
+        }
+    }
+    
     // Cascoin: HAT v2 Consensus - Validation Challenge
     else if (strCommand == NetMsgType::VALCHALLENGE) {
         CVM::ValidationRequest request;
@@ -3118,8 +3208,50 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         LogPrint(BCLog::NET, "HAT v2: Received validation challenge for tx %s from peer=%d\n", 
                  request.txHash.ToString(), pfrom->GetId());
         
-        // Process validation request and send response
-        // This will be handled by the HAT consensus validator
+        // GOSSIP PROTOCOL: Relay challenge to other peers
+        // This ensures the challenge reaches the entire network, not just direct connections
+        // Critical for security: prevents eclipse attacks and ensures all validators can respond
+        {
+            LOCK(cs_main);
+            
+            // Track seen challenges to prevent relay loops
+            static std::set<uint256> seenChallenges;
+            static CCriticalSection cs_seenChallenges;
+            
+            LOCK(cs_seenChallenges);
+            
+            // Check if we've already seen this challenge
+            uint256 challengeId = request.txHash;  // Use tx hash as unique identifier
+            
+            if (seenChallenges.find(challengeId) == seenChallenges.end()) {
+                // First time seeing this challenge - relay to other peers
+                seenChallenges.insert(challengeId);
+                
+                // Limit cache size to prevent memory bloat
+                if (seenChallenges.size() > 10000) {
+                    // Remove oldest entries (simple: clear half)
+                    auto it = seenChallenges.begin();
+                    std::advance(it, 5000);
+                    seenChallenges.erase(seenChallenges.begin(), it);
+                }
+                
+                // Relay to all other connected peers (except sender)
+                uint32_t relayCount = 0;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && pnode->GetId() != pfrom->GetId()) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+                        relayCount++;
+                    }
+                });
+                
+                LogPrint(BCLog::NET, "HAT v2: Relayed validation challenge to %u peers\n", relayCount);
+            } else {
+                LogPrint(BCLog::NET, "HAT v2: Already seen this challenge, not relaying\n");
+            }
+        }
+        
+        // Process validation request and send response (if we are a validator)
         if (g_hatConsensusValidator) {
             g_hatConsensusValidator->ProcessValidationRequest(request, pfrom, connman);
         } else {
@@ -3141,6 +3273,50 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             LOCK(cs_main);
             Misbehaving(pfrom->GetId(), 20);
             return false;
+        }
+        
+        // GOSSIP PROTOCOL: Relay response to other peers
+        // This ensures responses reach all nodes collecting validator responses
+        {
+            LOCK(cs_main);
+            
+            // Track seen responses to prevent relay loops
+            static std::map<uint256, std::set<uint160>> seenResponses;  // txHash -> set of validator addresses
+            static CCriticalSection cs_seenResponses;
+            
+            LOCK(cs_seenResponses);
+            
+            // Check if we've already seen this response from this validator
+            uint256 txHash = response.txHash;
+            uint160 validatorAddr = response.validatorAddress;
+            
+            if (seenResponses[txHash].find(validatorAddr) == seenResponses[txHash].end()) {
+                // First time seeing this response from this validator - relay
+                seenResponses[txHash].insert(validatorAddr);
+                
+                // Limit cache size to prevent memory bloat
+                if (seenResponses.size() > 1000) {
+                    // Remove oldest entries (simple: clear half)
+                    auto it = seenResponses.begin();
+                    std::advance(it, 500);
+                    seenResponses.erase(seenResponses.begin(), it);
+                }
+                
+                // Relay to all other connected peers (except sender)
+                uint32_t relayCount = 0;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && pnode->GetId() != pfrom->GetId()) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALRESPONSE, response));
+                        relayCount++;
+                    }
+                });
+                
+                LogPrint(BCLog::NET, "HAT v2: Relayed validation response to %u peers\n", relayCount);
+            } else {
+                LogPrint(BCLog::NET, "HAT v2: Already seen this response from validator %s, not relaying\n",
+                         validatorAddr.ToString());
+            }
         }
         
         // Process validation response

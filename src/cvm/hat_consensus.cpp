@@ -856,7 +856,7 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
     LogPrint(BCLog::NET, "HAT v2: Processing validation request for tx %s from peer=%d\n",
              request.txHash.ToString(), pfrom ? pfrom->GetId() : -1);
     
-    // Verify challenge nonce
+    // STEP 1: Verify challenge nonce (replay protection)
     uint256 expectedNonce = ValidationRequest::GenerateChallengeNonce(
         request.txHash, request.blockHeight);
     if (request.challengeNonce != expectedNonce) {
@@ -864,18 +864,53 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
         return;
     }
     
-    // Calculate our HAT v2 score for the sender
+    // STEP 2: Check if WE are selected as a validator
+    // Use deterministic random selection based on tx hash + block height
+    std::vector<uint160> selectedValidators = SelectRandomValidators(
+        request.txHash, request.blockHeight);
+    
+    // Get our validator address (TODO: from config/wallet)
+    uint160 myValidatorAddress;  // TODO: Load from config
+    
+    // Check if we are in the selected validator list
+    bool isSelected = false;
+    for (const auto& validator : selectedValidators) {
+        if (validator == myValidatorAddress) {
+            isSelected = true;
+            break;
+        }
+    }
+    
+    if (!isSelected) {
+        LogPrint(BCLog::NET, "HAT v2: We are not selected as validator for this tx, ignoring\n");
+        return;
+    }
+    
+    // STEP 3: Check if we are eligible (reputation >= 70, stake >= 1 CAS)
+    if (!IsEligibleValidator(myValidatorAddress)) {
+        LogPrint(BCLog::NET, "HAT v2: We are not eligible as validator, ignoring\n");
+        return;
+    }
+    
+    // STEP 4: Check rate limiting (anti-spam)
+    if (IsValidatorRateLimited(myValidatorAddress)) {
+        LogPrint(BCLog::NET, "HAT v2: We are rate-limited, ignoring validation request\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: We are selected and eligible validator, processing request\n");
+    
+    // STEP 5: Calculate our HAT v2 score for the sender
     HATv2Score calculatedScore;
     calculatedScore.address = request.senderAddress;
     calculatedScore.timestamp = GetTime();
     
     // Check if we have WoT connection
-    bool hasWoT = HasWoTConnection(uint160(), request.senderAddress);
+    bool hasWoT = HasWoTConnection(myValidatorAddress, request.senderAddress);
     
     if (hasWoT) {
         // Calculate full score with WoT component
-        // Use sender as both target and viewer for self-assessment
-        calculatedScore.finalScore = secureHAT.CalculateFinalTrust(request.senderAddress, request.senderAddress);
+        calculatedScore.finalScore = secureHAT.CalculateFinalTrust(request.senderAddress, myValidatorAddress);
         // TODO: Get component breakdown from SecureHAT
         calculatedScore.behaviorScore = 0;  // Placeholder
         calculatedScore.wotScore = 0;       // Placeholder
@@ -888,20 +923,20 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
         calculatedScore.hasWoTConnection = false;
     }
     
-    // Calculate our vote
+    // STEP 6: Calculate our vote
     ValidationVote vote = CalculateValidatorVote(
         request.selfReportedScore,
         calculatedScore,
         hasWoT
     );
     
-    // Calculate vote confidence
-    double confidence = CalculateVoteConfidence(uint160(), request.senderAddress);
+    // STEP 7: Calculate vote confidence
+    double confidence = CalculateVoteConfidence(myValidatorAddress, request.senderAddress);
     
-    // Create response
+    // STEP 8: Create response
     ValidationResponse response;
     response.txHash = request.txHash;
-    response.validatorAddress = uint160(); // TODO: Get our validator address
+    response.validatorAddress = myValidatorAddress;
     response.calculatedScore = calculatedScore;
     response.vote = vote;
     response.voteConfidence = confidence;
@@ -909,10 +944,14 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
     response.challengeNonce = request.challengeNonce;
     response.timestamp = GetTime();
     
-    // TODO: Sign response with validator key
+    // STEP 9: Sign response with validator key
+    // TODO: Load validator key from config/wallet
     // response.Sign(validatorKey);
     
-    // Send response back
+    // STEP 10: Record for rate limiting
+    RecordValidationMessage(myValidatorAddress);
+    
+    // STEP 11: Send response back (broadcast to all peers)
     SendValidationResponse(response, connman);
     
     LogPrint(BCLog::NET, "HAT v2: Sent validation response (vote=%d, confidence=%.2f)\n",
@@ -1009,19 +1048,30 @@ void CVM::HATConsensusValidator::BroadcastValidationChallenge(
         return;
     }
     
-    LogPrint(BCLog::NET, "HAT v2: Broadcasting validation challenge for tx %s to %zu validators\n",
+    LogPrint(BCLog::NET, "HAT v2: Broadcasting validation challenge for tx %s to ALL peers (expecting %zu validators to respond)\n",
              request.txHash.ToString(), validators.size());
     
-    // Send challenge to each selected validator
-    uint32_t sentCount = 0;
-    for (const auto& validator : validators) {
-        if (SendChallengeToValidator(validator, request, connman)) {
-            sentCount++;
-        }
-    }
+    // SECURITY: Broadcast to ALL peers, not targeted sending
+    // This prevents:
+    // 1. Targeting specific validators (manipulation)
+    // 2. Eclipse attacks (isolating validators)
+    // 3. Censorship (blocking specific validators)
+    //
+    // Validators will self-identify and respond if they are:
+    // 1. Eligible (reputation >= 70, stake >= 1 CAS)
+    // 2. Selected by deterministic random algorithm
+    // 3. Not rate-limited
     
-    LogPrint(BCLog::NET, "HAT v2: Sent challenges to %u/%zu validators\n",
-             sentCount, validators.size());
+    uint32_t broadcastCount = 0;
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+            broadcastCount++;
+        }
+    });
+    
+    LogPrint(BCLog::NET, "HAT v2: Broadcast challenge to %u peers\n", broadcastCount);
 }
 
 void CVM::HATConsensusValidator::SendValidationResponse(
@@ -1090,6 +1140,69 @@ void CVM::HATConsensusValidator::BroadcastDAOResolution(
                     disputeId, approved, resolutionTimestamp));
         }
     });
+}
+
+void CVM::HATConsensusValidator::AnnounceValidatorAddress(
+    const uint160& validatorAddress,
+    const CKey& validatorKey,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot announce validator address - no connection manager\n");
+        return;
+    }
+    
+    if (!validatorKey.IsValid()) {
+        LogPrintf("HAT v2: Cannot announce validator address - invalid key\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Announcing validator address %s to network\n",
+             validatorAddress.ToString());
+    
+    // Get public key from private key
+    CPubKey pubkey = validatorKey.GetPubKey();
+    if (!pubkey.IsFullyValid()) {
+        LogPrintf("HAT v2: Failed to derive public key from validator key\n");
+        return;
+    }
+    
+    // Verify the public key matches the validator address
+    CKeyID keyID = pubkey.GetID();
+    uint160 derivedAddress;
+    memcpy(derivedAddress.begin(), keyID.begin(), 20);
+    
+    if (derivedAddress != validatorAddress) {
+        LogPrintf("HAT v2: Validator key does not match validator address\n");
+        return;
+    }
+    
+    // Create signature to prove ownership of validator address
+    // Sign the hash of the validator address with the validator's private key
+    uint256 messageHash = Hash(validatorAddress.begin(), validatorAddress.end());
+    std::vector<uint8_t> signature;
+    
+    if (!validatorKey.Sign(messageHash, signature)) {
+        LogPrintf("HAT v2: Failed to sign validator announcement\n");
+        return;
+    }
+    
+    // Convert public key to vector for serialization
+    std::vector<uint8_t> validatorPubKey(pubkey.begin(), pubkey.end());
+    
+    // Broadcast announcement to all connected peers
+    uint32_t announcedCount = 0;
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALANNOUNCE,
+                    validatorAddress, validatorPubKey, signature));
+            announcedCount++;
+        }
+    });
+    
+    LogPrint(BCLog::NET, "HAT v2: Announced validator address to %u peers (pubkey size: %zu, signature size: %zu)\n",
+             announcedCount, validatorPubKey.size(), signature.size());
 }
 
 // ============================================================================
@@ -1257,6 +1370,74 @@ void CVM::HATConsensusValidator::RecordValidationMessage(const uint160& validato
     }
 }
 
+void CVM::HATConsensusValidator::RegisterValidatorPeer(
+    NodeId nodeId,
+    const uint160& validatorAddress)
+{
+    LOCK(cs_validatorPeers);
+    
+    // Check if validator already registered
+    auto it = validatorPeerMap.find(validatorAddress);
+    if (it != validatorPeerMap.end()) {
+        // Update existing entry
+        it->second.nodeId = nodeId;
+        it->second.lastSeen = GetTime();
+        it->second.isActive = true;
+        
+        LogPrint(BCLog::NET, "HAT v2: Updated validator peer mapping: %s → node %d\n",
+                 validatorAddress.ToString(), nodeId);
+    } else {
+        // Create new entry
+        ValidatorPeerInfo info;
+        info.nodeId = nodeId;
+        info.validatorAddress = validatorAddress;
+        info.lastSeen = GetTime();
+        info.isActive = true;
+        
+        validatorPeerMap[validatorAddress] = info;
+        nodeToValidatorMap[nodeId] = validatorAddress;
+        
+        LogPrint(BCLog::NET, "HAT v2: Registered validator peer: %s → node %d\n",
+                 validatorAddress.ToString(), nodeId);
+    }
+    
+    // Update reverse mapping
+    nodeToValidatorMap[nodeId] = validatorAddress;
+    
+    // Persist to database for recovery after restart
+    std::string key = "validator_peer_" + validatorAddress.ToString();
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << validatorAddress << GetTime();
+    std::vector<uint8_t> data(ss.begin(), ss.end());
+    database.WriteGeneric(key, data);
+}
+
+void CVM::HATConsensusValidator::UnregisterValidatorPeer(NodeId nodeId)
+{
+    LOCK(cs_validatorPeers);
+    
+    // Find validator address for this node
+    auto nodeIt = nodeToValidatorMap.find(nodeId);
+    if (nodeIt == nodeToValidatorMap.end()) {
+        return;  // Not a validator peer
+    }
+    
+    uint160 validatorAddress = nodeIt->second;
+    
+    // Mark as inactive
+    auto validatorIt = validatorPeerMap.find(validatorAddress);
+    if (validatorIt != validatorPeerMap.end()) {
+        validatorIt->second.isActive = false;
+        validatorIt->second.lastSeen = GetTime();
+        
+        LogPrint(BCLog::NET, "HAT v2: Unregistered validator peer: %s (node %d)\n",
+                 validatorAddress.ToString(), nodeId);
+    }
+    
+    // Remove from reverse mapping
+    nodeToValidatorMap.erase(nodeIt);
+}
+
 CNode* CVM::HATConsensusValidator::GetValidatorPeer(
     const uint160& validatorAddress,
     CConnman* connman)
@@ -1265,14 +1446,98 @@ CNode* CVM::HATConsensusValidator::GetValidatorPeer(
         return nullptr;
     }
     
-    // TODO: Implement validator address → peer mapping
-    // For now, we broadcast to all peers and let them filter
-    // In production, we should maintain a map of validator addresses to peer IDs
+    LOCK(cs_validatorPeers);
     
-    LogPrint(BCLog::NET, "HAT v2: Looking up peer for validator %s (not implemented)\n",
-             validatorAddress.ToString());
+    // Look up validator in peer map
+    auto it = validatorPeerMap.find(validatorAddress);
+    if (it == validatorPeerMap.end() || !it->second.isActive) {
+        LogPrint(BCLog::NET, "HAT v2: Validator %s not found in peer map or inactive\n",
+                 validatorAddress.ToString());
+        return nullptr;
+    }
     
-    return nullptr;
+    NodeId nodeId = it->second.nodeId;
+    
+    // Find the peer node
+    CNode* validatorPeer = nullptr;
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->GetId() == nodeId && pnode->fSuccessfullyConnected) {
+            validatorPeer = pnode;
+        }
+    });
+    
+    if (!validatorPeer) {
+        // Peer disconnected but not yet unregistered
+        it->second.isActive = false;
+        LogPrint(BCLog::NET, "HAT v2: Validator peer %s (node %d) no longer connected\n",
+                 validatorAddress.ToString(), nodeId);
+    }
+    
+    return validatorPeer;
+}
+
+bool CVM::HATConsensusValidator::IsValidatorOnline(const uint160& validatorAddress)
+{
+    LOCK(cs_validatorPeers);
+    
+    auto it = validatorPeerMap.find(validatorAddress);
+    return (it != validatorPeerMap.end() && it->second.isActive);
+}
+
+std::vector<uint160> CVM::HATConsensusValidator::GetOnlineValidators()
+{
+    LOCK(cs_validatorPeers);
+    
+    std::vector<uint160> onlineValidators;
+    for (const auto& pair : validatorPeerMap) {
+        if (pair.second.isActive) {
+            onlineValidators.push_back(pair.first);
+        }
+    }
+    
+    return onlineValidators;
+}
+
+void CVM::HATConsensusValidator::LoadValidatorPeerMappings()
+{
+    LOCK(cs_validatorPeers);
+    
+    LogPrint(BCLog::NET, "HAT v2: Loading validator peer mappings from database\n");
+    
+    // Query all validator peer records from database
+    std::vector<std::string> keys = database.ListKeysWithPrefix("validator_peer_");
+    
+    uint32_t loadedCount = 0;
+    for (const auto& key : keys) {
+        std::vector<uint8_t> data;
+        if (!database.ReadGeneric(key, data)) {
+            continue;
+        }
+        
+        try {
+            CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+            uint160 validatorAddress;
+            uint64_t lastSeen;
+            ss >> validatorAddress >> lastSeen;
+            
+            // Create inactive entry (validator must re-announce to become active)
+            ValidatorPeerInfo info;
+            info.nodeId = -1;  // Invalid node ID
+            info.validatorAddress = validatorAddress;
+            info.lastSeen = lastSeen;
+            info.isActive = false;  // Inactive until validator re-announces
+            
+            validatorPeerMap[validatorAddress] = info;
+            loadedCount++;
+            
+            LogPrint(BCLog::NET, "HAT v2: Loaded validator peer mapping: %s (last seen: %lu)\n",
+                     validatorAddress.ToString(), lastSeen);
+        } catch (...) {
+            LogPrintf("HAT v2: Failed to deserialize validator peer mapping: %s\n", key);
+        }
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Loaded %u validator peer mappings from database\n", loadedCount);
 }
 
 bool CVM::HATConsensusValidator::SendChallengeToValidator(
@@ -1280,44 +1545,12 @@ bool CVM::HATConsensusValidator::SendChallengeToValidator(
     const ValidationRequest& request,
     CConnman* connman)
 {
-    if (!connman) {
-        LogPrintf("HAT v2: Cannot send challenge - no connection manager\n");
-        return false;
-    }
+    // NOTE: This function is kept for API compatibility but is not used
+    // in the broadcast-based validator selection model.
+    // Challenges are broadcast to all peers, and validators self-identify.
     
-    // Check rate limiting
-    if (IsValidatorRateLimited(validatorAddress)) {
-        LogPrint(BCLog::NET, "HAT v2: Validator %s is rate-limited, skipping\n",
-                 validatorAddress.ToString());
-        return false;
-    }
-    
-    // Get validator peer
-    CNode* pnode = GetValidatorPeer(validatorAddress, connman);
-    
-    if (pnode) {
-        // Send to specific peer
-        connman->PushMessage(pnode,
-            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
-        
-        LogPrint(BCLog::NET, "HAT v2: Sent challenge to validator %s (peer=%d)\n",
-                 validatorAddress.ToString(), pnode->GetId());
-        
-        return true;
-    } else {
-        // Fallback: broadcast to all peers
-        // In production, this should be replaced with targeted sending
-        LogPrint(BCLog::NET, "HAT v2: Broadcasting challenge (validator peer not found)\n");
-        
-        connman->ForEachNode([&](CNode* node) {
-            if (node->fSuccessfullyConnected) {
-                connman->PushMessage(node,
-                    CNetMsgMaker(node->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
-            }
-        });
-        
-        return true;
-    }
+    LogPrint(BCLog::NET, "HAT v2: SendChallengeToValidator called but not used in broadcast model\n");
+    return false;
 }
 
 } // namespace CVM

@@ -690,6 +690,22 @@ public:
     );
     
     /**
+     * Announce validator address to network
+     * 
+     * Called when node starts up if it's configured as a validator.
+     * Broadcasts validator address to all connected peers.
+     * 
+     * @param validatorAddress This node's validator address
+     * @param validatorKey Private key for signing announcement
+     * @param connman Connection manager
+     */
+    void AnnounceValidatorAddress(
+        const uint160& validatorAddress,
+        const CKey& validatorKey,
+        CConnman* connman
+    );
+    
+    /**
      * Collect validator responses for a transaction
      * 
      * Waits for responses from validators with timeout handling.
@@ -744,6 +760,28 @@ public:
     void RecordValidationMessage(const uint160& validatorAddress);
     
     /**
+     * Register validator peer
+     * 
+     * Called when a peer announces their validator address.
+     * 
+     * @param nodeId Peer node ID
+     * @param validatorAddress Validator's address
+     */
+    void RegisterValidatorPeer(
+        NodeId nodeId,
+        const uint160& validatorAddress
+    );
+    
+    /**
+     * Unregister validator peer
+     * 
+     * Called when a peer disconnects.
+     * 
+     * @param nodeId Peer node ID
+     */
+    void UnregisterValidatorPeer(NodeId nodeId);
+    
+    /**
      * Get validator peer node
      * 
      * Maps validator address to connected peer node.
@@ -756,6 +794,30 @@ public:
         const uint160& validatorAddress,
         CConnman* connman
     );
+    
+    /**
+     * Check if validator is online
+     * 
+     * @param validatorAddress Validator address
+     * @return true if validator peer is connected
+     */
+    bool IsValidatorOnline(const uint160& validatorAddress);
+    
+    /**
+     * Get all online validators
+     * 
+     * @return Vector of online validator addresses
+     */
+    std::vector<uint160> GetOnlineValidators();
+    
+    /**
+     * Load validator peer mappings from database
+     * 
+     * Called on startup to restore validator mappings.
+     * Note: NodeIds are not persisted, only validator addresses.
+     * Validators must re-announce after node restart.
+     */
+    void LoadValidatorPeerMappings();
     
     /**
      * Send validation challenge to specific validator
@@ -777,6 +839,17 @@ private:
     CVMDatabase& database;
     SecureHAT& secureHAT;
     TrustGraph& trustGraph;
+    
+    // Validator peer mapping
+    struct ValidatorPeerInfo {
+        NodeId nodeId;                  // Peer node ID
+        uint160 validatorAddress;       // Validator's address
+        uint64_t lastSeen;              // Last activity timestamp
+        bool isActive;                  // Is peer currently connected?
+    };
+    std::map<uint160, ValidatorPeerInfo> validatorPeerMap;  // validator address → peer info
+    std::map<NodeId, uint160> nodeToValidatorMap;           // node ID → validator address
+    mutable CCriticalSection cs_validatorPeers;             // Protect peer maps
     
     // Rate limiting for anti-spam
     struct ValidatorRateLimit {

@@ -241,6 +241,8 @@ extern const char *BLOCKTXN;
 // Cascoin: Rialto: A Rialto message, sent in response to a getdata request.
 extern const char *RIALTO;
 
+// Cascoin: HAT v2 Consensus: Validator address announcement
+extern const char *VALANNOUNCE;
 // Cascoin: HAT v2 Consensus: Validation challenge message
 extern const char *VALCHALLENGE;
 // Cascoin: HAT v2 Consensus: Validation response message
