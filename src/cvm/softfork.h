@@ -269,6 +269,24 @@ bool IsEVMTransaction(const CTransaction& tx);
  */
 BytecodeFormat GetTransactionBytecodeFormat(const CTransaction& tx);
 
+/**
+ * Parse deployment data from raw bytes
+ * 
+ * @param data Raw data from OP_RETURN
+ * @param deployData Output deployment data structure
+ * @return true if successfully parsed
+ */
+bool ParseCVMDeployData(const std::vector<uint8_t>& data, CVMDeployData& deployData);
+
+/**
+ * Parse call data from raw bytes
+ * 
+ * @param data Raw data from OP_RETURN
+ * @param callData Output call data structure
+ * @return true if successfully parsed
+ */
+bool ParseCVMCallData(const std::vector<uint8_t>& data, CVMCallData& callData);
+
 } // namespace CVM
 
 #endif // CASCOIN_CVM_SOFTFORK_H

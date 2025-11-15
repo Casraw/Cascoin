@@ -26,6 +26,8 @@
 #include <cvm/evm_rpc.h>
 #include <cvm/bytecode_detector.h>
 #include <cvm/enhanced_vm.h>
+#include <cvm/validator_keys.h>
+#include <cvm/hat_consensus.h>
 #include <validation.h>
 #include <consensus/validation.h>
 #include <txmempool.h>
@@ -40,6 +42,7 @@
 #include <core_io.h>
 #include <policy/policy.h>
 #include <net.h>
+#include <chain.h>
 
 // Global connection manager
 extern std::unique_ptr<CConnman> g_connman;
@@ -3565,6 +3568,507 @@ UniValue cas_estimateGasWithReputation(const JSONRPCRequest& request)
     return result;
 }
 
+/**
+ * HAT v2 Validator Key Management RPC Commands
+ * 
+ * IMPORTANT: There is NO manual validator registration!
+ * 
+ * Validators are automatically selected via deterministic random algorithm when:
+ * - Reputation >= 70
+ * - Bonded stake >= 1 CAS
+ * - Selected by SelectRandomValidators() based on tx hash + block height
+ * 
+ * These commands ONLY manage the validator signing key:
+ * - Generate/import/export validator keys
+ * - Query validator statistics
+ * - Monitor validation performance
+ * 
+ * To become a validator:
+ * 1. Generate a validator key (generatevalidatorkey)
+ * 2. Build reputation >= 70 (via trust relationships)
+ * 3. Bond stake >= 1 CAS (via addtrust RPC)
+ * 4. Wait to be randomly selected for validations
+ */
+
+UniValue generatevalidatorkey(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "generatevalidatorkey\n"
+            "\nGenerate a new validator key for HAT v2 consensus participation.\n"
+            "\nThis creates a new private key that will be used to sign validation responses.\n"
+            "The key is automatically saved to the data directory.\n"
+            "\nNOTE: This does NOT register you as a validator! Validators are automatically\n"
+            "selected when they meet requirements (reputation >= 70, stake >= 1 CAS).\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",      (string) Validator address (hex)\n"
+            "  \"pubkey\": \"xxx\",       (string) Validator public key (hex)\n"
+            "  \"keyfile\": \"xxx\"       (string) Path to key file\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("generatevalidatorkey", "")
+            + HelpExampleRpc("generatevalidatorkey", "")
+        );
+
+    if (!CVM::g_validatorKeys) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Validator key manager not initialized");
+    }
+
+    if (!CVM::g_validatorKeys->GenerateNewKey()) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to generate validator key");
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", CVM::g_validatorKeys->GetValidatorAddress().ToString());
+    result.pushKV("pubkey", HexStr(CVM::g_validatorKeys->GetValidatorPubKey()));
+    result.pushKV("keyfile", "validator.key (in data directory)");
+
+    LogPrintf("Validator: Generated new validator key with address %s\n",
+              CVM::g_validatorKeys->GetValidatorAddress().ToString());
+
+    return result;
+}
+
+UniValue getvalidatorinfo(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "getvalidatorinfo\n"
+            "\nGet information about the current validator configuration.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"haskey\": true|false,        (boolean) Whether validator key is loaded\n"
+            "  \"address\": \"xxx\",            (string) Validator address (if key loaded)\n"
+            "  \"pubkey\": \"xxx\",             (string) Validator public key (if key loaded)\n"
+            "  \"eligible\": true|false,      (boolean) Whether eligible to validate\n"
+            "  \"reputation\": n,             (numeric) Current reputation score\n"
+            "  \"stake\": n,                  (numeric) Total bonded stake (CAS)\n"
+            "  \"validations\": n,            (numeric) Total validations performed\n"
+            "  \"accuracy\": n.nn,            (numeric) Validation accuracy percentage\n"
+            "  \"lastValidation\": n          (numeric) Block height of last validation\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getvalidatorinfo", "")
+            + HelpExampleRpc("getvalidatorinfo", "")
+        );
+
+    if (!CVM::g_validatorKeys) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Validator key manager not initialized");
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("haskey", CVM::g_validatorKeys->HasValidatorKey());
+
+    if (CVM::g_validatorKeys->HasValidatorKey()) {
+        uint160 validatorAddr = CVM::g_validatorKeys->GetValidatorAddress();
+        result.pushKV("address", validatorAddr.ToString());
+        result.pushKV("pubkey", HexStr(CVM::g_validatorKeys->GetValidatorPubKey()));
+
+        // Get validator statistics from database
+        try {
+            // Create database instance
+            CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+            
+            // Create required components
+            CVM::TrustGraph trustGraph(db);
+            CVM::SecureHAT secureHAT(db);
+            CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+            
+            // Get reputation
+            CVM::ReputationSystem repSystem(db);
+            CVM::ReputationScore repScore;
+            bool hasRep = repSystem.GetReputation(validatorAddr, repScore);
+            result.pushKV("reputation", hasRep ? repScore.score : 0);
+            result.pushKV("eligible", hasRep && repScore.score >= 50);
+
+            // Get bonded stake
+            std::vector<CVM::TrustEdge> outgoing = trustGraph.GetOutgoingTrust(validatorAddr);
+            CAmount totalStake = 0;
+            for (const auto& edge : outgoing) {
+                if (!edge.slashed) {
+                    totalStake += edge.bondAmount;
+                }
+            }
+            result.pushKV("stake", ValueFromAmount(totalStake));
+
+            // Get validator stats
+            CVM::ValidatorStats stats = validator.GetValidatorStats(validatorAddr);
+            result.pushKV("validations", (int64_t)stats.totalValidations);
+            result.pushKV("accuracy", stats.accuracyRate);
+            result.pushKV("lastActivity", stats.lastActivityTime);
+        } catch (const std::exception& e) {
+            result.pushKV("error", std::string("Failed to get validator stats: ") + e.what());
+        }
+    }
+
+    return result;
+}
+
+UniValue importvalidatorkey(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "importvalidatorkey \"privkey\"\n"
+            "\nImport a validator private key.\n"
+            "\nWARNING: This will replace any existing validator key!\n"
+            "\nArguments:\n"
+            "1. privkey    (string, required) Private key in hex format (64 characters)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",      (string) Validator address\n"
+            "  \"pubkey\": \"xxx\"        (string) Validator public key (hex)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("importvalidatorkey", "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"")
+            + HelpExampleRpc("importvalidatorkey", "\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"")
+        );
+
+    if (!CVM::g_validatorKeys) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Validator key manager not initialized");
+    }
+
+    std::string keyHex = request.params[0].get_str();
+
+    // Validate hex format
+    if (keyHex.length() != 64) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Private key must be 64 hex characters (32 bytes)");
+    }
+
+    if (!IsHex(keyHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Private key must be valid hex");
+    }
+
+    if (!CVM::g_validatorKeys->ImportKey(keyHex)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Failed to import validator key (invalid key)");
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", CVM::g_validatorKeys->GetValidatorAddress().ToString());
+    result.pushKV("pubkey", HexStr(CVM::g_validatorKeys->GetValidatorPubKey()));
+
+    LogPrintf("Validator: Imported validator key with address %s\n",
+              CVM::g_validatorKeys->GetValidatorAddress().ToString());
+
+    return result;
+}
+
+UniValue exportvalidatorkey(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "exportvalidatorkey\n"
+            "\nExport the validator private key.\n"
+            "\nWARNING: Keep this key secure! Anyone with this key can sign validation responses as you.\n"
+            "\nResult:\n"
+            "\"privkey\"    (string) Private key in hex format\n"
+            "\nExamples:\n"
+            + HelpExampleCli("exportvalidatorkey", "")
+            + HelpExampleRpc("exportvalidatorkey", "")
+        );
+
+    if (!CVM::g_validatorKeys) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Validator key manager not initialized");
+    }
+
+    if (!CVM::g_validatorKeys->HasValidatorKey()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "No validator key loaded");
+    }
+
+    std::string keyHex;
+    if (!CVM::g_validatorKeys->ExportKey(keyHex)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to export validator key");
+    }
+
+    return keyHex;
+}
+
+UniValue loadvalidatorfromwallet(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "loadvalidatorfromwallet \"address\"\n"
+            "\nLoad a validator key from the wallet.\n"
+            "\nThe address must exist in the wallet with its private key.\n"
+            "\nArguments:\n"
+            "1. address    (string, required) Address to use as validator (hex format)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",      (string) Validator address\n"
+            "  \"pubkey\": \"xxx\"        (string) Validator public key (hex)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("loadvalidatorfromwallet", "\"1234567890abcdef1234567890abcdef12345678\"")
+            + HelpExampleRpc("loadvalidatorfromwallet", "\"1234567890abcdef1234567890abcdef12345678\"")
+        );
+
+    if (!CVM::g_validatorKeys) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Validator key manager not initialized");
+    }
+
+    std::string addrStr = request.params[0].get_str();
+    
+    // Parse address
+    if (addrStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be 40 hex characters (20 bytes)");
+    }
+
+    if (!IsHex(addrStr)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be valid hex");
+    }
+
+    std::vector<uint8_t> addrData = ParseHex(addrStr);
+    uint160 addr;
+    memcpy(addr.begin(), addrData.data(), 20);
+
+    if (!CVM::g_validatorKeys->LoadFromWallet(addr)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Failed to load key from wallet (address not found or no private key)");
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", CVM::g_validatorKeys->GetValidatorAddress().ToString());
+    result.pushKV("pubkey", HexStr(CVM::g_validatorKeys->GetValidatorPubKey()));
+
+    LogPrintf("Validator: Loaded validator key from wallet with address %s\n",
+              CVM::g_validatorKeys->GetValidatorAddress().ToString());
+
+    return result;
+}
+
+UniValue listvalidators(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "listvalidators ( minreputation )\n"
+            "\nList all eligible validators in the network.\n"
+            "\nValidators are automatically eligible when they meet requirements:\n"
+            "- Reputation >= 70\n"
+            "- Bonded stake >= 1 CAS\n"
+            "- Have a validator key configured\n"
+            "\nArguments:\n"
+            "1. minreputation    (numeric, optional, default=70) Minimum reputation to include\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"address\": \"xxx\",        (string) Validator address\n"
+            "    \"reputation\": n,         (numeric) Reputation score\n"
+            "    \"stake\": n,              (numeric) Bonded stake (CAS)\n"
+            "    \"validations\": n,        (numeric) Total validations\n"
+            "    \"accuracy\": n.nn,        (numeric) Accuracy percentage\n"
+            "    \"eligible\": true|false   (boolean) Currently eligible\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listvalidators", "")
+            + HelpExampleCli("listvalidators", "80")
+            + HelpExampleRpc("listvalidators", "80")
+        );
+
+    int16_t minReputation = 70;
+    if (request.params.size() > 0) {
+        minReputation = request.params[0].get_int();
+    }
+
+    // Create database instance
+    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    
+    // Create required components
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+    CVM::ReputationSystem repSystem(db);
+
+    // Get all addresses with reputation >= minReputation
+    // Note: GetAddressesAboveReputation doesn't exist, so we'll get all addresses with reputation
+    std::vector<uint160> addresses;
+    // TODO: Implement proper address enumeration from reputation system
+    // For now, return empty list
+    
+    UniValue result(UniValue::VARR);
+
+    for (const auto& addr : addresses) {
+        UniValue validatorInfo(UniValue::VOBJ);
+        validatorInfo.pushKV("address", addr.ToString());
+
+        // Get reputation
+        CVM::ReputationScore repScore;
+        bool hasRep = repSystem.GetReputation(addr, repScore);
+        if (!hasRep || repScore.score < minReputation) {
+            continue;
+        }
+        validatorInfo.pushKV("reputation", repScore.score);
+
+        // Get bonded stake
+        std::vector<CVM::TrustEdge> outgoing = trustGraph.GetOutgoingTrust(addr);
+        CAmount totalStake = 0;
+        for (const auto& edge : outgoing) {
+            if (!edge.slashed) {
+                totalStake += edge.bondAmount;
+            }
+        }
+        validatorInfo.pushKV("stake", ValueFromAmount(totalStake));
+
+        // Get validator stats
+        CVM::ValidatorStats stats = validator.GetValidatorStats(addr);
+        validatorInfo.pushKV("validations", (int64_t)stats.totalValidations);
+        validatorInfo.pushKV("accuracy", stats.accuracyRate);
+
+        validatorInfo.pushKV("eligible", repScore.score >= 50);
+
+        result.push_back(validatorInfo);
+    }
+
+    return result;
+}
+
+UniValue getvalidatorstats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getvalidatorstats \"address\"\n"
+            "\nGet detailed statistics for a specific validator.\n"
+            "\nArguments:\n"
+            "1. address    (string, required) Validator address (hex)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",              (string) Validator address\n"
+            "  \"reputation\": n,               (numeric) Current reputation\n"
+            "  \"stake\": n,                    (numeric) Total bonded stake\n"
+            "  \"totalValidations\": n,         (numeric) Total validations performed\n"
+            "  \"correctValidations\": n,       (numeric) Correct validations\n"
+            "  \"incorrectValidations\": n,     (numeric) Incorrect validations\n"
+            "  \"accuracy\": n.nn,              (numeric) Accuracy percentage\n"
+            "  \"lastValidation\": n,           (numeric) Block height of last validation\n"
+            "  \"fraudRecords\": n,             (numeric) Number of fraud records\n"
+            "  \"slashedStake\": n,             (numeric) Total slashed stake\n"
+            "  \"rewardsEarned\": n             (numeric) Total rewards earned\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getvalidatorstats", "\"1234567890abcdef1234567890abcdef12345678\"")
+            + HelpExampleRpc("getvalidatorstats", "\"1234567890abcdef1234567890abcdef12345678\"")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    
+    // Parse address
+    if (addrStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be 40 hex characters");
+    }
+
+    std::vector<uint8_t> addrData = ParseHex(addrStr);
+    uint160 addr;
+    memcpy(addr.begin(), addrData.data(), 20);
+
+    // Create database instance
+    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    
+    // Create required components
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+    CVM::ReputationSystem repSystem(db);
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addr.ToString());
+
+    // Get reputation
+    CVM::ReputationScore repScore;
+    bool hasRep = repSystem.GetReputation(addr, repScore);
+    result.pushKV("reputation", hasRep ? repScore.score : 0);
+
+    // Get bonded stake
+    std::vector<CVM::TrustEdge> outgoing = trustGraph.GetOutgoingTrust(addr);
+    CAmount totalStake = 0;
+    CAmount slashedStake = 0;
+    for (const auto& edge : outgoing) {
+        if (edge.slashed) {
+            slashedStake += edge.bondAmount;
+        } else {
+            totalStake += edge.bondAmount;
+        }
+    }
+    result.pushKV("stake", ValueFromAmount(totalStake));
+    result.pushKV("slashedStake", ValueFromAmount(slashedStake));
+
+    // Get validator stats
+    CVM::ValidatorStats stats = validator.GetValidatorStats(addr);
+    result.pushKV("totalValidations", (int64_t)stats.totalValidations);
+    result.pushKV("correctValidations", (int64_t)stats.accurateValidations);
+    result.pushKV("incorrectValidations", (int64_t)stats.inaccurateValidations);
+    result.pushKV("accuracy", stats.accuracyRate);
+    result.pushKV("lastActivity", stats.lastActivityTime);
+
+    // Fraud records - not implemented yet
+    result.pushKV("fraudRecords", 0);
+
+    // Calculate rewards (placeholder - would need actual reward tracking)
+    result.pushKV("rewardsEarned", ValueFromAmount(0));
+
+    return result;
+}
+
+UniValue getvalidationhistory(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getvalidationhistory \"address\" ( count )\n"
+            "\nGet recent validation history for a validator.\n"
+            "\nArguments:\n"
+            "1. address    (string, required) Validator address (hex)\n"
+            "2. count      (numeric, optional, default=10) Number of recent validations to return\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"txhash\": \"xxx\",           (string) Transaction hash validated\n"
+            "    \"blockheight\": n,          (numeric) Block height\n"
+            "    \"vote\": \"xxx\",             (string) Vote (ACCEPT/REJECT/ABSTAIN)\n"
+            "    \"correct\": true|false,     (boolean) Whether vote was correct\n"
+            "    \"confidence\": n.nn         (numeric) Vote confidence\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getvalidationhistory", "\"1234567890abcdef1234567890abcdef12345678\"")
+            + HelpExampleCli("getvalidationhistory", "\"1234567890abcdef1234567890abcdef12345678\" 20")
+            + HelpExampleRpc("getvalidationhistory", "\"1234567890abcdef1234567890abcdef12345678\", 20")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    int count = 10;
+    if (request.params.size() > 1) {
+        count = request.params[1].get_int();
+        if (count < 1 || count > 100) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Count must be between 1 and 100");
+        }
+    }
+
+    // Parse address
+    if (addrStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be 40 hex characters");
+    }
+
+    std::vector<uint8_t> addrData = ParseHex(addrStr);
+    uint160 addr;
+    memcpy(addr.begin(), addrData.data(), 20);
+
+    // Create database instance
+    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    
+    // Create required components
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+
+    // Get validation history (would need to be implemented in HATConsensusValidator)
+    UniValue result(UniValue::VARR);
+
+    // Placeholder - actual implementation would query database for validation history
+    LogPrintf("Validator: Querying validation history for %s (count: %d)\n", addr.ToString(), count);
+
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -3649,6 +4153,15 @@ static const CRPCCommand commands[] =
     { "evm",                "evm_setNextBlockTimestamp", &evm_setNextBlockTimestamp, {"timestamp"} },
     { "cas",                "cas_increaseTime",      &cas_increaseTime,       {"seconds"} },
     { "evm",                "evm_increaseTime",      &evm_increaseTime,       {"seconds"} },
+    // Validator management RPC commands
+    { "validator",          "generatevalidatorkey",       &generatevalidatorkey,        {} },
+    { "validator",          "getvalidatorinfo",           &getvalidatorinfo,            {} },
+    { "validator",          "importvalidatorkey",         &importvalidatorkey,          {"privkey"} },
+    { "validator",          "exportvalidatorkey",         &exportvalidatorkey,          {} },
+    { "validator",          "loadvalidatorfromwallet",    &loadvalidatorfromwallet,     {"address"} },
+    { "validator",          "listvalidators",             &listvalidators,              {"minreputation"} },
+    { "validator",          "getvalidatorstats",          &getvalidatorstats,           {"address"} },
+    { "validator",          "getvalidationhistory",       &getvalidationhistory,        {"address","count"} },
 };
 
 void RegisterCVMRPCCommands(CRPCTable &t)

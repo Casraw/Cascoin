@@ -352,9 +352,44 @@ bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {
     // For now, we'll just log that pruning was requested
     LogPrintf("CVM: Receipt pruning requested for blocks before %d\n", beforeBlockNumber);
     
-    // TODO: Implement actual pruning logic
+    // Implement actual pruning logic
+    int prunedCount = 0;
+    std::vector<uint256> receiptsToDelete;
+    
+    // Iterate through all receipts
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    pcursor->Seek(std::string(1, DB_RECEIPT));
+    
+    while (pcursor->Valid()) {
+        std::pair<char, uint256> key;
+        if (!pcursor->GetKey(key) || key.first != DB_RECEIPT) {
+            break;
+        }
+        
+        // Read receipt
+        TransactionReceipt receipt;
+        if (pcursor->GetValue(receipt)) {
+            // Check if receipt is old enough to prune
+            if (receipt.blockNumber < beforeBlockNumber) {
+                receiptsToDelete.push_back(key.second);
+            }
+        }
+        
+        pcursor->Next();
+    }
+    
+    // Delete old receipts
+    for (const auto& txHash : receiptsToDelete) {
+        std::string dbKey = std::string(1, DB_RECEIPT) + txHash.ToString();
+        if (db->Erase(dbKey)) {
+            prunedCount++;
+        }
+    }
+    
+    LogPrintf("CVM: Pruned %d receipts from blocks before %d\n", prunedCount, beforeBlockNumber);
+    
     // This would involve:
-    // 1. Iterating through all receipts
+    // 1. Iterating through all receipts (DONE)
     // 2. Checking their block numbers
     // 3. Deleting receipts older than beforeBlockNumber
     // 4. Updating block receipt indices

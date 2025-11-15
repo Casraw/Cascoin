@@ -6,6 +6,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/securehat.h>
 #include <cvm/trustgraph.h>
+#include <cvm/validator_keys.h>
 #include <chain.h>
 #include <hash.h>
 #include <random.h>
@@ -869,8 +870,13 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
     std::vector<uint160> selectedValidators = SelectRandomValidators(
         request.txHash, request.blockHeight);
     
-    // Get our validator address (TODO: from config/wallet)
-    uint160 myValidatorAddress;  // TODO: Load from config
+    // Get our validator address from key manager
+    if (!g_validatorKeys || !g_validatorKeys->HasValidatorKey()) {
+        LogPrint(BCLog::NET, "HAT v2: No validator key configured, ignoring request\n");
+        return;
+    }
+    
+    uint160 myValidatorAddress = g_validatorKeys->GetValidatorAddress();
     
     // Check if we are in the selected validator list
     bool isSelected = false;
@@ -945,8 +951,13 @@ void CVM::HATConsensusValidator::ProcessValidationRequest(
     response.timestamp = GetTime();
     
     // STEP 9: Sign response with validator key
-    // TODO: Load validator key from config/wallet
-    // response.Sign(validatorKey);
+    std::vector<uint8_t> signature;
+    uint256 responseHash = response.GetHash();
+    if (!g_validatorKeys->Sign(responseHash, signature)) {
+        LogPrintf("HAT v2: Failed to sign validation response\n");
+        return;
+    }
+    response.signature = signature;
     
     // STEP 10: Record for rate limiting
     RecordValidationMessage(myValidatorAddress);

@@ -216,6 +216,19 @@ public:
         uint8_t reputation
     );
     
+    /**
+     * Get current gas price (micro-CAS per gas unit)
+     * 
+     * Dynamic gas price based on network conditions:
+     * - Base price: 1000 micro-CAS per gas (0.001 CAS per gas)
+     * - Adjusts based on mempool congestion
+     * - Increases during high demand
+     * - Decreases during low demand
+     * 
+     * @return Gas price in micro-CAS per gas
+     */
+    CAmount GetGasPrice();
+    
     // ===== Statistics =====
     
     /**

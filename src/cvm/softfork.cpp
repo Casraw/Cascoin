@@ -660,5 +660,13 @@ BytecodeFormat GetTransactionBytecodeFormat(const CTransaction& tx)
     return BytecodeFormat::UNKNOWN;
 }
 
+bool ParseCVMDeployData(const std::vector<uint8_t>& data, CVMDeployData& deployData) {
+    return deployData.Deserialize(data);
+}
+
+bool ParseCVMCallData(const std::vector<uint8_t>& data, CVMCallData& callData) {
+    return callData.Deserialize(data);
+}
+
 } // namespace CVM
 

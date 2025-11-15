@@ -10,6 +10,7 @@
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <key.h>
+#include <net.h>
 #include <cvm/securehat.h>
 #include <cvm/trustgraph.h>
 #include <vector>
@@ -176,6 +177,27 @@ struct ValidationResponse {
     
     ValidationResponse() : vote(ValidationVote::ABSTAIN), voteConfidence(0),
                           hasWoTConnection(false), timestamp(0) {}
+    
+    /**
+     * Get hash of response for signing (excludes signature field)
+     */
+    uint256 GetHash() const {
+        CHashWriter ss(SER_GETHASH, 0);
+        ss << txHash;
+        ss << validatorAddress;
+        ss << calculatedScore;
+        ss << static_cast<unsigned char>(vote);
+        ss << voteConfidence;
+        ss << hasWoTConnection;
+        ss << relevantPaths;
+        ss << trustGraphHash;
+        ss << componentStatus;
+        ss << verifiedComponents;
+        ss << validatorPubKey;
+        ss << challengeNonce;
+        ss << timestamp;
+        return ss.GetHash();
+    }
     
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>

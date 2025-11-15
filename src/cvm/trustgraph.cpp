@@ -4,11 +4,16 @@
 
 #include <cvm/trustgraph.h>
 #include <cvm/cvmdb.h>
+#include <cvm/reputation.h>
 #include <util.h>
 #include <tinyformat.h>
 #include <streams.h>
+#include <amount.h>
+#include <chain.h>
 #include <algorithm>
 #include <cmath>
+
+extern CChain chainActive;
 
 namespace CVM {
 
@@ -647,16 +652,56 @@ CAmount TrustGraph::CalculateRequiredBond(int16_t voteValue) const {
 }
 
 bool TrustGraph::IsDAOMember(const uint160& address) const {
-    // In production, check DAO membership
-    // For now, placeholder that checks if address has sufficient stake
+    // DAO membership requirements:
+    // 1. Minimum reputation score (70+)
+    // 2. Minimum stake (100 CAS bonded)
+    // 3. Active participation (voted in last 10,000 blocks)
     
-    // Could check:
-    // 1. Minimum CAS balance
-    // 2. Minimum time holding
-    // 3. Explicit DAO member list
-    // 4. Governance token holding
+    // Check reputation
+    ReputationSystem repSystem(const_cast<CVMDatabase&>(database));
+    ReputationScore repScore;
+    bool hasRep = repSystem.GetReputation(address, repScore);
+    if (!hasRep || repScore.score < 70) {
+        return false;
+    }
     
-    return true; // Placeholder: everyone can be DAO for testing
+    // Check bonded stake
+    std::vector<TrustEdge> outgoing = GetOutgoingTrust(address);
+    CAmount totalBonded = 0;
+    for (const auto& edge : outgoing) {
+        if (!edge.slashed) {
+            totalBonded += edge.bondAmount;
+        }
+    }
+    
+    // Minimum 100 CAS (100 * COIN satoshis) bonded
+    const CAmount MIN_DAO_STAKE = 100 * COIN;
+    if (totalBonded < MIN_DAO_STAKE) {
+        return false;
+    }
+    
+    // Check recent activity (voted in last 10,000 blocks)
+    // Query database for recent votes
+    std::string activityKey = "dao_activity_" + address.ToString();
+    std::vector<uint8_t> activityData;
+    if (database.ReadGeneric(activityKey, activityData)) {
+        // Deserialize last activity block
+        if (activityData.size() >= 4) {
+            int lastActivityBlock = 0;
+            memcpy(&lastActivityBlock, activityData.data(), 4);
+            
+            // Check if active in last 10,000 blocks
+            int currentHeight = ::chainActive.Height();
+            if (currentHeight - lastActivityBlock > 10000) {
+                return false;
+            }
+        }
+    } else {
+        // No activity record - not a DAO member
+        return false;
+    }
+    
+    return true;
 }
 
 } // namespace CVM

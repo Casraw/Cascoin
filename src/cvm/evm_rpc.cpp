@@ -12,6 +12,8 @@
 #include <cvm/txbuilder.h>
 #include <cvm/trust_context.h>
 #include <cvm/address_index.h>
+#include <cvm/execution_tracer.h>
+#include <cvm/reputation.h>
 #include <validation.h>
 #include <chainparams.h>
 #include <util.h>
@@ -26,6 +28,10 @@
 #include <chain.h>
 #include <consensus/validation.h>
 #include <net.h>
+#include <txdb.h>
+
+// External declarations
+extern CTxMemPool mempool;
 
 // Global connection manager
 extern std::unique_ptr<CConnman> g_connman;
@@ -722,19 +728,138 @@ UniValue debug_traceTransaction(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Transaction not found");
     }
     
-    // TODO: Implement full execution tracing
-    // For now, return basic information
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("gas", 21000); // Placeholder
-    result.pushKV("failed", false);
-    result.pushKV("returnValue", "0x");
+    // Find block containing transaction
+    CBlockIndex* pindex = nullptr;
+    {
+        LOCK(cs_main);
+        auto it = mapBlockIndex.find(hashBlock);
+        if (it != mapBlockIndex.end()) {
+            pindex = it->second;
+        }
+    }
     
-    UniValue structLogs(UniValue::VARR);
-    result.pushKV("structLogs", structLogs);
+    if (!pindex) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
+    }
     
-    LogPrintf("debug_traceTransaction: Full tracing not yet implemented\n");
+    // Parse tracer options
+    std::string tracerType = "default";
+    UniValue tracerOptions(UniValue::VOBJ);
     
-    return result;
+    if (request.params.size() > 1 && request.params[1].isObject()) {
+        const UniValue& opts = request.params[1];
+        if (opts.exists("tracer") && opts["tracer"].isStr()) {
+            tracerType = opts["tracer"].get_str();
+        }
+        if (opts.exists("tracerConfig") && opts["tracerConfig"].isObject()) {
+            tracerOptions = opts["tracerConfig"];
+        }
+    }
+    
+    // Create tracer
+    auto tracer = CVM::TracerFactory::CreateTracer(tracerType);
+    CVM::TracerFactory::ParseTracerOptions(tracer.get(), tracerOptions);
+    
+    // Check if this is a CVM/EVM transaction
+    int cvmOutputIndex = CVM::FindCVMOpReturn(*tx);
+    if (cvmOutputIndex < 0) {
+        // Not a CVM transaction
+        UniValue result(UniValue::VOBJ);
+        result.pushKV("gas", 21000);
+        result.pushKV("failed", false);
+        result.pushKV("returnValue", "0x");
+        result.pushKV("structLogs", UniValue(UniValue::VARR));
+        return result;
+    }
+    
+    // Parse CVM data
+    CVM::CVMOpType opType;
+    std::vector<uint8_t> data;
+    if (!CVM::ParseCVMOpReturn(tx->vout[cvmOutputIndex], opType, data)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid CVM OP_RETURN format");
+    }
+    
+    // Create CVM database instance
+    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    
+    // Create trust context
+    auto trustContext = std::make_shared<CVM::TrustContext>(&db);
+    
+    // Get sender address
+    uint160 senderAddr;
+    if (!tx->vin.empty()) {
+        // Extract from first input (simplified)
+        senderAddr = uint160();
+    }
+    
+    // Set caller reputation in tracer
+    CVM::ReputationSystem repSystem(db);
+    CVM::ReputationScore repScore;
+    int16_t reputation = 0;
+    if (repSystem.GetReputation(senderAddr, repScore)) {
+        reputation = repScore.score;
+    }
+    tracer->SetCallerReputation(reputation);
+    
+    // Create EnhancedVM with tracer
+    CVM::EnhancedVM vm(&db, trustContext);
+    
+    // Start tracing
+    tracer->StartTrace(hash);
+    
+    // Execute transaction with tracing
+    CVM::EnhancedExecutionResult execResult;
+    
+    if (opType == CVM::CVMOpType::CONTRACT_DEPLOY || opType == CVM::CVMOpType::EVM_DEPLOY) {
+        // Parse deployment data
+        CVM::CVMDeployData deployData;
+        if (!CVM::ParseCVMDeployData(data, deployData)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid deployment data");
+        }
+        
+        // Execute deployment with tracing
+        execResult = vm.DeployContract(
+            deployData.bytecode,
+            deployData.constructorData,
+            deployData.gasLimit,
+            senderAddr,
+            0, // value
+            pindex->nHeight,
+            pindex->GetBlockHash(),
+            pindex->nTime
+        );
+    } else if (opType == CVM::CVMOpType::CONTRACT_CALL || opType == CVM::CVMOpType::EVM_CALL) {
+        // Parse call data
+        CVM::CVMCallData callData;
+        if (!CVM::ParseCVMCallData(data, callData)) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid call data");
+        }
+        
+        // Execute call with tracing
+        execResult = vm.CallContract(
+            callData.contractAddress,
+            callData.callData,
+            callData.gasLimit,
+            senderAddr,
+            0, // value
+            pindex->nHeight,
+            pindex->GetBlockHash(),
+            pindex->nTime
+        );
+    }
+    
+    // Stop tracing and get trace
+    CVM::ExecutionTrace trace = tracer->StopTrace();
+    
+    // Set trace data from execution result
+    trace.totalGas = execResult.gas_used;
+    trace.failed = !execResult.success;
+    trace.returnValue = "0x" + HexStr(execResult.return_data);
+    trace.reputationGasDiscount = execResult.reputation_gas_discount;
+    trace.trustGatePassed = execResult.trust_gate_passed;
+    
+    // Convert to JSON
+    return trace.ToJSON(tracerType);
 }
 
 UniValue debug_traceCall(const JSONRPCRequest& request)
@@ -765,22 +890,107 @@ UniValue debug_traceCall(const JSONRPCRequest& request)
             + HelpExampleRpc("debug_traceCall", "{\"to\":\"0x...\",\"data\":\"0x...\"}")
         );
 
-    // Execute the call first
-    UniValue callResult = cas_call(request);
+    // Parse call parameters
+    const UniValue& callObj = request.params[0];
     
-    // TODO: Implement full execution tracing
-    // For now, return basic information
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("gas", 21000); // Placeholder
-    result.pushKV("failed", false);
-    result.pushKV("returnValue", callResult.get_str());
+    if (!callObj.isObject()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Call parameter must be an object");
+    }
     
-    UniValue structLogs(UniValue::VARR);
-    result.pushKV("structLogs", structLogs);
+    // Extract call parameters
+    if (!callObj.exists("to") || !callObj["to"].isStr()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Missing 'to' address");
+    }
     
-    LogPrintf("debug_traceCall: Full tracing not yet implemented\n");
+    uint160 contractAddr = ParseAddress(callObj["to"].get_str());
     
-    return result;
+    std::vector<uint8_t> callData;
+    if (callObj.exists("data") && callObj["data"].isStr()) {
+        std::string dataHex = callObj["data"].get_str();
+        if (dataHex.substr(0, 2) == "0x") {
+            dataHex = dataHex.substr(2);
+        }
+        callData = ParseHex(dataHex);
+    }
+    
+    uint160 callerAddr;
+    if (callObj.exists("from") && callObj["from"].isStr()) {
+        callerAddr = ParseAddress(callObj["from"].get_str());
+    }
+    
+    uint64_t gasLimit = 10000000; // Default 10M gas
+    if (callObj.exists("gas") && callObj["gas"].isNum()) {
+        gasLimit = callObj["gas"].get_int64();
+    }
+    
+    // Parse tracer options
+    std::string tracerType = "default";
+    UniValue tracerOptions(UniValue::VOBJ);
+    
+    if (request.params.size() > 2 && request.params[2].isObject()) {
+        const UniValue& opts = request.params[2];
+        if (opts.exists("tracer") && opts["tracer"].isStr()) {
+            tracerType = opts["tracer"].get_str();
+        }
+        if (opts.exists("tracerConfig") && opts["tracerConfig"].isObject()) {
+            tracerOptions = opts["tracerConfig"];
+        }
+    }
+    
+    // Create tracer
+    auto tracer = CVM::TracerFactory::CreateTracer(tracerType);
+    CVM::TracerFactory::ParseTracerOptions(tracer.get(), tracerOptions);
+    
+    // Create CVM database instance
+    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    
+    // Create trust context
+    auto trustContext = std::make_shared<CVM::TrustContext>(&db);
+    
+    // Set caller reputation in tracer
+    CVM::ReputationSystem repSystem(db);
+    CVM::ReputationScore repScore;
+    int16_t reputation = 0;
+    if (repSystem.GetReputation(callerAddr, repScore)) {
+        reputation = repScore.score;
+    }
+    tracer->SetCallerReputation(reputation);
+    
+    // Create EnhancedVM
+    CVM::EnhancedVM vm(&db, trustContext);
+    
+    // Start tracing
+    tracer->StartTrace();
+    
+    // Get current block info
+    int blockHeight = chainActive.Height();
+    uint256 blockHash = chainActive.Tip()->GetBlockHash();
+    int64_t timestamp = chainActive.Tip()->nTime;
+    
+    // Execute call with tracing
+    CVM::EnhancedExecutionResult execResult = vm.CallContract(
+        contractAddr,
+        callData,
+        gasLimit,
+        callerAddr,
+        0, // value
+        blockHeight,
+        blockHash,
+        timestamp
+    );
+    
+    // Stop tracing and get trace
+    CVM::ExecutionTrace trace = tracer->StopTrace();
+    
+    // Set trace data from execution result
+    trace.totalGas = execResult.gas_used;
+    trace.failed = !execResult.success;
+    trace.returnValue = "0x" + HexStr(execResult.return_data);
+    trace.reputationGasDiscount = execResult.reputation_gas_discount;
+    trace.trustGatePassed = execResult.trust_gate_passed;
+    
+    // Convert to JSON
+    return trace.ToJSON(tracerType);
 }
 
 UniValue cas_snapshot(const JSONRPCRequest& request)

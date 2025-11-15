@@ -8,7 +8,11 @@
 #include <hash.h>
 #include <util.h>
 #include <script/standard.h>
+#include <script/script.h>
 #include <coins.h>
+#include <pubkey.h>
+#include <key.h>
+#include <primitives/transaction.h>
 
 namespace CVM {
 
@@ -139,12 +143,66 @@ uint160 NonceManager::GetTransactionSender(const CTransaction& tx) {
         return uint160();
     }
     
-    // For CVM/EVM transactions, sender is extracted from scriptSig or witness
-    // This is a simplified implementation
-    // In production, you'd need to verify signatures and extract pubkey
+    const CTxIn& txin = tx.vin[0];
+    const CScript& scriptSig = txin.scriptSig;
     
-    // For now, return empty - this will be properly implemented
-    // when integrating with transaction validation
+    // Try to extract address from scriptSig
+    // P2PKH format: <sig> <pubkey>
+    // P2SH format: <sig> ... <redeemScript>
+    
+    if (scriptSig.size() > 0) {
+        // Parse scriptSig to get pubkey
+        CScript::const_iterator pc = scriptSig.begin();
+        std::vector<unsigned char> data;
+        opcodetype opcode;
+        
+        // Skip signature
+        if (scriptSig.GetOp(pc, opcode, data)) {
+            // Get pubkey
+            if (scriptSig.GetOp(pc, opcode, data)) {
+                if (data.size() == 33 || data.size() == 65) {
+                    // Valid pubkey size (compressed or uncompressed)
+                    CPubKey pubkey(data.begin(), data.end());
+                    if (pubkey.IsValid()) {
+                        return pubkey.GetID();
+                    }
+                }
+            }
+        }
+    }
+    
+    // Try witness data for SegWit transactions (P2WPKH)
+    if (!tx.vin.empty()) {
+        const auto& scriptWitness = tx.vin[0].scriptWitness;
+        if (scriptWitness.stack.size() >= 2) {
+            // P2WPKH: witness stack has <signature> <pubkey>
+            const std::vector<unsigned char>& pubkeyData = scriptWitness.stack.back();
+            if (pubkeyData.size() == 33 || pubkeyData.size() == 65) {
+                CPubKey pubkey(pubkeyData.begin(), pubkeyData.end());
+                if (pubkey.IsValid()) {
+                    return pubkey.GetID();
+                }
+            }
+        }
+    }
+    
+    // Try P2SH-P2WPKH (nested SegWit)
+    if (!tx.vin.empty()) {
+        const auto& scriptWitness = tx.vin[0].scriptWitness;
+        if (scriptWitness.stack.size() >= 2) {
+            // Extract pubkey from witness
+            const std::vector<unsigned char>& pubkeyData = scriptWitness.stack.back();
+            if (pubkeyData.size() == 33 || pubkeyData.size() == 65) {
+                CPubKey pubkey(pubkeyData.begin(), pubkeyData.end());
+                if (pubkey.IsValid()) {
+                    return pubkey.GetID();
+                }
+            }
+        }
+    }
+    
+    // Could not extract address
+    LogPrint(BCLog::CVM, "NonceManager: Could not extract sender address from transaction\n");
     return uint160();
 }
 
