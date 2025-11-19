@@ -725,26 +725,61 @@ ValidationVote HATConsensusValidator::CalculateValidatorVote(
     const HATv2Score& calculated,
     bool hasWoT)
 {
-    // If validator has WoT connection, can verify full score
+    // Component-based verification logic (Task 19.2.1)
+    ComponentStatus status;
+    
+    // Define tolerances for each component
+    const double BEHAVIOR_TOLERANCE = 0.03;  // ±3 points (3% of 100)
+    const double ECONOMIC_TOLERANCE = 0.03;  // ±3 points
+    const double TEMPORAL_TOLERANCE = 0.03;  // ±3 points
+    const double WOT_TOLERANCE = 0.05;       // ±5 points (WoT is more subjective)
+    
+    // Verify each component
+    status.behaviorDifference = std::abs(selfReported.behaviorScore - calculated.behaviorScore);
+    status.behaviorVerified = (status.behaviorDifference <= BEHAVIOR_TOLERANCE);
+    
+    status.economicDifference = std::abs(selfReported.economicScore - calculated.economicScore);
+    status.economicVerified = (status.economicDifference <= ECONOMIC_TOLERANCE);
+    
+    status.temporalDifference = std::abs(selfReported.temporalScore - calculated.temporalScore);
+    status.temporalVerified = (status.temporalDifference <= TEMPORAL_TOLERANCE);
+    
     if (hasWoT) {
-        if (ScoresMatch(selfReported, calculated, SCORE_TOLERANCE)) {
+        // Validator WITH WoT connection: verify all 4 components
+        double wotDifference = std::abs(selfReported.wotScore - calculated.wotScore);
+        status.wotVerified = (wotDifference <= WOT_TOLERANCE);
+        
+        // All components must match for ACCEPT
+        if (status.behaviorVerified && status.economicVerified && 
+            status.temporalVerified && status.wotVerified) {
+            LogPrint(BCLog::CVM, "HAT Consensus: ACCEPT - All components verified (WoT validator)\n");
             return ValidationVote::ACCEPT;
-        } else {
-            return ValidationVote::REJECT;
         }
-    }
-    
-    // Without WoT, can only verify non-WoT components
-    // Check if non-WoT components match
-    bool behaviorMatches = std::abs(selfReported.behaviorScore - calculated.behaviorScore) <= SCORE_TOLERANCE;
-    bool economicMatches = std::abs(selfReported.economicScore - calculated.economicScore) <= SCORE_TOLERANCE;
-    bool temporalMatches = std::abs(selfReported.temporalScore - calculated.temporalScore) <= SCORE_TOLERANCE;
-    
-    if (behaviorMatches && economicMatches && temporalMatches) {
-        // Non-WoT components match, but can't verify WoT component
-        return ValidationVote::ABSTAIN;
+        
+        // If any component fails, REJECT
+        LogPrint(BCLog::CVM, "HAT Consensus: REJECT - Component mismatch (WoT validator): "
+                 "Behavior=%s (%.3f), Economic=%s (%.3f), Temporal=%s (%.3f), WoT=%s (%.3f)\n",
+                 status.behaviorVerified ? "OK" : "FAIL", status.behaviorDifference,
+                 status.economicVerified ? "OK" : "FAIL", status.economicDifference,
+                 status.temporalVerified ? "OK" : "FAIL", status.temporalDifference,
+                 status.wotVerified ? "OK" : "FAIL", wotDifference);
+        return ValidationVote::REJECT;
     } else {
-        // Non-WoT components don't match - clear fraud
+        // Validator WITHOUT WoT connection: verify only non-WoT components
+        // IGNORE WoT component completely
+        
+        // All non-WoT components must match for ACCEPT
+        if (status.behaviorVerified && status.economicVerified && status.temporalVerified) {
+            LogPrint(BCLog::CVM, "HAT Consensus: ACCEPT - Non-WoT components verified (non-WoT validator)\n");
+            return ValidationVote::ACCEPT;
+        }
+        
+        // If any non-WoT component fails, REJECT
+        LogPrint(BCLog::CVM, "HAT Consensus: REJECT - Component mismatch (non-WoT validator): "
+                 "Behavior=%s (%.3f), Economic=%s (%.3f), Temporal=%s (%.3f)\n",
+                 status.behaviorVerified ? "OK" : "FAIL", status.behaviorDifference,
+                 status.economicVerified ? "OK" : "FAIL", status.economicDifference,
+                 status.temporalVerified ? "OK" : "FAIL", status.temporalDifference);
         return ValidationVote::REJECT;
     }
 }
@@ -753,31 +788,33 @@ HATv2Score HATConsensusValidator::CalculateNonWoTComponents(const uint160& addre
     HATv2Score score;
     score.address = address;
     score.timestamp = GetTime();
-    
-    // Calculate only non-WoT components
-    BehaviorMetrics behavior = secureHAT.GetBehaviorMetrics(address);
-    StakeInfo stake = secureHAT.GetStakeInfo(address);
-    TemporalMetrics temporal = secureHAT.GetTemporalMetrics(address);
-    
-    // Behavior component (40% weight)
-    score.behaviorScore = behavior.CalculateVolumeScore();
-    
-    // Economic component (20% weight)
-    score.economicScore = (stake.amount / COIN) * stake.GetTimeWeight();
-    
-    // Temporal component (10% weight)
-    score.temporalScore = temporal.CalculateActivityScore();
-    
-    // WoT component is 0 (can't calculate without WoT connection)
-    score.wotScore = 0;
     score.hasWoTConnection = false;
+    score.wotPathCount = 0;
+    score.wotPathStrength = 0.0;
     
-    // Final score is weighted sum (without WoT)
-    score.finalScore = static_cast<int16_t>(
-        (score.behaviorScore * 0.4) +
-        (score.economicScore * 0.2) +
-        (score.temporalScore * 0.1)
-    );
+    // Get component breakdown from SecureHAT (Task 19.2.1)
+    // Note: We pass address as both target and viewer since we don't have WoT connection
+    TrustBreakdown breakdown = secureHAT.CalculateWithBreakdown(address, address);
+    
+    // Extract non-WoT components (actual HAT v2 scores, not placeholders)
+    score.behaviorScore = breakdown.secure_behavior;
+    score.economicScore = breakdown.secure_economic;
+    score.temporalScore = breakdown.secure_temporal;
+    score.wotScore = 0.0;  // No WoT component for validators without connection
+    
+    // Calculate final score WITHOUT WoT component
+    // Adjust weights: Behavior 57%, Economic 29%, Temporal 14% (proportional to original 40/20/10)
+    double finalTrust = 0.57 * score.behaviorScore +
+                       0.29 * score.economicScore +
+                       0.14 * score.temporalScore;
+    
+    score.finalScore = static_cast<int16_t>(finalTrust * 100.0);
+    score.finalScore = std::max(int16_t(0), std::min(int16_t(100), score.finalScore));
+    
+    LogPrint(BCLog::CVM, "HAT Consensus: Calculated non-WoT score for %s: "
+             "Behavior=%.2f, Economic=%.2f, Temporal=%.2f, Final=%d\n",
+             address.ToString(), score.behaviorScore, score.economicScore,
+             score.temporalScore, score.finalScore);
     
     return score;
 }
