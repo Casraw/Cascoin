@@ -307,6 +307,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/nonce_manager.cpp \
   cvm/evm_rpc.cpp \
   cvm/hat_consensus.cpp \
+  cvm/eclipse_sybil_protection.cpp \
   cvm/consensus_validator.cpp \
   cvm/trust_attestation.cpp \
   cvm/validator_attestation.cpp \

@@ -7,6 +7,7 @@
 #include <cvm/securehat.h>
 #include <cvm/trustgraph.h>
 #include <cvm/validator_keys.h>
+#include <cvm/walletcluster.h>
 #include <chain.h>
 #include <hash.h>
 #include <random.h>
@@ -188,7 +189,8 @@ bool ValidationResponse::VerifySignature() const {
 // HATConsensusValidator implementation
 
 HATConsensusValidator::HATConsensusValidator(CVMDatabase& db, SecureHAT& hat, TrustGraph& graph)
-    : database(db), secureHAT(hat), trustGraph(graph)
+    : database(db), secureHAT(hat), trustGraph(graph),
+      m_eclipseSybilProtection(new EclipseSybilProtection(db, graph))
 {
 }
 
@@ -274,7 +276,67 @@ std::vector<uint160> HATConsensusValidator::SelectRandomValidators(
         validators.push_back(candidatePool[i]);
     }
     
-    LogPrint(BCLog::CVM, "HAT Consensus: Selected %zu validators from pool of %zu\n",
+    // Eclipse/Sybil Protection: Validate validator set diversity
+    if (!ValidateValidatorSetDiversity(validators, blockHeight)) {
+        LogPrint(BCLog::CVM, "HAT Consensus: Validator set failed diversity check, reselecting...\n");
+        
+        // Try to find a more diverse set by continuing selection
+        for (size_t i = selectCount; i < candidatePool.size() && validators.size() < MIN_VALIDATORS * 2; i++) {
+            validators.push_back(candidatePool[i]);
+            
+            // Check if diversity improved
+            if (ValidateValidatorSetDiversity(validators, blockHeight)) {
+                LogPrint(BCLog::CVM, "HAT Consensus: Found diverse validator set with %zu validators\n",
+                        validators.size());
+                break;
+            }
+        }
+    }
+    
+    // Eclipse/Sybil Protection: Detect Sybil network
+    SybilDetectionResult sybilResult = DetectValidatorSybilNetwork(validators, blockHeight);
+    if (sybilResult.isSybilNetwork) {
+        LogPrint(BCLog::CVM, "HAT Consensus: WARNING - Sybil network detected among validators (confidence: %.0f%%): %s\n",
+                sybilResult.confidence * 100, sybilResult.reason);
+        
+        // Remove suspicious validators
+        std::vector<uint160> cleanValidators;
+        for (const auto& validator : validators) {
+            bool isSuspicious = false;
+            for (const auto& suspicious : sybilResult.suspiciousValidators) {
+                if (validator == suspicious) {
+                    isSuspicious = true;
+                    break;
+                }
+            }
+            if (!isSuspicious) {
+                cleanValidators.push_back(validator);
+            }
+        }
+        
+        // If we removed too many, we need to add more from the pool
+        if (cleanValidators.size() < MIN_VALIDATORS) {
+            LogPrint(BCLog::CVM, "HAT Consensus: Not enough clean validators (%zu), adding more from pool\n",
+                    cleanValidators.size());
+            
+            for (size_t i = selectCount; i < candidatePool.size() && cleanValidators.size() < MIN_VALIDATORS; i++) {
+                bool isAlreadySelected = false;
+                for (const auto& selected : validators) {
+                    if (candidatePool[i] == selected) {
+                        isAlreadySelected = true;
+                        break;
+                    }
+                }
+                if (!isAlreadySelected) {
+                    cleanValidators.push_back(candidatePool[i]);
+                }
+            }
+        }
+        
+        validators = cleanValidators;
+    }
+    
+    LogPrint(BCLog::CVM, "HAT Consensus: Selected %zu validators from pool of %zu (after Eclipse/Sybil protection)\n",
              validators.size(), candidatePool.size());
     
     return validators;
@@ -1652,11 +1714,47 @@ bool CVM::HATConsensusValidator::SendChallengeToValidator(
 // Anti-Manipulation Helper Methods
 
 WalletCluster CVM::HATConsensusValidator::GetWalletCluster(const uint160& address) {
-    // TODO: Integrate with actual wallet clustering system
-    // For now, return single-address cluster
+    // Integrate with actual wallet clustering system
+    WalletClusterer clusterer(database);
+    
+    // Get all addresses in the same cluster
+    std::set<uint160> members = clusterer.GetClusterMembers(address);
+    
+    // Build WalletCluster structure
     WalletCluster cluster;
-    cluster.addresses.push_back(address);
-    cluster.confidence = 1.0;
+    cluster.addresses = std::vector<uint160>(members.begin(), members.end());
+    
+    // Calculate confidence based on cluster size and evidence strength
+    // Larger clusters with more transaction evidence = higher confidence
+    WalletClusterInfo info = clusterer.GetClusterInfo(clusterer.GetClusterForAddress(address));
+    
+    // Confidence formula:
+    // - Single address: 1.0 (certain)
+    // - 2-5 addresses: 0.9 (high confidence)
+    // - 6-10 addresses: 0.8 (good confidence)
+    // - 11-20 addresses: 0.7 (moderate confidence)
+    // - 21+ addresses: 0.6 (lower confidence, but still significant)
+    
+    if (cluster.addresses.size() == 1) {
+        cluster.confidence = 1.0;
+    } else if (cluster.addresses.size() <= 5) {
+        cluster.confidence = 0.9;
+    } else if (cluster.addresses.size() <= 10) {
+        cluster.confidence = 0.8;
+    } else if (cluster.addresses.size() <= 20) {
+        cluster.confidence = 0.7;
+    } else {
+        cluster.confidence = 0.6;
+    }
+    
+    // Adjust confidence based on transaction count (more evidence = higher confidence)
+    if (info.transaction_count > 100) {
+        cluster.confidence = std::min(1.0, cluster.confidence + 0.1);
+    }
+    
+    LogPrint(BCLog::CVM, "HAT Consensus: Wallet cluster for %s: %d addresses, confidence=%.2f\n",
+             address.ToString(), cluster.addresses.size(), cluster.confidence);
+    
     return cluster;
 }
 
@@ -1742,6 +1840,423 @@ bool CVM::HATConsensusValidator::ValidateFraudRecord(const FraudRecord& record) 
     
     // All checks passed
     return true;
+}
+
+// Eclipse/Sybil Protection Implementation (Task 19.2.4)
+
+bool HATConsensusValidator::IsValidatorEligible(const uint160& validatorAddr, int currentHeight)
+{
+    return m_eclipseSybilProtection->IsValidatorEligible(validatorAddr, currentHeight);
+}
+
+SybilDetectionResult HATConsensusValidator::DetectValidatorSybilNetwork(
+    const std::vector<uint160>& validators,
+    int currentHeight)
+{
+    return m_eclipseSybilProtection->DetectSybilNetwork(validators, currentHeight);
+}
+
+bool HATConsensusValidator::ValidateValidatorSetDiversity(
+    const std::vector<uint160>& validators,
+    int currentHeight)
+{
+    return m_eclipseSybilProtection->ValidateValidatorSetDiversity(validators, currentHeight);
+}
+
+void HATConsensusValidator::UpdateValidatorNetworkInfo(
+    const uint160& validatorAddr,
+    const CNetAddr& ipAddr,
+    const std::set<uint160>& peers,
+    int currentHeight)
+{
+    m_eclipseSybilProtection->UpdateValidatorNetworkInfo(validatorAddr, ipAddr, peers, currentHeight);
+}
+
+void HATConsensusValidator::UpdateValidatorStakeInfo(
+    const uint160& validatorAddr,
+    const ValidatorStakeInfo& stakeInfo)
+{
+    m_eclipseSybilProtection->UpdateValidatorStakeInfo(validatorAddr, stakeInfo);
+}
+
+bool HATConsensusValidator::CheckCrossGroupAgreement(
+    const std::vector<uint160>& validators,
+    const std::map<uint160, int>& votes)
+{
+    return m_eclipseSybilProtection->CheckCrossGroupAgreement(validators, votes);
+}
+
+bool HATConsensusValidator::EscalateSybilDetectionToDAO(
+    const SybilDetectionResult& detectionResult,
+    const CTransaction& tx)
+{
+    if (!detectionResult.isSybilNetwork) {
+        return false;
+    }
+    
+    // Only escalate if confidence is high (>60%)
+    if (detectionResult.confidence < 0.60) {
+        LogPrint(BCLog::CVM, "HATConsensusValidator: Sybil detection confidence %.0f%% too low for DAO escalation\n",
+                detectionResult.confidence * 100);
+        return false;
+    }
+    
+    // Create dispute case
+    DisputeCase dispute;
+    dispute.disputeId = tx.GetHash();
+    dispute.txHash = tx.GetHash();
+    dispute.senderAddress = uint160();  // Not applicable for Sybil detection
+    dispute.resolved = false;
+    dispute.approved = false;
+    dispute.resolutionTimestamp = 0;
+    
+    // Add evidence
+    dispute.disputeReason = "Sybil network detected with " + std::to_string(detectionResult.confidence * 100) + "% confidence: " + detectionResult.reason;
+    
+    // Add suspicious validators to evidence data (serialize as string for now)
+    std::string validatorList = "Suspicious validators: ";
+    for (size_t i = 0; i < detectionResult.suspiciousValidators.size(); i++) {
+        validatorList += detectionResult.suspiciousValidators[i].ToString();
+        if (i < detectionResult.suspiciousValidators.size() - 1) {
+            validatorList += ", ";
+        }
+    }
+    dispute.evidenceData = std::vector<uint8_t>(validatorList.begin(), validatorList.end());
+    
+    // Escalate to DAO
+    bool success = EscalateToDAO(dispute);
+    
+    if (success) {
+        LogPrint(BCLog::CVM, "HATConsensusValidator: Escalated Sybil network detection to DAO (confidence: %.0f%%)\n",
+                detectionResult.confidence * 100);
+    } else {
+        LogPrint(BCLog::CVM, "HATConsensusValidator: Failed to escalate Sybil network detection to DAO\n");
+    }
+    
+    return success;
+}
+
+// Sybil Attack Detection Implementation (Task 19.2.3)
+
+bool HATConsensusValidator::DetectSybilNetwork(const uint160& address) {
+    // Calculate Sybil risk score
+    double riskScore = CalculateSybilRiskScore(address);
+    
+    // Threshold for Sybil detection: 0.7 or higher
+    const double SYBIL_THRESHOLD = 0.7;
+    
+    if (riskScore >= SYBIL_THRESHOLD) {
+        LogPrintf("HAT Consensus: Sybil network detected for address %s (risk=%.2f)\n",
+                 address.ToString(), riskScore);
+        
+        // Create alert for review
+        std::string reason = strprintf("High Sybil risk score: %.2f", riskScore);
+        CreateSybilAlert(address, riskScore, reason);
+        
+        return true;
+    }
+    
+    return false;
+}
+
+double CVM::HATConsensusValidator::CalculateSybilRiskScore(const uint160& address) {
+    double riskScore = 0.0;
+    
+    // Get wallet cluster
+    WalletCluster cluster = GetWalletCluster(address);
+    
+    // FACTOR 1: Cluster size (weight: 0.25)
+    // Large clusters are suspicious (potential Sybil network)
+    double clusterSizeRisk = 0.0;
+    if (cluster.addresses.size() > 50) {
+        clusterSizeRisk = 1.0;  // Very suspicious
+    } else if (cluster.addresses.size() > 20) {
+        clusterSizeRisk = 0.8;  // Suspicious
+    } else if (cluster.addresses.size() > 10) {
+        clusterSizeRisk = 0.5;  // Moderately suspicious
+    } else if (cluster.addresses.size() > 5) {
+        clusterSizeRisk = 0.3;  // Slightly suspicious
+    }
+    // else: 0.0 (not suspicious)
+    
+    riskScore += clusterSizeRisk * 0.25;
+    
+    // FACTOR 2: Cluster creation time (weight: 0.20)
+    // All addresses created recently = suspicious
+    WalletClusterer clusterer(database);
+    WalletClusterInfo info = clusterer.GetClusterInfo(clusterer.GetClusterForAddress(address));
+    
+    int64_t currentTime = GetTime();
+    int64_t clusterAge = currentTime - info.first_seen;
+    
+    double creationTimeRisk = 0.0;
+    if (clusterAge < 86400) {  // Less than 1 day old
+        creationTimeRisk = 1.0;
+    } else if (clusterAge < 604800) {  // Less than 1 week old
+        creationTimeRisk = 0.7;
+    } else if (clusterAge < 2592000) {  // Less than 30 days old
+        creationTimeRisk = 0.4;
+    }
+    // else: 0.0 (established cluster)
+    
+    riskScore += creationTimeRisk * 0.20;
+    
+    // FACTOR 3: Transaction patterns (weight: 0.20)
+    // Coordinated activity = suspicious
+    double patternRisk = 0.0;
+    
+    // Check if all addresses have similar transaction counts
+    if (cluster.addresses.size() > 1) {
+        std::vector<uint32_t> txCounts;
+        for (const auto& addr : cluster.addresses) {
+            WalletClusterInfo addrInfo = clusterer.GetClusterInfo(addr);
+            txCounts.push_back(addrInfo.transaction_count);
+        }
+        
+        // Calculate coefficient of variation
+        if (!txCounts.empty()) {
+            double sum = 0.0;
+            for (uint32_t count : txCounts) {
+                sum += count;
+            }
+            double mean = sum / txCounts.size();
+            
+            double variance = 0.0;
+            for (uint32_t count : txCounts) {
+                variance += (count - mean) * (count - mean);
+            }
+            variance /= txCounts.size();
+            double stddev = std::sqrt(variance);
+            
+            double cv = (mean > 0) ? (stddev / mean) : 0.0;
+            
+            // Low CV = coordinated (suspicious)
+            if (cv < 0.3) {
+                patternRisk = 0.9;
+            } else if (cv < 0.5) {
+                patternRisk = 0.6;
+            } else if (cv < 0.7) {
+                patternRisk = 0.3;
+            }
+        }
+    }
+    
+    riskScore += patternRisk * 0.20;
+    
+    // FACTOR 4: Reputation patterns (weight: 0.20)
+    // All addresses have similar reputation scores = suspicious
+    double reputationRisk = 0.0;
+    
+    if (cluster.addresses.size() > 1) {
+        std::vector<double> reputations;
+        for (const auto& addr : cluster.addresses) {
+            double rep = clusterer.GetEffectiveHATScore(addr);
+            reputations.push_back(rep);
+        }
+        
+        // Calculate coefficient of variation for reputation
+        if (!reputations.empty()) {
+            double sum = 0.0;
+            for (double rep : reputations) {
+                sum += rep;
+            }
+            double mean = sum / reputations.size();
+            
+            double variance = 0.0;
+            for (double rep : reputations) {
+                variance += (rep - mean) * (rep - mean);
+            }
+            variance /= reputations.size();
+            double stddev = std::sqrt(variance);
+            
+            double cv = (mean > 0) ? (stddev / mean) : 0.0;
+            
+            // Low CV = similar reputations (suspicious)
+            if (cv < 0.1) {
+                reputationRisk = 1.0;
+            } else if (cv < 0.2) {
+                reputationRisk = 0.7;
+            } else if (cv < 0.3) {
+                reputationRisk = 0.4;
+            }
+        }
+    }
+    
+    riskScore += reputationRisk * 0.20;
+    
+    // FACTOR 5: Fraud history (weight: 0.15)
+    // Multiple fraud attempts in cluster = suspicious
+    int fraudCount = CountRecentFraudRecords(cluster.addresses, 10000);  // Last 10,000 blocks
+    
+    double fraudRisk = 0.0;
+    if (fraudCount >= 5) {
+        fraudRisk = 1.0;
+    } else if (fraudCount >= 3) {
+        fraudRisk = 0.7;
+    } else if (fraudCount >= 1) {
+        fraudRisk = 0.4;
+    }
+    
+    riskScore += fraudRisk * 0.15;
+    
+    LogPrint(BCLog::CVM, "HAT Consensus: Sybil risk score for %s: %.2f (cluster=%d, age=%d, pattern=%.2f, rep=%.2f, fraud=%d)\n",
+             address.ToString(), riskScore, cluster.addresses.size(), clusterAge, patternRisk, reputationRisk, fraudCount);
+    
+    return riskScore;
+}
+
+bool CVM::HATConsensusValidator::ApplySybilPenalty(const WalletCluster& cluster) {
+    LogPrintf("HAT Consensus: Applying Sybil penalty to cluster with %d addresses\n",
+             cluster.addresses.size());
+    
+    // Apply reputation penalty to all addresses in cluster
+    const int16_t SYBIL_PENALTY = 50;  // -50 reputation points
+    
+    for (const auto& addr : cluster.addresses) {
+        // Record fraud attempt for each address
+        FraudRecord record;
+        record.fraudsterAddress = addr;
+        record.timestamp = GetTime();
+        record.blockHeight = chainActive.Height();
+        record.reputationPenalty = SYBIL_PENALTY;
+        record.scoreDifference = SYBIL_PENALTY;
+        
+        // Save to database
+        std::string key = std::string(1, DB_FRAUD_RECORD) + addr.ToString() + "_sybil_" + std::to_string(record.timestamp);
+        WriteToDatabase(database, key, record);
+        
+        LogPrint(BCLog::CVM, "HAT Consensus: Applied Sybil penalty to address %s\n",
+                 addr.ToString());
+    }
+    
+    return true;
+}
+
+bool CVM::HATConsensusValidator::CreateSybilAlert(const uint160& address, double riskScore, const std::string& reason) {
+    LogPrintf("HAT Consensus: Creating Sybil alert for address %s (risk=%.2f): %s\n",
+             address.ToString(), riskScore, reason);
+    
+    // Create alert structure
+    SybilAlert alert;
+    alert.address = address;
+    alert.riskScore = riskScore;
+    alert.reason = reason;
+    alert.timestamp = GetTime();
+    alert.blockHeight = chainActive.Height();
+    alert.reviewed = false;
+    
+    // Save to database
+    std::string key = "sybil_alert_" + address.ToString() + "_" + std::to_string(alert.timestamp);
+    WriteToDatabase(database, key, alert);
+    
+    // If risk is very high (>= 0.9), automatically apply penalty
+    if (riskScore >= 0.9) {
+        WalletCluster cluster = GetWalletCluster(address);
+        ApplySybilPenalty(cluster);
+    }
+    
+    return true;
+}
+
+bool CVM::HATConsensusValidator::DetectCoordinatedSybilAttack(const std::vector<ValidationResponse>& responses) {
+    if (responses.size() < 3) {
+        return false;  // Need at least 3 validators to detect coordination
+    }
+    
+    // Check for coordinated voting patterns
+    // Indicators:
+    // 1. Multiple validators from same wallet cluster
+    // 2. All validators vote the same way with identical scores
+    // 3. Validators have similar reputation scores
+    // 4. Validators responded at nearly the same time
+    
+    // INDICATOR 1: Check for wallet clustering among validators
+    std::map<uint160, std::vector<uint160>> clusterMap;  // cluster_id -> validator addresses
+    
+    WalletClusterer clusterer(database);
+    for (const auto& response : responses) {
+        uint160 clusterId = clusterer.GetClusterForAddress(response.validatorAddress);
+        clusterMap[clusterId].push_back(response.validatorAddress);
+    }
+    
+    // If any cluster has 3+ validators, that's suspicious
+    for (const auto& pair : clusterMap) {
+        if (pair.second.size() >= 3) {
+            LogPrintf("HAT Consensus: Coordinated Sybil attack detected - %d validators from same cluster\n",
+                     pair.second.size());
+            return true;
+        }
+    }
+    
+    // INDICATOR 2: Check for identical votes and scores
+    std::map<std::string, int> votePatterns;  // vote pattern -> count
+    
+    for (const auto& response : responses) {
+        std::string pattern = strprintf("%d_%d_%d",
+                                       static_cast<int>(response.vote),
+                                       response.calculatedScore.finalScore,
+                                       response.calculatedScore.behaviorScore);
+        votePatterns[pattern]++;
+    }
+    
+    // If 50%+ validators have identical pattern, suspicious
+    for (const auto& pair : votePatterns) {
+        if (pair.second >= (int)(responses.size() * 0.5)) {
+            LogPrintf("HAT Consensus: Coordinated Sybil attack detected - %d validators with identical vote pattern\n",
+                     pair.second);
+            return true;
+        }
+    }
+    
+    // INDICATOR 3: Check for similar reputation scores among validators
+    std::vector<double> validatorReputations;
+    for (const auto& response : responses) {
+        double rep = clusterer.GetEffectiveHATScore(response.validatorAddress);
+        validatorReputations.push_back(rep);
+    }
+    
+    if (validatorReputations.size() >= 3) {
+        double sum = 0.0;
+        for (double rep : validatorReputations) {
+            sum += rep;
+        }
+        double mean = sum / validatorReputations.size();
+        
+        double variance = 0.0;
+        for (double rep : validatorReputations) {
+            variance += (rep - mean) * (rep - mean);
+        }
+        variance /= validatorReputations.size();
+        double stddev = std::sqrt(variance);
+        
+        double cv = (mean > 0) ? (stddev / mean) : 0.0;
+        
+        // Very low CV = coordinated (suspicious)
+        if (cv < 0.1) {
+            LogPrintf("HAT Consensus: Coordinated Sybil attack detected - validators have suspiciously similar reputations (CV=%.2f)\n",
+                     cv);
+            return true;
+        }
+    }
+    
+    // INDICATOR 4: Check for coordinated response timing
+    std::vector<uint64_t> timestamps;
+    for (const auto& response : responses) {
+        timestamps.push_back(response.timestamp);
+    }
+    
+    if (timestamps.size() >= 3) {
+        std::sort(timestamps.begin(), timestamps.end());
+        
+        // Check if all responses came within 1 second
+        uint64_t timeSpan = timestamps.back() - timestamps.front();
+        if (timeSpan <= 1) {
+            LogPrintf("HAT Consensus: Coordinated Sybil attack detected - all validators responded within 1 second\n");
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 } // namespace CVM

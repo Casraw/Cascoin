@@ -13,6 +13,7 @@
 #include <net.h>
 #include <cvm/securehat.h>
 #include <cvm/trustgraph.h>
+#include <cvm/eclipse_sybil_protection.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -27,6 +28,7 @@ namespace CVM {
 class CVMDatabase;
 class SecureHAT;
 class TrustGraph;
+class EclipseSybilProtection;
 
 /**
  * Wallet Cluster
@@ -397,6 +399,33 @@ struct ValidatorStats {
 };
 
 /**
+ * Sybil Alert
+ * 
+ * Alert for suspicious Sybil attack patterns.
+ */
+struct SybilAlert {
+    uint160 address;
+    double riskScore;
+    std::string reason;
+    int64_t timestamp;
+    int blockHeight;
+    bool reviewed;
+    
+    SybilAlert() : riskScore(0), timestamp(0), blockHeight(0), reviewed(false) {}
+    
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(address);
+        READWRITE(riskScore);
+        READWRITE(reason);
+        READWRITE(timestamp);
+        READWRITE(blockHeight);
+        READWRITE(reviewed);
+    }
+};
+
+/**
  * Transaction State
  * 
  * Tracks validation state of transactions in mempool.
@@ -572,6 +601,68 @@ public:
     bool ValidateFraudRecord(const FraudRecord& record);
     
     /**
+     * Sybil Attack Detection: Detect coordinated Sybil networks
+     * 
+     * Analyzes wallet clusters, transaction patterns, and reputation
+     * manipulation to identify Sybil attack networks.
+     * 
+     * @param address Address to analyze
+     * @return true if address is part of suspected Sybil network
+     */
+    bool DetectSybilNetwork(const uint160& address);
+    
+    /**
+     * Sybil Attack Detection: Calculate Sybil risk score
+     * 
+     * Returns a risk score (0.0-1.0) indicating likelihood of Sybil attack.
+     * Higher score = higher risk.
+     * 
+     * Factors:
+     * - Cluster size (large clusters = suspicious)
+     * - Cluster creation time (all addresses created recently = suspicious)
+     * - Transaction patterns (coordinated activity = suspicious)
+     * - Reputation patterns (all addresses have similar scores = suspicious)
+     * - Fraud history (multiple fraud attempts in cluster = suspicious)
+     * 
+     * @param address Address to analyze
+     * @return Risk score (0.0-1.0)
+     */
+    double CalculateSybilRiskScore(const uint160& address);
+    
+    /**
+     * Sybil Attack Detection: Apply reputation penalty for Sybil networks
+     * 
+     * Applies penalties to all addresses in a detected Sybil network.
+     * 
+     * @param cluster Wallet cluster identified as Sybil network
+     * @return true if penalties applied successfully
+     */
+    bool ApplySybilPenalty(const WalletCluster& cluster);
+    
+    /**
+     * Sybil Attack Detection: Create alert for suspicious clustering
+     * 
+     * Creates an alert that can be reviewed by DAO or node operators.
+     * 
+     * @param address Address with suspicious clustering
+     * @param riskScore Calculated risk score
+     * @param reason Description of suspicious patterns
+     * @return true if alert created successfully
+     */
+    bool CreateSybilAlert(const uint160& address, double riskScore, const std::string& reason);
+    
+    /**
+     * Sybil Attack Detection: Validate HAT v2 consensus detects coordinated attacks
+     * 
+     * Tests whether the consensus system properly detects and rejects
+     * coordinated Sybil attacks where multiple addresses vote together.
+     * 
+     * @param responses Validator responses to analyze
+     * @return true if coordinated attack detected
+     */
+    bool DetectCoordinatedSybilAttack(const std::vector<ValidationResponse>& responses);
+    
+    /**
      * Get transaction validation state
      * 
      * @param txHash Transaction hash
@@ -656,6 +747,122 @@ public:
      * @return Validator statistics
      */
     ValidatorStats GetValidatorStats(const uint160& validator);
+    
+    /**
+     * Eclipse/Sybil Protection: Check if validator is eligible
+     * 
+     * Validates:
+     * - Network topology diversity (different IP subnets)
+     * - Peer connection diversity (<50% overlap)
+     * - Validator history (10,000+ blocks)
+     * - Validation history (50+ validations, 85%+ accuracy)
+     * - Stake age (1000+ blocks)
+     * - Stake source diversity (3+ sources)
+     * 
+     * @param validatorAddr Validator address
+     * @param currentHeight Current block height
+     * @return true if validator is eligible
+     */
+    bool IsValidatorEligible(const uint160& validatorAddr, int currentHeight);
+    
+    /**
+     * Eclipse/Sybil Protection: Detect Sybil network among validators
+     * 
+     * Analyzes:
+     * - Network topology (same IP subnets)
+     * - Peer connections (high overlap)
+     * - Stake concentration (>20% control)
+     * - Coordinated behavior (similar patterns)
+     * - WoT group isolation (all from same group)
+     * 
+     * @param validators Validator addresses
+     * @param currentHeight Current block height
+     * @return Detection result with confidence and reasons
+     */
+    SybilDetectionResult DetectValidatorSybilNetwork(
+        const std::vector<uint160>& validators,
+        int currentHeight
+    );
+    
+    /**
+     * Eclipse/Sybil Protection: Validate validator set diversity
+     * 
+     * Ensures sufficient diversity across:
+     * - Network topology
+     * - Peer connections
+     * - Stake sources
+     * - WoT vs non-WoT validators (40% non-WoT minimum)
+     * 
+     * @param validators Validator addresses
+     * @param currentHeight Current block height
+     * @return true if validator set is sufficiently diverse
+     */
+    bool ValidateValidatorSetDiversity(
+        const std::vector<uint160>& validators,
+        int currentHeight
+    );
+    
+    /**
+     * Eclipse/Sybil Protection: Update validator network info
+     * 
+     * @param validatorAddr Validator address
+     * @param ipAddr IP address
+     * @param peers Connected peer addresses
+     * @param currentHeight Current block height
+     */
+    void UpdateValidatorNetworkInfo(
+        const uint160& validatorAddr,
+        const CNetAddr& ipAddr,
+        const std::set<uint160>& peers,
+        int currentHeight
+    );
+    
+    /**
+     * Eclipse/Sybil Protection: Update validator stake info
+     * 
+     * @param validatorAddr Validator address
+     * @param stakeInfo Stake information
+     */
+    void UpdateValidatorStakeInfo(
+        const uint160& validatorAddr,
+        const ValidatorStakeInfo& stakeInfo
+    );
+    
+    /**
+     * Eclipse/Sybil Protection: Check cross-group agreement
+     * 
+     * Ensures WoT and non-WoT validators agree within 60%.
+     * 
+     * @param validators Validator addresses
+     * @param votes Validator votes
+     * @return true if agreement within threshold
+     */
+    bool CheckCrossGroupAgreement(
+        const std::vector<uint160>& validators,
+        const std::map<uint160, int>& votes
+    );
+    
+    /**
+     * Eclipse/Sybil Protection: Escalate to DAO if Sybil network detected
+     * 
+     * Automatically escalates to DAO when Sybil network is detected
+     * with high confidence (>60%).
+     * 
+     * @param detectionResult Sybil detection result
+     * @param tx Transaction being validated
+     * @return true if escalation successful
+     */
+    bool EscalateSybilDetectionToDAO(
+        const SybilDetectionResult& detectionResult,
+        const CTransaction& tx
+    );
+    
+    /**
+     * Get Eclipse/Sybil protection manager
+     * 
+     * @return Reference to protection manager
+     */
+    EclipseSybilProtection& GetEclipseSybilProtection() { return *m_eclipseSybilProtection; }
     
     /**
      * Process validation request from P2P network
@@ -905,6 +1112,7 @@ private:
     CVMDatabase& database;
     SecureHAT& secureHAT;
     TrustGraph& trustGraph;
+    std::unique_ptr<EclipseSybilProtection> m_eclipseSybilProtection;
     
     // Validator peer mapping
     struct ValidatorPeerInfo {

@@ -204,6 +204,7 @@ int16_t BehaviorMetrics::CalculateFinalReputation() const {
     double base = static_cast<double>(base_reputation);
     
     // Apply all penalties including fraud score (Task 19.2)
+    // Note: Sybil penalty is applied separately in HAT consensus validator
     double final = base * diversity_score * volume_score * pattern_score * fraud_score;
     
     return static_cast<int16_t>(std::max(0.0, std::min(100.0, final)));
