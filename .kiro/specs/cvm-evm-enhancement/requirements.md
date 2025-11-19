@@ -145,6 +145,14 @@ This specification outlines the enhancement of Cascoin's Virtual Machine (CVM) t
 3. THE CVM SHALL implement proper access controls for trust score modifications
 4. THE CVM SHALL provide audit trails for all reputation-affecting operations
 5. THE CVM SHALL maintain backward compatibility with existing CVM contracts
+6. THE CVM SHALL operate a permissionless validator network where any participant can become a validator by obtaining distributed attestations from the network without registration or approval
+7. THE CVM SHALL use a distributed attestation system where 10+ random nodes attest to a validator's eligibility based on objective criteria (stake, history, network participation) and subjective trust scores
+8. THE CVM SHALL cache validator attestations for 10,000 blocks (~17 hours) to minimize network overhead and only re-attest when validator state changes significantly
+9. THE CVM SHALL aggregate attestations using weighted voting (by attestor reputation and confidence) to determine validator eligibility with 80%+ agreement on objective criteria and average trust score >= 50
+10. THE CVM SHALL ensure validator attestation system is highly performant with 95% reduction in messages through caching, batching, gossip protocol, and compression
+11. THE CVM SHALL distribute gas fees with 70% to miners (block production) and 30% to validators (reputation verification), split equally among participating validators
+12. THE CVM SHALL track validator participation in each transaction and include validator payments in coinbase transaction outputs
+13. THE CVM SHALL create passive income opportunities for node operators through automatic validator selection and fee distribution, enabling anyone with 10 CAS stake to earn validator fees
 
 ### Requirement 11: Trust-Aware Memory and Stack Operations
 

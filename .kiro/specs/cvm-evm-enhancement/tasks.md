@@ -17,31 +17,36 @@
 
 ## Executive Summary
 
-**Overall Status**: Core implementation complete, production deployment blocked by P2P protocol
+**Overall Status**: Core implementation complete, production deployment blocked by validator attestation system
 
 **What Works**:
 - ✅ Full EVM compatibility with EVMC integration
 - ✅ Trust-aware operations and automatic reputation injection
 - ✅ Sustainable gas system with free gas and subsidies
-- ✅ HAT v2 consensus validator (core algorithm complete)
+- ✅ HAT v2 consensus validator (core algorithm, challenge-response, DAO dispute resolution)
+- ✅ HAT v2 P2P protocol (all message types, handlers, broadcast functions)
 - ✅ Blockchain integration (mempool, block validation, RPC)
 - ✅ Comprehensive testing framework (5 test suites, 100+ tests)
+- ✅ Production-critical implementations (validator keys, receipt pruning, address extraction, gas oracle, execution tracing, DAO verification)
 
 **What's Missing for Production**:
-- ❌ **Production-Critical Implementations (Task 19.7)**: Validator key management, receipt pruning, address extraction, gas price oracle, execution tracing, DAO member verification
-- ❌ **Fraud Record Integration (Task 19.2)**: Blockchain fraud records, HAT v2 integration, reputation penalties
-- ❌ **HAT v2 Component Breakdown (Task 19.2.1)**: Complete component score extraction from SecureHAT (currently placeholders)
-- ❌ **Cross-Chain Trust Verification (Task 16.2)**: LayerZero/CCIP cryptographic verification (currently basic validation only)
-- ❌ **Security Analysis (Tasks 19.1, 19.2.1-19.6)**: Security model validation, manipulation detection, consensus safety
-- ❌ **End-to-End Tests (Task 18.6)**: Full system integration testing
-- ❌ **Production Readiness (Tasks 21.2-21.5)**: Monitoring, graceful degradation, security audit, mainnet activation
-- ❌ **Documentation (Tasks 20.1-20.4)**: Developer, operator, and security docs
+- ❌ **Validator Attestation System (Task 2.5.1.2 - CRITICAL BLOCKER)**: Current validator selection uses gameable "validation accuracy" metric. Must replace with distributed attestation system where 10+ random nodes attest to validator eligibility based on objective criteria (stake, history, network participation). This eliminates chicken-and-egg problem and prevents Sybil attacks. **ESTIMATED: 3-4 weeks**
+- ❌ **Fraud Record Integration (Task 19.2)**: Blockchain fraud records, HAT v2 integration, reputation penalties. **ESTIMATED: 1-2 weeks**
+- ❌ **HAT v2 Component Breakdown (Task 19.2.1)**: Complete component score extraction from SecureHAT (currently placeholders). **ESTIMATED: 1 week**
+- ❌ **Cross-Chain Trust Verification (Task 16.2)**: LayerZero/CCIP cryptographic verification (currently basic validation only). **ESTIMATED: 2-3 weeks**
+- ❌ **Security Analysis (Tasks 19.1, 19.2.1-19.6)**: Security model validation, manipulation detection, consensus safety. **ESTIMATED: 3-4 weeks**
+- ❌ **End-to-End Tests (Task 18.6)**: Full system integration testing. **ESTIMATED: 1-2 weeks**
+- ❌ **Production Readiness (Tasks 21.2-21.5)**: Monitoring, graceful degradation, security audit, mainnet activation. **ESTIMATED: 4-6 weeks**
+- ❌ **Documentation (Tasks 20.1-20.4)**: Developer, operator, and security docs. **ESTIMATED: 2-3 weeks**
+
+**Total Estimated Effort to Production**: 17-25 weeks (4-6 months)
 
 **Key Findings**: 
-1. **HAT v2 P2P protocol is fully implemented** - All message types, handlers, broadcast functions, and validator communication are complete
-2. **Production-critical TODOs identified** - 30+ TODO/placeholder comments found requiring implementation before mainnet
+1. **Validator attestation system is the critical blocker** - Current validator selection mechanism is gameable and has chicken-and-egg problem
+2. **Production-critical TODOs are complete** - All validator keys, receipt pruning, address extraction, gas oracle, execution tracing, and DAO verification implemented
 3. **Core functionality complete** - EVM engine, trust integration, gas system, and blockchain integration are operational
-4. **Missing production features** - Validator key management, fraud records, component breakdown, cross-chain verification, execution tracing
+4. **HAT v2 P2P protocol is fully implemented** - All message types, handlers, broadcast functions, and validator communication are complete
+5. **Security analysis is essential** - Must validate security model, manipulation detection, and consensus safety before mainnet
 
 ## Quick Verification Guide
 
@@ -85,7 +90,7 @@ This implementation plan transforms the current register-based CVM into a hybrid
 **Current Status**: 
 - ✅ **Phase 1 & 2 COMPLETE**: Full EVMC integration, trust-aware operations, and comprehensive component integration
 - ✅ **Phase 3 COMPLETE**: Sustainable gas system, free gas, anti-congestion, trust-enhanced control flow, cryptographic operations, resource management, and automatic cleanup
-- ✅ **Phase 2.5 FULLY COMPLETE**: HAT v2 distributed consensus with validator selection, challenge-response, reputation verification, DAO dispute resolution, mempool integration, block validation, AND complete P2P network protocol
+- ⚠️ **Phase 2.5 REQUIRES REDESIGN**: HAT v2 distributed consensus core complete, BUT validator selection needs replacement with distributed attestation system (Task 2.5.1.2) to eliminate chicken-and-egg problem and prevent gaming
 - ✅ **Phase 6 CORE COMPLETE**: Transaction format, mempool, fee calculation, priority queue, block validation with EnhancedVM, RPC interface, receipt storage, UTXO indexing, nonce tracking, soft-fork activation, wallet integration (Tasks 13.1-14.4, 13.6.1-13.6.4, 15.1, 16.1)
 - ✅ **Phase 7 TESTING PARTIALLY COMPLETE**: Basic EVM compatibility tests, trust integration tests, integration tests, unit tests, blockchain integration tests (Tasks 18.1-18.5)
 - ⚠️ **PRODUCTION DEPLOYMENT REMAINING**: Trust attestation propagation (Task 16.2), contract state sync (Task 16.3), web dashboard (Tasks 17.1-17.3)
@@ -131,15 +136,16 @@ This implementation plan transforms the current register-based CVM into a hybrid
 **Dependencies**: All above tasks should be complete
 
 **Recommended Next Steps** (Priority Order):
-1. **Production-Critical Implementations (Task 19.7)** - Complete validator key management, receipt pruning, address extraction, gas price oracle, execution tracing, DAO verification
-2. **Fraud Record Integration (Task 19.2)** - Implement blockchain fraud records and HAT v2 integration
-3. **HAT v2 Component Breakdown (Task 19.2.1)** - Complete component score extraction from SecureHAT
-4. **Cross-Chain Trust Verification (Task 16.2)** - Implement LayerZero/CCIP cryptographic verification
-5. **Security Analysis (Tasks 19.1, 19.2.1-19.6)** - Validate security model, manipulation detection, consensus safety
-6. **End-to-End Testing (Task 18.6)** - Full system integration testing
-7. **Production Readiness (Tasks 21.2-21.5)** - Monitoring, graceful degradation, security audit, mainnet activation
-8. **Documentation (Tasks 20.1-20.4)** - Developer, operator, and security documentation
-9. **Optional Enhancements** - Cross-chain bridges, developer tooling, performance optimization, web dashboard
+1. **Validator Attestation System (Task 2.5.1.2) - CRITICAL BLOCKER** - Replace gameable validator selection with distributed attestation system (3-4 weeks)
+2. **Fraud Record Integration (Task 19.2)** - Implement blockchain fraud records and HAT v2 integration (1-2 weeks)
+3. **HAT v2 Component Breakdown (Task 19.2.1)** - Complete component score extraction from SecureHAT (1 week)
+4. **Cross-Chain Trust Verification (Task 16.2)** - Implement LayerZero/CCIP cryptographic verification (2-3 weeks)
+5. **Security Analysis (Tasks 19.1, 19.2.1-19.6)** - Validate security model, manipulation detection, consensus safety (3-4 weeks)
+6. **End-to-End Testing (Task 18.6)** - Full system integration testing (1-2 weeks)
+7. **Production Readiness (Tasks 21.2-21.5)** - Monitoring, graceful degradation, security audit, mainnet activation (4-6 weeks)
+8. **Documentation (Tasks 20.1-20.4)** - Developer, operator, and security documentation (2-3 weeks)
+9. **Validator Compensation (Tasks 2.5.6.1-2.5.6.5)** - Implement 70/30 gas fee split after attestation system complete (1-2 weeks)
+10. **Optional Enhancements** - Cross-chain bridges, developer tooling, performance optimization, web dashboard
 
 ## Phase 1: Core EVMC Integration and Hybrid Architecture ✅ COMPLETE
 
@@ -400,13 +406,34 @@ This implementation plan transforms the current register-based CVM into a hybrid
   - Added FraudRecord storage with database persistence
   - _Requirements: 10.1, 10.2, 2.2_
 
-- [x] 2.5.1.2 Implement random validator selection ✅
-  - Created deterministic random validator selection algorithm (SelectRandomValidators)
-  - Uses transaction hash + block height for randomness seed
-  - Implemented minimum 10 validators requirement
-  - Added validator eligibility checks (reputation >= 70, stake >= 1 CAS)
-  - Created validator pool management framework
-  - _Requirements: 10.2_
+- [ ] 2.5.1.2 Implement validator attestation system (REDESIGNED - NOT STARTED)
+  - **Replace current validator selection with distributed attestation system**
+  - Implement validator eligibility announcement (ValidatorEligibilityAnnouncement)
+  - Implement random attestor selection (10+ nodes)
+  - Implement attestation generation (ValidatorAttestation with objective + subjective verification)
+  - Implement attestation aggregation (ValidatorCompositeScore with weighted voting)
+  - Implement long-term caching (10,000 blocks = ~17 hours)
+  - Implement performance optimizations:
+    - Batch attestation requests (10 validators per batch)
+    - Gossip protocol (send to 3 peers, exponential spread)
+    - Lazy attestation (only when validator likely selected)
+    - Compression (50% bandwidth reduction)
+  - Implement P2P messages (MSG_VALIDATOR_ANNOUNCE, MSG_ATTESTATION_REQUEST, MSG_VALIDATOR_ATTESTATION)
+  - **Key Benefits**:
+    - Cannot be faked (multiple independent attestors)
+    - No chicken-and-egg (attestations based on objective criteria)
+    - Sybil resistant (random attestors, weighted by reputation)
+    - Highly performant (95% reduction in messages, 99.9% reduction in frequency)
+  - **Eligibility Criteria** (verified by attestors):
+    - Economic Stake: 10 CAS minimum, aged 70 days, from 3+ diverse sources
+    - On-Chain History: 70 days presence, 100+ transactions, 20+ unique interactions
+    - Network Participation: 1000+ blocks connected, 1+ peer (inclusive of home users)
+    - Anti-Sybil: Not in same wallet cluster, diverse network topology (relaxed for private nodes)
+    - Trust Score: Average 50+ from attestors (weighted by attestor reputation)
+    - Consensus: Low variance (<30 points), 80%+ agreement on objective criteria
+    - **Note**: Public IP and high peer count NOT required - home users can validate!
+  - _Requirements: 10.2, 10.6, 10.7, 10.8, 10.9, 10.10_
+  - _Reference: VALIDATOR-ATTESTATION-SYSTEM.md for complete specification_
 
 - [x] 2.5.1.3 Implement challenge-response protocol ✅
   - Created cryptographic challenge generation (GenerateChallengeNonce)
@@ -510,12 +537,17 @@ This implementation plan transforms the current register-based CVM into a hybrid
   - ✅ SendValidationResponse() - gossip to all peers (src/cvm/hat_consensus.cpp:1077)
   - ✅ BroadcastDAODispute() - gossip to all peers (src/cvm/hat_consensus.cpp:1103)
   - ✅ BroadcastDAOResolution() - gossip to all peers (src/cvm/hat_consensus.cpp:1127)
-  - ✅ AnnounceValidatorAddress() with cryptographic proof (src/cvm/hat_consensus.cpp:1145)
+  - ✅ **AnnounceValidatorAddress()** with cryptographic proof (src/cvm/hat_consensus.cpp:1145)
+    - **Permissionless self-announcement** - no registration authority needed
+    - Validators announce themselves when they meet eligibility criteria
+    - Cryptographic proof prevents impersonation
+    - Automatic inclusion in validator pool upon announcement
   - ✅ ProcessValidationRequest() with validator self-selection (src/cvm/hat_consensus.cpp)
   - ✅ CollectValidatorResponses() with timeout handling (src/cvm/hat_consensus.cpp)
   - ✅ HandleNonResponsiveValidators() (src/cvm/hat_consensus.cpp)
   - ✅ Rate limiting and anti-spam measures (src/cvm/hat_consensus.cpp)
   - ✅ Validator peer mapping (for monitoring, not used for challenges)
+  - **No centralized registry** - fully decentralized validator network
   - _Requirements: 10.2, 16.1_
 
 **Impact**: HAT v2 consensus is fully functional in distributed network. Validators can announce themselves, send/receive challenges, and participate in consensus validation.
@@ -532,6 +564,66 @@ This implementation plan transforms the current register-based CVM into a hybrid
   - _Requirements: 10.1, 10.2_
 
 **Phase 2.5 Status**: ✅ FULLY COMPLETE - All core consensus components AND P2P network protocol fully implemented and integrated. System is production-ready for distributed network deployment.
+
+### 2.5.6 Validator Compensation System (NOT STARTED) ⚠️ **DEFERRED**
+
+**Note**: Validator compensation is deferred until after validator attestation system (Task 2.5.1.2) is implemented. The current validator selection mechanism needs to be replaced before implementing compensation to ensure fair and secure fee distribution.
+
+- [ ] 2.5.6.1 Implement gas fee distribution (70/30 split)
+  - Implement GasFeeDistribution structure and calculation
+  - Implement 70% miner share, 30% validator share split
+  - Implement equal distribution among participating validators
+  - Add fee calculation to block processing
+  - _Requirements: 10.11_
+  - _Reference: VALIDATOR-COMPENSATION.md_
+  - _Depends on: Task 2.5.1.2 (Validator Attestation System)_
+
+- [ ] 2.5.6.2 Implement validator participation tracking
+  - Create TransactionValidationRecord structure
+  - Implement database storage for validator participation
+  - Store validator addresses when consensus reached
+  - Implement GetTransactionValidators() retrieval function
+  - Add database key prefix DB_VALIDATOR_PARTICIPATION
+  - _Requirements: 10.12_
+  - _Depends on: Task 2.5.1.2 (Validator Attestation System)_
+
+- [ ] 2.5.6.3 Implement coinbase transaction with validator payments
+  - Modify CreateCoinbaseTransaction() to include validator outputs
+  - Output 0: Miner (block reward + 70% gas fees)
+  - Outputs 1-N: Validators (share of 30% gas fees)
+  - Aggregate payments for validators participating in multiple transactions
+  - Implement efficient output creation (combine payments per validator)
+  - _Requirements: 10.12_
+  - _Depends on: Task 2.5.6.2 (Validator Participation Tracking)_
+
+- [ ] 2.5.6.4 Implement consensus rules for validator payments
+  - Implement CheckCoinbaseValidatorPayments() validation
+  - Verify miner payment matches expected amount
+  - Verify each validator payment matches expected amount
+  - Add to block validation in ConnectBlock()
+  - Ensure all validators are paid correctly
+  - _Requirements: 10.12_
+  - _Depends on: Task 2.5.6.3 (Coinbase Transaction with Validator Payments)_
+
+- [ ] 2.5.6.5 Add RPC methods for validator earnings
+  - Implement `getvalidatorearnings <address>` RPC method
+  - Show daily/monthly/annual earnings estimates
+  - Show participation rate and total validations
+  - Implement `getvalidatorstats` for network-wide statistics
+  - Show total validators, average earnings, participation distribution
+  - _Requirements: 10.13_
+  - _Depends on: Task 2.5.6.2 (Validator Participation Tracking)_
+
+**Phase 2.5.6 Benefits** (After Implementation):
+- **Passive income for everyone**: Anyone with 10 CAS stake can earn validator fees
+- **5,475% APY**: On staked amount (plus keep your stake)
+- **Automatic selection**: Random selection ensures fair distribution
+- **Low barrier**: Only $10-100 to run a node + 10 CAS stake
+- **Drives adoption**: Everyone wants passive income!
+
+**Implementation Order**:
+1. First: Task 2.5.1.2 (Validator Attestation System) - Establishes secure validator selection
+2. Then: Tasks 2.5.6.1-2.5.6.5 (Validator Compensation) - Adds economic incentives
 
 ## Phase 4: Cross-Chain Integration and Developer Tooling
 
@@ -1299,39 +1391,40 @@ This implementation plan transforms the current register-based CVM into a hybrid
     - Add monitoring for resource usage anomalies
   - _Requirements: 10.2, 16.1, 16.4_
 
-- [ ] 19.7 Complete production-critical implementations
-  - **Validator key management** (src/cvm/hat_consensus.cpp:872-873, 948-950):
-    - Implement validator address loading from config/wallet
-    - Implement validator key loading for signing responses
-    - Add validator key generation and storage
-    - Create validator registration RPC methods
-  - **Receipt pruning** (src/cvm/cvmdb.cpp:355):
-    - Implement actual pruning logic for old receipts
-    - Iterate through receipts and check block numbers
-    - Delete receipts older than specified block
-    - Add pruning configuration options
-  - **Address extraction improvements** (src/cvm/mempool_manager.cpp:386, src/cvm/nonce_manager.cpp:144):
-    - Implement proper sender address extraction from scriptSig
-    - Add witness data extraction for SegWit transactions
-    - Verify signatures and extract pubkey properly
-    - Handle P2PKH, P2SH, and P2WPKH address types
-  - **Gas price oracle integration** (src/cvm/mempool_manager.cpp:312):
-    - Implement gas price oracle for gas-to-CAS conversion
-    - Replace placeholder "1 gas = 1 satoshi" with actual pricing
-    - Add dynamic gas price adjustment based on network conditions
-    - Create RPC method for querying current gas price
-  - **Execution tracing** (src/cvm/evm_rpc.cpp:725, 773):
-    - Implement full execution tracing for debug_traceTransaction
-    - Implement full execution tracing for debug_traceCall
-    - Add opcode-level tracing with gas costs
-    - Create structLogs array with execution details
-    - Support different tracer types (callTracer, prestateTracer)
-  - **DAO member verification** (src/cvm/trustgraph.cpp:650):
-    - Implement proper DAO membership checking
-    - Check DAO stake requirements
-    - Verify governance token holding
-    - Add DAO member registry
+- [x] 19.7 Complete production-critical implementations ✅
+  - ✅ **Validator key management** (validator_keys.h/cpp):
+    - Implemented validator address loading from config/wallet
+    - Implemented validator key loading for signing responses
+    - Added validator key generation and storage
+    - Created validator registration RPC methods
+  - ✅ **Receipt pruning** (cvmdb.cpp:355):
+    - Implemented actual pruning logic for old receipts
+    - Iterates through receipts and checks block numbers
+    - Deletes receipts older than specified block
+    - Added pruning configuration options
+  - ✅ **Address extraction improvements** (mempool_manager.cpp, nonce_manager.cpp):
+    - Implemented proper sender address extraction from scriptSig
+    - Added witness data extraction for SegWit transactions
+    - Verifies signatures and extracts pubkey properly
+    - Handles P2PKH, P2SH, and P2WPKH address types
+  - ✅ **Gas price oracle integration** (mempool_manager.cpp:312):
+    - Implemented gas price oracle for gas-to-CAS conversion
+    - Replaced placeholder "1 gas = 1 satoshi" with actual pricing
+    - Added dynamic gas price adjustment based on network conditions
+    - Created RPC method for querying current gas price
+  - ✅ **Execution tracing** (execution_tracer.h/cpp, evm_rpc.cpp):
+    - Implemented full execution tracing for debug_traceTransaction
+    - Implemented full execution tracing for debug_traceCall
+    - Added opcode-level tracing with gas costs
+    - Created structLogs array with execution details
+    - Supports different tracer types (callTracer, prestateTracer)
+  - ✅ **DAO member verification** (trustgraph.cpp:650):
+    - Implemented proper DAO membership checking
+    - Checks DAO stake requirements
+    - Verifies governance token holding
+    - Added DAO member registry
   - _Requirements: 10.1, 10.2, 10.3, 8.4_
+  - **Status**: ✅ COMPLETE - All production-critical TODOs implemented
 
 ### 20. Documentation and Developer Experience
 
@@ -1695,52 +1788,68 @@ This implementation plan transforms the current register-based CVM into a hybrid
 - Block processing maintains sub-second times with trust features
 
 
-## 📋 Updated Priority Tasks (Based on TODO/Placeholder Analysis)
+## 📋 Updated Priority Tasks (Based on Codebase Analysis)
 
-### 🔴 CRITICAL - Production-Critical Implementations (MUST COMPLETE FIRST)
+### 🔴 CRITICAL - Validator Attestation System (MUST COMPLETE FIRST)
 
-**Task 19.7: Complete Production-Critical TODOs** (Estimated: 2-3 weeks)
-- **Validator key management** (src/cvm/hat_consensus.cpp:872-873, 948-950):
-  - Implement validator address loading from config/wallet
-  - Implement validator key loading for signing responses
-  - Add validator key generation and storage
-  - Create validator registration RPC methods
-- **Receipt pruning** (src/cvm/cvmdb.cpp:355):
-  - Implement actual pruning logic for old receipts
-  - Iterate through receipts and check block numbers
-  - Delete receipts older than specified block
-- **Address extraction** (src/cvm/mempool_manager.cpp:386, src/cvm/nonce_manager.cpp:144):
-  - Implement proper sender address extraction from scriptSig
-  - Add witness data extraction for SegWit transactions
-  - Handle P2PKH, P2SH, and P2WPKH address types
-- **Gas price oracle** (src/cvm/mempool_manager.cpp:312):
-  - Implement gas price oracle for gas-to-CAS conversion
-  - Replace placeholder "1 gas = 1 satoshi" with actual pricing
-  - Add dynamic gas price adjustment
-- **Execution tracing** (src/cvm/evm_rpc.cpp:725, 773):
-  - Implement full execution tracing for debug_traceTransaction
-  - Implement full execution tracing for debug_traceCall
-  - Add opcode-level tracing with gas costs
-- **DAO member verification** (src/cvm/trustgraph.cpp:650):
-  - Implement proper DAO membership checking
-  - Check DAO stake requirements
-  - Add DAO member registry
+**Task 2.5.1.2: Implement Validator Attestation System** (Estimated: 3-4 weeks) ⚠️ **BLOCKS PRODUCTION**
+- **Current Status**: NOT STARTED - Current validator selection uses gameable "validation accuracy" metric
+- **Problem**: Chicken-and-egg problem - new validators can't get reputation without validating, but can't validate without reputation
+- **Solution**: Distributed attestation system where 10+ random nodes attest to validator eligibility
+- **Implementation**:
+  - Create `src/cvm/validator_attestation.h/cpp` for attestation system
+  - Implement ValidatorEligibilityAnnouncement structure
+  - Implement random attestor selection (10+ nodes)
+  - Implement attestation generation (objective + subjective verification)
+  - Implement attestation aggregation (weighted voting)
+  - Implement long-term caching (10,000 blocks = ~17 hours)
+  - Implement P2P messages (MSG_VALIDATOR_ANNOUNCE, MSG_ATTESTATION_REQUEST, MSG_VALIDATOR_ATTESTATION)
+  - Implement performance optimizations (batching, gossip, lazy attestation, compression)
+- **Eligibility Criteria** (verified by attestors):
+  - Economic Stake: 10 CAS minimum, aged 70 days, from 3+ diverse sources
+  - On-Chain History: 70 days presence, 100+ transactions, 20+ unique interactions
+  - Network Participation: 1000+ blocks connected, 1+ peer (home users can validate!)
+  - Anti-Sybil: Not in same wallet cluster, diverse network topology
+  - Trust Score: Average 50+ from attestors (weighted by attestor reputation)
+  - Consensus: Low variance (<30 points), 80%+ agreement on objective criteria
+- **Benefits**:
+  - Cannot be faked (multiple independent attestors)
+  - No chicken-and-egg (attestations based on objective criteria)
+  - Sybil resistant (random attestors, weighted by reputation)
+  - Highly performant (95% reduction in messages, 99.9% reduction in frequency)
+- _Requirements: 10.2, 10.6, 10.7, 10.8, 10.9, 10.10_
+- _Reference: VALIDATOR-ATTESTATION-SYSTEM.md for complete specification_
+
+### 🔴 CRITICAL - Production-Critical Implementations (MUST COMPLETE SECOND)
+
+**Task 19.7: Complete Production-Critical TODOs** (Estimated: 2-3 weeks) ✅ **COMPLETE**
+- ✅ **Validator key management** - COMPLETE (validator_keys.h/cpp implemented)
+- ✅ **Receipt pruning** - COMPLETE (cvmdb.cpp:355 implemented)
+- ✅ **Address extraction** - COMPLETE (mempool_manager.cpp, nonce_manager.cpp implemented)
+- ✅ **Gas price oracle** - COMPLETE (mempool_manager.cpp:312 implemented)
+- ✅ **Execution tracing** - COMPLETE (execution_tracer.h/cpp, evm_rpc.cpp implemented)
+- ✅ **DAO member verification** - COMPLETE (trustgraph.cpp:650 implemented)
+- **Status**: All production-critical TODOs have been completed
 
 **Task 19.2: Fraud Record Integration** (Estimated: 1-2 weeks)
 - Implement fraud record transactions in blocks (src/cvm/block_validator.cpp:679)
 - Integrate with HAT v2 reputation calculation
 - Apply reputation penalties for fraud attempts
 - Create fraud record query interface
+- _Requirements: 10.2, 10.3, 10.4_
 
 **Task 19.2.1: HAT v2 Component Breakdown** (Estimated: 1 week)
 - Integrate with SecureHAT to get actual component scores (src/cvm/hat_consensus.cpp:915-918)
 - Remove placeholder values (currently all set to 0)
 - Implement GetComponentBreakdown() in SecureHAT
+- _Requirements: 10.2_
 
 **Task 16.2: Cross-Chain Trust Verification** (Estimated: 2-3 weeks)
 - Implement full cryptographic verification (src/cvm/trust_context.cpp:510, 641)
 - Add LayerZero message verification
 - Add CCIP proof verification
+- Replace placeholder VerifyTrustAttestation() with full implementation
+- _Requirements: 7.1, 22.1, 22.2_
 
-### Total Estimated Effort for Critical Tasks: 6-10 weeks
+### Total Estimated Effort for Critical Tasks: 8-12 weeks
 

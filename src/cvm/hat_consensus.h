@@ -29,6 +29,19 @@ class SecureHAT;
 class TrustGraph;
 
 /**
+ * Wallet Cluster
+ * 
+ * Represents a cluster of addresses controlled by the same entity.
+ * Used for Sybil attack detection.
+ */
+struct WalletCluster {
+    std::vector<uint160> addresses;     // Addresses in cluster
+    double confidence;                  // Confidence level (0.0-1.0)
+    
+    WalletCluster() : confidence(0) {}
+};
+
+/**
  * HAT v2 Score with Component Breakdown
  * 
  * Represents a complete HAT v2 trust score with all components.
@@ -526,6 +539,37 @@ public:
         const uint160& validator,
         bool accurate
     );
+    
+    /**
+     * Anti-Manipulation: Get wallet cluster for address
+     * 
+     * @param address Address to check
+     * @return Wallet cluster containing address
+     */
+    WalletCluster GetWalletCluster(const uint160& address);
+    
+    /**
+     * Anti-Manipulation: Count recent fraud records for addresses
+     * 
+     * @param addresses Addresses to check
+     * @param blockWindow Number of blocks to look back
+     * @return Count of fraud records
+     */
+    int CountRecentFraudRecords(const std::vector<uint160>& addresses, int blockWindow);
+    
+    /**
+     * Anti-Manipulation: Validate fraud record before accepting
+     * 
+     * Checks for:
+     * - Minimum score difference threshold
+     * - Sybil attack patterns
+     * - Wallet clustering
+     * - False accusation attempts
+     * 
+     * @param record Fraud record to validate
+     * @return true if fraud record is legitimate
+     */
+    bool ValidateFraudRecord(const FraudRecord& record);
     
     /**
      * Get transaction validation state

@@ -213,7 +213,8 @@ BITCOIN_CORE_H = \
   cvm/block_validator.h \
   cvm/evm_rpc.h \
   cvm/validator_keys.h \
-  cvm/execution_tracer.h
+  cvm/execution_tracer.h \
+  cvm/validator_attestation.h
 
 
 obj/build.h: FORCE
@@ -308,6 +309,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/hat_consensus.cpp \
   cvm/consensus_validator.cpp \
   cvm/trust_attestation.cpp \
+  cvm/validator_attestation.cpp \
   cvm/validator_keys.cpp \
   cvm/execution_tracer.cpp \
   rpc/cvm.cpp \

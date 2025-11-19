@@ -36,6 +36,7 @@
 #include <cvm/cvm.h> // Cascoin: CVM database
 #include <cvm/hat_consensus.h> // Cascoin: HAT v2 Consensus
 #include <cvm/trust_attestation.h> // Cascoin: Trust Attestation
+#include <cvm/validator_attestation.h> // Cascoin: Validator Attestation
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -3408,6 +3409,86 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         
         // Process attestation (store and relay)
         ProcessTrustAttestation(attestation, pfrom, connman);
+    }
+
+    // Cascoin: Validator Attestation - Validator Eligibility Announcement
+    else if (strCommand == NetMsgType::VALIDATOR_ANNOUNCE) {
+        ValidatorEligibilityAnnouncement announcement;
+        vRecv >> announcement;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received eligibility announcement from %s (peer=%d)\n",
+                 announcement.validatorAddress.ToString(), pfrom->GetId());
+        
+        // Process announcement
+        if (g_validatorAttestationManager) {
+            ProcessValidatorAnnounceMessage(pfrom, announcement);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring announcement\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Attestation Request
+    else if (strCommand == NetMsgType::ATTESTATION_REQUEST) {
+        uint160 validatorAddress;
+        vRecv >> validatorAddress;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received attestation request for %s from peer=%d\n",
+                 validatorAddress.ToString(), pfrom->GetId());
+        
+        // Process request
+        if (g_validatorAttestationManager) {
+            ProcessAttestationRequestMessage(pfrom, validatorAddress);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring request\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Validator Attestation
+    else if (strCommand == NetMsgType::VALIDATOR_ATTESTATION) {
+        ValidatorAttestation attestation;
+        vRecv >> attestation;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received attestation for %s from %s (peer=%d)\n",
+                 attestation.validatorAddress.ToString(), attestation.attestorAddress.ToString(), pfrom->GetId());
+        
+        // Process attestation
+        if (g_validatorAttestationManager) {
+            ProcessValidatorAttestationMessage(pfrom, attestation);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring attestation\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Batch Attestation Request
+    else if (strCommand == NetMsgType::BATCH_ATTESTATION_REQUEST) {
+        BatchAttestationRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received batch attestation request for %d validators from peer=%d\n",
+                 request.validators.size(), pfrom->GetId());
+        
+        // Process batch request
+        if (g_validatorAttestationManager) {
+            ProcessBatchAttestationRequestMessage(pfrom, request);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring batch request\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Batch Attestation Response
+    else if (strCommand == NetMsgType::BATCH_ATTESTATION_RESPONSE) {
+        BatchAttestationResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received batch attestation response with %d attestations from peer=%d\n",
+                 response.attestations.size(), pfrom->GetId());
+        
+        // Process batch response
+        if (g_validatorAttestationManager) {
+            ProcessBatchAttestationResponseMessage(pfrom, response);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring batch response\n");
+        }
     }
 
     else {

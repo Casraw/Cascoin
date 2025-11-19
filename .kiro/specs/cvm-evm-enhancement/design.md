@@ -59,6 +59,12 @@ This document outlines the design for enhancing Cascoin's Virtual Machine (CVM) 
 
 The enhanced CVM introduces a revolutionary consensus mechanism that validates transaction reputation claims through distributed verification before block inclusion. This prevents reputation fraud and ensures trust scores are accurate across the network.
 
+**Permissionless Validator Network**: The system operates without a centralized validator registry. Any network participant can become a validator by meeting automatic eligibility criteria (validator reputation >= 70, stake >= 1 CAS, active participation). Validators self-announce on the P2P network and are automatically included in the random selection pool. This ensures true decentralization and prevents validator gatekeeping.
+
+**CRITICAL: Two Types of Reputation**:
+1. **Validator Reputation** (for eligibility): Global, objective metric based on validation accuracy. Same value for all nodes. Used to determine who can be a validator. Prevents centralization around WoT clusters.
+2. **HAT v2 Reputation** (for transaction senders): Personalized metric based on Web-of-Trust. Different value per node. Used to verify transaction sender's claimed reputation. Allows diverse perspectives.
+
 #### Consensus Flow
 
 ```
@@ -83,6 +89,29 @@ Transaction Submission → Random Validator Selection → Challenge-Response Pro
                                                                                               (Blockchain Record)
 ```
 
+#### Permissionless Validator Architecture
+
+**No Registration Required**: The HAT v2 consensus system operates without a centralized validator registry. This design choice ensures true decentralization and prevents validator gatekeeping or censorship.
+
+**How Validators Join**:
+1. **Meet Eligibility Criteria**: Any network participant with reputation >= 70, stake >= 1 CAS, and active participation
+2. **Self-Announce**: Call `AnnounceValidatorAddress()` to broadcast validator status with cryptographic proof
+3. **Automatic Inclusion**: System automatically adds validator to selection pool
+4. **Participate**: Respond to validation challenges when randomly selected
+
+**How Validators Exit**:
+1. **Automatic Exclusion**: Validators who fall below criteria (reputation < 70, stake < 1 CAS, or inactive > 1000 blocks) are automatically excluded
+2. **No Manual Deregistration**: System handles eligibility checks automatically during selection
+3. **Graceful Degradation**: Network continues functioning as long as minimum 10 eligible validators exist
+
+**Validator Discovery**: Validators announce themselves via P2P gossip protocol. The `VALANNOUNCE` message propagates through the network, allowing all nodes to discover available validators. The system maintains a database of announced validators and their eligibility status.
+
+**Security Benefits**:
+- **Sybil Resistance**: Reputation and stake requirements prevent cheap validator creation
+- **Censorship Resistance**: No central authority can block validator participation
+- **Dynamic Adaptation**: Validator pool grows/shrinks automatically with network activity
+- **Economic Security**: Stake requirement ensures validators have skin in the game
+
 #### Key Components
 
 **1. Self-Reported HAT v2 Score**
@@ -90,12 +119,38 @@ Transaction Submission → Random Validator Selection → Challenge-Response Pro
 - Score includes timestamp and cryptographic signature
 - Submitter claims their reputation based on their local trust graph perspective
 
-**2. Random Validator Selection**
+**2. Random Validator Selection (Permissionless & Automated)**
 - Minimum 10 validators required (configurable, open-ended maximum)
-- Validators randomly selected from active network nodes
-- Selection uses deterministic randomness based on transaction hash + block height
-- Each validator has unique trust graph perspective (personalized reputation)
+- **No registration required** - validators self-select by announcing on network
+- **Distributed Attestation System** (like "2FA for validators"):
+  - Validator announces eligibility with supporting evidence
+  - 10+ random nodes from network attest to validator's claims
+  - Attestors verify objective criteria (stake, history, network participation)
+  - Attestors provide personalized trust scores (based on their WoT perspective)
+  - System aggregates attestations into composite score
+  - Eligibility determined by consensus of attestors
+- **Eligibility Criteria** (verified by attestors):
+  - **Economic Stake**: 10 CAS minimum, aged 70 days, from 3+ diverse sources
+  - **On-Chain History**: 70 days presence, 100+ transactions, 20+ unique interactions
+  - **Network Participation**: 1000+ blocks connected, 1+ peer (inclusive of home users - no public IP required!)
+  - **Anti-Sybil Measures**: Not in same wallet cluster, diverse network topology, diverse stake sources
+  - **Trust Score**: Average 50+ from attestors (weighted by attestor reputation)
+  - **Consensus**: Low variance among attestors (<30 points), 80%+ agreement on objective criteria
+- **Why Distributed Attestation**:
+  - **Cannot be faked**: Multiple independent nodes must confirm claims
+  - **No chicken-and-egg**: Attestations based on objective criteria, new validators can start
+  - **Sybil resistant**: Random attestor selection, weighted by attestor reputation
+  - **Fully transparent**: All attestations broadcast to network, publicly verifiable
+  - **Diverse perspectives**: Attestors have different WoT perspectives, prevents gaming
+- **CRITICAL DISTINCTION**: 
+  - **Validator Eligibility** (who can validate): Based on distributed attestations from network
+  - **HAT v2 Reputation** (transaction sender): Personalized metric based on WoT, what validators verify
+- This ensures **trustworthy validators from entire network** can participate, not just those in sender's WoT
+- Validators randomly selected from eligible pool using deterministic randomness
+- Selection uses transaction hash + block height as seed (unpredictable, deterministic)
+- Each validator has unique trust graph perspective for **verifying sender's reputation**
 - No fixed validator set - prevents collusion and gaming
+- Anyone can become a validator by getting attestations from network - fully decentralized
 
 **3. Challenge-Response Protocol**
 - Only selected validators can respond to validation requests
@@ -194,6 +249,13 @@ Since HAT v2 scores are personalized based on each node's trust graph, validator
 - Prevents acceptance based solely on non-WoT components
 - Automatic escalation to DAO if insufficient WoT coverage after extended validator selection
 
+**Critical Security Feature - Prevents Isolated Sybil Networks:**
+- **Minimum 40% non-WoT validators required** (at least 4 out of 10)
+- Non-WoT validators verify objective components (Behavior, Economic, Temporal)
+- If WoT validators (Sybil network) accept but non-WoT validators reject → DAO escalation
+- This prevents attackers from creating isolated networks where only nearby nodes have reputation >= 70
+- Example: Attacker creates 100 Sybil nodes with mutual WoT connections, but non-WoT validators from honest network detect fraud in objective components
+
 **Example Scenario:**
 ```
 Transaction: Alice claims HAT v2 score of 85
@@ -262,6 +324,8 @@ Weighted Consensus Calculation:
 - False validations result in reputation penalties
 - Consistent accurate validations increase validator reputation
 - Validator selection weighted by historical accuracy
+- **Automatic eligibility enforcement**: Validators who fall below criteria (reputation < 70, stake < 1 CAS, or inactive) are automatically excluded from selection pool
+- No manual registration or deregistration needed - system is fully automated
 
 **Sybil Resistance:**
 - Random selection prevents validator prediction
@@ -277,18 +341,41 @@ Weighted Consensus Calculation:
 - Component-based verification prevents partial collusion
 
 **Eclipse Attack + Sybil Network Protection:**
-- **Network Topology Diversity**: Validators must come from different IP subnets (/16)
-- **Peer Connection Diversity**: Validators must have <50% peer overlap (prevents isolated Sybil networks)
-- **Validator History Requirements**: Minimum 10,000 blocks since first seen (~70 days)
-- **Validation History**: Minimum 50 previous validations with 85%+ accuracy
+
+The system prevents attackers from creating isolated Sybil networks where only nearby nodes have reputation >= 70 due to WoT connections. This is achieved through **multi-layer defense**:
+
+**Layer 1: Cross-Validation Requirements (CRITICAL)**
+- **Minimum 40% non-WoT validators required**: Prevents WoT-only Sybil attacks
+- **Cross-Group Agreement**: WoT and non-WoT validators must agree within 60%
+- **Automatic DAO Escalation**: If groups disagree, indicates network isolation
+- **Why This Works**: Non-WoT validators from honest network provide independent verification of non-WoT components (Behavior, Economic, Temporal). If isolated Sybil network has fake WoT connections, non-WoT validators will detect fraud in objective components.
+
+**Layer 2: Network Topology Diversity**
+- **IP Subnet Diversity**: Validators must come from different /16 subnets
+- **Peer Connection Diversity**: Validators must have <50% peer overlap
+- **Why This Works**: Sybil networks typically run on same infrastructure with high peer overlap
+
+**Layer 3: Validator History Requirements**
+- **Minimum 10,000 blocks since first seen** (~70 days on-chain presence)
+- **Minimum 50 previous validations** with 85%+ accuracy
+- **Why This Works**: Building 70 days of history for 100 Sybil nodes is expensive
+
+**Layer 4: Economic Stake Requirements**
 - **Stake Concentration Limits**: No entity can control >20% of validator stake
-- **Cross-Validation Requirements**: Minimum 40% non-WoT validators required (prevents WoT-only Sybil attacks)
-- **Cross-Group Agreement**: WoT and non-WoT validators must agree within 60% (detects isolated networks)
 - **Stake Age Requirements**: Validator stake must be aged (1000+ blocks, ~7 days)
 - **Stake Source Diversity**: Stake must come from 3+ different sources
+- **Why This Works**: 100 Sybil nodes × 10 CAS × 7 days = expensive to maintain
+
+**Layer 5: Behavioral Analysis**
 - **Wallet Clustering Integration**: Detect validators controlled by same entity
-- **Behavioral Analysis**: Detect coordinated transaction timing and patterns
-- **Automatic DAO Escalation**: Escalate to DAO if Sybil network or Eclipse attack detected
+- **Timing Correlation Detection**: Detect coordinated transaction timing
+- **Pattern Similarity Detection**: Detect coordinated behavior patterns
+- **Why This Works**: Sybil nodes operated by same entity show correlated behavior
+
+**Attack Cost Analysis**:
+- Without protection: ~$1,000, 1 day, high success rate
+- With protection: ~$50,000+, 70+ days, very low success rate
+- Cross-validation makes isolated Sybil networks ineffective
 
 ### Bytecode Format Detection
 
@@ -1809,3 +1896,183 @@ The distributed reputation validation system provides unique benefits:
 - **Sybil Resistance**: Random validator selection prevents gaming
 - **Scalable Validation**: Open-ended validator count adapts to network size
 - **Fair Consensus**: 70% threshold balances security with trust graph diversity
+
+
+## Validator Compensation System
+
+### Overview
+
+To incentivize validator participation and create passive income opportunities for node operators, the system implements a **70/30 gas fee split** between miners and validators.
+
+### Fee Distribution Model
+
+```
+Total Gas Fee = 100%
+
+Distribution:
+- 70% → Miner (mines block, assembles transactions, propagates)
+- 30% → Validators (verify reputation, enable trust-aware features)
+
+Validator share (30%) split equally among all validators who participated
+```
+
+### Implementation Components
+
+#### 1. Gas Fee Distribution Calculator
+
+```cpp
+struct GasFeeDistribution {
+    CAmount totalGasFee;
+    CAmount minerShare;      // 70%
+    CAmount validatorShare;  // 30%
+    
+    std::vector<uint160> validators;
+    CAmount perValidatorShare;
+};
+
+GasFeeDistribution CalculateGasFeeDistribution(
+    const CTransaction& tx,
+    const std::vector<uint160>& validators
+) {
+    GasFeeDistribution dist;
+    dist.totalGasFee = tx.gasUsed * tx.gasPrice;
+    dist.minerShare = dist.totalGasFee * 0.70;
+    dist.validatorShare = dist.totalGasFee * 0.30;
+    dist.validators = validators;
+    if (!validators.empty()) {
+        dist.perValidatorShare = dist.validatorShare / validators.size();
+    }
+    return dist;
+}
+```
+
+#### 2. Validator Participation Tracking
+
+```cpp
+struct TransactionValidationRecord {
+    uint256 txHash;
+    std::vector<uint160> validators;
+    uint64_t blockHeight;
+};
+
+// Store when consensus reached
+void RecordValidatorParticipation(
+    const uint256& txHash,
+    const std::vector<ValidationResponse>& responses
+) {
+    TransactionValidationRecord record;
+    record.txHash = txHash;
+    record.blockHeight = chainActive.Height();
+    
+    for (const auto& response : responses) {
+        record.validators.push_back(response.validatorAddress);
+    }
+    
+    WriteToDatabase(database, MakeDBKey(DB_VALIDATOR_PARTICIPATION, txHash), record);
+}
+```
+
+#### 3. Coinbase Transaction with Validator Payments
+
+```cpp
+void CreateCoinbaseTransaction(
+    CMutableTransaction& coinbaseTx,
+    const CBlock& block,
+    const CAmount& blockReward
+) {
+    CAmount minerTotal = blockReward;
+    std::map<uint160, CAmount> validatorPayments;
+    
+    // Calculate fees for all transactions
+    for (const auto& tx : block.vtx) {
+        if (tx.IsCoinBase()) continue;
+        
+        std::vector<uint160> validators = GetTransactionValidators(tx.GetHash());
+        GasFeeDistribution dist = CalculateGasFeeDistribution(tx, validators);
+        
+        minerTotal += dist.minerShare;
+        
+        for (const auto& validator : validators) {
+            validatorPayments[validator] += dist.perValidatorShare;
+        }
+    }
+    
+    // Output 0: Miner
+    coinbaseTx.vout.push_back(CTxOut(minerTotal, minerScript));
+    
+    // Outputs 1-N: Validators
+    for (const auto& [validator, amount] : validatorPayments) {
+        CScript validatorScript = GetScriptForDestination(validator);
+        coinbaseTx.vout.push_back(CTxOut(amount, validatorScript));
+    }
+}
+```
+
+#### 4. Consensus Validation
+
+```cpp
+bool CheckCoinbaseValidatorPayments(const CBlock& block) {
+    const CTransaction& coinbase = block.vtx[0];
+    
+    // Calculate expected payments
+    std::map<uint160, CAmount> expectedPayments;
+    CAmount expectedMinerTotal = GetBlockSubsidy(block.nHeight);
+    
+    for (size_t i = 1; i < block.vtx.size(); i++) {
+        const CTransaction& tx = block.vtx[i];
+        std::vector<uint160> validators = GetTransactionValidators(tx.GetHash());
+        GasFeeDistribution dist = CalculateGasFeeDistribution(tx, validators);
+        
+        expectedMinerTotal += dist.minerShare;
+        for (const auto& validator : validators) {
+            expectedPayments[validator] += dist.perValidatorShare;
+        }
+    }
+    
+    // Verify payments
+    if (coinbase.vout[0].nValue != expectedMinerTotal) {
+        return error("Coinbase miner payment incorrect");
+    }
+    
+    for (size_t i = 1; i < coinbase.vout.size(); i++) {
+        uint160 validator = ExtractAddress(coinbase.vout[i].scriptPubKey);
+        if (coinbase.vout[i].nValue != expectedPayments[validator]) {
+            return error("Coinbase validator payment incorrect");
+        }
+    }
+    
+    return true;
+}
+```
+
+### Economic Benefits
+
+**Passive Income for Node Operators**:
+- Anyone with 10 CAS stake can earn validator fees
+- Automatic random selection ensures fair distribution
+- Expected earnings: ~1.5 CAS/day (at 1000 tx/day, 0.1 CAS/tx, 50% participation)
+- Annual return: 547.5 CAS on 10 CAS stake = 5,475% APY
+- Low barrier: $10-100 VPS + 10 CAS stake
+- Profitable at CAS price > $0.20
+
+**Network Effects**:
+- Drives node adoption (everyone wants passive income)
+- Increases decentralization (more validators)
+- Improves security (more diverse validator set)
+- Creates sustainable economic model
+
+**Comparison to Other Networks**:
+- Ethereum: 32 ETH (~$50k) required, ~5% APY
+- Bitcoin: $5k+ mining hardware, variable returns
+- Cascoin: 10 CAS + $10/mo VPS, 5,475% APY
+
+This creates the **most accessible passive income opportunity in crypto**!
+
+### Reference
+
+See `VALIDATOR-COMPENSATION.md` for complete specification including:
+- Detailed economic analysis
+- Alternative compensation models
+- Implementation examples
+- Consensus rules
+- RPC methods for earnings tracking

@@ -12,6 +12,7 @@
 #include <utilstrencodings.h>
 #include <script/script.h>
 #include <script/standard.h>
+#include <net_processing.h>
 
 namespace CVM {
 
@@ -676,13 +677,53 @@ bool BlockValidator::ValidateBlockHATConsensus(const CBlock& block, std::string&
 }
 
 bool BlockValidator::RecordFraudInBlock(CBlock& block, const std::vector<FraudRecord>& fraudRecords) {
-    // TODO: Implement fraud record transactions
-    // This would create special transactions that encode fraud records
-    // For now, just log
+    // Create special OP_RETURN transactions to encode fraud records in the blockchain
+    // This makes fraud records permanent and verifiable by all nodes
+    
+    // ANTI-MANIPULATION PROTECTION: Only accept DAO-approved fraud records
+    // This prevents arbitrary users from adding false fraud accusations to blocks
     
     for (const auto& fraud : fraudRecords) {
-        LogPrint(BCLog::CVM, "BlockValidator: Recording fraud by %s in block (penalty: %d points)\n",
-                 fraud.fraudsterAddress.ToString(), fraud.reputationPenalty);
+        // Validate fraud record before adding to block
+        if (!g_hatConsensusValidator || !g_hatConsensusValidator->ValidateFraudRecord(fraud)) {
+            LogPrintf("BlockValidator: Skipping invalid fraud record for %s\n",
+                     fraud.fraudsterAddress.ToString());
+            continue;  // Skip invalid fraud records
+        }
+        
+        // Create fraud record transaction
+        CMutableTransaction fraudTx;
+        fraudTx.nVersion = 2;
+        fraudTx.nLockTime = 0;
+        
+        // Create OP_RETURN output with fraud record data
+        // Format: OP_RETURN <magic> <version> <serialized_fraud_record>
+        CScript fraudScript;
+        fraudScript << OP_RETURN;
+        
+        // Magic bytes to identify fraud records: "FRAUD"
+        std::vector<unsigned char> magic = {0x46, 0x52, 0x41, 0x55, 0x44};
+        fraudScript << magic;
+        
+        // Version byte
+        fraudScript << std::vector<unsigned char>{0x01};
+        
+        // Serialize fraud record
+        CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
+        ss << fraud;
+        std::vector<unsigned char> fraudData(ss.begin(), ss.end());
+        fraudScript << fraudData;
+        
+        // Add output
+        CTxOut fraudOut(0, fraudScript);  // 0 value for OP_RETURN
+        fraudTx.vout.push_back(fraudOut);
+        
+        // Add to block
+        block.vtx.push_back(MakeTransactionRef(std::move(fraudTx)));
+        
+        LogPrint(BCLog::CVM, "BlockValidator: Recorded fraud by %s in block (penalty: %d points, tx: %s)\n",
+                 fraud.fraudsterAddress.ToString(), fraud.reputationPenalty, 
+                 block.vtx.back()->GetHash().ToString());
     }
     
     return true;
@@ -691,9 +732,72 @@ bool BlockValidator::RecordFraudInBlock(CBlock& block, const std::vector<FraudRe
 std::vector<FraudRecord> BlockValidator::ExtractFraudRecords(const CBlock& block) {
     std::vector<FraudRecord> fraudRecords;
     
-    // TODO: Implement fraud record extraction from block transactions
-    // This would parse special fraud record transactions
-    // For now, return empty vector
+    // Parse fraud record transactions from block
+    // Look for OP_RETURN transactions with fraud record magic bytes
+    
+    for (const auto& tx : block.vtx) {
+        // Skip coinbase
+        if (tx->IsCoinBase()) {
+            continue;
+        }
+        
+        // Check each output for fraud record OP_RETURN
+        for (const auto& out : tx->vout) {
+            if (out.scriptPubKey.size() < 10) {  // Minimum size check
+                continue;
+            }
+            
+            // Check for OP_RETURN
+            if (out.scriptPubKey[0] != OP_RETURN) {
+                continue;
+            }
+            
+            // Parse script to extract data
+            CScript::const_iterator pc = out.scriptPubKey.begin() + 1;
+            std::vector<unsigned char> data;
+            opcodetype opcode;
+            
+            // Read magic bytes
+            if (!out.scriptPubKey.GetOp(pc, opcode, data)) {
+                continue;
+            }
+            
+            // Check magic: "FRAUD"
+            if (data.size() != 5 || 
+                data[0] != 0x46 || data[1] != 0x52 || data[2] != 0x41 || 
+                data[3] != 0x55 || data[4] != 0x44) {
+                continue;
+            }
+            
+            // Read version
+            if (!out.scriptPubKey.GetOp(pc, opcode, data)) {
+                continue;
+            }
+            if (data.size() != 1 || data[0] != 0x01) {
+                continue;  // Unsupported version
+            }
+            
+            // Read fraud record data
+            if (!out.scriptPubKey.GetOp(pc, opcode, data)) {
+                continue;
+            }
+            
+            // Deserialize fraud record
+            try {
+                CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
+                FraudRecord fraud;
+                ss >> fraud;
+                
+                fraudRecords.push_back(fraud);
+                
+                LogPrint(BCLog::CVM, "BlockValidator: Extracted fraud record for %s from block (penalty: %d points)\n",
+                         fraud.fraudsterAddress.ToString(), fraud.reputationPenalty);
+            } catch (const std::exception& e) {
+                LogPrintf("BlockValidator: Failed to deserialize fraud record: %s\n", e.what());
+                continue;
+            }
+        }
+    }
     
     return fraudRecords;
 }

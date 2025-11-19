@@ -65,11 +65,18 @@ public:
     int64_t last_activity;
     std::vector<int64_t> activity_timestamps;
     
+    // Fraud Metrics (Task 19.2)
+    uint32_t fraud_count;              // Number of fraud attempts
+    int64_t last_fraud_timestamp;      // Most recent fraud attempt
+    int16_t total_fraud_penalty;       // Cumulative reputation penalty
+    std::vector<uint256> fraud_txhashes;  // Transaction hashes of fraud attempts
+    
     // Cached scores (updated by UpdateScores())
     double diversity_score;
     double volume_score;
     double pattern_score;
     double base_reputation;
+    double fraud_score;                // 0.0-1.0 (lower = more fraudulent)
     
     BehaviorMetrics();
     explicit BehaviorMetrics(const uint160& addr);
@@ -77,6 +84,11 @@ public:
     // Trade Management
     void AddTrade(const TradeRecord& trade);
     void AddActivity(int64_t timestamp);
+    
+    // Fraud Management (Task 19.2)
+    void AddFraudRecord(const uint256& txHash, int16_t penalty, int64_t timestamp);
+    bool HasFraudHistory() const;
+    int GetFraudSeverity() const;  // 0=none, 1=minor, 2=moderate, 3=severe, 4=critical
     
     // Score Calculations
     void UpdateScores();
@@ -130,6 +142,25 @@ public:
      * @return 0.5 if suspicious, 1.0 if normal
      */
     double DetectSuspiciousPattern() const;
+    
+    /**
+     * Calculate Fraud Score (Task 19.2)
+     * 
+     * Calculates reputation impact based on fraud history.
+     * Multiple fraud attempts result in severe penalties.
+     * Recent fraud weighted more heavily than old fraud.
+     * 
+     * Formula:
+     *   - No fraud: 1.0 (no penalty)
+     *   - 1 fraud: 0.7 (30% penalty)
+     *   - 2+ frauds: 0.3 (70% penalty)
+     *   - 5+ frauds: 0.0 (permanent low score)
+     * 
+     * Decay: 10% reduction per 10,000 blocks (~70 days)
+     * 
+     * @return 0.0-1.0 (lower = more fraudulent)
+     */
+    double CalculateFraudScore() const;
     
     /**
      * Calculate Base Reputation (before penalties)

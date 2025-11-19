@@ -18,10 +18,14 @@ BehaviorMetrics::BehaviorMetrics()
       total_volume(0),
       account_creation(GetTime()),
       last_activity(GetTime()),
+      fraud_count(0),
+      last_fraud_timestamp(0),
+      total_fraud_penalty(0),
       diversity_score(0.0),
       volume_score(0.0),
       pattern_score(1.0),
-      base_reputation(0)
+      base_reputation(0),
+      fraud_score(1.0)
 {
 }
 
@@ -33,10 +37,14 @@ BehaviorMetrics::BehaviorMetrics(const uint160& addr)
       total_volume(0),
       account_creation(GetTime()),
       last_activity(GetTime()),
+      fraud_count(0),
+      last_fraud_timestamp(0),
+      total_fraud_penalty(0),
       diversity_score(0.0),
       volume_score(0.0),
       pattern_score(1.0),
-      base_reputation(0)
+      base_reputation(0),
+      fraud_score(1.0)
 {
 }
 
@@ -195,10 +203,70 @@ int16_t BehaviorMetrics::CalculateBaseReputation() const {
 int16_t BehaviorMetrics::CalculateFinalReputation() const {
     double base = static_cast<double>(base_reputation);
     
-    // Apply all penalties
-    double final = base * diversity_score * volume_score * pattern_score;
+    // Apply all penalties including fraud score (Task 19.2)
+    double final = base * diversity_score * volume_score * pattern_score * fraud_score;
     
     return static_cast<int16_t>(std::max(0.0, std::min(100.0, final)));
+}
+
+// Fraud Management Methods (Task 19.2)
+
+void BehaviorMetrics::AddFraudRecord(const uint256& txHash, int16_t penalty, int64_t timestamp) {
+    fraud_count++;
+    last_fraud_timestamp = timestamp;
+    total_fraud_penalty += penalty;
+    fraud_txhashes.push_back(txHash);
+    
+    // Update fraud score
+    fraud_score = CalculateFraudScore();
+    
+    LogPrint(BCLog::CVM, "BehaviorMetrics: Added fraud record for %s (count=%d, penalty=%d, score=%.2f)\n",
+             address.ToString(), fraud_count, penalty, fraud_score);
+}
+
+bool BehaviorMetrics::HasFraudHistory() const {
+    return fraud_count > 0;
+}
+
+int BehaviorMetrics::GetFraudSeverity() const {
+    if (fraud_count == 0) return 0;  // None
+    if (fraud_count == 1) return 1;  // Minor
+    if (fraud_count == 2) return 2;  // Moderate
+    if (fraud_count < 5) return 3;   // Severe
+    return 4;                         // Critical
+}
+
+double BehaviorMetrics::CalculateFraudScore() const {
+    if (fraud_count == 0) {
+        return 1.0;  // No fraud, no penalty
+    }
+    
+    // Base penalty based on fraud count
+    double base_penalty;
+    if (fraud_count == 1) {
+        base_penalty = 0.7;  // 30% penalty
+    } else if (fraud_count == 2) {
+        base_penalty = 0.5;  // 50% penalty
+    } else if (fraud_count < 5) {
+        base_penalty = 0.3;  // 70% penalty
+    } else {
+        base_penalty = 0.0;  // Permanent low score (5+ frauds)
+    }
+    
+    // Apply time decay (10% reduction per 10,000 blocks = ~70 days)
+    if (last_fraud_timestamp > 0) {
+        int64_t current_time = GetTime();
+        int64_t time_since_fraud = current_time - last_fraud_timestamp;
+        int64_t blocks_since_fraud = time_since_fraud / 150;  // ~2.5 min per block
+        
+        // Decay: 10% per 10,000 blocks
+        double decay_factor = 1.0 + (blocks_since_fraud / 10000.0) * 0.1;
+        decay_factor = std::min(decay_factor, 2.0);  // Max 2x improvement
+        
+        base_penalty = std::min(1.0, base_penalty * decay_factor);
+    }
+    
+    return base_penalty;
 }
 
 } // namespace CVM

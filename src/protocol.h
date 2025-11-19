@@ -253,6 +253,16 @@ extern const char *DAODISPUTE;
 extern const char *DAORESOLUTION;
 // Cascoin: Trust Attestation: Cross-chain trust score update
 extern const char *TRUSTATTEST;
+// Cascoin: Validator Attestation: Validator eligibility announcement
+extern const char *VALIDATOR_ANNOUNCE;
+// Cascoin: Validator Attestation: Attestation request
+extern const char *ATTESTATION_REQUEST;
+// Cascoin: Validator Attestation: Validator attestation
+extern const char *VALIDATOR_ATTESTATION;
+// Cascoin: Validator Attestation: Batch attestation request
+extern const char *BATCH_ATTESTATION_REQUEST;
+// Cascoin: Validator Attestation: Batch attestation response
+extern const char *BATCH_ATTESTATION_RESPONSE;
 };
 
 /* Get a vector of all valid message types (see above) */
