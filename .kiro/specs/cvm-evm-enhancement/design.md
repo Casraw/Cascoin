@@ -61,9 +61,29 @@ The enhanced CVM introduces a revolutionary consensus mechanism that validates t
 
 **Permissionless Validator Network**: The system operates without a centralized validator registry. Any network participant can become a validator by meeting automatic eligibility criteria (validator reputation >= 70, stake >= 1 CAS, active participation). Validators self-announce on the P2P network and are automatically included in the random selection pool. This ensures true decentralization and prevents validator gatekeeping.
 
-**CRITICAL: Two Types of Reputation**:
-1. **Validator Reputation** (for eligibility): Global, objective metric based on validation accuracy. Same value for all nodes. Used to determine who can be a validator. Prevents centralization around WoT clusters.
-2. **HAT v2 Reputation** (for transaction senders): Personalized metric based on Web-of-Trust. Different value per node. Used to verify transaction sender's claimed reputation. Allows diverse perspectives.
+**CRITICAL: Validator Eligibility Uses HAT v2 Score**:
+
+Validator eligibility is determined by **HAT v2 Score** calculated by attestors from their individual WoT perspectives. This is NOT a separate "global, objective" metric.
+
+**How It Works**:
+1. **Validator announces eligibility** with self-reported metrics (stake, history, network participation)
+2. **10+ random attestors** independently calculate the validator's HAT v2 score from their own WoT perspective
+3. **HAT v2 Score components** (as implemented in `src/cvm/securehat.cpp`):
+   - **Behavior (40%)**: Objective metrics - transaction patterns, diversity, volume, timing
+   - **Web-of-Trust (30%)**: Subjective, personalized - trust paths from attestor's perspective
+   - **Economic (20%)**: Objective - stake amount, stake age, time weight
+   - **Temporal (10%)**: Objective - account age, activity patterns, gaps
+4. **Attestors provide**:
+   - Verification of objective criteria (stake, history, network participation)
+   - Their personalized HAT v2 trust score for the validator
+   - Confidence level based on their WoT connectivity
+5. **Eligibility determined by consensus**: 80%+ agreement on objective criteria + average trust score >= 50
+
+**Key Benefits**:
+- **No chicken-and-egg problem**: New validators can start with 0 WoT score but still achieve ~40-50 total score from objective components (Behavior 40% + Economic 20% + Temporal 10% = 70% of total)
+- **Sybil resistant**: Objective components (70% weight) cannot be faked; WoT component (30% weight) requires genuine network relationships
+- **Diverse perspectives**: Each attestor calculates from their own WoT view, preventing isolated Sybil networks
+- **Fully decentralized**: No central authority determines eligibility; consensus emerges from distributed attestations
 
 #### Consensus Flow
 
@@ -134,7 +154,10 @@ Transaction Submission → Random Validator Selection → Challenge-Response Pro
   - **On-Chain History**: 70 days presence, 100+ transactions, 20+ unique interactions
   - **Network Participation**: 1000+ blocks connected, 1+ peer (inclusive of home users - no public IP required!)
   - **Anti-Sybil Measures**: Not in same wallet cluster, diverse network topology, diverse stake sources
-  - **Trust Score**: Average 50+ from attestors (weighted by attestor reputation)
+  - **HAT v2 Trust Score**: Average 50+ from attestors (weighted by attestor reputation)
+    - Calculated using HAT v2 formula: 40% Behavior + 30% WoT + 20% Economic + 10% Temporal
+    - Each attestor calculates from their own WoT perspective
+    - New validators can achieve ~40-50 score from objective components alone (Behavior + Economic + Temporal = 70% weight)
   - **Consensus**: Low variance among attestors (<30 points), 80%+ agreement on objective criteria
 - **Why Distributed Attestation**:
   - **Cannot be faked**: Multiple independent nodes must confirm claims
@@ -142,10 +165,11 @@ Transaction Submission → Random Validator Selection → Challenge-Response Pro
   - **Sybil resistant**: Random attestor selection, weighted by attestor reputation
   - **Fully transparent**: All attestations broadcast to network, publicly verifiable
   - **Diverse perspectives**: Attestors have different WoT perspectives, prevents gaming
-- **CRITICAL DISTINCTION**: 
-  - **Validator Eligibility** (who can validate): Based on distributed attestations from network
-  - **HAT v2 Reputation** (transaction sender): Personalized metric based on WoT, what validators verify
-- This ensures **trustworthy validators from entire network** can participate, not just those in sender's WoT
+- **CRITICAL: Both Use HAT v2 Score**: 
+  - **Validator Eligibility** (who can validate): Determined by HAT v2 scores from 10+ attestors
+  - **Transaction Sender Verification** (what validators verify): Validators verify sender's self-reported HAT v2 score
+  - **Same scoring system, different contexts**: Attestors calculate validator's HAT v2; Validators calculate sender's HAT v2
+- This ensures **trustworthy validators from entire network** can participate through distributed attestation consensus
 - Validators randomly selected from eligible pool using deterministic randomness
 - Selection uses transaction hash + block height as seed (unpredictable, deterministic)
 - Each validator has unique trust graph perspective for **verifying sender's reputation**
@@ -321,11 +345,11 @@ Weighted Consensus Calculation:
 
 **Validator Accountability:**
 - Validators stake reputation on their responses
-- False validations result in reputation penalties
-- Consistent accurate validations increase validator reputation
-- Validator selection weighted by historical accuracy
-- **Automatic eligibility enforcement**: Validators who fall below criteria (reputation < 70, stake < 1 CAS, or inactive) are automatically excluded from selection pool
-- No manual registration or deregistration needed - system is fully automated
+- False validations result in reputation penalties (affects their HAT v2 Behavior score)
+- Consistent accurate validations increase validator reputation (improves HAT v2 Behavior score)
+- Validator selection uses HAT v2 score >= 50 (calculated by attestors from their WoT perspectives)
+- **Automatic eligibility enforcement**: Validators whose HAT v2 score falls below 50 (as determined by attestor consensus) are automatically excluded
+- No manual registration or deregistration needed - system is fully automated through distributed attestation
 
 **Sybil Resistance:**
 - Random selection prevents validator prediction
