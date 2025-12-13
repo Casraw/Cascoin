@@ -25,8 +25,7 @@
 #include <fstream>
 #include <cstdio>
 
-// Global BCT block handler instance
-std::unique_ptr<BCTBlockHandler> g_bct_block_handler;
+// Global BCT block handler instance is defined inline in bctdb.h
 
 // Static member definition
 const int BCTDatabaseSQLite::SCHEMA_VERSION;
@@ -94,7 +93,7 @@ bool BCTRecord::operator==(const BCTRecord& other) const {
 
 // BCTDatabaseSQLite implementation
 
-BCTDatabaseSQLite::BCTDatabaseSQLite() : db(nullptr), cacheValid(false) {}
+BCTDatabaseSQLite::BCTDatabaseSQLite() {}
 
 BCTDatabaseSQLite::~BCTDatabaseSQLite() {
     shutdown();

@@ -178,13 +178,13 @@ private:
     BCTDatabaseSQLite& operator=(const BCTDatabaseSQLite&) = delete;
 
     // Database handle
-    sqlite3* db;
+    sqlite3* db = nullptr;
     std::string dbPath;
     mutable std::mutex dbMutex;
 
     // In-memory cache
     std::map<std::string, BCTRecord> cache;
-    bool cacheValid;
+    bool cacheValid = false;
 
     // Schema management
     bool createSchema();
@@ -239,7 +239,7 @@ private:
 };
 
 // Global BCT block handler instance
-extern std::unique_ptr<BCTBlockHandler> g_bct_block_handler;
+inline std::unique_ptr<BCTBlockHandler> g_bct_block_handler;
 
 // Initialize BCT block handler (call during startup)
 void InitBCTBlockHandler();
