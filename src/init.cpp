@@ -42,6 +42,7 @@
 #include <ui_interface.h>
 #include <util.h>
 #include <utilmoneystr.h>
+#include <utilstrencodings.h>
 #include <validationinterface.h>
 #include <rialto.h>   // Cascoin: Rialto
 #ifdef ENABLE_WALLET
@@ -625,7 +626,8 @@ void CleanupBlockRevFiles()
     // start removing block files.
     int nContigCounter = 0;
     for (const std::pair<std::string, fs::path>& item : mapBlockFiles) {
-        if (atoi(item.first) == nContigCounter) {
+        int32_t fileIndex = 0;
+        if (ParseInt32(item.first, &fileIndex) && fileIndex == nContigCounter) {
             nContigCounter++;
             continue;
         }
