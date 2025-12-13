@@ -249,7 +249,6 @@ BITCOIN_QT_H = \
   qt/hivedialog.h \
   qt/beenftpage.h \
   qt/beenfttablemodel.h \
-  qt/bctdatabase.h \
   qt/paymentrequestplus.h \
   qt/paymentserver.h \
   qt/peertablemodel.h \
@@ -394,7 +393,6 @@ BITCOIN_QT_WALLET_CPP = \
   qt/hivedialog.cpp \
   qt/beenftpage.cpp \
   qt/beenfttablemodel.cpp \
-  qt/bctdatabase.cpp \
   qt/paymentrequestplus.cpp \
   qt/paymentserver.cpp \
   qt/receivecoinsdialog.cpp \
@@ -479,7 +477,7 @@ qt_cascoin_qt_LDADD += $(LIBBITCOIN_ZMQ) $(ZMQ_LIBS)
 endif
 qt_cascoin_qt_LDADD += $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) \
   $(BOOST_LIBS) $(QR_LIBS) $(PROTOBUF_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(LIBSECP256K1) \
-  $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(QT_DBUS_LIBS) $(QT_LIBS)
+  $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(QT_DBUS_LIBS) $(QT_LIBS) $(SQLITE3_LIBS)
 if TARGET_WINDOWS
 qt_cascoin_qt_LDADD += \
   -lQt6EntryPoint -lqwindows -lQt6DeviceDiscoverySupport -lQt6FbSupport \
