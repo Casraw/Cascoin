@@ -10,10 +10,32 @@
 #include <cvm/receipt.h>
 #include <dbwrapper.h>
 #include <uint256.h>
+#include <serialize.h>
 #include <map>
 #include <memory>
+#include <vector>
 
 namespace CVM {
+
+/**
+ * Record of validators who participated in transaction validation
+ * Used for calculating validator compensation (30% of gas fees)
+ */
+struct TransactionValidationRecord {
+    uint256 txHash;                    // Transaction hash
+    std::vector<uint160> validators;   // Validators who provided responses
+    uint64_t blockHeight;              // Block height where transaction was included
+    
+    TransactionValidationRecord() : blockHeight(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(txHash);
+        READWRITE(validators);
+        READWRITE(blockHeight);
+    }
+};
 
 /**
  * Database keys for CVM state storage
@@ -25,6 +47,7 @@ static const char DB_BALANCE = 'B';           // Contract balance: 'B' + address
 static const char DB_CONTRACT_LIST = 'L';     // List of all contracts
 static const char DB_RECEIPT = 'R';           // Transaction receipt: 'R' + txhash -> TransactionReceipt
 static const char DB_RECEIPT_BLOCK = 'X';     // Block receipts index: 'X' + blockhash -> vector<txhash>
+static const char DB_VALIDATOR_PARTICIPATION = 'V';  // Validator participation: 'V' + txhash -> TransactionValidationRecord
 
 /**
  * CVMDatabase - LevelDB-backed storage for CVM state
@@ -83,6 +106,12 @@ public:
     
     // Receipt pruning (delete receipts older than specified block height)
     bool PruneReceipts(uint32_t beforeBlockNumber);
+    
+    // Validator participation tracking (for gas fee distribution)
+    bool WriteValidatorParticipation(const uint256& txHash, const TransactionValidationRecord& record);
+    bool ReadValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record);
+    bool GetValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record);
+    bool HasValidatorParticipation(const uint256& txHash);
     
     // Generic key-value storage (for Web-of-Trust and other extensions)
     bool WriteGeneric(const std::string& key, const std::vector<uint8_t>& value);

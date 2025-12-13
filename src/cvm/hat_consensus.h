@@ -14,6 +14,7 @@
 #include <cvm/securehat.h>
 #include <cvm/trustgraph.h>
 #include <cvm/eclipse_sybil_protection.h>
+#include <cvm/vote_manipulation_detector.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -865,6 +866,29 @@ public:
     EclipseSybilProtection& GetEclipseSybilProtection() { return *m_eclipseSybilProtection; }
     
     /**
+     * Get vote manipulation detector
+     * 
+     * @return Reference to vote manipulation detector
+     */
+    VoteManipulationDetector& GetVoteManipulationDetector() { return *m_voteManipulationDetector; }
+    
+    /**
+     * Analyze transaction for vote manipulation
+     * 
+     * @param txHash Transaction hash
+     * @return Manipulation detection result
+     */
+    ManipulationDetection AnalyzeTransactionVoting(const uint256& txHash);
+    
+    /**
+     * Analyze address for reputation manipulation
+     * 
+     * @param address Address to analyze
+     * @return Manipulation detection result
+     */
+    ManipulationDetection AnalyzeAddressReputation(const uint160& address);
+    
+    /**
      * Process validation request from P2P network
      * 
      * Called when a VALCHALLENGE message is received.
@@ -1113,6 +1137,7 @@ private:
     SecureHAT& secureHAT;
     TrustGraph& trustGraph;
     std::unique_ptr<EclipseSybilProtection> m_eclipseSybilProtection;
+    std::unique_ptr<VoteManipulationDetector> m_voteManipulationDetector;
     
     // Validator peer mapping
     struct ValidatorPeerInfo {

@@ -4299,3 +4299,191 @@ void RegisterCVMRPCCommands(CRPCTable &t)
         t.appendCommand(commands[vcidx].name, &commands[vcidx]);
 }
 
+
+
+// Vote Manipulation Detection RPC Methods
+
+UniValue analyzevotemanipulation(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "analyzevotemanipulation \"txhash\"\n"
+            "\nAnalyze a transaction for vote manipulation patterns.\n"
+            "\nArguments:\n"
+            "1. \"txhash\"    (string, required) The transaction hash\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"type\": \"xxx\",                    (string) Type of manipulation detected\n"
+            "  \"suspicious_addresses\": [...],      (array) Addresses flagged as suspicious\n"
+            "  \"suspicious_txs\": [...],            (array) Transactions flagged as suspicious\n"
+            "  \"confidence\": x.xx,                 (numeric) Confidence level (0.0-1.0)\n"
+            "  \"description\": \"xxx\",             (string) Description of detection\n"
+            "  \"escalate_to_dao\": true|false       (boolean) Should be escalated to DAO\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("analyzevotemanipulation", "\"1234567890abcdef...\"")
+            + HelpExampleRpc("analyzevotemanipulation", "\"1234567890abcdef...\"")
+        );
+    
+    uint256 txHash = ParseHashV(request.params[0], "txhash");
+    
+    // Get HAT consensus validator
+    // TODO: Get from global instance
+    // For now, return placeholder
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("type", "none");
+    result.pushKV("suspicious_addresses", UniValue(UniValue::VARR));
+    result.pushKV("suspicious_txs", UniValue(UniValue::VARR));
+    result.pushKV("confidence", 0.0);
+    result.pushKV("description", "No manipulation detected");
+    result.pushKV("escalate_to_dao", false);
+    
+    return result;
+}
+
+UniValue analyzeaddressreputation(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "analyzeaddressreputation \"address\"\n"
+            "\nAnalyze an address for reputation manipulation.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The address to analyze\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"type\": \"xxx\",                    (string) Type of manipulation detected\n"
+            "  \"suspicious_addresses\": [...],      (array) Addresses flagged as suspicious\n"
+            "  \"confidence\": x.xx,                 (numeric) Confidence level (0.0-1.0)\n"
+            "  \"description\": \"xxx\",             (string) Description of detection\n"
+            "  \"escalate_to_dao\": true|false,      (boolean) Should be escalated to DAO\n"
+            "  \"is_flagged\": true|false            (boolean) Is address currently flagged\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("analyzeaddressreputation", "\"CAddress123...\"")
+            + HelpExampleRpc("analyzeaddressreputation", "\"CAddress123...\"")
+        );
+    
+    std::string addressStr = request.params[0].get_str();
+    uint160 address;
+    // TODO: Parse address
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("type", "none");
+    result.pushKV("suspicious_addresses", UniValue(UniValue::VARR));
+    result.pushKV("confidence", 0.0);
+    result.pushKV("description", "No manipulation detected");
+    result.pushKV("escalate_to_dao", false);
+    result.pushKV("is_flagged", false);
+    
+    return result;
+}
+
+UniValue getflaggedaddresses(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "getflaggedaddresses\n"
+            "\nGet all addresses flagged for suspicious activity.\n"
+            "\nResult:\n"
+            "[\n"
+            "  \"address\",    (string) Flagged address\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getflaggedaddresses", "")
+            + HelpExampleRpc("getflaggedaddresses", "")
+        );
+    
+    UniValue result(UniValue::VARR);
+    
+    // TODO: Get from vote manipulation detector
+    
+    return result;
+}
+
+UniValue getvotehistory(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getvotehistory \"txhash\"\n"
+            "\nGet vote history for a transaction.\n"
+            "\nArguments:\n"
+            "1. \"txhash\"    (string, required) The transaction hash\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"validator\": \"address\",         (string) Validator address\n"
+            "    \"vote\": \"accept|reject\",        (string) Vote decision\n"
+            "    \"timestamp\": xxx,                 (numeric) Vote timestamp\n"
+            "    \"score_difference\": x             (numeric) Score difference\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getvotehistory", "\"1234567890abcdef...\"")
+            + HelpExampleRpc("getvotehistory", "\"1234567890abcdef...\"")
+        );
+    
+    uint256 txHash = ParseHashV(request.params[0], "txhash");
+    
+    UniValue result(UniValue::VARR);
+    
+    // TODO: Get from vote manipulation detector
+    
+    return result;
+}
+
+UniValue getreputationhistory(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getreputationhistory \"address\" ( count )\n"
+            "\nGet reputation change history for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The address\n"
+            "2. count          (numeric, optional, default=100) Number of records to return\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"block_height\": xxx,              (numeric) Block height\n"
+            "    \"old_score\": x,                   (numeric) Old reputation score\n"
+            "    \"new_score\": x,                   (numeric) New reputation score\n"
+            "    \"change\": x,                      (numeric) Change amount\n"
+            "    \"reason\": \"xxx\"                 (string) Reason for change\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getreputationhistory", "\"CAddress123...\"")
+            + HelpExampleRpc("getreputationhistory", "\"CAddress123...\" 50")
+        );
+    
+    std::string addressStr = request.params[0].get_str();
+    int count = 100;
+    if (request.params.size() > 1) {
+        count = request.params[1].get_int();
+    }
+    
+    UniValue result(UniValue::VARR);
+    
+    // TODO: Get from vote manipulation detector
+    
+    return result;
+}
+
+static const CRPCCommand commands[] =
+{ //  category              name                            actor (function)            argNames
+  //  --------------------- ------------------------        -----------------------     ----------
+    { "cvm",                "analyzevotemanipulation",      &analyzevotemanipulation,   {"txhash"} },
+    { "cvm",                "analyzeaddressreputation",     &analyzeaddressreputation,  {"address"} },
+    { "cvm",                "getflaggedaddresses",          &getflaggedaddresses,       {} },
+    { "cvm",                "getvotehistory",               &getvotehistory,            {"txhash"} },
+    { "cvm",                "getreputationhistory",         &getreputationhistory,      {"address","count"} },
+};
+
+void RegisterVoteManipulationRPCCommands(CRPCTable &t)
+{
+    for (unsigned int vcidx = 0; vcidx < ARRAYLEN(commands); vcidx++)
+        t.appendCommand(commands[vcidx].name, &commands[vcidx]);
+}

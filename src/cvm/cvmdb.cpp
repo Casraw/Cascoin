@@ -398,3 +398,27 @@ bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {
 }
 
 } // namespace CVM
+
+// Validator participation tracking
+bool CVMDatabase::WriteValidatorParticipation(const uint256& txHash, const TransactionValidationRecord& record) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_PARTICIPATION) + 
+                       std::string((char*)txHash.begin(), 32);
+    
+    return db->Write(dbKey, record);
+}
+
+bool CVMDatabase::ReadValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_PARTICIPATION) + 
+                       std::string((char*)txHash.begin(), 32);
+    
+    return db->Read(dbKey, record);
+}
+
+bool CVMDatabase::GetValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record) {
+    return ReadValidatorParticipation(txHash, record);
+}
+
+bool CVMDatabase::HasValidatorParticipation(const uint256& txHash) {
+    TransactionValidationRecord record;
+    return ReadValidatorParticipation(txHash, record);
+}

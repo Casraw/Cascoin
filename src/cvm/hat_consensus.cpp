@@ -190,7 +190,8 @@ bool ValidationResponse::VerifySignature() const {
 
 HATConsensusValidator::HATConsensusValidator(CVMDatabase& db, SecureHAT& hat, TrustGraph& graph)
     : database(db), secureHAT(hat), trustGraph(graph),
-      m_eclipseSybilProtection(new EclipseSybilProtection(db, graph))
+      m_eclipseSybilProtection(new EclipseSybilProtection(db, graph)),
+      m_voteManipulationDetector(new VoteManipulationDetector(db))
 {
 }
 
@@ -2257,6 +2258,21 @@ bool CVM::HATConsensusValidator::DetectCoordinatedSybilAttack(const std::vector<
     }
     
     return false;
+}
+
+} // namespace CVM
+
+
+// Vote Manipulation Detection Methods
+
+ManipulationDetection HATConsensusValidator::AnalyzeTransactionVoting(const uint256& txHash)
+{
+    return m_voteManipulationDetector->AnalyzeTransaction(txHash);
+}
+
+ManipulationDetection HATConsensusValidator::AnalyzeAddressReputation(const uint160& address)
+{
+    return m_voteManipulationDetector->AnalyzeAddress(address);
 }
 
 } // namespace CVM

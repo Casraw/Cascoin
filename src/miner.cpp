@@ -38,6 +38,7 @@
 #include <boost/thread.hpp> // Cascoin: Hive: Mining optimisations
 #include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
 #include <cvm/mempool_priority.h>  // Cascoin: CVM/EVM reputation-based priority
+#include <cvm/validator_compensation.h>  // Cascoin: HAT v2 validator compensation
 
 
 static CCriticalSection cs_solution_vars;
@@ -242,29 +243,32 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
         pblocktemplate->vchCoinbaseCommitment = GenerateCoinbaseCommitment(*pblock, pindexPrev, chainparams.GetConsensus());
         pblocktemplate->vTxFees[0] = -nFees;
     } else {
-        CMutableTransaction coinbaseTx;
-        coinbaseTx.vin.resize(1);
-        coinbaseTx.vin[0].prevout.SetNull();
-        coinbaseTx.vout.resize(1);
-        coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
-
         // Cascoin: MinotaurX+Hive1.2: Pow rewards are 50% of base block reward
-        coinbaseTx.vout[0].nValue = GetBlockSubsidy(nHeight, chainparams.GetConsensus());
+        CAmount blockReward = GetBlockSubsidy(nHeight, chainparams.GetConsensus());
         if (IsMinotaurXEnabled(pindexPrev, chainparams.GetConsensus()))
-            coinbaseTx.vout[0].nValue = coinbaseTx.vout[0].nValue >> 1;
+            blockReward = blockReward >> 1;
 
-        coinbaseTx.vout[0].nValue += nFees;
+        // Cascoin: HAT v2: Create coinbase with validator payments (70/30 split)
+        CMutableTransaction coinbaseTx;
+        if (!CreateCoinbaseWithValidatorPayments(coinbaseTx, *pblock, scriptPubKeyIn, blockReward, nHeight)) {
+            // Fallback to traditional coinbase if validator payment creation fails
+            LogPrintf("CreateNewBlock: Failed to create coinbase with validator payments, using traditional coinbase\n");
+            
+            coinbaseTx.vin.resize(1);
+            coinbaseTx.vin[0].prevout.SetNull();
+            coinbaseTx.vout.resize(1);
+            coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
+            coinbaseTx.vout[0].nValue = blockReward + nFees;
 
-        // BIP34 requires the block height to be included in the coinbase
-        // The validation code specifically expects the scriptSig to BEGIN WITH: CScript() << nHeight
-        // We then append arbitrary data to ensure the minimum size requirement for coinbase scriptSig
-        CScript scriptSig;
-        scriptSig << nHeight;
-        // Ensure the scriptSig is at least 2 bytes by padding if needed
-        if (scriptSig.size() < 2) {
-            scriptSig << OP_0;
+            // BIP34 requires the block height to be included in the coinbase
+            CScript scriptSig;
+            scriptSig << nHeight;
+            if (scriptSig.size() < 2) {
+                scriptSig << OP_0;
+            }
+            coinbaseTx.vin[0].scriptSig = scriptSig;
         }
-        coinbaseTx.vin[0].scriptSig = scriptSig;
+        
         pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
         pblocktemplate->vchCoinbaseCommitment = GenerateCoinbaseCommitment(*pblock, pindexPrev, chainparams.GetConsensus());
         pblocktemplate->vTxFees[0] = -nFees;
