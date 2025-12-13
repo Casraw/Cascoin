@@ -64,6 +64,29 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
             std::vector<BCTRecord> records;
             
+            // Helper lambda to convert wallet BCTs to BCTRecords
+            auto convertWalletBCTs = [](const std::vector<CBeeCreationTransactionInfo>& walletBCTs) {
+                std::vector<BCTRecord> result;
+                result.reserve(walletBCTs.size());
+                for (const auto& bct : walletBCTs) {
+                    BCTRecord record;
+                    record.txid = bct.txid;
+                    record.honeyAddress = bct.honeyAddress;
+                    record.status = bct.beeStatus;
+                    record.beeCount = bct.beeCount;
+                    record.creationHeight = 0;
+                    record.maturityHeight = 0;
+                    record.expirationHeight = 0;
+                    record.timestamp = bct.time;
+                    record.cost = bct.beeFeePaid;
+                    record.blocksFound = bct.blocksFound;
+                    record.rewardsPaid = bct.rewardsPaid;
+                    record.profit = bct.profit;
+                    result.push_back(record);
+                }
+                return result;
+            };
+            
             if (bctDb && bctDb->isInitialized()) {
                 // Use SQLite database for fast queries
                 records = bctDb->getAllBCTs(includeDeadBees);
@@ -74,23 +97,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                     LogPrintf("HiveTableModel: SQLite database is empty, falling back to wallet scan\n");
                     std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
                     walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
-                    
-                    for (const auto& bct : vBeeCreationTransactions) {
-                        BCTRecord record;
-                        record.txid = bct.txid;
-                        record.honeyAddress = bct.honeyAddress;
-                        record.status = bct.beeStatus;
-                        record.beeCount = bct.beeCount;
-                        record.creationHeight = 0;
-                        record.maturityHeight = 0;
-                        record.expirationHeight = 0;
-                        record.timestamp = bct.time;
-                        record.cost = bct.beeFeePaid;
-                        record.blocksFound = bct.blocksFound;
-                        record.rewardsPaid = bct.rewardsPaid;
-                        record.profit = bct.profit;
-                        records.push_back(record);
-                    }
+                    records = convertWalletBCTs(vBeeCreationTransactions);
                     LogPrintf("HiveTableModel: Loaded %zu BCT records from wallet scan\n", records.size());
                 }
             } else {
@@ -99,24 +106,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                           bctDb, bctDb ? bctDb->isInitialized() : false);
                 std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
                 walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
-                
-                // Convert to BCTRecord format for consistent processing
-                for (const auto& bct : vBeeCreationTransactions) {
-                    BCTRecord record;
-                    record.txid = bct.txid;
-                    record.honeyAddress = bct.honeyAddress;
-                    record.status = bct.beeStatus;
-                    record.beeCount = bct.beeCount;
-                    record.creationHeight = 0;  // Not available from wallet scan
-                    record.maturityHeight = 0;
-                    record.expirationHeight = 0;
-                    record.timestamp = bct.time;
-                    record.cost = bct.beeFeePaid;
-                    record.blocksFound = bct.blocksFound;
-                    record.rewardsPaid = bct.rewardsPaid;
-                    record.profit = bct.profit;
-                    records.push_back(record);
-                }
+                records = convertWalletBCTs(vBeeCreationTransactions);
             }
             
             // Get current chain height for blocks left calculation

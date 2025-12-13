@@ -31,6 +31,12 @@ std::unique_ptr<BCTBlockHandler> g_bct_block_handler;
 // Static member definition
 const int BCTDatabaseSQLite::SCHEMA_VERSION;
 
+// SQL column list for BCT queries (used in multiple places to avoid duplication)
+static const char* BCT_SELECT_COLUMNS = 
+    "txid, honey_address, status, bee_count, creation_height, "
+    "maturity_height, expiration_height, timestamp, cost, blocks_found, "
+    "rewards_paid, profit, checksum, updated_at";
+
 // BCTRecord implementation
 
 int BCTRecord::getBlocksLeft(int currentHeight) const {
@@ -475,9 +481,7 @@ std::vector<BCTRecord> BCTDatabaseSQLite::getAllBCTs(bool includeExpired) {
     std::vector<BCTRecord> results;
     if (db == nullptr) return results;
 
-    std::string sql = "SELECT txid, honey_address, status, bee_count, creation_height, "
-                      "maturity_height, expiration_height, timestamp, cost, blocks_found, "
-                      "rewards_paid, profit, checksum, updated_at FROM bcts";
+    std::string sql = std::string("SELECT ") + BCT_SELECT_COLUMNS + " FROM bcts";
     
     if (!includeExpired) {
         sql += " WHERE status != 'expired'";
@@ -504,13 +508,11 @@ std::vector<BCTRecord> BCTDatabaseSQLite::getBCTsByStatus(const std::string& sta
     std::vector<BCTRecord> results;
     if (db == nullptr) return results;
 
-    const char* sql = "SELECT txid, honey_address, status, bee_count, creation_height, "
-                      "maturity_height, expiration_height, timestamp, cost, blocks_found, "
-                      "rewards_paid, profit, checksum, updated_at FROM bcts "
-                      "WHERE status = ? ORDER BY creation_height DESC;";
+    std::string sql = std::string("SELECT ") + BCT_SELECT_COLUMNS + 
+                      " FROM bcts WHERE status = ? ORDER BY creation_height DESC;";
 
     sqlite3_stmt* stmt;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return results;
     }
 
@@ -530,12 +532,10 @@ BCTRecord BCTDatabaseSQLite::getBCT(const std::string& txid) {
     BCTRecord record;
     if (db == nullptr) return record;
 
-    const char* sql = "SELECT txid, honey_address, status, bee_count, creation_height, "
-                      "maturity_height, expiration_height, timestamp, cost, blocks_found, "
-                      "rewards_paid, profit, checksum, updated_at FROM bcts WHERE txid = ?;";
+    std::string sql = std::string("SELECT ") + BCT_SELECT_COLUMNS + " FROM bcts WHERE txid = ?;";
 
     sqlite3_stmt* stmt;
-    if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) {
         return record;
     }
 

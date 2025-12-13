@@ -43,6 +43,23 @@ std::string RandomHexString(std::mt19937& gen, size_t length) {
     return result;
 }
 
+// Helper to verify BCTRecord fields match (excluding checksum and updatedAt)
+void VerifyBCTRecordFieldsMatch(const BCTRecord& expected, const BCTRecord& actual, const std::string& context = "") {
+    std::string ctx = context.empty() ? "" : " (" + context + ")";
+    BOOST_CHECK_EQUAL(expected.txid, actual.txid);
+    BOOST_CHECK_EQUAL(expected.honeyAddress, actual.honeyAddress);
+    BOOST_CHECK_EQUAL(expected.status, actual.status);
+    BOOST_CHECK_EQUAL(expected.beeCount, actual.beeCount);
+    BOOST_CHECK_EQUAL(expected.creationHeight, actual.creationHeight);
+    BOOST_CHECK_EQUAL(expected.maturityHeight, actual.maturityHeight);
+    BOOST_CHECK_EQUAL(expected.expirationHeight, actual.expirationHeight);
+    BOOST_CHECK_EQUAL(expected.timestamp, actual.timestamp);
+    BOOST_CHECK_EQUAL(expected.cost, actual.cost);
+    BOOST_CHECK_EQUAL(expected.blocksFound, actual.blocksFound);
+    BOOST_CHECK_EQUAL(expected.rewardsPaid, actual.rewardsPaid);
+    BOOST_CHECK_EQUAL(expected.profit, actual.profit);
+}
+
 // Helper to generate random BCTRecord
 BCTRecord GenerateRandomBCTRecord(std::mt19937& gen) {
     BCTRecord record;
@@ -140,18 +157,7 @@ BOOST_AUTO_TEST_CASE(property_serialization_roundtrip)
         BCTRecord retrieved = db->getBCT(original.txid);
         
         // Verify all fields match (excluding checksum and updatedAt which are set by the database)
-        BOOST_CHECK_EQUAL(original.txid, retrieved.txid);
-        BOOST_CHECK_EQUAL(original.honeyAddress, retrieved.honeyAddress);
-        BOOST_CHECK_EQUAL(original.status, retrieved.status);
-        BOOST_CHECK_EQUAL(original.beeCount, retrieved.beeCount);
-        BOOST_CHECK_EQUAL(original.creationHeight, retrieved.creationHeight);
-        BOOST_CHECK_EQUAL(original.maturityHeight, retrieved.maturityHeight);
-        BOOST_CHECK_EQUAL(original.expirationHeight, retrieved.expirationHeight);
-        BOOST_CHECK_EQUAL(original.timestamp, retrieved.timestamp);
-        BOOST_CHECK_EQUAL(original.cost, retrieved.cost);
-        BOOST_CHECK_EQUAL(original.blocksFound, retrieved.blocksFound);
-        BOOST_CHECK_EQUAL(original.rewardsPaid, retrieved.rewardsPaid);
-        BOOST_CHECK_EQUAL(original.profit, retrieved.profit);
+        VerifyBCTRecordFieldsMatch(original, retrieved);
         
         // Verify checksum is valid
         BOOST_CHECK_MESSAGE(retrieved.validateChecksum(),
@@ -398,19 +404,7 @@ BOOST_AUTO_TEST_CASE(property_update_isolation)
             if (i == updateIndex) continue;
             
             BCTRecord retrieved = db->getBCT(originalRecords[i].txid);
-            
-            BOOST_CHECK_EQUAL(originalRecords[i].txid, retrieved.txid);
-            BOOST_CHECK_EQUAL(originalRecords[i].honeyAddress, retrieved.honeyAddress);
-            BOOST_CHECK_EQUAL(originalRecords[i].status, retrieved.status);
-            BOOST_CHECK_EQUAL(originalRecords[i].beeCount, retrieved.beeCount);
-            BOOST_CHECK_EQUAL(originalRecords[i].creationHeight, retrieved.creationHeight);
-            BOOST_CHECK_EQUAL(originalRecords[i].maturityHeight, retrieved.maturityHeight);
-            BOOST_CHECK_EQUAL(originalRecords[i].expirationHeight, retrieved.expirationHeight);
-            BOOST_CHECK_EQUAL(originalRecords[i].timestamp, retrieved.timestamp);
-            BOOST_CHECK_EQUAL(originalRecords[i].cost, retrieved.cost);
-            BOOST_CHECK_EQUAL(originalRecords[i].blocksFound, retrieved.blocksFound);
-            BOOST_CHECK_EQUAL(originalRecords[i].rewardsPaid, retrieved.rewardsPaid);
-            BOOST_CHECK_EQUAL(originalRecords[i].profit, retrieved.profit);
+            VerifyBCTRecordFieldsMatch(originalRecords[i], retrieved);
         }
         
         // Verify the updated record has the new values
