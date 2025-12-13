@@ -14,7 +14,7 @@ sudo apt-get install -y \
   libprotobuf-dev protobuf-compiler \
   libevent-dev libboost-all-dev \
   libminiupnpc-dev libssl-dev libzmq3-dev libqrencode-dev \
-  libdb++-dev
+  libdb++-dev libsqlite3-dev
 ```
 
 Hinweise:
