@@ -167,7 +167,7 @@ public:
     bool deleteBCTsAfterHeight(int height);
 
     // Get database path
-    std::string getDatabasePath() const { return dbPath; }
+    const std::string& getDatabasePath() const { return dbPath; }
 
 private:
     // Private constructor for singleton

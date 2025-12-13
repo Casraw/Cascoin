@@ -736,7 +736,6 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
     
     int bctCount = 0;
-    int currentHeight = 0;
     
     {
         LOCK(cs_main);
@@ -750,7 +749,7 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
         
         // Iterate through blocks from startHeight to stopHeight
         for (int height = startHeight; height <= stopHeight; height++) {
-            CBlockIndex* pindex = chainActive[height];
+            const CBlockIndex* pindex = chainActive[height];
             if (!pindex) continue;
             
             CBlock block;
@@ -758,8 +757,6 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
                 LogPrintf("BCTDatabase: Failed to read block at height %d\n", height);
                 continue;
             }
-            
-            currentHeight = height;
             
             // Scan transactions in this block
             for (const auto& tx : block.vtx) {
@@ -1058,6 +1055,11 @@ bool BCTDatabaseSQLite::databaseExists() const {
 
 bool BCTDatabaseSQLite::loadIntoCache() {
     LogPrintf("BCTDatabase: Loading data into memory cache\n");
+    
+    if (!isInitialized()) {
+        LogPrintf("BCTDatabase: Cannot load cache - database not initialized\n");
+        return false;
+    }
     
     auto records = getAllBCTs(true); // Include expired
     
