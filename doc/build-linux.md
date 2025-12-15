@@ -1,10 +1,10 @@
-Cascoin Core – Build-Anleitung (Linux)
-======================================
+Cascoin Core – Build Instructions (Linux)
+==========================================
 
-Diese Anleitung beschreibt den Build von Cascoin Core unter Linux mit Wallet und Qt6‑GUI – ausschließlich mit Systembibliotheken (ohne das `depends/`‑System).
+This guide describes building Cascoin Core on Linux with Wallet and Qt6 GUI – exclusively using system libraries (without the `depends/` system).
 
-Voraussetzungen (Ubuntu/Debian)
---------------------------------
+Prerequisites (Ubuntu/Debian)
+------------------------------
 
 ```bash
 sudo apt-get update
@@ -17,12 +17,26 @@ sudo apt-get install -y \
   libdb++-dev libsqlite3-dev
 ```
 
-Hinweise:
-- Falls Ihre Distribution nur neuere Berkeley DB‑Versionen bereitstellt, konfigurieren Sie mit `--with-incompatible-bdb` (Wallets sind dann nicht portabel zu offiziellen Releases).
-- Qt6‑Tools (`moc`, `uic`, `rcc`, `lrelease`) liegen typischerweise in `/usr/lib/qt6/libexec` bzw. `/usr/bin`.
+For Debian 13 add this: 'libdb5.3++-dev'
 
-Build‑Schritte
---------------
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential autoconf automake libtool pkg-config \
+  qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools \
+  libprotobuf-dev protobuf-compiler \
+  libevent-dev libboost-all-dev \
+  libminiupnpc-dev libssl-dev libzmq3-dev libqrencode-dev \
+  libdb++-dev libsqlite3-dev libdb5.3++-dev
+```
+
+Notes:
+- If your distribution only provides newer Berkeley DB versions, configure with `--with-incompatible-bdb` (wallets will then not be portable to official releases).
+- Qt6 tools (`moc`, `uic`, `rcc`, `lrelease`) are typically located in `/usr/lib/qt6/libexec` or `/usr/bin`.
+
+Build Steps
+-----------
 
 ```bash
 cd /pfad/zu/Cascoin
@@ -43,27 +57,27 @@ cd /pfad/zu/Cascoin
 make -j"$(nproc)"
 ```
 
-Erzeugte Binaries
+Generated Binaries
 -----------------
 
-- GUI‑Wallet: `src/qt/cascoin-qt`
+- GUI Wallet: `src/qt/cascoin-qt`
 - Daemon: `src/cascoind`
 - CLI: `src/cascoin-cli`
-- TX‑Tool: `src/cascoin-tx`
+- TX Tool: `src/cascoin-tx`
 
-Optionale Features
-------------------
+Optional Features
+-----------------
 
-- Ohne GUI: `./configure --with-gui=no`
-- Tests/Bench deaktivieren: `--disable-tests --disable-bench`
-- QR‑Codes in der GUI: `libqrencode-dev` installieren und `--with-qrencode` setzen
-- ZMQ: `libzmq3-dev` installieren und `--enable-zmq` setzen
+- Without GUI: `./configure --with-gui=no`
+- Disable tests/bench: `--disable-tests --disable-bench`
+- QR codes in GUI: Install `libqrencode-dev` and set `--with-qrencode`
+- ZMQ: Install `libzmq3-dev` and set `--enable-zmq`
 
 Troubleshooting
 ---------------
 
-- Qt6‑Tools nicht gefunden (moc/uic/rcc/lrelease): Stellen Sie sicher, dass die Pakete `qt6-base-dev-tools` und `qt6-tools-dev-tools` installiert sind, und geben Sie deren Pfade wie oben bei `./configure` an.
-- Berkeley DB‑Fehlermeldung: Nutzen Sie `--with-incompatible-bdb` (Wallets dann nicht portabel) oder bauen Sie BDB 4.8 separat und linken dagegen.
-- Fehlende Libraries: Installieren Sie die entsprechenden `-dev`‑Pakete (siehe obige Liste) und führen Sie `./configure` erneut aus.
+- Qt6 tools not found (moc/uic/rcc/lrelease): Make sure the packages `qt6-base-dev-tools` and `qt6-tools-dev-tools` are installed, and specify their paths as shown above in `./configure`.
+- Berkeley DB error message: Use `--with-incompatible-bdb` (wallets will then not be portable) or build BDB 4.8 separately and link against it.
+- Missing libraries: Install the corresponding `-dev` packages (see list above) and run `./configure` again.
 
 
