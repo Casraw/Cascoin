@@ -38,6 +38,8 @@ Notes:
 Build Steps
 -----------
 
+### Ubuntu / Debian (general)
+
 ```bash
 cd /pfad/zu/Cascoin
 ./autogen.sh
@@ -53,6 +55,29 @@ cd /pfad/zu/Cascoin
   RCC=/usr/lib/qt6/libexec/rcc \
   LRELEASE=$(command -v lrelease || command -v lrelease-qt6 || echo /usr/lib/qt6/libexec/lrelease) \
   LUPDATE=$(command -v lupdate || command -v lupdate-qt6 || echo /usr/lib/qt6/libexec/lupdate)
+
+make -j"$(nproc)"
+```
+
+### Debian 13 (Trixie)
+
+On Debian 13, the Qt6 translation tools (`lrelease`, `lupdate`) are located in `/usr/lib/qt6/bin/` instead of `/usr/lib/qt6/libexec/`:
+
+```bash
+cd /pfad/zu/Cascoin
+./autogen.sh
+
+./configure \
+  --with-gui=qt6 \
+  --enable-wallet \
+  --with-qrencode \
+  --enable-zmq \
+  --with-incompatible-bdb \
+  MOC=/usr/lib/qt6/libexec/moc \
+  UIC=/usr/lib/qt6/libexec/uic \
+  RCC=/usr/lib/qt6/libexec/rcc \
+  LRELEASE=/usr/lib/qt6/bin/lrelease \
+  LUPDATE=/usr/lib/qt6/bin/lupdate
 
 make -j"$(nproc)"
 ```
