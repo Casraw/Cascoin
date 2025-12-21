@@ -2807,6 +2807,11 @@ CBeeCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDe
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
     bct.profit = rewardsPaid - beeFeePaid;
+    
+    // Set height information for UI calculations
+    bct.creationHeight = height;
+    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
+    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
 
     return bct;
 }
@@ -2893,6 +2898,11 @@ CBeeCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool 
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
     bct.profit = rewardsPaid - beeFeePaid;
+    
+    // Set height information for UI calculations
+    bct.creationHeight = height;
+    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
+    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
 
     return bct;
 }

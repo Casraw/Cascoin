@@ -142,12 +142,20 @@ public:
     // Get records with invalid checksums (for rescan)
     std::vector<std::string> getInvalidChecksumRecords();
     
+    // Validate that all BCTs in database belong to the wallet
+    // Returns number of foreign BCTs found (0 = all valid)
+    int validateWalletOwnership(CWallet* pwallet);
+    
+    // Rescan only rewards (not BCTs) - useful for catching missed rewards
+    void rescanRewardsOnly(CWallet* pwallet);
+    
     // Mark records for rescan
     bool markRecordsForRescan(const std::vector<std::string>& txids);
 
     // Rescan support
     bool clearAllData();
-    int rescanFromHeight(int startHeight, int stopHeight = -1);  // Returns count of BCTs found, -1 on error
+    int rescanFromHeight(int startHeight, int stopHeight = -1);  // DEPRECATED: Scans all BCTs, not just wallet BCTs
+    int rescanFromWallet(CWallet* pwallet, int startHeight = 0, int stopHeight = -1);  // Recommended: Only scans wallet BCTs
     int getBCTCount();  // Get total count of BCT records
 
     // Reward tracking

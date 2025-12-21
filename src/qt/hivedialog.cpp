@@ -24,6 +24,7 @@
 #include <qt/walletmodel.h>
 #include <qt/tinypie.h>
 #include <qt/qcustomplot.h>
+#include <bctdb.h>  // For BCTDatabaseSQLite summary
 
 #include <qt/optionsdialog.h> // Cascoin: Hive: Mining optimisations
 
@@ -244,6 +245,19 @@ void HiveDialog::updateHiveSummary() {
     if(!(model && model->getHiveTableModel())) return;
 
     model->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+
+    // IMPORTANT: Always get total rewards from database (including expired BCTs)
+    // This ensures the summary shows all rewards even when expired BCTs are hidden in the table
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (bctDb && bctDb->isInitialized()) {
+        BCTSummary dbSummary = bctDb->getSummary();
+        // Use database totals for rewards-related fields (includes all BCTs)
+        blocksFound = dbSummary.blocksFound;
+        rewardsPaid = dbSummary.totalRewards;
+        cost = dbSummary.totalCost;
+        profit = dbSummary.totalProfit;
+        dead = dbSummary.expiredCount;
+    }
 
     // Update labels
     setAmountField(ui->rewardsPaidLabel, rewardsPaid);

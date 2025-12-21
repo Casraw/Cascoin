@@ -679,7 +679,10 @@ struct CBeeCreationTransactionInfo
     CAmount rewardsPaid;
     CAmount profit;
     int blocksFound;
-    int blocksLeft;
+    int blocksLeft;          // Blocks until expiration
+    int creationHeight;      // Block height when BCT was created
+    int maturityHeight;      // Block height when BCT becomes mature
+    int expirationHeight;    // Block height when BCT expires
 };
 
 // Cascoin: Hive: Mining optimisations: Bee range structure

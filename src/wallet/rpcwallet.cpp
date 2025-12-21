@@ -5652,7 +5652,8 @@ UniValue rescanblockchain(const JSONRPCRequest& request)
     if (bctDb->isInitialized()) {
         LogPrintf("BCT: Triggering BCT database rescan after wallet rescan (heights %d to %d)\n", 
                   pindexStart->nHeight, stopBlock->nHeight);
-        int bctsFound = bctDb->rescanFromHeight(pindexStart->nHeight, stopBlock->nHeight);
+        // Use wallet-based rescan to only include BCTs that belong to this wallet
+        int bctsFound = bctDb->rescanFromWallet(pwallet, pindexStart->nHeight, stopBlock->nHeight);
         LogPrintf("BCT: BCT database rescan complete, found %d BCTs\n", bctsFound);
     }
     
@@ -5723,8 +5724,8 @@ UniValue rescanbctdatabase(const JSONRPCRequest& request)
         }
     }
 
-    // Perform the rescan
-    int bctsFound = bctDb->rescanFromHeight(startHeight, stopHeight);
+    // Perform the rescan using wallet-based function to only include our BCTs
+    int bctsFound = bctDb->rescanFromWallet(pwallet, startHeight, stopHeight);
     
     if (bctsFound < 0) {
         throw JSONRPCError(RPC_MISC_ERROR, "BCT rescan failed");

@@ -710,7 +710,186 @@ bool BCTDatabaseSQLite::clearAllData() {
     return success;
 }
 
+// New wallet-based rescan function - only scans BCTs that belong to the wallet
+int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int stopHeight) {
+#ifdef ENABLE_WALLET
+    if (pwallet == nullptr) {
+        LogPrintf("BCTDatabase: No wallet available for rescan\n");
+        return -1;
+    }
+    
+    LogPrintf("BCTDatabase: Rescanning BCT data from wallet (startHeight=%d, stopHeight=%d)\n", startHeight, stopHeight);
+    
+    if (!isInitialized()) {
+        LogPrintf("BCTDatabase: Cannot rescan - database not initialized\n");
+        return -1;
+    }
+    
+    // Clear existing data if starting from 0
+    if (startHeight == 0) {
+        clearAllData();
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    int currentHeight = chainActive.Height();
+    
+    if (stopHeight < 0 || stopHeight > currentHeight) {
+        stopHeight = currentHeight;
+    }
+    
+    // Get BCT creation address script
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    
+    beginTransaction();
+    
+    int bctCount = 0;
+    
+    // Iterate through all wallet transactions
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        
+        // Skip coinbase transactions
+        if (wtx.IsCoinBase())
+            continue;
+            
+        // CRITICAL: Only include BCTs that we created (all inputs are ours)
+        if (!pwallet->IsAllFromMe(*wtx.tx, ISMINE_SPENDABLE))
+            continue;
+        
+        // Get block height
+        int height = 0;
+        if (wtx.hashBlock != uint256()) {
+            BlockMap::iterator mi = mapBlockIndex.find(wtx.hashBlock);
+            if (mi != mapBlockIndex.end() && mi->second) {
+                height = mi->second->nHeight;
+            }
+        }
+        
+        // Skip if outside requested range
+        if (height < startHeight || height > stopHeight)
+            continue;
+        
+        // Check if this is a BCT
+        CAmount beeFeePaid = 0;
+        CScript scriptPubKeyHoney;
+        
+        if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
+            // Extract honey address
+            CTxDestination honeyDestination;
+            if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
+                continue;
+            }
+            std::string honeyAddress = EncodeDestination(honeyDestination);
+            
+            // Check for community contribution
+            if (wtx.tx->vout.size() > 1 && wtx.tx->vout[1].scriptPubKey == scriptPubKeyCF) {
+                beeFeePaid += wtx.tx->vout[1].nValue;
+            }
+            
+            // Calculate bee count
+            CAmount beeCost = GetBeeCost(height, consensusParams);
+            int beeCount = beeCost > 0 ? beeFeePaid / beeCost : 0;
+            
+            // Create BCT record
+            BCTRecord record;
+            record.txid = wtx.GetHash().GetHex();
+            record.honeyAddress = honeyAddress;
+            record.beeCount = beeCount;
+            record.creationHeight = height;
+            record.maturityHeight = height + consensusParams.beeGestationBlocks;
+            record.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+            record.timestamp = wtx.GetTxTime();
+            record.cost = beeFeePaid;
+            record.blocksFound = 0;
+            record.rewardsPaid = 0;
+            record.profit = -beeFeePaid;
+            
+            // Update status based on current height
+            record.updateStatus(currentHeight);
+            
+            // Calculate checksum
+            record.checksum = record.calculateChecksum();
+            record.updatedAt = std::time(nullptr);
+            
+            if (!bctExists(record.txid)) {
+                insertBCT(record);
+                bctCount++;
+            }
+        }
+    }
+    
+    // Commit BCT inserts before scanning for rewards
+    commitTransaction();
+    
+    // Now scan for Hive coinbase transactions to get rewards
+    std::set<std::string> myBctIds;
+    {
+        auto allBcts = getAllBCTs(true);
+        for (const auto& bct : allBcts) {
+            myBctIds.insert(bct.txid);
+        }
+    }
+    
+    LogPrintf("BCTDatabase: Found %zu BCTs for reward scanning in rescanFromWallet\n", myBctIds.size());
+    
+    // Start new transaction for reward updates
+    beginTransaction();
+    
+    // Build rewards map from Hive coinbase transactions
+    std::map<std::string, std::pair<int, CAmount>> rewardsMap;
+    
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        
+        if (!wtx.IsHiveCoinBase()) continue;
+        if (wtx.GetDepthInMainChain() < 1) continue;
+        
+        if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
+            std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
+            std::string blockTxidStr(blockTxid.begin(), blockTxid.end());
+            
+            if (myBctIds.find(blockTxidStr) == myBctIds.end()) continue;
+            
+            auto &entry = rewardsMap[blockTxidStr];
+            entry.first++;
+            if (wtx.tx->vout.size() > 1) {
+                entry.second += wtx.tx->vout[1].nValue;
+            }
+        }
+    }
+    
+    // Update BCT records with rewards
+    for (const auto& reward : rewardsMap) {
+        BCTRecord bct = getBCT(reward.first);
+        if (!bct.txid.empty()) {
+            bct.blocksFound = reward.second.first;
+            bct.rewardsPaid = reward.second.second;
+            bct.profit = bct.rewardsPaid - bct.cost;
+            bct.checksum = bct.calculateChecksum();
+            bct.updatedAt = std::time(nullptr);
+            updateBCT(bct.txid, bct);
+        }
+    }
+    
+    setLastProcessedHeight(stopHeight);
+    commitTransaction();
+    loadIntoCache();
+    
+    LogPrintf("BCTDatabase: Wallet rescan complete - found %d BCTs\n", bctCount);
+    return bctCount;
+#else
+    LogPrintf("BCTDatabase: Wallet support not enabled\n");
+    return -1;
+#endif
+}
+
+// DEPRECATED: This function scans ALL BCTs from blockchain, not just wallet BCTs
+// Use rescanFromWallet() instead for correct behavior
 int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
+    LogPrintf("BCTDatabase: WARNING - rescanFromHeight scans ALL BCTs, not just wallet BCTs. Consider using rescanFromWallet() instead.\n");
     LogPrintf("BCTDatabase: Rescanning BCT data from height %d to %d\n", startHeight, stopHeight);
     
     if (!isInitialized()) {
@@ -1105,6 +1284,15 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         const CWalletTx& wtx = item.second;
         scannedCount++;
         
+        // Skip coinbase transactions
+        if (wtx.IsCoinBase())
+            continue;
+            
+        // CRITICAL: Only include BCTs that we created (all inputs are ours)
+        // This prevents showing other people's BCTs that we might have received funds from
+        if (!pwallet->IsAllFromMe(*wtx.tx, ISMINE_SPENDABLE))
+            continue;
+        
         // Check if this is a BCT
         CAmount beeFeePaid = 0;
         CScript scriptPubKeyHoney;
@@ -1163,6 +1351,10 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         }
     }
     
+    // Commit BCT inserts before scanning for rewards
+    // This ensures getAllBCTs() can find the newly inserted BCTs
+    commitTransaction();
+    
     // Now scan for Hive coinbase transactions to get rewards
     // Build a set of our BCT txids for quick lookup
     std::set<std::string> myBctIds;
@@ -1173,14 +1365,22 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         }
     }
     
+    LogPrintf("BCTDatabase: Found %zu BCTs for reward scanning\n", myBctIds.size());
+    
+    // Start new transaction for reward updates
+    beginTransaction();
+    
     // Build rewards map from Hive coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
     
+    int hiveCoinbaseCount = 0;
     for (const auto& item : pwallet->mapWallet) {
         const CWalletTx& wtx = item.second;
         
         // Only process hive coinbase transactions
         if (!wtx.IsHiveCoinBase()) continue;
+        
+        hiveCoinbaseCount++;
         
         // Skip unconfirmed transactions
         if (wtx.GetDepthInMainChain() < 1) continue;
@@ -1190,16 +1390,40 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
             std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
             std::string blockTxidStr(blockTxid.begin(), blockTxid.end());
             
+            // Debug: Log the first few BCT txids we're looking for
+            static bool loggedBctIds = false;
+            if (!loggedBctIds && myBctIds.size() > 0) {
+                LogPrintf("BCTDatabase: First BCT txid in our set: %s (length=%zu)\n", 
+                          myBctIds.begin()->c_str(), myBctIds.begin()->length());
+                LogPrintf("BCTDatabase: BCT txid from coinbase: %s (length=%zu)\n", 
+                          blockTxidStr.c_str(), blockTxidStr.length());
+                loggedBctIds = true;
+            }
+            
             // Only accumulate if this coinbase references one of our BCTs
-            if (myBctIds.find(blockTxidStr) == myBctIds.end()) continue;
+            if (myBctIds.find(blockTxidStr) == myBctIds.end()) {
+                // Log first few misses for debugging
+                static int missCount = 0;
+                if (missCount++ < 5) {
+                    LogPrintf("BCTDatabase: Hive coinbase %s references BCT %s which is not in our set\n", 
+                              wtx.GetHash().GetHex(), blockTxidStr);
+                }
+                continue;
+            }
             
             auto &entry = rewardsMap[blockTxidStr];
             entry.first++;  // blocks found
             if (wtx.tx->vout.size() > 1) {
                 entry.second += wtx.tx->vout[1].nValue;  // rewards
             }
+            
+            LogPrintf("BCTDatabase: Found reward for BCT %s: blocks=%d, amount=%lld\n", 
+                      blockTxidStr, entry.first, entry.second);
         }
     }
+    
+    LogPrintf("BCTDatabase: Scanned %d hive coinbase transactions, found %zu with matching BCTs\n", 
+              hiveCoinbaseCount, rewardsMap.size());
     
     // Update BCT records with rewards
     int rewardsUpdated = 0;
@@ -1213,6 +1437,8 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
             bct.updatedAt = std::time(nullptr);
             updateBCT(bct.txid, bct);
             rewardsUpdated++;
+            LogPrintf("BCTDatabase: Updated BCT %s with %d blocks found, %lld rewards\n", 
+                      bct.txid, bct.blocksFound, bct.rewardsPaid);
         }
     }
     
@@ -1276,6 +1502,27 @@ bool BCTDatabaseSQLite::initializeOnStartup(CWallet* pwallet) {
             return performInitialScan(pwallet);
         }
         
+        // CRITICAL: Validate that all BCTs in database belong to this wallet
+        // This catches cases where the database contains BCTs from other wallets
+        // (e.g., from a bug in previous versions or database corruption)
+        int foreignBCTs = validateWalletOwnership(pwallet);
+        if (foreignBCTs > 0) {
+            LogPrintf("BCTDatabase: DETECTED %d FOREIGN BCTs in database! "
+                      "These BCTs do not belong to this wallet. "
+                      "Performing automatic database rebuild...\n", foreignBCTs);
+            clearAllData();
+            return performInitialScan(pwallet);
+        } else if (foreignBCTs < 0) {
+            LogPrintf("BCTDatabase: Warning - could not validate BCT ownership (wallet not available)\n");
+        } else {
+            LogPrintf("BCTDatabase: All %d BCTs validated as belonging to this wallet\n", recordCount);
+        }
+        
+        // Always rescan rewards on startup to catch any missed rewards
+        // This is important because rewards might have been mined while the wallet was offline
+        // or if there was a bug that prevented reward tracking
+        rescanRewardsOnly(pwallet);
+        
         // Check for records with missing height data (from JSON migration)
         // These need a rescan to get proper height values
         int recordsWithMissingHeights = 0;
@@ -1329,6 +1576,174 @@ std::vector<std::string> BCTDatabaseSQLite::getInvalidChecksumRecords() {
     }
     
     return invalidTxids;
+}
+
+// Validate that all BCTs in database actually belong to the wallet
+// Returns number of foreign (non-wallet) BCTs found
+int BCTDatabaseSQLite::validateWalletOwnership(CWallet* pwallet) {
+#ifdef ENABLE_WALLET
+    if (pwallet == nullptr) {
+        LogPrintf("BCTDatabase: No wallet available for ownership validation\n");
+        return -1;
+    }
+    
+    LogPrintf("BCTDatabase: Validating BCT ownership against wallet...\n");
+    
+    LOCK(pwallet->cs_wallet);
+    
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    
+    auto allRecords = getAllBCTs(true);
+    int foreignCount = 0;
+    
+    for (const auto& record : allRecords) {
+        // Parse txid
+        uint256 txid;
+        txid.SetHex(record.txid);
+        
+        // Check if transaction exists in wallet
+        auto it = pwallet->mapWallet.find(txid);
+        if (it == pwallet->mapWallet.end()) {
+            // Transaction not in wallet at all - definitely foreign
+            LogPrintf("BCTDatabase: Foreign BCT detected (not in wallet): %s\n", record.txid);
+            foreignCount++;
+            continue;
+        }
+        
+        const CWalletTx& wtx = it->second;
+        
+        // Check if we created this BCT (all inputs are ours)
+        if (!pwallet->IsAllFromMe(*wtx.tx, ISMINE_SPENDABLE)) {
+            LogPrintf("BCTDatabase: Foreign BCT detected (not created by us): %s\n", record.txid);
+            foreignCount++;
+            continue;
+        }
+        
+        // Verify it's actually a BCT
+        if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF)) {
+            LogPrintf("BCTDatabase: Invalid BCT detected (not a valid BCT): %s\n", record.txid);
+            foreignCount++;
+            continue;
+        }
+    }
+    
+    LogPrintf("BCTDatabase: Ownership validation complete - %d of %zu BCTs are foreign/invalid\n", 
+              foreignCount, allRecords.size());
+    
+    return foreignCount;
+#else
+    LogPrintf("BCTDatabase: Wallet support not enabled\n");
+    return -1;
+#endif
+}
+
+// Rescan only rewards for existing BCTs - doesn't add new BCTs
+void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
+#ifdef ENABLE_WALLET
+    if (pwallet == nullptr) {
+        LogPrintf("BCTDatabase: No wallet available for reward rescan\n");
+        return;
+    }
+    
+    LogPrintf("BCTDatabase: Rescanning rewards for existing BCTs...\n");
+    
+    LOCK(pwallet->cs_wallet);
+    
+    // Build a set of our BCT txids for quick lookup
+    std::set<std::string> myBctIds;
+    {
+        auto allBcts = getAllBCTs(true);
+        for (const auto& bct : allBcts) {
+            myBctIds.insert(bct.txid);
+        }
+        // Debug: Log first BCT txid format
+        if (!allBcts.empty()) {
+            LogPrintf("BCTDatabase: Example BCT txid from DB: '%s' (length=%zu)\n", 
+                      allBcts[0].txid.c_str(), allBcts[0].txid.length());
+        }
+    }
+    
+    if (myBctIds.empty()) {
+        LogPrintf("BCTDatabase: No BCTs in database, skipping reward rescan\n");
+        return;
+    }
+    
+    LogPrintf("BCTDatabase: Scanning rewards for %zu BCTs\n", myBctIds.size());
+    
+    // Build rewards map from Hive coinbase transactions
+    std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
+    
+    int hiveCoinbaseCount = 0;
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        
+        // Only process hive coinbase transactions
+        if (!wtx.IsHiveCoinBase()) continue;
+        
+        hiveCoinbaseCount++;
+        
+        // Skip unconfirmed transactions
+        if (wtx.GetDepthInMainChain() < 1) continue;
+        
+        // Extract the BCT txid from the coinbase transaction
+        if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
+            std::vector<unsigned char> blockTxid(&wtx.tx->vout[0].scriptPubKey[14], &wtx.tx->vout[0].scriptPubKey[14 + 64]);
+            std::string blockTxidStr(blockTxid.begin(), blockTxid.end());
+            
+            // Debug: Log first coinbase BCT txid format
+            static bool loggedFirst = false;
+            if (!loggedFirst) {
+                LogPrintf("BCTDatabase: Example BCT txid from coinbase: '%s' (length=%zu)\n", 
+                          blockTxidStr.c_str(), blockTxidStr.length());
+                loggedFirst = true;
+            }
+            
+            // Only accumulate if this coinbase references one of our BCTs
+            if (myBctIds.find(blockTxidStr) == myBctIds.end()) continue;
+            
+            auto &entry = rewardsMap[blockTxidStr];
+            entry.first++;  // blocks found
+            if (wtx.tx->vout.size() > 1) {
+                entry.second += wtx.tx->vout[1].nValue;  // rewards
+            }
+        }
+    }
+    
+    LogPrintf("BCTDatabase: Found %d hive coinbase transactions, %zu match our BCTs\n", 
+              hiveCoinbaseCount, rewardsMap.size());
+    
+    // Update BCT records with rewards
+    beginTransaction();
+    
+    int rewardsUpdated = 0;
+    for (const auto& reward : rewardsMap) {
+        BCTRecord bct = getBCT(reward.first);
+        if (!bct.txid.empty()) {
+            // Only update if rewards changed
+            if (bct.blocksFound != reward.second.first || bct.rewardsPaid != reward.second.second) {
+                bct.blocksFound = reward.second.first;
+                bct.rewardsPaid = reward.second.second;
+                bct.profit = bct.rewardsPaid - bct.cost;
+                bct.checksum = bct.calculateChecksum();
+                bct.updatedAt = std::time(nullptr);
+                updateBCT(bct.txid, bct);
+                rewardsUpdated++;
+                LogPrintf("BCTDatabase: Updated BCT %s: %d blocks found, %lld rewards\n", 
+                          bct.txid, bct.blocksFound, bct.rewardsPaid);
+            }
+        }
+    }
+    
+    commitTransaction();
+    
+    // Reload cache with updated data
+    loadIntoCache();
+    
+    LogPrintf("BCTDatabase: Reward rescan complete - updated %d BCTs with rewards\n", rewardsUpdated);
+#else
+    LogPrintf("BCTDatabase: Wallet support not enabled\n");
+#endif
 }
 
 bool BCTDatabaseSQLite::markRecordsForRescan(const std::vector<std::string>& txids) {
@@ -1512,6 +1927,22 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
             CScript scriptPubKeyHoney;
             
             if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
+#ifdef ENABLE_WALLET
+                // CRITICAL: Only include BCTs that belong to our wallet
+                // Check if this transaction is in our wallet and we created it
+                if (pwallet != nullptr) {
+                    LOCK(pwallet->cs_wallet);
+                    auto it = pwallet->mapWallet.find(tx->GetHash());
+                    if (it == pwallet->mapWallet.end()) {
+                        // Transaction not in our wallet, skip it
+                        continue;
+                    }
+                    // Check if all inputs are ours (we created this BCT)
+                    if (!pwallet->IsAllFromMe(*tx, ISMINE_SPENDABLE)) {
+                        continue;
+                    }
+                }
+#endif
                 // Extract honey address
                 CTxDestination honeyDestination;
                 if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {

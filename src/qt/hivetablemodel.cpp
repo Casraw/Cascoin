@@ -74,9 +74,9 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                     record.honeyAddress = bct.honeyAddress;
                     record.status = bct.beeStatus;
                     record.beeCount = bct.beeCount;
-                    record.creationHeight = 0;
-                    record.maturityHeight = 0;
-                    record.expirationHeight = 0;
+                    record.creationHeight = bct.creationHeight;
+                    record.maturityHeight = bct.maturityHeight;
+                    record.expirationHeight = bct.expirationHeight;
                     record.timestamp = bct.time;
                     record.cost = bct.beeFeePaid;
                     record.blocksFound = bct.blocksFound;
@@ -91,6 +91,13 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 // Use SQLite database for fast queries
                 records = bctDb->getAllBCTs(includeDeadBees);
                 LogPrintf("HiveTableModel: Loaded %zu BCT records from SQLite database (includeDeadBees=%d)\n", records.size(), includeDeadBees);
+                
+                // Debug: Count records with rewards
+                int recordsWithRewards = 0;
+                for (const auto& r : records) {
+                    if (r.blocksFound > 0) recordsWithRewards++;
+                }
+                LogPrintf("HiveTableModel: %d of %zu records have blocksFound > 0\n", recordsWithRewards, records.size());
                 
                 // If database is empty, fall back to wallet scan
                 if (records.empty()) {
@@ -136,20 +143,45 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                     CBeeCreationTransactionInfo bct;
                     bct.txid = record.txid;
                     bct.honeyAddress = record.honeyAddress;
-                    bct.beeStatus = record.status;
                     bct.beeCount = record.beeCount;
                     bct.time = record.timestamp;
                     bct.beeFeePaid = record.cost;
                     bct.blocksFound = record.blocksFound;
                     bct.rewardsPaid = record.rewardsPaid;
                     bct.profit = record.profit;
+                    bct.creationHeight = record.creationHeight;
+                    bct.maturityHeight = record.maturityHeight;
+                    bct.expirationHeight = record.expirationHeight;
                     
-                    // Calculate blocks left
-                    if (record.expirationHeight > 0) {
+                    // Debug: Log first few records with rewards
+                    static int loggedCount = 0;
+                    if (record.blocksFound > 0 && loggedCount < 3) {
+                        LogPrintf("HiveTableModel: BCT %s has blocksFound=%d, rewardsPaid=%lld\n", 
+                                  record.txid, record.blocksFound, record.rewardsPaid);
+                        loggedCount++;
+                    }
+                    
+                    // Calculate blocks left and status based on CURRENT height
+                    // This ensures the UI always shows the correct status even if
+                    // the database hasn't been updated yet
+                    if (record.creationHeight > 0 && record.expirationHeight > 0) {
                         bct.blocksLeft = record.getBlocksLeft(currentHeight);
+                        
+                        // Recalculate status based on current height
+                        if (currentHeight >= record.expirationHeight) {
+                            bct.beeStatus = "expired";
+                        } else if (currentHeight >= record.maturityHeight) {
+                            bct.beeStatus = "mature";
+                        } else {
+                            bct.beeStatus = "immature";
+                        }
                     } else {
-                        // Estimate from status if heights not available
+                        // Fallback to database status if heights not available
+                        bct.beeStatus = record.status;
                         bct.blocksLeft = 0;
+                        bct.creationHeight = 0;
+                        bct.maturityHeight = 0;
+                        bct.expirationHeight = 0;
                     }
 
                     // Update summary counts
@@ -264,11 +296,29 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
             case EstimatedTime:
                 {
                     QString status = "";
-                    if (rec->beeStatus == "immature") {
-                        int blocksTillMature = rec->blocksLeft - Params().GetConsensus().beeLifespanBlocks;
-                        status = "Matures in " + QString::number(blocksTillMature) + " blocks (" + secondsToString(blocksTillMature * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
-                    } else if (rec->beeStatus == "mature")
-                        status = "Expires in " + QString::number(rec->blocksLeft) + " blocks (" + secondsToString(rec->blocksLeft * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                    if (rec->beeStatus == "immature" && rec->maturityHeight > 0) {
+                        // Calculate blocks until maturity using the stored maturity height
+                        LOCK(cs_main);
+                        int currentHeight = chainActive.Height();
+                        int blocksTillMature = rec->maturityHeight - currentHeight;
+                        if (blocksTillMature > 0) {
+                            status = "Matures in " + QString::number(blocksTillMature) + " blocks (" + secondsToString(blocksTillMature * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                        } else {
+                            status = "Maturing...";
+                        }
+                    } else if (rec->beeStatus == "mature" && rec->expirationHeight > 0) {
+                        // Calculate blocks until expiration using the stored expiration height
+                        LOCK(cs_main);
+                        int currentHeight = chainActive.Height();
+                        int blocksLeft = rec->expirationHeight - currentHeight;
+                        if (blocksLeft > 0) {
+                            status = "Expires in " + QString::number(blocksLeft) + " blocks (" + secondsToString(blocksLeft * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                        } else {
+                            status = "Expiring...";
+                        }
+                    } else if (rec->beeStatus == "expired") {
+                        status = "Expired";
+                    }
                     return status;
                 }
             case Cost:
