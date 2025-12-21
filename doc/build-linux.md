@@ -3,7 +3,7 @@ Cascoin Core – Build Instructions (Linux)
 
 This guide describes building Cascoin Core on Linux with Wallet and Qt6 GUI – exclusively using system libraries (without the `depends/` system).
 
-Prerequisites (Ubuntu/Debian)
+Prerequisites Ubuntu
 ------------------------------
 
 ```bash
@@ -17,7 +17,7 @@ sudo apt-get install -y \
   libdb++-dev libsqlite3-dev
 ```
 
-For Debian 13 add this: 'libdb5.3++-dev'
+**For Debian 13 add this: 'libdb5.3++-dev'**
 
 
 ```bash
