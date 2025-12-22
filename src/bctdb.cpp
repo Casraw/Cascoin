@@ -1910,7 +1910,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
     const Consensus::Params& consensusParams = Params().GetConsensus();
     int height = pindex->nHeight;
     
-    LogPrint(BCLog::ALL, "BCTDatabase: Processing block %d for BCT updates\n", height);
+    LogPrintf("BCTDatabase: Processing block %d for BCT updates\n", height);
 
     // Get the BCT creation address script
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
@@ -1978,7 +1978,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                 // Insert or update the record
                 if (!bctExists(record.txid)) {
                     insertBCT(record);
-                    LogPrint(BCLog::ALL, "BCTDatabase: Added new BCT %s with %d bees at height %d\n", 
+                    LogPrintf("BCTDatabase: Added new BCT %s with %d bees at height %d\n", 
                              record.txid, beeCount, height);
                 }
             }
@@ -1990,6 +1990,8 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                 std::vector<unsigned char> bctTxidBytes(&tx->vout[0].scriptPubKey[14], 
                                                         &tx->vout[0].scriptPubKey[14 + 64]);
                 std::string bctTxid(bctTxidBytes.begin(), bctTxidBytes.end());
+
+                LogPrintf("BCTDatabase: Found Hive coinbase at height %d, BCT txid: %s\n", height, bctTxid);
 
                 // Check if this BCT exists in our database
                 if (bctExists(bctTxid)) {
@@ -2006,8 +2008,8 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                     bct.profit = bct.rewardsPaid - bct.cost;
                     updateBCT(bctTxid, bct);
 
-                    LogPrint(BCLog::ALL, "BCTDatabase: Recorded reward %lld for BCT %s at height %d\n",
-                             rewardAmount, bctTxid, height);
+                    LogPrintf("BCTDatabase: Recorded reward %lld for BCT %s at height %d (total blocks: %d)\n",
+                             rewardAmount, bctTxid, height, bct.blocksFound);
                 }
             }
         }
@@ -2019,6 +2021,9 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
         setLastProcessedHeight(height);
 
         commitTransaction();
+        
+        // Refresh cache so UI gets updated data
+        loadIntoCache();
     } catch (const std::exception& e) {
         LogPrintf("BCTDatabase: Error processing block %d: %s\n", height, e.what());
         rollbackTransaction();
