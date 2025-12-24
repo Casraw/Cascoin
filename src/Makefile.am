@@ -231,7 +231,9 @@ BITCOIN_CORE_H = \
   cvm/security_rpc.h \
   cvm/access_control_audit.h \
   cvm/backward_compat.h \
-  cvm/dos_protection.h
+  cvm/dos_protection.h \
+  cvm/metrics.h \
+  cvm/graceful_degradation.h
 
 
 obj/build.h: FORCE
@@ -344,6 +346,8 @@ libbitcoin_server_a_SOURCES = \
   cvm/access_control_audit.cpp \
   cvm/backward_compat.cpp \
   cvm/dos_protection.cpp \
+  cvm/metrics.cpp \
+  cvm/graceful_degradation.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

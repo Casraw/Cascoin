@@ -485,7 +485,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-build-${{ github.ref_name }}
+          name: cascoin-linux-build-${{ github.run_id }}
           path: |
             src/qt/*-qt
             src/*coind
@@ -496,7 +496,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution-${{ github.ref_name }}
+          name: cascoin-linux-x86_64-distribution-${{ github.run_id }}
           path: |
             cascoin-linux-x86_64-distribution-*.tar.gz
           if-no-files-found: warn
@@ -505,7 +505,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-debug-${{ github.ref_name }}
+          name: cascoin-linux-debug-${{ github.run_id }}
           path: |
             src/qt/*.debug
             src/*.debug
@@ -682,7 +682,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-build-${{ github.ref_name }}
+          name: cascoin-windows-${{ env.HOST }}-build-${{ github.run_id }}
           path: |
             src/qt/*-qt.exe
             src/*coind.exe
@@ -696,7 +696,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-debug-${{ github.ref_name }}
+          name: cascoin-windows-${{ env.HOST }}-debug-${{ github.run_id }}
           path: |
             src/*.exe.debug
             src/qt/*.exe.debug
@@ -741,7 +741,7 @@ jobs:
       - name: Download Linux distribution artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution-${{ github.ref_name }}
+          name: cascoin-linux-x86_64-distribution-${{ github.run_id }}
           path: release/linux
 
       - name: Normalize Linux artifact filename
@@ -758,7 +758,7 @@ jobs:
       - name: Download Windows build artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-windows-x86_64-w64-mingw32-build-${{ github.ref_name }}
+          name: cascoin-windows-x86_64-w64-mingw32-build-${{ github.run_id }}
           path: release/windows
 
       - name: Package Windows ZIP
