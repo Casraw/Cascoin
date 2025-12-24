@@ -958,6 +958,11 @@ if test x$use_pkgconfig = xyes; then
         fi
       fi
 
+      dnl Check for SQLite3 (required for BCT database)
+      if test x$enable_wallet != xno; then
+        PKG_CHECK_MODULES([SQLITE3], [sqlite3 >= 3.7.17],, [AC_MSG_ERROR(sqlite3 >= 3.7.17 not found. Install libsqlite3-dev or use --disable-wallet.)])
+      fi
+
       if test "x$use_zmq" = "xyes"; then
         PKG_CHECK_MODULES([ZMQ],[libzmq >= 4],
           [AC_DEFINE([ENABLE_ZMQ],[1],[Define to 1 to enable ZMQ functions])],
@@ -982,6 +987,12 @@ else
     if test x$TARGET_OS != xwindows; then
       AC_CHECK_LIB([event_pthreads],[main],EVENT_PTHREADS_LIBS=-levent_pthreads,AC_MSG_ERROR(libevent_pthreads missing))
     fi
+  fi
+
+  dnl Check for SQLite3 (required for BCT database)
+  if test x$enable_wallet != xno; then
+    AC_CHECK_HEADER([sqlite3.h],, AC_MSG_ERROR(sqlite3 headers missing. Install libsqlite3-dev or use --disable-wallet.),)
+    AC_CHECK_LIB([sqlite3],[sqlite3_open],SQLITE3_LIBS=-lsqlite3,AC_MSG_ERROR(sqlite3 missing. Install libsqlite3-dev or use --disable-wallet.))
   fi
 
   if test "x$use_zmq" = "xyes"; then
@@ -1346,6 +1357,8 @@ AC_SUBST(SSL_LIBS)
 AC_SUBST(EVENT_LIBS)
 AC_SUBST(EVENT_PTHREADS_LIBS)
 AC_SUBST(ZMQ_LIBS)
+AC_SUBST(SQLITE3_CFLAGS)
+AC_SUBST(SQLITE3_LIBS)
 AC_SUBST(PROTOBUF_LIBS)
 AC_SUBST(QR_LIBS)
 AC_CONFIG_FILES([Makefile src/Makefile doc/man/Makefile share/setup.nsi share/qt/Info.plist test/config.ini])

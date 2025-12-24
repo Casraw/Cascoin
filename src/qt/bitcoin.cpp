@@ -15,7 +15,7 @@
 #include <qt/guiutil.h>
 #include <qt/intro.h>
 #include <qt/networkstyle.h>
-#include <qt/bctdatabase.h>
+#include <bctdb.h>  // For BCTDatabaseSQLite
 #include <qt/optionsmodel.h>
 #include <qt/platformstyle.h>
 #include <qt/splashscreen.h>
@@ -526,20 +526,25 @@ void BitcoinApplication::createSplashScreen(const NetworkStyle *networkStyle)
     connect(this, SIGNAL(requestedShutdown()), splash, SLOT(close()));
 
     // Cascoin: Start mice/BCT DB init while splash is visible so user sees progress
-    // Memory leak fix: Use shared_ptr to ensure proper cleanup and avoid detached thread memory leaks
+    // BCTDatabaseSQLite is initialized in init.cpp, just show progress here
     auto dbInitTask = std::make_shared<std::thread>([](){
         try {
             uiInterface.ShowProgress("Mice DB initialisieren", 1, false);
-            BCTDatabase db;
-            std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Reduced delay to prevent memory buildup
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
             uiInterface.ShowProgress("Mice DB initialisieren", 20, false);
-            (void)db.initialize();
+            
+            // BCTDatabaseSQLite is a singleton - check if initialized
+            BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             uiInterface.ShowProgress("Mice DB initialisieren", 50, false);
-            (void)db.getTotalBCTs();
+            
+            if (bctDb && bctDb->isInitialized()) {
+                // Get summary to verify database is working
+                BCTSummary summary = bctDb->getSummary();
+                (void)summary.totalBeeCount;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             uiInterface.ShowProgress("Mice DB initialisieren", 80, false);
-            (void)db.getTotalAvailableMice();
             std::this_thread::sleep_for(std::chrono::milliseconds(30));
             uiInterface.ShowProgress("Mice DB initialisieren", 100, false);
             g_miceDbReady.store(true);

@@ -488,7 +488,11 @@ static bool InterpretBool(const std::string& strValue)
 {
     if (strValue.empty())
         return true;
-    return (atoi(strValue) != 0);
+    int32_t result = 0;
+    if (ParseInt32(strValue, &result)) {
+        return result != 0;
+    }
+    return false;
 }
 
 /** Turn -noX into -X=0 */

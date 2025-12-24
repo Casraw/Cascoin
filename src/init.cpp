@@ -43,10 +43,13 @@
 #include <ui_interface.h>
 #include <util.h>
 #include <utilmoneystr.h>
+#include <utilstrencodings.h>
 #include <validationinterface.h>
 #include <rialto.h>   // Cascoin: Rialto
+#include <bctdb.h>    // Cascoin: BCT persistent database
 #ifdef ENABLE_WALLET
 #include <wallet/init.h>
+#include <wallet/wallet.h>
 #endif
 #include <warnings.h>
 #include <cvm/cvmdb.h>  // Cascoin: CVM Database
@@ -271,6 +274,10 @@ void Shutdown()
     }
 #endif
 
+    // Cascoin: BCT: Shutdown BCT block handler and database
+    ShutdownBCTBlockHandler();
+    BCTDatabaseSQLite::instance()->shutdown();
+
 #ifndef WIN32
     try {
         fs::remove(GetPidFile());
@@ -380,6 +387,7 @@ std::string HelpMessage(HelpMessageMode mode)
             "(default: 0 = disable pruning blocks, 1 = allow manual pruning via RPC, >%u = automatically prune block files to stay under the specified target size in MiB)"), MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
     strUsage += HelpMessageOpt("-reindex-chainstate", _("Rebuild chain state from the currently indexed blocks"));
     strUsage += HelpMessageOpt("-reindex", _("Rebuild chain state and block index from the blk*.dat files on disk"));
+    strUsage += HelpMessageOpt("-rescanbct", _("Force a full rescan of BCT (Bee Creation Transaction) data. This will delete the existing bct_database.sqlite and rebuild it"));
 #ifndef WIN32
     strUsage += HelpMessageOpt("-sysperms", _("Create new files with system default permissions, instead of umask 077 (only effective with disabled wallet functionality)"));
 #endif
@@ -631,7 +639,8 @@ void CleanupBlockRevFiles()
     // start removing block files.
     int nContigCounter = 0;
     for (const std::pair<std::string, fs::path>& item : mapBlockFiles) {
-        if (atoi(item.first) == nContigCounter) {
+        int32_t fileIndex = 0;
+        if (ParseInt32(item.first, &fileIndex) && fileIndex == nContigCounter) {
             nContigCounter++;
             continue;
         }
@@ -1811,6 +1820,57 @@ bool AppInitMain()
 #ifdef ENABLE_WALLET
     StartWallets(scheduler);
 #endif
+
+    // Cascoin: BCT: Initialize BCT persistent database and block handler
+    {
+        std::string dataDir = GetDataDir().string();
+        BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+        
+        // Check for -rescanbct or -reindex parameter - delete existing database before initialization
+        bool fRescanBCT = gArgs.GetBoolArg("-rescanbct", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if (fRescanBCT || fReindexTriggered) {
+            std::string bctDbPath = dataDir + "/bct_database.sqlite";
+            if (fRescanBCT) {
+                LogPrintf("BCT: -rescanbct specified, deleting existing BCT database at %s\n", bctDbPath);
+            } else {
+                LogPrintf("BCT: -reindex specified, deleting existing BCT database at %s\n", bctDbPath);
+            }
+            fs::path dbPath(bctDbPath);
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove(dbPath);
+                    // Also remove WAL and SHM files if they exist
+                    fs::path walPath(bctDbPath + "-wal");
+                    fs::path shmPath(bctDbPath + "-shm");
+                    if (fs::exists(walPath)) fs::remove(walPath);
+                    if (fs::exists(shmPath)) fs::remove(shmPath);
+                    LogPrintf("BCT: Deleted existing BCT database files\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("BCT: Warning - could not delete BCT database: %s\n", e.what());
+                }
+            }
+        }
+        
+        if (bctDb->initialize(dataDir)) {
+            // Perform startup initialization (load cache or full scan)
+#ifdef ENABLE_WALLET
+            CWallet* pwallet = !vpwallets.empty() ? vpwallets[0] : nullptr;
+            if (!bctDb->initializeOnStartup(pwallet)) {
+                LogPrintf("Warning: BCT database startup initialization failed\n");
+            }
+#else
+            if (!bctDb->initializeOnStartup(nullptr)) {
+                LogPrintf("Warning: BCT database startup initialization failed (no wallet)\n");
+            }
+#endif
+            InitBCTBlockHandler();
+            LogPrintf("BCT database initialized at %s\n", bctDb->getDatabasePath());
+        } else {
+            LogPrintf("Warning: Failed to initialize BCT database\n");
+        }
+    }
 
     return true;
 }

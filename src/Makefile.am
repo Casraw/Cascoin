@@ -18,7 +18,7 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS)
+BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS) $(SQLITE3_CFLAGS)
 
 BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
 BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
@@ -179,6 +179,7 @@ BITCOIN_CORE_H = \
   zmq/zmqpublishnotifier.h \
   rialto.h \
   beenft.h \
+  bctdb.h \
   cvm/cvm.h \
   cvm/vmstate.h \
   cvm/opcodes.h \
@@ -271,6 +272,7 @@ libbitcoin_server_a_SOURCES = \
   versionbits.cpp \
   rialto.cpp \
   beenft.cpp \
+  bctdb.cpp \
   cvm/cvm.cpp \
   cvm/vmstate.cpp \
   cvm/opcodes.cpp \
@@ -559,7 +561,7 @@ cascoind_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS)
 
 if ENABLE_EVMC
 cascoind_LDADD += -levmone -levmc-loader -levmc-instructions
