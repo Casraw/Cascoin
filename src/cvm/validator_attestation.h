@@ -328,4 +328,166 @@ void BroadcastValidationResponse(const ValidationResponse& response, CConnman* c
 // Global automatic validator manager instance
 extern AutomaticValidatorManager* g_automaticValidatorManager;
 
+// ============================================================================
+// Legacy Validator Attestation Types (for P2P message compatibility)
+// ============================================================================
+
+/**
+ * Validator Eligibility Announcement (Legacy P2P message type)
+ * Used for VALIDATOR_ANNOUNCE message handling
+ */
+struct ValidatorEligibilityAnnouncement {
+    uint160 validatorAddress;
+    CAmount stakeAmount;
+    int stakeAge;
+    uint64_t timestamp;
+    std::vector<uint8_t> signature;
+    
+    ValidatorEligibilityAnnouncement() : stakeAmount(0), stakeAge(0), timestamp(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(validatorAddress);
+        READWRITE(stakeAmount);
+        READWRITE(stakeAge);
+        READWRITE(timestamp);
+        READWRITE(signature);
+    }
+    
+    std::string ToString() const {
+        return validatorAddress.ToString();
+    }
+};
+
+/**
+ * Validator Attestation (Legacy P2P message type)
+ * Used for VALIDATOR_ATTESTATION message handling
+ */
+struct ValidatorAttestation {
+    uint160 validatorAddress;
+    uint160 attestorAddress;
+    uint8_t trustScore;
+    uint64_t timestamp;
+    std::vector<uint8_t> signature;
+    
+    ValidatorAttestation() : trustScore(0), timestamp(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(validatorAddress);
+        READWRITE(attestorAddress);
+        READWRITE(trustScore);
+        READWRITE(timestamp);
+        READWRITE(signature);
+    }
+    
+    std::string ToString() const {
+        return validatorAddress.ToString();
+    }
+};
+
+/**
+ * Batch Attestation Request (Legacy P2P message type)
+ * Used for BATCH_ATTESTATION_REQUEST message handling
+ */
+struct BatchAttestationRequest {
+    std::vector<uint160> validators;
+    uint160 requesterAddress;
+    uint64_t timestamp;
+    
+    BatchAttestationRequest() : timestamp(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(validators);
+        READWRITE(requesterAddress);
+        READWRITE(timestamp);
+    }
+};
+
+/**
+ * Batch Attestation Response (Legacy P2P message type)
+ * Used for BATCH_ATTESTATION_RESPONSE message handling
+ */
+struct BatchAttestationResponse {
+    std::vector<ValidatorAttestation> attestations;
+    uint160 responderAddress;
+    uint64_t timestamp;
+    
+    BatchAttestationResponse() : timestamp(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(attestations);
+        READWRITE(responderAddress);
+        READWRITE(timestamp);
+    }
+};
+
+/**
+ * Legacy Validator Attestation Manager
+ * Provides backward compatibility for P2P message handling
+ */
+class ValidatorAttestationManager {
+private:
+    CVMDatabase* db;
+    CCriticalSection cs_attestations;
+    
+    // Attestation storage
+    std::map<uint160, std::vector<ValidatorAttestation>> attestationsByValidator;
+    std::map<uint160, ValidatorEligibilityAnnouncement> announcements;
+    
+public:
+    ValidatorAttestationManager(CVMDatabase* database) : db(database) {}
+    ~ValidatorAttestationManager() {}
+    
+    // Process incoming announcements
+    bool ProcessAnnouncement(const ValidatorEligibilityAnnouncement& announcement) {
+        LOCK(cs_attestations);
+        announcements[announcement.validatorAddress] = announcement;
+        return true;
+    }
+    
+    // Process incoming attestations
+    bool ProcessAttestation(const ValidatorAttestation& attestation) {
+        LOCK(cs_attestations);
+        attestationsByValidator[attestation.validatorAddress].push_back(attestation);
+        return true;
+    }
+    
+    // Get attestations for a validator
+    std::vector<ValidatorAttestation> GetAttestationsForValidator(const uint160& validatorAddress) {
+        LOCK(cs_attestations);
+        auto it = attestationsByValidator.find(validatorAddress);
+        if (it != attestationsByValidator.end()) {
+            return it->second;
+        }
+        return std::vector<ValidatorAttestation>();
+    }
+    
+    // Check if validator has announced
+    bool HasAnnouncement(const uint160& validatorAddress) {
+        LOCK(cs_attestations);
+        return announcements.find(validatorAddress) != announcements.end();
+    }
+};
+
+// Global legacy validator attestation manager instance
+extern ValidatorAttestationManager* g_validatorAttestationManager;
+
+// Legacy P2P message handlers
+void ProcessValidatorAnnounceMessage(CNode* pfrom, const ValidatorEligibilityAnnouncement& announcement);
+void ProcessAttestationRequestMessage(CNode* pfrom, const uint160& validatorAddress);
+void ProcessValidatorAttestationMessage(CNode* pfrom, const ValidatorAttestation& attestation);
+void ProcessBatchAttestationRequestMessage(CNode* pfrom, const BatchAttestationRequest& request);
+void ProcessBatchAttestationResponseMessage(CNode* pfrom, const BatchAttestationResponse& response);
+
 #endif // CASCOIN_CVM_VALIDATOR_ATTESTATION_H

@@ -605,3 +605,93 @@ void BroadcastValidationResponse(const ValidationResponse& response, CConnman* c
     // TODO: Implement using connman->ForEachNode
     LogPrint(BCLog::CVM, "AutomaticValidatorManager: BroadcastValidationResponse not yet fully implemented\n");
 }
+
+// ============================================================================
+// Legacy Validator Attestation System
+// ============================================================================
+
+// Global legacy validator attestation manager instance
+ValidatorAttestationManager* g_validatorAttestationManager = nullptr;
+
+// Legacy P2P message handlers
+void ProcessValidatorAnnounceMessage(CNode* pfrom, const ValidatorEligibilityAnnouncement& announcement) {
+    if (!g_validatorAttestationManager) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Manager not initialized\n");
+        return;
+    }
+    
+    // Process the announcement
+    if (g_validatorAttestationManager->ProcessAnnouncement(announcement)) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Processed announcement from %s\n",
+                 announcement.validatorAddress.ToString());
+    }
+}
+
+void ProcessAttestationRequestMessage(CNode* pfrom, const uint160& validatorAddress) {
+    if (!g_validatorAttestationManager) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Manager not initialized\n");
+        return;
+    }
+    
+    // Get attestations for the requested validator
+    std::vector<ValidatorAttestation> attestations = 
+        g_validatorAttestationManager->GetAttestationsForValidator(validatorAddress);
+    
+    LogPrint(BCLog::NET, "ValidatorAttestation: Processed attestation request for %s, found %d attestations\n",
+             validatorAddress.ToString(), attestations.size());
+    
+    // TODO: Send response back to pfrom with attestations
+}
+
+void ProcessValidatorAttestationMessage(CNode* pfrom, const ValidatorAttestation& attestation) {
+    if (!g_validatorAttestationManager) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Manager not initialized\n");
+        return;
+    }
+    
+    // Process the attestation
+    if (g_validatorAttestationManager->ProcessAttestation(attestation)) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Processed attestation for %s from %s\n",
+                 attestation.validatorAddress.ToString(), attestation.attestorAddress.ToString());
+    }
+}
+
+void ProcessBatchAttestationRequestMessage(CNode* pfrom, const BatchAttestationRequest& request) {
+    if (!g_validatorAttestationManager) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Manager not initialized\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "ValidatorAttestation: Processing batch request for %d validators\n",
+             request.validators.size());
+    
+    // Build batch response
+    BatchAttestationResponse response;
+    response.timestamp = GetTime();
+    
+    for (const auto& validatorAddress : request.validators) {
+        std::vector<ValidatorAttestation> attestations = 
+            g_validatorAttestationManager->GetAttestationsForValidator(validatorAddress);
+        
+        for (const auto& att : attestations) {
+            response.attestations.push_back(att);
+        }
+    }
+    
+    // TODO: Send response back to pfrom
+}
+
+void ProcessBatchAttestationResponseMessage(CNode* pfrom, const BatchAttestationResponse& response) {
+    if (!g_validatorAttestationManager) {
+        LogPrint(BCLog::NET, "ValidatorAttestation: Manager not initialized\n");
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "ValidatorAttestation: Processing batch response with %d attestations\n",
+             response.attestations.size());
+    
+    // Process each attestation in the batch
+    for (const auto& attestation : response.attestations) {
+        g_validatorAttestationManager->ProcessAttestation(attestation);
+    }
+}
