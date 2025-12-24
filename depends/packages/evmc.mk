@@ -12,6 +12,19 @@ define $(package)_set_vars
   $(package)_config_opts+=-DEVMC_TOOLS=OFF
   $(package)_config_opts+=-DEVMC_EXAMPLES=OFF
   $(package)_config_opts+=-DBUILD_SHARED_LIBS=OFF
+  # Cross-compilation settings for MinGW
+  $(package)_config_opts_mingw32=-DCMAKE_SYSTEM_NAME=Windows
+  $(package)_config_opts_mingw32+=-DCMAKE_C_COMPILER=$(host)-gcc
+  $(package)_config_opts_mingw32+=-DCMAKE_CXX_COMPILER=$(host)-g++
+  $(package)_config_opts_mingw32+=-DCMAKE_RC_COMPILER=$(host)-windres
+  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH=$(host_prefix)
+  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+  # Darwin cross-compilation
+  $(package)_config_opts_darwin=-DCMAKE_SYSTEM_NAME=Darwin
+  $(package)_config_opts_darwin+=-DCMAKE_C_COMPILER=$(host)-clang
+  $(package)_config_opts_darwin+=-DCMAKE_CXX_COMPILER=$(host)-clang++
 endef
 
 define $(package)_config_cmds
@@ -27,5 +40,16 @@ define $(package)_stage_cmds
 endef
 
 define $(package)_postprocess_cmds
-  rm -rf share
+  rm -rf share && \
+  mkdir -p lib/pkgconfig && \
+  echo "prefix=$(host_prefix)" > lib/pkgconfig/evmc.pc && \
+  echo "exec_prefix=\$${prefix}" >> lib/pkgconfig/evmc.pc && \
+  echo "libdir=\$${exec_prefix}/lib" >> lib/pkgconfig/evmc.pc && \
+  echo "includedir=\$${prefix}/include" >> lib/pkgconfig/evmc.pc && \
+  echo "" >> lib/pkgconfig/evmc.pc && \
+  echo "Name: evmc" >> lib/pkgconfig/evmc.pc && \
+  echo "Description: Ethereum Virtual Machine C API" >> lib/pkgconfig/evmc.pc && \
+  echo "Version: $($(package)_version)" >> lib/pkgconfig/evmc.pc && \
+  echo "Libs: -L\$${libdir} -levmc-loader -levmc-instructions" >> lib/pkgconfig/evmc.pc && \
+  echo "Cflags: -I\$${includedir}" >> lib/pkgconfig/evmc.pc
 endef
