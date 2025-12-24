@@ -360,6 +360,36 @@ jobs:
             done
           done
           
+          # Copy EVMC and evmone libraries (for CVM EVM compatibility)
+          echo "  Collecting EVMC/evmone libraries..."
+          evmc_libs=(
+            "libevmone.so*"
+            "libevmc-loader.a"
+            "libevmc-instructions.a"
+          )
+          
+          for evmc_lib in "${evmc_libs[@]}"; do
+            find /usr/local/lib -name "$evmc_lib" 2>/dev/null | while read lib; do
+              if [[ -f "$lib" ]]; then
+                lib_name=$(basename "$lib")
+                if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                  echo "    Copying: $lib_name"
+                  cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                fi
+              fi
+            done
+          done
+          
+          # Also copy symlinks for evmone
+          if [[ -L /usr/local/lib/libevmone.so ]]; then
+            cp -P /usr/local/lib/libevmone.so "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: libevmone.so"
+          fi
+          if [[ -L /usr/local/lib/libevmone.so.0.18 ]]; then
+            cp -P /usr/local/lib/libevmone.so.0.18 "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: libevmone.so.0.18"
+          fi
+          
           # Create wrapper scripts
           cat > "$DIST_DIR"/bin/cascoin-qt-wrapper << 'EOF'
           #!/bin/bash
@@ -446,6 +476,7 @@ jobs:
           - libprotobuf (serialization)
           - libqrencode (QR code generation)
           - libzmq (ZeroMQ messaging)
+          - libevmone + libevmc (EVM compatibility for CVM)
           
           Note: OpenSSL libraries are not included - use system libraries.
           
@@ -458,6 +489,8 @@ jobs:
           ls -la "$LIB_DIR"/libboost_*.so* 2>/dev/null | head -10 || echo "    No Boost libraries found"
           echo "  Berkeley DB libraries:"
           ls -la "$LIB_DIR"/libdb*.so* 2>/dev/null || echo "    No Berkeley DB libraries found"
+          echo "  EVMC/evmone libraries:"
+          ls -la "$LIB_DIR"/libevmone*.so* "$LIB_DIR"/libevmc*.a 2>/dev/null || echo "    No EVMC/evmone libraries found"
           echo "  OpenSSL libraries: (not included - use system libraries)"
           echo "  Qt6 libraries: (not included - installed via package manager)"
           echo "  Other required libraries:"
@@ -469,7 +502,7 @@ jobs:
           find "$DIST_DIR" -type d | sort
           echo ""
           echo "Libraries collected:"
-          ls -la "$DIST_DIR"/lib/x86_64-linux-gnu/ | head -10
+          ls -la "$DIST_DIR"/lib/x86_64-linux-gnu/ | head -20
           echo ""
           echo "Binaries:"
           ls -la "$DIST_DIR"/bin/
