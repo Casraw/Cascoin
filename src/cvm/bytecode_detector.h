@@ -82,22 +82,22 @@ public:
     ~BytecodeDetector();
 
     // Main detection interface
-    BytecodeDetectionResult DetectFormat(const std::vector<uint8_t>& bytecode);
-    BytecodeDetectionResult DetectFormat(const uint8_t* data, size_t size);
+    BytecodeDetectionResult DetectFormat(const std::vector<uint8_t>& bytecode) const;
+    BytecodeDetectionResult DetectFormat(const uint8_t* data, size_t size) const;
     
     // Format-specific detection
-    bool IsEVMBytecode(const std::vector<uint8_t>& bytecode);
-    bool IsCVMBytecode(const std::vector<uint8_t>& bytecode);
-    bool IsHybridContract(const std::vector<uint8_t>& bytecode);
+    bool IsEVMBytecode(const std::vector<uint8_t>& bytecode) const;
+    bool IsCVMBytecode(const std::vector<uint8_t>& bytecode) const;
+    bool IsHybridContract(const std::vector<uint8_t>& bytecode) const;
     
     // Validation
-    bool ValidateEVMBytecode(const std::vector<uint8_t>& bytecode);
-    bool ValidateCVMBytecode(const std::vector<uint8_t>& bytecode);
+    bool ValidateEVMBytecode(const std::vector<uint8_t>& bytecode) const;
+    bool ValidateCVMBytecode(const std::vector<uint8_t>& bytecode) const;
     
     // Analysis utilities
-    std::vector<uint8_t> ExtractEVMPortion(const std::vector<uint8_t>& hybrid_bytecode);
-    std::vector<uint8_t> ExtractCVMPortion(const std::vector<uint8_t>& hybrid_bytecode);
-    BytecodeAnalysis AnalyzeBytecode(const std::vector<uint8_t>& bytecode);
+    std::vector<uint8_t> ExtractEVMPortion(const std::vector<uint8_t>& hybrid_bytecode) const;
+    std::vector<uint8_t> ExtractCVMPortion(const std::vector<uint8_t>& hybrid_bytecode) const;
+    BytecodeAnalysis AnalyzeBytecode(const std::vector<uint8_t>& bytecode) const;
     
     // Configuration
     void SetConfidenceThreshold(double threshold) { confidence_threshold = threshold; }
@@ -117,8 +117,8 @@ public:
     void ResetStats();
     
     // Section finding (needed by BytecodeUtils)
-    size_t FindEVMSection(const std::vector<uint8_t>& bytecode);
-    size_t FindCVMSection(const std::vector<uint8_t>& bytecode);
+    size_t FindEVMSection(const std::vector<uint8_t>& bytecode) const;
+    size_t FindCVMSection(const std::vector<uint8_t>& bytecode) const;
     
     // Known patterns and signatures (needed by BytecodeUtils)
     static const std::vector<uint8_t> CVM_HEADER_PATTERN;
@@ -126,41 +126,41 @@ public:
 
 private:
     // EVM bytecode detection
-    bool HasEVMOpcodes(const std::vector<uint8_t>& bytecode);
-    bool HasEVMPushPattern(const std::vector<uint8_t>& bytecode);
-    bool HasEVMJumpDestinations(const std::vector<uint8_t>& bytecode);
-    double CalculateEVMConfidence(const std::vector<uint8_t>& bytecode);
+    bool HasEVMOpcodes(const std::vector<uint8_t>& bytecode) const;
+    bool HasEVMPushPattern(const std::vector<uint8_t>& bytecode) const;
+    bool HasEVMJumpDestinations(const std::vector<uint8_t>& bytecode) const;
+    double CalculateEVMConfidence(const std::vector<uint8_t>& bytecode) const;
     
     // CVM bytecode detection  
-    bool HasCVMOpcodes(const std::vector<uint8_t>& bytecode);
-    bool HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode);
-    bool HasCVMTrustOpcodes(const std::vector<uint8_t>& bytecode);
-    double CalculateCVMConfidence(const std::vector<uint8_t>& bytecode);
+    bool HasCVMOpcodes(const std::vector<uint8_t>& bytecode) const;
+    bool HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode) const;
+    bool HasCVMTrustOpcodes(const std::vector<uint8_t>& bytecode) const;
+    double CalculateCVMConfidence(const std::vector<uint8_t>& bytecode) const;
     
     // Hybrid contract detection
-    bool HasHybridMarkers(const std::vector<uint8_t>& bytecode);
-    bool HasFormatSeparators(const std::vector<uint8_t>& bytecode);
+    bool HasHybridMarkers(const std::vector<uint8_t>& bytecode) const;
+    bool HasFormatSeparators(const std::vector<uint8_t>& bytecode) const;
     
     // Validation helpers
-    bool ValidateOpcodeSequence(const std::vector<uint8_t>& bytecode, size_t start, size_t end);
-    bool CheckBytecodeIntegrity(const std::vector<uint8_t>& bytecode);
-    bool VerifyJumpTargets(const std::vector<uint8_t>& bytecode);
+    bool ValidateOpcodeSequence(const std::vector<uint8_t>& bytecode, size_t start, size_t end) const;
+    bool CheckBytecodeIntegrity(const std::vector<uint8_t>& bytecode) const;
+    bool VerifyJumpTargets(const std::vector<uint8_t>& bytecode) const;
     
     // Pattern matching
-    bool MatchesPattern(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern, size_t offset = 0);
-    std::vector<size_t> FindPatternOccurrences(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern);
+    bool MatchesPattern(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern, size_t offset = 0) const;
+    std::vector<size_t> FindPatternOccurrences(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern) const;
     
     // Statistical analysis
-    void UpdateStats(const BytecodeDetectionResult& result);
-    double CalculateEntropyScore(const std::vector<uint8_t>& bytecode);
-    std::map<uint8_t, size_t> GetOpcodeFrequency(const std::vector<uint8_t>& bytecode);
+    void UpdateStats(const BytecodeDetectionResult& result) const;
+    double CalculateEntropyScore(const std::vector<uint8_t>& bytecode) const;
+    std::map<uint8_t, size_t> GetOpcodeFrequency(const std::vector<uint8_t>& bytecode) const;
     
     // Configuration
     double confidence_threshold;
     bool strict_validation;
     
     // Statistics
-    DetectionStats stats;
+    mutable DetectionStats stats;
     
     // Known patterns and signatures
     static const std::vector<uint8_t> EVM_CONSTRUCTOR_PATTERN;

@@ -6,6 +6,7 @@
 #include <cvm/cvmdb.h>
 #include <test/test_bitcoin.h>
 #include <uint256.h>
+#include <fs.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -13,9 +14,10 @@ BOOST_FIXTURE_TEST_SUITE(cvm_trust_context_tests, BasicTestingSetup)
 
 BOOST_AUTO_TEST_CASE(reputation_range)
 {
-    // Create a test database
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    // Create a test database with in-memory storage
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);  // fMemory=true, fWipe=true
+    CVM::TrustContext trust_ctx(&db);
     
     // Test address
     uint160 address;
@@ -31,15 +33,16 @@ BOOST_AUTO_TEST_CASE(reputation_range)
 
 BOOST_AUTO_TEST_CASE(reputation_discount)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
     
     // Test gas discount calculation
     uint64_t base_gas = 100000;
-    uint64_t discounted_gas = trust_ctx.ApplyReputationGasDiscount(address, base_gas);
+    uint64_t discounted_gas = trust_ctx.ApplyReputationGasDiscount(base_gas, address);
     
     // Discounted gas should be <= base gas
     BOOST_CHECK_LE(discounted_gas, base_gas);
@@ -48,8 +51,9 @@ BOOST_AUTO_TEST_CASE(reputation_discount)
 
 BOOST_AUTO_TEST_CASE(free_gas_eligibility)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
@@ -63,8 +67,9 @@ BOOST_AUTO_TEST_CASE(free_gas_eligibility)
 
 BOOST_AUTO_TEST_CASE(gas_allowance)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
@@ -78,35 +83,42 @@ BOOST_AUTO_TEST_CASE(gas_allowance)
 
 BOOST_AUTO_TEST_CASE(trust_weighted_value)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
     
-    // Add trust-weighted value
-    uint256 value;
-    value.SetHex("0000000000000000000000000000000000000000000000000000000000000042");
+    // Create trust-weighted value
+    CVM::TrustContext::TrustWeightedValue twv;
+    twv.value.SetHex("0000000000000000000000000000000000000000000000000000000000000042");
+    twv.trust_weight = 50;
+    twv.source_address = address;
+    twv.timestamp = 12345;
     
-    trust_ctx.AddTrustWeightedValue(address, value);
+    // Add trust-weighted value with string key
+    std::string key = "test_key";
+    trust_ctx.AddTrustWeightedValue(key, twv);
     
     // Get trust-weighted values
-    std::vector<uint256> values = trust_ctx.GetTrustWeightedValues(address);
+    std::vector<CVM::TrustContext::TrustWeightedValue> values = trust_ctx.GetTrustWeightedValues(key);
     
     // Should have at least one value
-    BOOST_CHECK_GE(values.size(), 0);
+    BOOST_CHECK_GE(values.size(), 1);
 }
 
 BOOST_AUTO_TEST_CASE(access_level)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
     
     // Check access level (requires minimum reputation)
-    bool has_access = trust_ctx.CheckAccessLevel(address, 50);
+    bool has_access = trust_ctx.CheckAccessLevel(address, "test_resource", "read");
     
     // Should return a boolean
     BOOST_CHECK(has_access == true || has_access == false);
@@ -114,14 +126,15 @@ BOOST_AUTO_TEST_CASE(access_level)
 
 BOOST_AUTO_TEST_CASE(reputation_history)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
     
     // Get reputation history
-    std::vector<uint32_t> history = trust_ctx.GetReputationHistory(address);
+    std::vector<CVM::TrustContext::ReputationEvent> history = trust_ctx.GetReputationHistory(address);
     
     // History should be a valid vector (may be empty)
     BOOST_CHECK_GE(history.size(), 0);
@@ -129,14 +142,13 @@ BOOST_AUTO_TEST_CASE(reputation_history)
 
 BOOST_AUTO_TEST_CASE(reputation_decay)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
-    uint160 address;
-    address.SetNull();
-    
-    // Apply reputation decay
-    trust_ctx.ApplyReputationDecay(address, 1);  // 1 block
+    // Apply reputation decay with current time
+    int64_t current_time = 12345;
+    trust_ctx.ApplyReputationDecay(current_time);
     
     // Should not throw
     BOOST_CHECK(true);
@@ -144,14 +156,15 @@ BOOST_AUTO_TEST_CASE(reputation_decay)
 
 BOOST_AUTO_TEST_CASE(reputation_update_from_activity)
 {
-    auto db = std::make_shared<CVM::CVMDatabase>();
-    CVM::TrustContext trust_ctx(db.get());
+    fs::path testPath = fs::temp_directory_path() / fs::unique_path();
+    CVM::CVMDatabase db(testPath, 8 << 20, true, true);
+    CVM::TrustContext trust_ctx(&db);
     
     uint160 address;
     address.SetNull();
     
     // Update reputation from activity
-    trust_ctx.UpdateReputationFromActivity(address, 1);  // Positive activity
+    trust_ctx.UpdateReputationFromActivity(address, "positive_trade", 1);
     
     // Should not throw
     BOOST_CHECK(true);

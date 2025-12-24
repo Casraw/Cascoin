@@ -17,43 +17,56 @@ class CNode;
 class CVMDatabase;
 
 /**
- * Validator Attestation System: Distributed 2FA for Validator Reputation
+ * Automatic Validator Selection System
  * 
- * This system replaces the gameable "validation accuracy" metric with a distributed
- * attestation system where multiple random nodes attest to a validator's eligibility.
+ * Validators are automatically selected from the pool of eligible addresses.
+ * NO registration or announcement required - the system discovers eligible
+ * validators by scanning on-chain data and selects them randomly.
  * 
  * Key Benefits:
- * - Cannot be faked (multiple independent attestors)
- * - No chicken-and-egg (attestations based on objective criteria)
- * - Sybil resistant (random attestors, weighted by reputation)
- * - Highly performant (95% reduction in messages, 99.9% reduction in frequency)
+ * - Fully automatic (no user action required)
+ * - Truly decentralized (no registration = no gatekeeping)
+ * - Fair selection (deterministic randomness from block hash)
+ * - Sybil resistant (eligibility based on on-chain history)
+ * - Passive income (validators earn fees without active participation)
+ * 
+ * How it works:
+ * 1. System scans blockchain for addresses meeting eligibility criteria
+ * 2. Eligible addresses are added to validator pool automatically
+ * 3. For each validation task, random validators are selected from pool
+ * 4. Selected validators are notified and compensated for participation
  */
 
 /**
- * Validator eligibility announcement
- * Broadcast by validators who want to participate in consensus validation
+ * Validator eligibility record (discovered automatically from chain)
+ * NOT announced by user - computed by each node independently
  */
-struct ValidatorEligibilityAnnouncement {
+struct ValidatorEligibilityRecord {
     uint160 validatorAddress;
     
-    // Self-reported metrics
+    // On-chain verified metrics (computed, not self-reported)
     CAmount stakeAmount;
-    int stakeAge;
-    int blocksSinceFirstSeen;
-    int transactionCount;
-    int uniqueInteractions;
+    int stakeAge;              // Blocks since stake was created
+    int blocksSinceFirstSeen;  // Blocks since first transaction
+    int transactionCount;      // Total transactions
+    int uniqueInteractions;    // Unique addresses interacted with
     
-    // Cryptographic proof
-    std::vector<uint8_t> signature;
-    uint64_t timestamp;
+    // Computed eligibility
+    bool meetsStakeRequirement;
+    bool meetsHistoryRequirement;
+    bool meetsInteractionRequirement;
+    bool isEligible;
     
-    // Request attestations from network
-    bool requestAttestations;
+    // Last update
+    int64_t lastUpdateBlock;
+    uint64_t lastUpdateTime;
     
-    ValidatorEligibilityAnnouncement() : 
+    ValidatorEligibilityRecord() : 
         stakeAmount(0), stakeAge(0), blocksSinceFirstSeen(0),
         transactionCount(0), uniqueInteractions(0),
-        timestamp(0), requestAttestations(true) {}
+        meetsStakeRequirement(false), meetsHistoryRequirement(false),
+        meetsInteractionRequirement(false), isEligible(false),
+        lastUpdateBlock(0), lastUpdateTime(0) {}
     
     ADD_SERIALIZE_METHODS;
     
@@ -65,192 +78,85 @@ struct ValidatorEligibilityAnnouncement {
         READWRITE(blocksSinceFirstSeen);
         READWRITE(transactionCount);
         READWRITE(uniqueInteractions);
-        READWRITE(signature);
-        READWRITE(timestamp);
-        READWRITE(requestAttestations);
+        READWRITE(meetsStakeRequirement);
+        READWRITE(meetsHistoryRequirement);
+        READWRITE(meetsInteractionRequirement);
+        READWRITE(isEligible);
+        READWRITE(lastUpdateBlock);
+        READWRITE(lastUpdateTime);
     }
     
     uint256 GetHash() const;
-    bool Sign(const std::vector<uint8_t>& privateKey);
-    bool VerifySignature() const;
 };
 
 /**
- * Attestation provided by a network node
- * Attests to a validator's eligibility based on objective and subjective criteria
+ * Validator selection result
+ * Contains the validators selected for a specific validation task
  */
-struct ValidatorAttestation {
-    uint160 validatorAddress;  // Who is being attested
-    uint160 attestorAddress;   // Who is attesting
+struct ValidatorSelection {
+    uint256 taskHash;          // Hash of the task (txHash + blockHeight)
+    int64_t blockHeight;       // Block height when selection was made
     
-    // Attestor's verification of validator's claims (objective)
-    bool stakeVerified;
-    bool historyVerified;
-    bool networkParticipationVerified;
-    bool behaviorVerified;
+    // Selected validators
+    std::vector<uint160> selectedValidators;
     
-    // Attestor's trust score for validator (subjective, personalized)
-    uint8_t trustScore;  // 0-100, based on attestor's WoT perspective
+    // Selection metadata
+    uint256 selectionSeed;     // Deterministic seed used for selection
+    int totalEligible;         // Total eligible validators at time of selection
+    int targetCount;           // How many validators were requested
     
-    // Attestor's confidence in their attestation
-    double confidence;  // 0.0-1.0
+    uint64_t timestamp;
+    
+    ValidatorSelection() : blockHeight(0), totalEligible(0), targetCount(0), timestamp(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(taskHash);
+        READWRITE(blockHeight);
+        READWRITE(selectedValidators);
+        READWRITE(selectionSeed);
+        READWRITE(totalEligible);
+        READWRITE(targetCount);
+        READWRITE(timestamp);
+    }
+    
+    uint256 GetHash() const;
+};
+
+/**
+ * Validation response from a selected validator
+ * Sent when a validator participates in validation
+ */
+struct ValidationResponse {
+    uint256 taskHash;          // Which task this responds to
+    uint160 validatorAddress;  // Who is responding
+    
+    // Validation result
+    bool isValid;              // Validator's verdict
+    uint8_t confidence;        // 0-100, how confident in the result
+    
+    // Optional: Trust score from validator's WoT perspective
+    uint8_t trustScore;        // 0-100, personalized trust score
     
     // Cryptographic proof
     std::vector<uint8_t> signature;
     uint64_t timestamp;
     
-    // Attestor's own reputation (for weighting)
-    uint8_t attestorReputation;
-    
-    ValidatorAttestation() :
-        stakeVerified(false), historyVerified(false),
-        networkParticipationVerified(false), behaviorVerified(false),
-        trustScore(0), confidence(0.0), timestamp(0), attestorReputation(0) {}
+    ValidationResponse() : isValid(false), confidence(0), trustScore(0), timestamp(0) {}
     
     ADD_SERIALIZE_METHODS;
     
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(taskHash);
         READWRITE(validatorAddress);
-        READWRITE(attestorAddress);
-        READWRITE(stakeVerified);
-        READWRITE(historyVerified);
-        READWRITE(networkParticipationVerified);
-        READWRITE(behaviorVerified);
-        READWRITE(trustScore);
+        READWRITE(isValid);
         READWRITE(confidence);
-        READWRITE(signature);
-        READWRITE(timestamp);
-        READWRITE(attestorReputation);
-    }
-    
-    uint256 GetHash() const;
-    bool Sign(const std::vector<uint8_t>& privateKey);
-    bool VerifySignature() const;
-};
-
-/**
- * Compressed attestation for bandwidth optimization
- * Reduces attestation size by ~50%
- */
-struct CompressedAttestation {
-    uint160 validatorAddress;
-    uint160 attestorAddress;
-    
-    // Compress boolean flags into single byte
-    // bit 0: stakeVerified, bit 1: historyVerified, 
-    // bit 2: networkParticipationVerified, bit 3: behaviorVerified
-    uint8_t flags;
-    
-    // Compress trust score (0-100) into single byte
-    uint8_t trustScore;
-    
-    // Compress confidence (0.0-1.0) into single byte (0-255)
-    uint8_t confidenceByte;
-    
-    // Attestor reputation
-    uint8_t attestorReputation;
-    
-    // Signature (64 bytes)
-    std::vector<uint8_t> signature;
-    
-    uint64_t timestamp;
-    
-    CompressedAttestation() : flags(0), trustScore(0), confidenceByte(0), 
-                             attestorReputation(0), timestamp(0) {}
-    
-    // Convert to/from full attestation
-    static CompressedAttestation Compress(const ValidatorAttestation& attestation);
-    ValidatorAttestation Decompress() const;
-    
-    ADD_SERIALIZE_METHODS;
-    
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(validatorAddress);
-        READWRITE(attestorAddress);
-        READWRITE(flags);
         READWRITE(trustScore);
-        READWRITE(confidenceByte);
-        READWRITE(attestorReputation);
         READWRITE(signature);
         READWRITE(timestamp);
-    }
-};
-
-/**
- * Composite validator score aggregated from multiple attestations
- * Used to determine validator eligibility
- */
-struct ValidatorCompositeScore {
-    uint160 validatorAddress;
-    
-    // Objective criteria (verified by all attestors)
-    bool stakeVerified;
-    bool historyVerified;
-    bool networkVerified;
-    
-    // Subjective criteria (aggregated from attestors)
-    uint8_t averageTrustScore;  // Weighted average of all trust scores
-    double trustScoreVariance;  // Variance in trust scores
-    
-    // Attestation metadata
-    int attestationCount;
-    std::vector<ValidatorAttestation> attestations;
-    
-    // Final eligibility decision
-    bool isEligible;
-    double eligibilityConfidence;  // 0.0-1.0
-    
-    // Cache metadata
-    int64_t cacheBlock;  // Block height when cached
-    CAmount stakeAmount;  // Cached stake amount
-    int transactionCount;  // Cached transaction count
-    
-    ValidatorCompositeScore() :
-        stakeVerified(false), historyVerified(false), networkVerified(false),
-        averageTrustScore(0), trustScoreVariance(0.0), attestationCount(0),
-        isEligible(false), eligibilityConfidence(0.0),
-        cacheBlock(0), stakeAmount(0), transactionCount(0) {}
-    
-    ADD_SERIALIZE_METHODS;
-    
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(validatorAddress);
-        READWRITE(stakeVerified);
-        READWRITE(historyVerified);
-        READWRITE(networkVerified);
-        READWRITE(averageTrustScore);
-        READWRITE(trustScoreVariance);
-        READWRITE(attestationCount);
-        READWRITE(attestations);
-        READWRITE(isEligible);
-        READWRITE(eligibilityConfidence);
-        READWRITE(cacheBlock);
-        READWRITE(stakeAmount);
-        READWRITE(transactionCount);
-    }
-};
-
-/**
- * Batch attestation request for performance optimization
- * Request attestations for multiple validators in single message
- */
-struct BatchAttestationRequest {
-    std::vector<uint160> validators;
-    uint64_t timestamp;
-    std::vector<uint8_t> signature;
-    
-    BatchAttestationRequest() : timestamp(0) {}
-    
-    ADD_SERIALIZE_METHODS;
-    
-    template <typename Stream, typename Operation>
-    inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(validators);
-        READWRITE(timestamp);
-        READWRITE(signature);
     }
     
     uint256 GetHash() const;
@@ -259,134 +165,167 @@ struct BatchAttestationRequest {
 };
 
 /**
- * Batch attestation response
- * Send multiple attestations in single message
+ * Aggregated validation result
+ * Combines responses from multiple validators
  */
-struct BatchAttestationResponse {
-    std::vector<CompressedAttestation> attestations;
-    uint64_t timestamp;
+struct AggregatedValidationResult {
+    uint256 taskHash;
     
-    BatchAttestationResponse() : timestamp(0) {}
+    // Aggregated result
+    bool consensusReached;
+    bool isValid;              // Final verdict (majority vote)
+    double confidence;         // Aggregated confidence
+    
+    // Response statistics
+    int totalSelected;         // How many validators were selected
+    int totalResponded;        // How many responded
+    int validVotes;            // Votes for valid
+    int invalidVotes;          // Votes for invalid
+    
+    // Individual responses
+    std::vector<ValidationResponse> responses;
+    
+    // Compensation info
+    CAmount totalCompensation; // Total fees to distribute
+    
+    AggregatedValidationResult() :
+        consensusReached(false), isValid(false), confidence(0.0),
+        totalSelected(0), totalResponded(0), validVotes(0), invalidVotes(0),
+        totalCompensation(0) {}
     
     ADD_SERIALIZE_METHODS;
     
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(attestations);
-        READWRITE(timestamp);
+        READWRITE(taskHash);
+        READWRITE(consensusReached);
+        READWRITE(isValid);
+        READWRITE(confidence);
+        READWRITE(totalSelected);
+        READWRITE(totalResponded);
+        READWRITE(validVotes);
+        READWRITE(invalidVotes);
+        READWRITE(responses);
+        READWRITE(totalCompensation);
     }
 };
 
 /**
- * Validator Attestation Manager
- * Manages the distributed attestation system for validator eligibility
+ * Automatic Validator Selection Manager
+ * 
+ * Manages automatic discovery and selection of validators.
+ * NO registration required - validators are discovered from on-chain data.
  */
-class ValidatorAttestationManager {
+class AutomaticValidatorManager {
 private:
     CVMDatabase* db;
-    CCriticalSection cs_attestations;
+    CCriticalSection cs_validators;
     
-    // Attestation cache (10,000 blocks = ~17 hours)
-    std::map<uint160, ValidatorCompositeScore> attestationCache;
-    std::map<uint160, int64_t> cacheTimestamps;
-    int64_t cacheExpiry;
+    // Validator pool (discovered automatically)
+    std::map<uint160, ValidatorEligibilityRecord> validatorPool;
+    std::vector<uint160> eligibleValidators;  // Sorted list for fast selection
     
-    // Pending attestation requests
-    std::map<uint160, std::vector<ValidatorAttestation>> pendingAttestations;
-    std::map<uint160, int64_t> requestTimestamps;
+    // Selection cache
+    std::map<uint256, ValidatorSelection> selectionCache;
     
-    // Bloom filter for attestation discovery
-    std::vector<bool> attestationBloomFilter;
+    // Response tracking
+    std::map<uint256, std::vector<ValidationResponse>> pendingResponses;
+    
+    // Pool update tracking
+    int64_t lastPoolUpdateBlock;
+    static const int POOL_UPDATE_INTERVAL = 100;  // Update pool every 100 blocks
+    
+    // Eligibility thresholds
+    static const CAmount MIN_STAKE = 10 * COIN;           // 10 CAS minimum
+    static const int MIN_STAKE_AGE = 40320;               // 70 days (70 * 576 blocks)
+    static const int MIN_HISTORY_BLOCKS = 40320;          // 70 days presence
+    static const int MIN_TRANSACTIONS = 100;              // 100+ transactions
+    static const int MIN_UNIQUE_INTERACTIONS = 20;        // 20+ unique addresses
     
 public:
-    ValidatorAttestationManager(CVMDatabase* database);
-    ~ValidatorAttestationManager();
+    AutomaticValidatorManager(CVMDatabase* database);
+    ~AutomaticValidatorManager();
     
-    // Validator announces eligibility
-    void AnnounceValidatorEligibility(const uint160& validatorAddress);
-    ValidatorEligibilityAnnouncement CreateEligibilityAnnouncement(const uint160& validatorAddress);
+    // ========== Pool Management (Automatic) ==========
     
-    // Process incoming announcements
-    void ProcessValidatorAnnouncement(const ValidatorEligibilityAnnouncement& announcement);
+    // Scan blockchain and update validator pool
+    void UpdateValidatorPool();
+    void UpdateValidatorPool(int64_t currentBlock);
     
-    // Attestation generation
-    ValidatorAttestation GenerateAttestation(const uint160& validatorAddress);
-    void ProcessAttestationRequest(const uint160& validatorAddress);
+    // Check if address is eligible (computed, not announced)
+    bool IsEligibleValidator(const uint160& address);
+    ValidatorEligibilityRecord ComputeEligibility(const uint160& address);
     
-    // Batch attestation processing
-    BatchAttestationResponse ProcessBatchAttestationRequest(const BatchAttestationRequest& request);
-    void ProcessBatchAttestationResponse(const BatchAttestationResponse& response);
+    // Get all eligible validators
+    std::vector<uint160> GetEligibleValidators();
+    int GetEligibleValidatorCount();
     
-    // Attestation aggregation
-    ValidatorCompositeScore AggregateAttestations(
-        const uint160& validatorAddress,
-        const std::vector<ValidatorAttestation>& attestations
-    );
+    // ========== Validator Selection (Automatic & Random) ==========
     
-    // Eligibility checking
-    bool IsValidatorEligible(const uint160& validatorAddress);
-    bool CalculateValidatorEligibility(const ValidatorCompositeScore& score);
-    double CalculateEligibilityConfidence(const ValidatorCompositeScore& score);
+    // Select random validators for a task
+    ValidatorSelection SelectValidatorsForTask(const uint256& taskHash, int64_t blockHeight, int count = 10);
     
-    // Cache management
-    bool GetCachedScore(const uint160& validator, ValidatorCompositeScore& score);
-    void CacheScore(const uint160& validator, const ValidatorCompositeScore& score);
-    bool RequiresReattestation(const uint160& validator);
-    void InvalidateCache(const uint160& validator);
+    // Deterministic random selection using block hash
+    std::vector<uint160> SelectRandomValidators(const uint256& seed, int count);
     
-    // Attestor selection
-    std::vector<uint160> SelectRandomAttestors(int count);
-    bool IsEligibleAttestor(const uint160& address);
+    // Check if local node was selected for a task
+    bool WasSelectedForTask(const uint256& taskHash, const uint160& myAddress);
     
-    // Verification methods
-    bool VerifyStake(const uint160& validatorAddress, CAmount& stakeAmount, int& stakeAge);
-    bool VerifyHistory(const uint160& validatorAddress, int& blocksSinceFirstSeen, 
-                      int& transactionCount, int& uniqueInteractions);
-    bool VerifyNetworkParticipation(const uint160& validatorAddress);
-    bool VerifyBehavior(const uint160& validatorAddress);
+    // ========== Validation Response Handling ==========
     
-    // Trust score calculation (personalized, based on WoT)
-    uint8_t CalculateMyTrustScore(const uint160& validatorAddress);
-    double CalculateAttestationConfidence(const uint160& validatorAddress);
-    uint8_t GetMyReputation();
+    // Process validation response from selected validator
+    void ProcessValidationResponse(const ValidationResponse& response);
     
-    // Attestation storage
-    void StoreAttestation(const ValidatorAttestation& attestation);
-    std::vector<ValidatorAttestation> GetAttestations(const uint160& validatorAddress);
-    void StoreValidatorAnnouncement(const ValidatorEligibilityAnnouncement& announcement);
+    // Aggregate responses and determine consensus
+    AggregatedValidationResult AggregateResponses(const uint256& taskHash);
     
-    // Bloom filter operations
-    void AddToBloomFilter(const uint160& validator);
-    bool MayHaveAttestation(const uint160& validator);
+    // Check if consensus reached
+    bool HasConsensus(const uint256& taskHash);
     
-    // Statistics
-    int GetAttestationCount(const uint160& validatorAddress);
-    int GetCachedValidatorCount();
-    int GetPendingAttestationCount();
+    // ========== Local Node Participation ==========
+    
+    // Called when local node is selected - generate response
+    ValidationResponse GenerateValidationResponse(const uint256& taskHash, bool isValid, uint8_t confidence);
+    
+    // ========== Eligibility Verification (On-Chain) ==========
+    
+    // Verify stake requirements from UTXO set
+    bool VerifyStakeRequirement(const uint160& address, CAmount& stakeAmount, int& stakeAge);
+    
+    // Verify history requirements from blockchain
+    bool VerifyHistoryRequirement(const uint160& address, int& blocksSinceFirstSeen, 
+                                  int& transactionCount, int& uniqueInteractions);
+    
+    // ========== Cache & Storage ==========
+    
+    void CacheSelection(const ValidatorSelection& selection);
+    bool GetCachedSelection(const uint256& taskHash, ValidatorSelection& selection);
+    
+    void StoreEligibilityRecord(const ValidatorEligibilityRecord& record);
+    bool GetEligibilityRecord(const uint160& address, ValidatorEligibilityRecord& record);
+    
+    // ========== Statistics ==========
+    
+    int GetTotalValidatorCount();
+    int GetActiveValidatorCount();  // Validators who responded recently
+    double GetAverageResponseRate();
 };
 
-// P2P message types
-extern const char* MSG_VALIDATOR_ANNOUNCE;
-extern const char* MSG_ATTESTATION_REQUEST;
-extern const char* MSG_VALIDATOR_ATTESTATION;
-extern const char* MSG_BATCH_ATTESTATION_REQUEST;
-extern const char* MSG_BATCH_ATTESTATION_RESPONSE;
+// P2P message types for automatic validator system
+extern const char* MSG_VALIDATION_TASK;       // Broadcast validation task to selected validators
+extern const char* MSG_VALIDATION_RESPONSE;   // Response from selected validator
 
 // P2P message handlers
-void ProcessValidatorAnnounceMessage(CNode* pfrom, const ValidatorEligibilityAnnouncement& announcement);
-void ProcessAttestationRequestMessage(CNode* pfrom, const uint160& validatorAddress);
-void ProcessValidatorAttestationMessage(CNode* pfrom, const ValidatorAttestation& attestation);
-void ProcessBatchAttestationRequestMessage(CNode* pfrom, const BatchAttestationRequest& request);
-void ProcessBatchAttestationResponseMessage(CNode* pfrom, const BatchAttestationResponse& response);
+void ProcessValidationTaskMessage(CNode* pfrom, const uint256& taskHash, int64_t blockHeight);
+void ProcessValidationResponseMessage(CNode* pfrom, const ValidationResponse& response);
 
-// Broadcast functions (require CConnman)
+// Broadcast functions
 class CConnman;
-void BroadcastValidatorAnnouncement(const ValidatorEligibilityAnnouncement& announcement, CConnman* connman);
-void BroadcastAttestation(const ValidatorAttestation& attestation, CConnman* connman);
-void SendAttestationRequest(const uint160& peer, const uint160& validatorAddress, CConnman* connman);
-void SendBatchAttestationRequest(const uint160& peer, const std::vector<uint160>& validators, CConnman* connman);
+void BroadcastValidationTask(const uint256& taskHash, int64_t blockHeight, 
+                             const std::vector<uint160>& selectedValidators, CConnman* connman);
+void BroadcastValidationResponse(const ValidationResponse& response, CConnman* connman);
 
-// Global attestation manager instance
-extern ValidatorAttestationManager* g_validatorAttestationManager;
+// Global automatic validator manager instance
+extern AutomaticValidatorManager* g_automaticValidatorManager;
 
 #endif // CASCOIN_CVM_VALIDATOR_ATTESTATION_H

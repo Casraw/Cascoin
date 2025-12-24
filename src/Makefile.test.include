@@ -24,6 +24,7 @@ GENERATED_TEST_FILES = $(JSON_TEST_FILES:.json=.json.h) $(RAW_TEST_FILES:.raw=.r
 # test_bitcoin binary #
 BITCOIN_TESTS =\
   test/bctdb_tests.cpp \
+  test/cvm_backward_compat_tests.cpp \
   test/cvm_bytecode_detector_tests.cpp \
   test/cvm_consensus_safety_tests.cpp \
   test/cvm_enhanced_storage_tests.cpp \

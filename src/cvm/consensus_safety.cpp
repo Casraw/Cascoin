@@ -538,7 +538,7 @@ CrossChainAttestationResult ConsensusSafetyValidator::ValidateCrossChainAttestat
         result.isValid = true;
         result.isConsensusSafe = true;
         // Extract lower 16 bits from uint256 sourceChainId for result
-        result.sourceChainId = static_cast<uint16_t>(attestation.sourceChainId.GetLow64() & 0xFFFF);
+        result.sourceChainId = static_cast<uint16_t>(attestation.sourceChainId.GetUint64(0) & 0xFFFF);
         result.trustScore = static_cast<uint8_t>(attestation.trustScore);
         
         LogPrintf("ConsensusSafetyValidator: Cross-chain attestation validation for %s: %s (chain=%d, score=%d)\n",

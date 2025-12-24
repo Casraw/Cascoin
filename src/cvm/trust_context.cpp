@@ -8,6 +8,7 @@
 #include <cvm/reputation.h>
 #include <cvm/securehat.h>
 #include <cvm/cross_chain_bridge.h>
+#include <cvm/access_control_audit.h>
 #include <util.h>
 #include <timedata.h>
 #include <algorithm>
@@ -45,6 +46,13 @@ uint32_t TrustContext::GetReputation(const uint160& address) const {
         reputation = aggregated;
     }
     
+    // Log trust score query to access control auditor
+    if (g_accessControlAuditor && !current_caller.IsNull()) {
+        g_accessControlAuditor->LogTrustScoreQuery(current_caller, address, 
+                                                   static_cast<int16_t>(reputation), 
+                                                   "GetReputation");
+    }
+    
     return reputation;
 }
 
@@ -72,6 +80,16 @@ bool TrustContext::CheckTrustGate(const uint160& address, const std::string& ope
     
     // Check minimum reputation requirement
     if (reputation < gate.min_reputation) {
+        // Log denied reputation-gated operation
+        if (g_accessControlAuditor) {
+            g_accessControlAuditor->LogReputationGatedOperation(
+                address,
+                AccessOperationType::REPUTATION_GATED_CALL,
+                operation,
+                static_cast<int16_t>(gate.min_reputation),
+                static_cast<int16_t>(reputation),
+                operation);
+        }
         return false;
     }
     
@@ -79,6 +97,18 @@ bool TrustContext::CheckTrustGate(const uint160& address, const std::string& ope
     if (gate.require_cross_chain_verification) {
         auto attestations_it = cross_chain_attestations.find(address);
         if (attestations_it == cross_chain_attestations.end() || attestations_it->second.empty()) {
+            // Log denied due to missing cross-chain attestation
+            if (g_accessControlAuditor) {
+                AccessControlAuditEntry entry;
+                entry.operationType = AccessOperationType::CROSS_CHAIN_ATTESTATION;
+                entry.decision = AccessDecision::DENIED_OTHER;
+                entry.requesterAddress = address;
+                entry.operationName = operation;
+                entry.denialReason = "Missing cross-chain attestation";
+                entry.requiredReputation = static_cast<int16_t>(gate.min_reputation);
+                entry.actualReputation = static_cast<int16_t>(reputation);
+                g_accessControlAuditor->LogAccessDecision(entry);
+            }
             return false;
         }
         
@@ -92,8 +122,31 @@ bool TrustContext::CheckTrustGate(const uint160& address, const std::string& ope
         }
         
         if (!has_valid_attestation) {
+            // Log denied due to invalid cross-chain attestation
+            if (g_accessControlAuditor) {
+                AccessControlAuditEntry entry;
+                entry.operationType = AccessOperationType::CROSS_CHAIN_ATTESTATION;
+                entry.decision = AccessDecision::DENIED_INSUFFICIENT_REPUTATION;
+                entry.requesterAddress = address;
+                entry.operationName = operation;
+                entry.denialReason = "Cross-chain attestation reputation too low";
+                entry.requiredReputation = static_cast<int16_t>(gate.min_reputation);
+                entry.actualReputation = static_cast<int16_t>(reputation);
+                g_accessControlAuditor->LogAccessDecision(entry);
+            }
             return false;
         }
+    }
+    
+    // Log granted reputation-gated operation
+    if (g_accessControlAuditor) {
+        g_accessControlAuditor->LogReputationGatedOperation(
+            address,
+            AccessOperationType::REPUTATION_GATED_CALL,
+            operation,
+            static_cast<int16_t>(gate.min_reputation),
+            static_cast<int16_t>(reputation),
+            operation);
     }
     
     return true;
@@ -312,6 +365,18 @@ bool TrustContext::CheckAccessLevel(const uint160& address, const std::string& r
              address.ToString(), resource, action, reputation, policy.min_reputation,
              has_access ? "granted" : "denied");
     
+    // Log reputation-gated operation attempt to access control auditor
+    if (g_accessControlAuditor) {
+        std::string operationName = resource + "." + action;
+        g_accessControlAuditor->LogReputationGatedOperation(
+            address,
+            AccessOperationType::REPUTATION_GATED_CALL,
+            operationName,
+            static_cast<int16_t>(policy.min_reputation),
+            static_cast<int16_t>(reputation),
+            resource);
+    }
+    
     // Check required attestations if specified
     if (has_access && !policy.required_attestations.empty()) {
         auto attestations_it = cross_chain_attestations.find(address);
@@ -400,6 +465,16 @@ void TrustContext::UpdateReputationFromActivity(const uint160& address, const st
         
         LogPrint(BCLog::CVM, "TrustContext: Updated reputation for %s from activity '%s': %d -> %d (delta: %d)\n",
                  address.ToString(), activity_type, current_reputation, new_reputation, reputation_delta);
+        
+        // Log trust score modification to access control auditor
+        if (g_accessControlAuditor) {
+            uint160 modifier = current_caller.IsNull() ? address : current_caller;
+            g_accessControlAuditor->LogTrustScoreModification(
+                modifier, address,
+                static_cast<int16_t>(current_reputation),
+                static_cast<int16_t>(new_reputation),
+                activity_type);
+        }
         
         // If this is a significant change, also update in the database
         if (database && std::abs(reputation_delta) >= 5) {

@@ -8,6 +8,7 @@
 #include <cvm/cvm.h>
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
+#include <cvm/dos_protection.h>
 #include <chain.h>
 #include <util.h>
 #include <utiltime.h>
@@ -87,7 +88,40 @@ MempoolManager::ValidationResult MempoolManager::ValidateTransaction(
     uint160 senderAddr = GetSenderAddress(tx);
     result.reputation = GetReputation(senderAddr);
     
-    // Check rate limiting
+    // Check DoS protection - transaction rate limiting
+    if (g_dosProtection && g_dosProtection->IsTransactionRateLimited(tx, senderAddr, result.reputation)) {
+        result.error = "Transaction rate limit exceeded";
+        m_totalRejected++;
+        return result;
+    }
+    
+    // Check DoS protection - deployment rate limiting
+    bool isDeployment = (opType == CVMOpType::CONTRACT_DEPLOY || opType == CVMOpType::EVM_DEPLOY);
+    if (isDeployment && g_dosProtection && g_dosProtection->IsDeploymentRateLimited(senderAddr, result.reputation)) {
+        result.error = "Deployment rate limit exceeded";
+        m_totalRejected++;
+        return result;
+    }
+    
+    // Check DoS protection - malicious contract detection for deployments
+    if (isDeployment && g_dosProtection) {
+        CVMDeployData deployData;
+        if (deployData.Deserialize(data)) {
+            auto analysisResult = g_dosProtection->AnalyzeBytecode(deployData.bytecode);
+            if (analysisResult.isMalicious) {
+                result.error = "Malicious contract detected: " + analysisResult.analysisReport;
+                m_totalRejected++;
+                return result;
+            }
+            // Log warning for high-risk contracts
+            if (analysisResult.riskScore >= 0.5) {
+                LogPrint(BCLog::CVM, "MempoolManager: High-risk contract detected (score=%.2f): %s\n",
+                         analysisResult.riskScore, tx.GetHash().ToString());
+            }
+        }
+    }
+    
+    // Check rate limiting (legacy)
     if (IsRateLimited(senderAddr)) {
         result.error = "Rate limit exceeded";
         m_totalRejected++;
@@ -143,8 +177,20 @@ MempoolManager::ValidationResult MempoolManager::ValidateTransaction(
         return result;
     }
     
+    // Check DoS protection - mempool admission policy
+    if (g_dosProtection && !g_dosProtection->CheckMempoolAdmission(tx, senderAddr, result.reputation, result.effectiveFee)) {
+        result.error = "Mempool admission policy rejected";
+        m_totalRejected++;
+        return result;
+    }
+    
     // Record submission for rate limiting
     RecordTransactionSubmission(senderAddr);
+    
+    // Record with DoS protection
+    if (g_dosProtection) {
+        g_dosProtection->RecordTransaction(senderAddr, isDeployment);
+    }
     
     result.isValid = true;
     m_totalAccepted++;

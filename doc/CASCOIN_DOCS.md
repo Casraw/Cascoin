@@ -17,6 +17,17 @@ Complete guide for using the HAT v2 (Hybrid Adaptive Trust) reputation system:
 
 **For:** End users who want to understand and use the trust system
 
+### [CVM User Guide](CVM_USER_GUIDE.md) ⭐ **NEW**
+Complete user guide for Cascoin CVM:
+- All essential commands
+- Becoming a validator
+- Using smart contracts
+- Web-of-Trust & Reputation
+- Gas & Fees
+- DAO & Disputes
+
+**For:** All Cascoin users
+
 ---
 
 ## 🔒 Security Documentation
@@ -74,6 +85,51 @@ Practical scam prevention:
 ### API Documentation
 - [REST-interface.md](REST-interface.md) - REST API
 - [zmq.md](zmq.md) - ZeroMQ notifications
+
+---
+
+## 🔗 CVM/Smart Contract Documentation
+
+### [CVM Developer Guide](CVM_DEVELOPER_GUIDE.md) ⭐ **NEW**
+Complete guide for deploying smart contracts on Cascoin's CVM:
+- Quick start tutorial
+- Contract deployment and calling
+- Trust-aware features
+- Gas system and discounts
+- RPC reference
+- Code examples
+
+**For:** Smart contract developers
+
+### [CVM Blockchain Integration](CVM_BLOCKCHAIN_INTEGRATION.md)
+Technical documentation for blockchain integration:
+- Transaction format (OP_RETURN structure)
+- Soft fork compatibility
+- Mempool integration
+- Block validation
+- Receipt storage
+
+**For:** Protocol developers and integrators
+
+### [CVM Operator Guide](CVM_OPERATOR_GUIDE.md)
+Node operator documentation:
+- System requirements
+- Configuration options
+- Soft fork activation
+- Monitoring and maintenance
+- Troubleshooting
+
+**For:** Node operators and validators
+
+### [CVM Security Guide](CVM_SECURITY_GUIDE.md)
+Security documentation:
+- HAT v2 consensus security model
+- Validator operations
+- Attack vectors and mitigations
+- Security best practices
+- Incident response
+
+**For:** Security auditors and validator operators
 
 ---
 
@@ -156,6 +212,11 @@ See the root directory for:
 | TRUST_SECURITY_ANALYSIS.md | ✅ Complete | Nov 2025 |
 | WOT_SECURITY_ANALYSIS.md | ✅ Complete | Nov 2025 |
 | WOT_SCAM_PROTECTION.md | ✅ Complete | Nov 2025 |
+| CVM_USER_GUIDE.md | ✅ Complete | Dec 2025 |
+| CVM_DEVELOPER_GUIDE.md | ✅ Complete | Dec 2025 |
+| CVM_BLOCKCHAIN_INTEGRATION.md | ✅ Complete | Dec 2025 |
+| CVM_OPERATOR_GUIDE.md | ✅ Complete | Dec 2025 |
+| CVM_SECURITY_GUIDE.md | ✅ Complete | Dec 2025 |
 
 ---
 
@@ -168,7 +229,7 @@ See [../CONTRIBUTING.md](../CONTRIBUTING.md) for:
 
 ---
 
-**Last Updated:** November 3, 2025  
-**Version:** 2.0  
+**Last Updated:** December 2025  
+**Version:** 2.1  
 **Status:** Production Ready ✅
 

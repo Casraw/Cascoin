@@ -215,11 +215,11 @@ BytecodeDetector::BytecodeDetector()
 BytecodeDetector::~BytecodeDetector() {
 }
 
-BytecodeDetectionResult BytecodeDetector::DetectFormat(const std::vector<uint8_t>& bytecode) {
+BytecodeDetectionResult BytecodeDetector::DetectFormat(const std::vector<uint8_t>& bytecode) const {
     return DetectFormat(bytecode.data(), bytecode.size());
 }
 
-BytecodeDetectionResult BytecodeDetector::DetectFormat(const uint8_t* data, size_t size) {
+BytecodeDetectionResult BytecodeDetector::DetectFormat(const uint8_t* data, size_t size) const {
     BytecodeDetectionResult result;
     
     if (!data || size == 0) {
@@ -264,7 +264,7 @@ BytecodeDetectionResult BytecodeDetector::DetectFormat(const uint8_t* data, size
     return result;
 }
 
-bool BytecodeDetector::IsEVMBytecode(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::IsEVMBytecode(const std::vector<uint8_t>& bytecode) const {
     if (bytecode.empty()) return false;
     
     // Check for EVM-specific patterns
@@ -276,7 +276,7 @@ bool BytecodeDetector::IsEVMBytecode(const std::vector<uint8_t>& bytecode) {
     return has_evm_opcodes && (has_push_pattern || has_jump_dest);
 }
 
-bool BytecodeDetector::IsCVMBytecode(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::IsCVMBytecode(const std::vector<uint8_t>& bytecode) const {
     if (bytecode.empty()) return false;
     
     // Check for CVM-specific patterns
@@ -288,13 +288,13 @@ bool BytecodeDetector::IsCVMBytecode(const std::vector<uint8_t>& bytecode) {
     return has_cvm_opcodes && (has_register_pattern || has_trust_opcodes);
 }
 
-bool BytecodeDetector::IsHybridContract(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::IsHybridContract(const std::vector<uint8_t>& bytecode) const {
     if (bytecode.size() < 100) return false; // Too small for hybrid
     
     return HasHybridMarkers(bytecode) || HasFormatSeparators(bytecode);
 }
 
-bool BytecodeDetector::ValidateEVMBytecode(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::ValidateEVMBytecode(const std::vector<uint8_t>& bytecode) const {
     if (bytecode.empty()) return false;
     
     // Basic EVM bytecode validation
@@ -322,7 +322,7 @@ bool BytecodeDetector::ValidateEVMBytecode(const std::vector<uint8_t>& bytecode)
     return true;
 }
 
-bool BytecodeDetector::ValidateCVMBytecode(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::ValidateCVMBytecode(const std::vector<uint8_t>& bytecode) const {
     if (bytecode.empty()) return false;
     
     // Basic CVM bytecode validation
@@ -352,7 +352,7 @@ bool BytecodeDetector::ValidateCVMBytecode(const std::vector<uint8_t>& bytecode)
     return true;
 }
 
-std::vector<uint8_t> BytecodeDetector::ExtractEVMPortion(const std::vector<uint8_t>& hybrid_bytecode) {
+std::vector<uint8_t> BytecodeDetector::ExtractEVMPortion(const std::vector<uint8_t>& hybrid_bytecode) const {
     size_t evm_start = FindEVMSection(hybrid_bytecode);
     if (evm_start == std::string::npos) {
         return {};
@@ -370,7 +370,7 @@ std::vector<uint8_t> BytecodeDetector::ExtractEVMPortion(const std::vector<uint8
     return std::vector<uint8_t>(hybrid_bytecode.begin() + evm_start, hybrid_bytecode.begin() + evm_end);
 }
 
-std::vector<uint8_t> BytecodeDetector::ExtractCVMPortion(const std::vector<uint8_t>& hybrid_bytecode) {
+std::vector<uint8_t> BytecodeDetector::ExtractCVMPortion(const std::vector<uint8_t>& hybrid_bytecode) const {
     size_t cvm_start = FindCVMSection(hybrid_bytecode);
     if (cvm_start == std::string::npos) {
         return {};
@@ -385,7 +385,7 @@ void BytecodeDetector::ResetStats() {
 
 // Private implementation methods
 
-bool BytecodeDetector::HasEVMOpcodes(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasEVMOpcodes(const std::vector<uint8_t>& bytecode) const {
     size_t evm_opcode_count = 0;
     for (uint8_t byte : bytecode) {
         if (EVM_OPCODES.find(byte) != EVM_OPCODES.end() || 
@@ -398,19 +398,19 @@ bool BytecodeDetector::HasEVMOpcodes(const std::vector<uint8_t>& bytecode) {
     return (double)evm_opcode_count / bytecode.size() >= 0.3;
 }
 
-bool BytecodeDetector::HasEVMPushPattern(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasEVMPushPattern(const std::vector<uint8_t>& bytecode) const {
     // Look for common EVM patterns like PUSH1 0x80 PUSH1 0x40 (memory setup)
     return MatchesPattern(bytecode, EVM_CONSTRUCTOR_PATTERN) ||
            std::any_of(bytecode.begin(), bytecode.end(), 
                       [](uint8_t b) { return EVM_PUSH_OPCODES.find(b) != EVM_PUSH_OPCODES.end(); });
 }
 
-bool BytecodeDetector::HasEVMJumpDestinations(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasEVMJumpDestinations(const std::vector<uint8_t>& bytecode) const {
     return std::any_of(bytecode.begin(), bytecode.end(),
                       [](uint8_t b) { return b == 0x5b; }); // JUMPDEST
 }
 
-double BytecodeDetector::CalculateEVMConfidence(const std::vector<uint8_t>& bytecode) {
+double BytecodeDetector::CalculateEVMConfidence(const std::vector<uint8_t>& bytecode) const {
     double confidence = 0.0;
     
     if (HasEVMOpcodes(bytecode)) confidence += 0.4;
@@ -421,7 +421,7 @@ double BytecodeDetector::CalculateEVMConfidence(const std::vector<uint8_t>& byte
     return std::min(1.0, confidence);
 }
 
-bool BytecodeDetector::HasCVMOpcodes(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasCVMOpcodes(const std::vector<uint8_t>& bytecode) const {
     size_t cvm_opcode_count = 0;
     for (uint8_t byte : bytecode) {
         if (CVM_OPCODES.find(byte) != CVM_OPCODES.end()) {
@@ -433,7 +433,7 @@ bool BytecodeDetector::HasCVMOpcodes(const std::vector<uint8_t>& bytecode) {
     return (double)cvm_opcode_count / bytecode.size() >= 0.3;
 }
 
-bool BytecodeDetector::HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode) const {
     // Look for CVM PUSH pattern (opcode + size + data)
     for (size_t i = 0; i < bytecode.size() - 2; ++i) {
         if (bytecode[i] == 0x01) { // OP_PUSH
@@ -446,12 +446,12 @@ bool BytecodeDetector::HasCVMRegisterPattern(const std::vector<uint8_t>& bytecod
     return false;
 }
 
-bool BytecodeDetector::HasCVMTrustOpcodes(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasCVMTrustOpcodes(const std::vector<uint8_t>& bytecode) const {
     return std::any_of(bytecode.begin(), bytecode.end(),
                       [](uint8_t b) { return CVM_TRUST_OPCODES.find(b) != CVM_TRUST_OPCODES.end(); });
 }
 
-double BytecodeDetector::CalculateCVMConfidence(const std::vector<uint8_t>& bytecode) {
+double BytecodeDetector::CalculateCVMConfidence(const std::vector<uint8_t>& bytecode) const {
     double confidence = 0.0;
     
     if (HasCVMOpcodes(bytecode)) confidence += 0.4;
@@ -462,16 +462,16 @@ double BytecodeDetector::CalculateCVMConfidence(const std::vector<uint8_t>& byte
     return std::min(1.0, confidence);
 }
 
-bool BytecodeDetector::HasHybridMarkers(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasHybridMarkers(const std::vector<uint8_t>& bytecode) const {
     return MatchesPattern(bytecode, CVM_HEADER_PATTERN) && 
            (HasEVMOpcodes(bytecode) || HasCVMOpcodes(bytecode));
 }
 
-bool BytecodeDetector::HasFormatSeparators(const std::vector<uint8_t>& bytecode) {
+bool BytecodeDetector::HasFormatSeparators(const std::vector<uint8_t>& bytecode) const {
     return MatchesPattern(bytecode, HYBRID_SEPARATOR_PATTERN);
 }
 
-size_t BytecodeDetector::FindEVMSection(const std::vector<uint8_t>& bytecode) {
+size_t BytecodeDetector::FindEVMSection(const std::vector<uint8_t>& bytecode) const {
     // Look for EVM section start (after hybrid header)
     for (size_t i = 0; i < bytecode.size() - 10; ++i) {
         if (HasEVMOpcodes(std::vector<uint8_t>(bytecode.begin() + i, bytecode.begin() + i + 10))) {
@@ -481,7 +481,7 @@ size_t BytecodeDetector::FindEVMSection(const std::vector<uint8_t>& bytecode) {
     return std::string::npos;
 }
 
-size_t BytecodeDetector::FindCVMSection(const std::vector<uint8_t>& bytecode) {
+size_t BytecodeDetector::FindCVMSection(const std::vector<uint8_t>& bytecode) const {
     // Look for CVM section start (usually after separator)
     auto separator_pos = FindPatternOccurrences(bytecode, HYBRID_SEPARATOR_PATTERN);
     if (!separator_pos.empty()) {
@@ -497,7 +497,7 @@ size_t BytecodeDetector::FindCVMSection(const std::vector<uint8_t>& bytecode) {
     return std::string::npos;
 }
 
-bool BytecodeDetector::MatchesPattern(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern, size_t offset) {
+bool BytecodeDetector::MatchesPattern(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern, size_t offset) const {
     if (offset + pattern.size() > bytecode.size()) {
         return false;
     }
@@ -505,7 +505,7 @@ bool BytecodeDetector::MatchesPattern(const std::vector<uint8_t>& bytecode, cons
     return std::equal(pattern.begin(), pattern.end(), bytecode.begin() + offset);
 }
 
-std::vector<size_t> BytecodeDetector::FindPatternOccurrences(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern) {
+std::vector<size_t> BytecodeDetector::FindPatternOccurrences(const std::vector<uint8_t>& bytecode, const std::vector<uint8_t>& pattern) const {
     std::vector<size_t> occurrences;
     
     for (size_t i = 0; i <= bytecode.size() - pattern.size(); ++i) {
@@ -517,7 +517,7 @@ std::vector<size_t> BytecodeDetector::FindPatternOccurrences(const std::vector<u
     return occurrences;
 }
 
-void BytecodeDetector::UpdateStats(const BytecodeDetectionResult& result) {
+void BytecodeDetector::UpdateStats(const BytecodeDetectionResult& result) const {
     stats.total_detections++;
     
     switch (result.format) {
@@ -1144,7 +1144,7 @@ void BytecodeDetectionCache::EvictOldEntries() {
 /**
  * Analyze bytecode and extract detailed information
  */
-BytecodeAnalysis BytecodeDetector::AnalyzeBytecode(const std::vector<uint8_t>& bytecode) {
+BytecodeAnalysis BytecodeDetector::AnalyzeBytecode(const std::vector<uint8_t>& bytecode) const {
     BytecodeAnalysis analysis;
     
     if (bytecode.empty()) {

@@ -19,9 +19,9 @@ BOOST_AUTO_TEST_CASE(detect_evm_bytecode)
     
     CVM::BytecodeDetectionResult result = detector.DetectFormat(evm_bytecode);
     
-    BOOST_CHECK_EQUAL(result.format, CVM::BytecodeFormat::EVM_BYTECODE);
-    BOOST_CHECK_GT(result.confidence, 80);
-    BOOST_CHECK(!result.reasoning.empty());
+    BOOST_CHECK(result.format == CVM::BytecodeFormat::EVM_BYTECODE);
+    BOOST_CHECK_GT(result.confidence, 0.8);  // Confidence is 0.0-1.0
+    BOOST_CHECK(!result.reason.empty());
 }
 
 BOOST_AUTO_TEST_CASE(detect_cvm_bytecode)
@@ -34,9 +34,9 @@ BOOST_AUTO_TEST_CASE(detect_cvm_bytecode)
     
     CVM::BytecodeDetectionResult result = detector.DetectFormat(cvm_bytecode);
     
-    // Should detect as CVM or AUTO
+    // Should detect as CVM or UNKNOWN for short bytecode
     BOOST_CHECK(result.format == CVM::BytecodeFormat::CVM_NATIVE || 
-                result.format == CVM::BytecodeFormat::AUTO_DETECT);
+                result.format == CVM::BytecodeFormat::UNKNOWN);
 }
 
 BOOST_AUTO_TEST_CASE(detect_empty_bytecode)
@@ -48,7 +48,7 @@ BOOST_AUTO_TEST_CASE(detect_empty_bytecode)
     CVM::BytecodeDetectionResult result = detector.DetectFormat(empty_bytecode);
     
     // Empty bytecode should have low confidence
-    BOOST_CHECK_LT(result.confidence, 50);
+    BOOST_CHECK_LT(result.confidence, 0.5);  // Confidence is 0.0-1.0
 }
 
 BOOST_AUTO_TEST_CASE(detect_short_bytecode)
@@ -61,8 +61,8 @@ BOOST_AUTO_TEST_CASE(detect_short_bytecode)
     CVM::BytecodeDetectionResult result = detector.DetectFormat(short_bytecode);
     
     // Short bytecode may have lower confidence
-    BOOST_CHECK_GE(result.confidence, 0);
-    BOOST_CHECK_LE(result.confidence, 100);
+    BOOST_CHECK_GE(result.confidence, 0.0);
+    BOOST_CHECK_LE(result.confidence, 1.0);
 }
 
 BOOST_AUTO_TEST_CASE(detect_long_evm_bytecode)
@@ -77,18 +77,18 @@ BOOST_AUTO_TEST_CASE(detect_long_evm_bytecode)
     
     CVM::BytecodeDetectionResult result = detector.DetectFormat(long_bytecode);
     
-    BOOST_CHECK_EQUAL(result.format, CVM::BytecodeFormat::EVM_BYTECODE);
-    BOOST_CHECK_GT(result.confidence, 80);
+    BOOST_CHECK(result.format == CVM::BytecodeFormat::EVM_BYTECODE);
+    BOOST_CHECK_GT(result.confidence, 0.8);  // Confidence is 0.0-1.0
 }
 
 BOOST_AUTO_TEST_CASE(bytecode_optimization)
 {
     CVM::BytecodeDetector detector;
     
-    // Test bytecode optimization
+    // Test bytecode optimization using BytecodeUtils
     std::vector<uint8_t> bytecode = ParseHex("604260005260206000f3");
     
-    bool is_optimized = detector.IsBytecodeOptimized(bytecode);
+    bool is_optimized = CVM::BytecodeUtils::IsBytecodeOptimized(bytecode, CVM::BytecodeFormat::EVM_BYTECODE);
     
     // Should return a boolean
     BOOST_CHECK(is_optimized == true || is_optimized == false);
@@ -98,10 +98,10 @@ BOOST_AUTO_TEST_CASE(bytecode_disassembly)
 {
     CVM::BytecodeDetector detector;
     
-    // Test bytecode disassembly
+    // Test bytecode disassembly using BytecodeUtils
     std::vector<uint8_t> bytecode = ParseHex("604260005260206000f3");
     
-    std::string disassembly = detector.DisassembleBytecode(bytecode);
+    std::string disassembly = CVM::BytecodeUtils::DisassembleBytecode(bytecode, CVM::BytecodeFormat::EVM_BYTECODE);
     
     // Should return non-empty disassembly
     BOOST_CHECK(!disassembly.empty());
@@ -123,9 +123,9 @@ BOOST_AUTO_TEST_CASE(confidence_range)
         std::vector<uint8_t> bytecode = ParseHex(hex);
         CVM::BytecodeDetectionResult result = detector.DetectFormat(bytecode);
         
-        // Confidence must be 0-100
-        BOOST_CHECK_GE(result.confidence, 0);
-        BOOST_CHECK_LE(result.confidence, 100);
+        // Confidence must be 0.0-1.0
+        BOOST_CHECK_GE(result.confidence, 0.0);
+        BOOST_CHECK_LE(result.confidence, 1.0);
     }
 }
 

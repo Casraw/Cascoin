@@ -19,22 +19,22 @@
 #include <algorithm>
 #include <cmath>
 
-// P2P message types
-const char* MSG_VALIDATOR_ANNOUNCE = "valannounce";
-const char* MSG_ATTESTATION_REQUEST = "attestreq";
-const char* MSG_VALIDATOR_ATTESTATION = "attestation";
-const char* MSG_BATCH_ATTESTATION_REQUEST = "batchattest";
-const char* MSG_BATCH_ATTESTATION_RESPONSE = "batchresp";
+// P2P message types for automatic validator system
+const char* MSG_VALIDATION_TASK = "valtask";
+const char* MSG_VALIDATION_RESPONSE = "valresp";
 
-// Global attestation manager instance
-ValidatorAttestationManager* g_validatorAttestationManager = nullptr;
+// Global automatic validator manager instance
+AutomaticValidatorManager* g_automaticValidatorManager = nullptr;
 
-// Helper function to get validator address
+// Helper function to get local validator address
 // TODO: Integrate with wallet to get actual validator address
 uint160 GetMyValidatorAddress();
 
-// ValidatorEligibilityAnnouncement implementation
-uint256 ValidatorEligibilityAnnouncement::GetHash() const {
+// ============================================================================
+// ValidatorEligibilityRecord implementation
+// ============================================================================
+
+uint256 ValidatorEligibilityRecord::GetHash() const {
     CHashWriter ss(SER_GETHASH, 0);
     ss << validatorAddress;
     ss << stakeAmount;
@@ -42,813 +42,566 @@ uint256 ValidatorEligibilityAnnouncement::GetHash() const {
     ss << blocksSinceFirstSeen;
     ss << transactionCount;
     ss << uniqueInteractions;
-    ss << timestamp;
+    ss << lastUpdateBlock;
     return ss.GetHash();
 }
 
-bool ValidatorEligibilityAnnouncement::Sign(const std::vector<uint8_t>& privateKey) {
-    // TODO: Implement signature generation
-    // For now, placeholder
-    signature.resize(64);
-    return true;
-}
+// ============================================================================
+// ValidatorSelection implementation
+// ============================================================================
 
-bool ValidatorEligibilityAnnouncement::VerifySignature() const {
-    // TODO: Implement signature verification
-    // For now, placeholder
-    return !signature.empty();
-}
-
-// ValidatorAttestation implementation
-uint256 ValidatorAttestation::GetHash() const {
+uint256 ValidatorSelection::GetHash() const {
     CHashWriter ss(SER_GETHASH, 0);
+    ss << taskHash;
+    ss << blockHeight;
+    for (const auto& v : selectedValidators) {
+        ss << v;
+    }
+    ss << selectionSeed;
+    return ss.GetHash();
+}
+
+// ============================================================================
+// ValidationResponse implementation
+// ============================================================================
+
+uint256 ValidationResponse::GetHash() const {
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << taskHash;
     ss << validatorAddress;
-    ss << attestorAddress;
-    ss << stakeVerified;
-    ss << historyVerified;
-    ss << networkParticipationVerified;
-    ss << behaviorVerified;
-    ss << trustScore;
+    ss << isValid;
     ss << confidence;
-    ss << timestamp;
-    ss << attestorReputation;
-    return ss.GetHash();
-}
-
-bool ValidatorAttestation::Sign(const std::vector<uint8_t>& privateKey) {
-    // TODO: Implement signature generation
-    signature.resize(64);
-    return true;
-}
-
-bool ValidatorAttestation::VerifySignature() const {
-    // TODO: Implement signature verification
-    return !signature.empty();
-}
-
-// CompressedAttestation implementation
-CompressedAttestation CompressedAttestation::Compress(const ValidatorAttestation& attestation) {
-    CompressedAttestation compressed;
-    compressed.validatorAddress = attestation.validatorAddress;
-    compressed.attestorAddress = attestation.attestorAddress;
-    
-    // Compress boolean flags into single byte
-    compressed.flags = 0;
-    if (attestation.stakeVerified) compressed.flags |= (1 << 0);
-    if (attestation.historyVerified) compressed.flags |= (1 << 1);
-    if (attestation.networkParticipationVerified) compressed.flags |= (1 << 2);
-    if (attestation.behaviorVerified) compressed.flags |= (1 << 3);
-    
-    compressed.trustScore = attestation.trustScore;
-    compressed.confidenceByte = static_cast<uint8_t>(attestation.confidence * 255.0);
-    compressed.attestorReputation = attestation.attestorReputation;
-    compressed.signature = attestation.signature;
-    compressed.timestamp = attestation.timestamp;
-    
-    return compressed;
-}
-
-ValidatorAttestation CompressedAttestation::Decompress() const {
-    ValidatorAttestation attestation;
-    attestation.validatorAddress = validatorAddress;
-    attestation.attestorAddress = attestorAddress;
-    
-    // Decompress boolean flags
-    attestation.stakeVerified = (flags & (1 << 0)) != 0;
-    attestation.historyVerified = (flags & (1 << 1)) != 0;
-    attestation.networkParticipationVerified = (flags & (1 << 2)) != 0;
-    attestation.behaviorVerified = (flags & (1 << 3)) != 0;
-    
-    attestation.trustScore = trustScore;
-    attestation.confidence = confidenceByte / 255.0;
-    attestation.attestorReputation = attestorReputation;
-    attestation.signature = signature;
-    attestation.timestamp = timestamp;
-    
-    return attestation;
-}
-
-// BatchAttestationRequest implementation
-uint256 BatchAttestationRequest::GetHash() const {
-    CHashWriter ss(SER_GETHASH, 0);
-    for (const auto& validator : validators) {
-        ss << validator;
-    }
+    ss << trustScore;
     ss << timestamp;
     return ss.GetHash();
 }
 
-bool BatchAttestationRequest::Sign(const std::vector<uint8_t>& privateKey) {
-    // TODO: Implement signature generation
+bool ValidationResponse::Sign(const std::vector<uint8_t>& privateKey) {
+    // TODO: Implement actual signature generation using secp256k1
     signature.resize(64);
     return true;
 }
 
-bool BatchAttestationRequest::VerifySignature() const {
-    // TODO: Implement signature verification
+bool ValidationResponse::VerifySignature() const {
+    // TODO: Implement actual signature verification
     return !signature.empty();
 }
 
-// ValidatorAttestationManager implementation
-ValidatorAttestationManager::ValidatorAttestationManager(CVMDatabase* database)
-    : db(database), cacheExpiry(10000) {
-    // Initialize bloom filter (1MB = 8M bits)
-    attestationBloomFilter.resize(8 * 1024 * 1024, false);
+// ============================================================================
+// AutomaticValidatorManager implementation
+// ============================================================================
+
+AutomaticValidatorManager::AutomaticValidatorManager(CVMDatabase* database)
+    : db(database), lastPoolUpdateBlock(0) {
+    LogPrintf("AutomaticValidatorManager: Initialized automatic validator selection system\n");
 }
 
-ValidatorAttestationManager::~ValidatorAttestationManager() {
+AutomaticValidatorManager::~AutomaticValidatorManager() {
 }
 
-void ValidatorAttestationManager::AnnounceValidatorEligibility(const uint160& validatorAddress) {
-    // Create announcement
-    ValidatorEligibilityAnnouncement announcement = CreateEligibilityAnnouncement(validatorAddress);
-    
-    // Store announcement
-    StoreValidatorAnnouncement(announcement);
-    
-    // Broadcast to network
-    // TODO: Pass actual connman instance
-    BroadcastValidatorAnnouncement(announcement, nullptr);
-    
-    // Request attestations from random nodes
-    std::vector<uint160> attestors = SelectRandomAttestors(10);
-    for (const auto& attestor : attestors) {
-        // TODO: Pass actual connman instance
-        SendAttestationRequest(attestor, validatorAddress, nullptr);
-    }
-    
-    LogPrintf("ValidatorAttestation: Announced eligibility for %s, requested %d attestations\n",
-              validatorAddress.ToString(), attestors.size());
+void AutomaticValidatorManager::UpdateValidatorPool() {
+    UpdateValidatorPool(chainActive.Height());
 }
 
-ValidatorEligibilityAnnouncement ValidatorAttestationManager::CreateEligibilityAnnouncement(
-    const uint160& validatorAddress) {
-    ValidatorEligibilityAnnouncement announcement;
-    announcement.validatorAddress = validatorAddress;
-    
-    // Get self-reported metrics
-    int stakeAge = 0;
-    VerifyStake(validatorAddress, announcement.stakeAmount, stakeAge);
-    announcement.stakeAge = stakeAge;
-    
-    int blocksSinceFirstSeen = 0;
-    int transactionCount = 0;
-    int uniqueInteractions = 0;
-    VerifyHistory(validatorAddress, blocksSinceFirstSeen, transactionCount, uniqueInteractions);
-    announcement.blocksSinceFirstSeen = blocksSinceFirstSeen;
-    announcement.transactionCount = transactionCount;
-    announcement.uniqueInteractions = uniqueInteractions;
-    
-    announcement.timestamp = GetTime();
-    announcement.requestAttestations = true;
-    
-    // Sign announcement
-    std::vector<uint8_t> privateKey;  // TODO: Get from wallet
-    announcement.Sign(privateKey);
-    
-    return announcement;
-}
-
-void ValidatorAttestationManager::ProcessValidatorAnnouncement(
-    const ValidatorEligibilityAnnouncement& announcement) {
-    // Verify signature
-    if (!announcement.VerifySignature()) {
-        LogPrintf("ValidatorAttestation: Invalid signature on announcement from %s\n",
-                  announcement.validatorAddress.ToString());
+void AutomaticValidatorManager::UpdateValidatorPool(int64_t currentBlock) {
+    // Only update every POOL_UPDATE_INTERVAL blocks
+    if (currentBlock - lastPoolUpdateBlock < POOL_UPDATE_INTERVAL) {
         return;
     }
     
-    // Store announcement
-    StoreValidatorAnnouncement(announcement);
+    LOCK(cs_validators);
     
-    // If we're eligible to attest, generate attestation
-    uint160 myAddress = GetMyValidatorAddress();
-    if (!myAddress.IsNull() && IsEligibleAttestor(myAddress)) {
-        ProcessAttestationRequest(announcement.validatorAddress);
+    LogPrintf("AutomaticValidatorManager: Updating validator pool at block %d\n", currentBlock);
+    
+    // Clear eligible list for rebuild
+    eligibleValidators.clear();
+    
+    // Scan all known addresses and check eligibility
+    // In practice, this would iterate through address index or UTXO set
+    // For now, we update existing pool entries
+    
+    for (auto& pair : validatorPool) {
+        ValidatorEligibilityRecord& record = pair.second;
+        
+        // Re-compute eligibility
+        ValidatorEligibilityRecord updated = ComputeEligibility(record.validatorAddress);
+        record = updated;
+        
+        if (record.isEligible) {
+            eligibleValidators.push_back(record.validatorAddress);
+        }
     }
     
-    LogPrintf("ValidatorAttestation: Processed announcement from %s\n",
-              announcement.validatorAddress.ToString());
+    // Sort for deterministic selection
+    std::sort(eligibleValidators.begin(), eligibleValidators.end());
+    
+    lastPoolUpdateBlock = currentBlock;
+    
+    LogPrintf("AutomaticValidatorManager: Pool updated - %d eligible validators\n", 
+              eligibleValidators.size());
 }
 
-ValidatorAttestation ValidatorAttestationManager::GenerateAttestation(const uint160& validatorAddress) {
-    ValidatorAttestation attestation;
-    attestation.validatorAddress = validatorAddress;
-    attestation.attestorAddress = GetMyValidatorAddress();
+bool AutomaticValidatorManager::IsEligibleValidator(const uint160& address) {
+    LOCK(cs_validators);
     
-    if (attestation.attestorAddress.IsNull()) {
-        LogPrintf("ValidatorAttestation: Cannot generate attestation - no validator address configured\n");
-        return attestation;
+    // Check cache first
+    auto it = validatorPool.find(address);
+    if (it != validatorPool.end()) {
+        // Check if cache is fresh enough
+        if (chainActive.Height() - it->second.lastUpdateBlock < POOL_UPDATE_INTERVAL) {
+            return it->second.isEligible;
+        }
     }
     
-    // Verify objective criteria (on-chain)
-    CAmount stakeAmount;
-    int stakeAge;
-    attestation.stakeVerified = VerifyStake(validatorAddress, stakeAmount, stakeAge);
+    // Compute eligibility
+    ValidatorEligibilityRecord record = ComputeEligibility(address);
+    validatorPool[address] = record;
     
-    int blocksSinceFirstSeen, transactionCount, uniqueInteractions;
-    attestation.historyVerified = VerifyHistory(validatorAddress, blocksSinceFirstSeen, 
-                                                transactionCount, uniqueInteractions);
+    // Update eligible list if needed
+    if (record.isEligible) {
+        auto pos = std::lower_bound(eligibleValidators.begin(), eligibleValidators.end(), address);
+        if (pos == eligibleValidators.end() || *pos != address) {
+            eligibleValidators.insert(pos, address);
+        }
+    }
     
-    attestation.networkParticipationVerified = VerifyNetworkParticipation(validatorAddress);
-    attestation.behaviorVerified = VerifyBehavior(validatorAddress);
-    
-    // Calculate trust score (personalized, based on my WoT)
-    attestation.trustScore = CalculateMyTrustScore(validatorAddress);
-    
-    // Calculate confidence (based on my WoT connectivity)
-    attestation.confidence = CalculateAttestationConfidence(validatorAddress);
-    
-    // Add my own reputation (for weighting)
-    attestation.attestorReputation = GetMyReputation();
-    
-    // Sign attestation
-    attestation.timestamp = GetTime();
-    std::vector<uint8_t> privateKey;  // TODO: Get from wallet
-    attestation.Sign(privateKey);
-    
-    return attestation;
+    return record.isEligible;
 }
 
-void ValidatorAttestationManager::ProcessAttestationRequest(const uint160& validatorAddress) {
-    // Generate attestation
-    ValidatorAttestation attestation = GenerateAttestation(validatorAddress);
+ValidatorEligibilityRecord AutomaticValidatorManager::ComputeEligibility(const uint160& address) {
+    ValidatorEligibilityRecord record;
+    record.validatorAddress = address;
+    record.lastUpdateBlock = chainActive.Height();
+    record.lastUpdateTime = GetTime();
     
-    // Store attestation
-    StoreAttestation(attestation);
+    // Verify stake requirement (on-chain)
+    record.meetsStakeRequirement = VerifyStakeRequirement(
+        address, record.stakeAmount, record.stakeAge);
     
-    // Broadcast attestation to network (transparency)
-    // TODO: Pass actual connman instance
-    BroadcastAttestation(attestation, nullptr);
+    // Verify history requirement (on-chain)
+    record.meetsHistoryRequirement = VerifyHistoryRequirement(
+        address, record.blocksSinceFirstSeen, 
+        record.transactionCount, record.uniqueInteractions);
     
-    LogPrintf("ValidatorAttestation: Generated attestation for %s (trust=%d, confidence=%.2f)\n",
-              validatorAddress.ToString(), attestation.trustScore, attestation.confidence);
+    // Interaction requirement is part of history
+    record.meetsInteractionRequirement = (record.uniqueInteractions >= MIN_UNIQUE_INTERACTIONS);
+    
+    // Final eligibility: all requirements must be met
+    record.isEligible = record.meetsStakeRequirement && 
+                        record.meetsHistoryRequirement && 
+                        record.meetsInteractionRequirement;
+    
+    LogPrint(BCLog::CVM, "AutomaticValidatorManager: Computed eligibility for %s: %s "
+             "(stake=%s, history=%s, interactions=%s)\n",
+             address.ToString(),
+             record.isEligible ? "ELIGIBLE" : "NOT ELIGIBLE",
+             record.meetsStakeRequirement ? "OK" : "FAIL",
+             record.meetsHistoryRequirement ? "OK" : "FAIL",
+             record.meetsInteractionRequirement ? "OK" : "FAIL");
+    
+    return record;
 }
 
-BatchAttestationResponse ValidatorAttestationManager::ProcessBatchAttestationRequest(
-    const BatchAttestationRequest& request) {
+std::vector<uint160> AutomaticValidatorManager::GetEligibleValidators() {
+    LOCK(cs_validators);
+    return eligibleValidators;
+}
+
+int AutomaticValidatorManager::GetEligibleValidatorCount() {
+    LOCK(cs_validators);
+    return eligibleValidators.size();
+}
+
+// ============================================================================
+// Validator Selection (Automatic & Random)
+// ============================================================================
+
+ValidatorSelection AutomaticValidatorManager::SelectValidatorsForTask(
+    const uint256& taskHash, int64_t blockHeight, int count) {
+    
+    ValidatorSelection selection;
+    selection.taskHash = taskHash;
+    selection.blockHeight = blockHeight;
+    selection.targetCount = count;
+    selection.timestamp = GetTime();
+    
+    // Create deterministic seed from task hash and block height
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << taskHash;
+    ss << blockHeight;
+    
+    // Include block hash for additional randomness
+    if (blockHeight > 0 && blockHeight <= chainActive.Height()) {
+        CBlockIndex* pindex = chainActive[blockHeight];
+        if (pindex) {
+            ss << pindex->GetBlockHash();
+        }
+    }
+    
+    selection.selectionSeed = ss.GetHash();
+    
+    // Select random validators
+    selection.selectedValidators = SelectRandomValidators(selection.selectionSeed, count);
+    selection.totalEligible = GetEligibleValidatorCount();
+    
+    // Cache selection
+    CacheSelection(selection);
+    
+    LogPrintf("AutomaticValidatorManager: Selected %d validators for task %s at block %d\n",
+              selection.selectedValidators.size(), taskHash.ToString().substr(0, 16), blockHeight);
+    
+    return selection;
+}
+
+std::vector<uint160> AutomaticValidatorManager::SelectRandomValidators(
+    const uint256& seed, int count) {
+    
+    LOCK(cs_validators);
+    
+    std::vector<uint160> selected;
+    
+    if (eligibleValidators.empty()) {
+        LogPrintf("AutomaticValidatorManager: No eligible validators available\n");
+        return selected;
+    }
+    
+    // Create shuffled copy using deterministic randomness
+    std::vector<uint160> shuffled = eligibleValidators;
+    
+    // Fisher-Yates shuffle with deterministic seed
+    for (size_t i = shuffled.size() - 1; i > 0; i--) {
+        // Generate deterministic random index
+        CHashWriter ss(SER_GETHASH, 0);
+        ss << seed;
+        ss << i;
+        uint256 hash = ss.GetHash();
+        
+        size_t j = hash.GetUint64(0) % (i + 1);
+        std::swap(shuffled[i], shuffled[j]);
+    }
+    
+    // Select first 'count' validators
+    int selectCount = std::min(count, (int)shuffled.size());
+    for (int i = 0; i < selectCount; i++) {
+        selected.push_back(shuffled[i]);
+    }
+    
+    return selected;
+}
+
+bool AutomaticValidatorManager::WasSelectedForTask(const uint256& taskHash, const uint160& myAddress) {
+    ValidatorSelection selection;
+    if (!GetCachedSelection(taskHash, selection)) {
+        return false;
+    }
+    
+    for (const auto& v : selection.selectedValidators) {
+        if (v == myAddress) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// ============================================================================
+// Validation Response Handling
+// ============================================================================
+
+void AutomaticValidatorManager::ProcessValidationResponse(const ValidationResponse& response) {
     // Verify signature
-    if (!request.VerifySignature()) {
-        LogPrintf("ValidatorAttestation: Invalid signature on batch request\n");
-        return BatchAttestationResponse();
+    if (!response.VerifySignature()) {
+        LogPrintf("AutomaticValidatorManager: Invalid signature on response from %s\n",
+                  response.validatorAddress.ToString());
+        return;
     }
     
-    BatchAttestationResponse response;
+    // Verify validator was actually selected for this task
+    if (!WasSelectedForTask(response.taskHash, response.validatorAddress)) {
+        LogPrintf("AutomaticValidatorManager: Validator %s was not selected for task %s\n",
+                  response.validatorAddress.ToString(), response.taskHash.ToString().substr(0, 16));
+        return;
+    }
+    
+    // Store response
+    LOCK(cs_validators);
+    pendingResponses[response.taskHash].push_back(response);
+    
+    LogPrint(BCLog::CVM, "AutomaticValidatorManager: Received response from %s for task %s "
+             "(valid=%s, confidence=%d)\n",
+             response.validatorAddress.ToString(), response.taskHash.ToString().substr(0, 16),
+             response.isValid ? "true" : "false", response.confidence);
+}
+
+AggregatedValidationResult AutomaticValidatorManager::AggregateResponses(const uint256& taskHash) {
+    AggregatedValidationResult result;
+    result.taskHash = taskHash;
+    
+    ValidatorSelection selection;
+    if (!GetCachedSelection(taskHash, selection)) {
+        LogPrintf("AutomaticValidatorManager: No selection found for task %s\n",
+                  taskHash.ToString().substr(0, 16));
+        return result;
+    }
+    
+    result.totalSelected = selection.selectedValidators.size();
+    
+    LOCK(cs_validators);
+    auto it = pendingResponses.find(taskHash);
+    if (it == pendingResponses.end() || it->second.empty()) {
+        return result;
+    }
+    
+    result.responses = it->second;
+    result.totalResponded = result.responses.size();
+    
+    // Count votes
+    double totalConfidence = 0;
+    for (const auto& response : result.responses) {
+        if (response.isValid) {
+            result.validVotes++;
+        } else {
+            result.invalidVotes++;
+        }
+        totalConfidence += response.confidence;
+    }
+    
+    // Determine consensus (require 2/3 majority)
+    int totalVotes = result.validVotes + result.invalidVotes;
+    if (totalVotes >= result.totalSelected * 0.6) {  // At least 60% responded
+        result.consensusReached = true;
+        result.isValid = (result.validVotes > result.invalidVotes);
+        result.confidence = totalConfidence / totalVotes / 100.0;  // Normalize to 0-1
+    }
+    
+    LogPrintf("AutomaticValidatorManager: Aggregated %d responses for task %s: "
+              "valid=%d, invalid=%d, consensus=%s\n",
+              result.totalResponded, taskHash.ToString().substr(0, 16),
+              result.validVotes, result.invalidVotes,
+              result.consensusReached ? "YES" : "NO");
+    
+    return result;
+}
+
+bool AutomaticValidatorManager::HasConsensus(const uint256& taskHash) {
+    AggregatedValidationResult result = AggregateResponses(taskHash);
+    return result.consensusReached;
+}
+
+ValidationResponse AutomaticValidatorManager::GenerateValidationResponse(
+    const uint256& taskHash, bool isValid, uint8_t confidence) {
+    
+    ValidationResponse response;
+    response.taskHash = taskHash;
+    response.validatorAddress = GetMyValidatorAddress();
+    response.isValid = isValid;
+    response.confidence = confidence;
     response.timestamp = GetTime();
     
-    // Generate attestations for all validators in batch
-    for (const auto& validator : request.validators) {
-        ValidatorAttestation attestation = GenerateAttestation(validator);
-        response.attestations.push_back(CompressedAttestation::Compress(attestation));
-        
-        // Also store attestation
-        StoreAttestation(attestation);
-    }
+    // Calculate trust score from local WoT perspective
+    // TODO: Integrate with TrustGraph
+    response.trustScore = 50;  // Neutral for now
     
-    LogPrintf("ValidatorAttestation: Generated %d attestations for batch request\n",
-              response.attestations.size());
+    // Sign response
+    std::vector<uint8_t> privateKey;  // TODO: Get from wallet
+    response.Sign(privateKey);
     
     return response;
 }
 
-void ValidatorAttestationManager::ProcessBatchAttestationResponse(
-    const BatchAttestationResponse& response) {
-    // Process each attestation in batch
-    for (const auto& compressed : response.attestations) {
-        ValidatorAttestation attestation = compressed.Decompress();
-        
-        // Verify signature
-        if (!attestation.VerifySignature()) {
-            LogPrintf("ValidatorAttestation: Invalid signature on attestation from %s\n",
-                      attestation.attestorAddress.ToString());
-            continue;
-        }
-        
-        // Store attestation
-        StoreAttestation(attestation);
-        
-        // Add to pending attestations
-        LOCK(cs_attestations);
-        pendingAttestations[attestation.validatorAddress].push_back(attestation);
-    }
-    
-    LogPrintf("ValidatorAttestation: Processed batch response with %d attestations\n",
-              response.attestations.size());
-}
+// ============================================================================
+// Eligibility Verification (On-Chain)
+// ============================================================================
 
-ValidatorCompositeScore ValidatorAttestationManager::AggregateAttestations(
-    const uint160& validatorAddress,
-    const std::vector<ValidatorAttestation>& attestations) {
-    ValidatorCompositeScore score;
-    score.validatorAddress = validatorAddress;
-    score.attestations = attestations;
-    score.attestationCount = attestations.size();
+bool AutomaticValidatorManager::VerifyStakeRequirement(
+    const uint160& address, CAmount& stakeAmount, int& stakeAge) {
     
-    if (attestations.empty()) {
-        return score;
-    }
+    // TODO: Implement actual UTXO scanning to verify stake
+    // This would:
+    // 1. Scan UTXO set for outputs belonging to this address
+    // 2. Sum up the total value
+    // 3. Find the oldest UTXO to determine stake age
+    // 4. Verify stake comes from 3+ diverse sources (anti-Sybil)
     
-    // Check objective criteria (require 80%+ agreement)
-    int stakeVerifiedCount = 0;
-    int historyVerifiedCount = 0;
-    int networkVerifiedCount = 0;
-    
-    for (const auto& attestation : attestations) {
-        if (attestation.stakeVerified) stakeVerifiedCount++;
-        if (attestation.historyVerified) historyVerifiedCount++;
-        if (attestation.networkParticipationVerified) networkVerifiedCount++;
-    }
-    
-    score.stakeVerified = (stakeVerifiedCount >= attestations.size() * 0.8);
-    score.historyVerified = (historyVerifiedCount >= attestations.size() * 0.8);
-    score.networkVerified = (networkVerifiedCount >= attestations.size() * 0.8);
-    
-    // Calculate weighted average trust score
-    double totalWeight = 0;
-    double weightedSum = 0;
-    
-    for (const auto& attestation : attestations) {
-        // Weight by attestor's reputation and confidence
-        double weight = (attestation.attestorReputation / 100.0) * attestation.confidence;
-        weightedSum += attestation.trustScore * weight;
-        totalWeight += weight;
-    }
-    
-    score.averageTrustScore = (totalWeight > 0) ? (weightedSum / totalWeight) : 0;
-    
-    // Calculate variance in trust scores
-    double sumSquaredDiff = 0;
-    for (const auto& attestation : attestations) {
-        double diff = attestation.trustScore - score.averageTrustScore;
-        sumSquaredDiff += diff * diff;
-    }
-    score.trustScoreVariance = sqrt(sumSquaredDiff / attestations.size());
-    
-    // Calculate eligibility confidence
-    score.eligibilityConfidence = CalculateEligibilityConfidence(score);
-    
-    // Determine eligibility
-    score.isEligible = CalculateValidatorEligibility(score);
-    
-    // Cache metadata
-    score.cacheBlock = chainActive.Height();
-    int stakeAge;
-    VerifyStake(validatorAddress, score.stakeAmount, stakeAge);
-    int blocksSinceFirstSeen, uniqueInteractions;
-    VerifyHistory(validatorAddress, blocksSinceFirstSeen, score.transactionCount, uniqueInteractions);
-    
-    return score;
-}
-
-bool ValidatorAttestationManager::IsValidatorEligible(const uint160& validatorAddress) {
-    // Check cache first
-    ValidatorCompositeScore cached;
-    if (GetCachedScore(validatorAddress, cached)) {
-        return cached.isEligible;
-    }
-    
-    // Check if we have pending attestations
-    LOCK(cs_attestations);
-    auto it = pendingAttestations.find(validatorAddress);
-    if (it != pendingAttestations.end() && !it->second.empty()) {
-        // Aggregate pending attestations
-        ValidatorCompositeScore score = AggregateAttestations(validatorAddress, it->second);
-        
-        // Cache result
-        CacheScore(validatorAddress, score);
-        
-        // Clear pending attestations
-        pendingAttestations.erase(it);
-        
-        return score.isEligible;
-    }
-    
-    // No attestations available
-    return false;
-}
-
-bool ValidatorAttestationManager::CalculateValidatorEligibility(const ValidatorCompositeScore& score) {
-    // Require minimum attestations
-    if (score.attestationCount < 10) {
-        return false;
-    }
-    
-    // Require objective criteria verified
-    if (!score.stakeVerified || !score.historyVerified || !score.networkVerified) {
-        return false;
-    }
-    
-    // Require reasonable trust score
-    if (score.averageTrustScore < 50) {
-        return false;
-    }
-    
-    // Check variance (low variance = consensus, high variance = suspicious)
-    if (score.trustScoreVariance > 30) {
-        return false;
-    }
-    
-    // Require high confidence
-    if (score.eligibilityConfidence < 0.70) {
-        return false;
-    }
-    
-    return true;
-}
-
-double ValidatorAttestationManager::CalculateEligibilityConfidence(const ValidatorCompositeScore& score) {
-    // Base confidence on number of attestations
-    double attestationConfidence = std::min(1.0, score.attestationCount / 10.0);
-    
-    // Reduce confidence if objective criteria not verified
-    double objectiveConfidence = 0.0;
-    if (score.stakeVerified) objectiveConfidence += 0.33;
-    if (score.historyVerified) objectiveConfidence += 0.33;
-    if (score.networkVerified) objectiveConfidence += 0.34;
-    
-    // Reduce confidence if high variance (disagreement)
-    double varianceConfidence = 1.0 - (score.trustScoreVariance / 100.0);
-    varianceConfidence = std::max(0.0, varianceConfidence);
-    
-    // Combine confidences
-    return attestationConfidence * objectiveConfidence * varianceConfidence;
-}
-
-bool ValidatorAttestationManager::GetCachedScore(const uint160& validator, 
-                                                 ValidatorCompositeScore& score) {
-    LOCK(cs_attestations);
-    
-    auto it = attestationCache.find(validator);
-    if (it == attestationCache.end()) {
-        return false;
-    }
-    
-    // Check if expired
-    int64_t age = chainActive.Height() - cacheTimestamps[validator];
-    if (age > cacheExpiry) {
-        attestationCache.erase(validator);
-        cacheTimestamps.erase(validator);
-        return false;
-    }
-    
-    score = it->second;
-    return true;
-}
-
-void ValidatorAttestationManager::CacheScore(const uint160& validator, 
-                                             const ValidatorCompositeScore& score) {
-    LOCK(cs_attestations);
-    attestationCache[validator] = score;
-    cacheTimestamps[validator] = chainActive.Height();
-    
-    // Add to bloom filter
-    AddToBloomFilter(validator);
-}
-
-bool ValidatorAttestationManager::RequiresReattestation(const uint160& validator) {
-    ValidatorCompositeScore cached;
-    if (!GetCachedScore(validator, cached)) {
-        return true;  // No cache, need attestation
-    }
-    
-    // Check if stake changed significantly (>10%)
-    CAmount currentStake;
-    int stakeAge;
-    VerifyStake(validator, currentStake, stakeAge);
-    if (abs(currentStake - cached.stakeAmount) > cached.stakeAmount * 0.1) {
-        return true;
-    }
-    
-    // Check if transaction count increased significantly (>20%)
-    int blocksSinceFirstSeen, currentTxCount, uniqueInteractions;
-    VerifyHistory(validator, blocksSinceFirstSeen, currentTxCount, uniqueInteractions);
-    if (currentTxCount > cached.transactionCount * 1.2) {
-        return true;
-    }
-    
-    // Check if cache expired
-    int64_t age = chainActive.Height() - cached.cacheBlock;
-    if (age > cacheExpiry) {
-        return true;
-    }
-    
-    return false;
-}
-
-void ValidatorAttestationManager::InvalidateCache(const uint160& validator) {
-    LOCK(cs_attestations);
-    attestationCache.erase(validator);
-    cacheTimestamps.erase(validator);
-}
-
-std::vector<uint160> ValidatorAttestationManager::SelectRandomAttestors(int count) {
-    // TODO: Implement proper attestor selection from connected peers
-    // For now, return empty vector - this will be implemented when integrating with P2P layer
-    std::vector<uint160> eligibleAttestors;
-    
-    LogPrint(BCLog::CVM, "ValidatorAttestation: SelectRandomAttestors not yet fully implemented\n");
-    
-    return eligibleAttestors;
-}
-
-bool ValidatorAttestationManager::IsEligibleAttestor(const uint160& address) {
-    // Attestor must have minimum reputation (30+)
-    uint8_t reputation = GetMyReputation();  // TODO: Get reputation for address
-    if (reputation < 30) {
-        return false;
-    }
-    
-    // Attestor must be connected for minimum time (1000 blocks)
-    // TODO: Check connection time
-    
-    return true;
-}
-
-bool ValidatorAttestationManager::VerifyStake(const uint160& validatorAddress, 
-                                              CAmount& stakeAmount, int& stakeAge) {
-    // Eligibility criteria:
-    // - Minimum 10 CAS stake
-    // - Stake aged 70 days (70 * 576 blocks = 40,320 blocks)
-    // - Stake from 3+ diverse sources
-    
-    // TODO: Implement actual stake verification
-    // For now, placeholder
+    // For now, placeholder implementation
     stakeAmount = 10 * COIN;
-    stakeAge = 40320;
+    stakeAge = MIN_STAKE_AGE;
     
-    return stakeAmount >= 10 * COIN && stakeAge >= 40320;
+    return stakeAmount >= MIN_STAKE && stakeAge >= MIN_STAKE_AGE;
 }
 
-bool ValidatorAttestationManager::VerifyHistory(const uint160& validatorAddress,
-                                                int& blocksSinceFirstSeen,
-                                                int& transactionCount,
-                                                int& uniqueInteractions) {
-    // Eligibility criteria:
-    // - 70 days presence (40,320 blocks)
-    // - 100+ transactions
-    // - 20+ unique interactions
+bool AutomaticValidatorManager::VerifyHistoryRequirement(
+    const uint160& address, int& blocksSinceFirstSeen,
+    int& transactionCount, int& uniqueInteractions) {
     
-    // TODO: Implement actual history verification
-    // For now, placeholder
-    blocksSinceFirstSeen = 40320;
-    transactionCount = 100;
-    uniqueInteractions = 20;
+    // TODO: Implement actual blockchain scanning
+    // This would:
+    // 1. Find first transaction involving this address
+    // 2. Count total transactions
+    // 3. Count unique addresses interacted with
     
-    return blocksSinceFirstSeen >= 40320 && 
-           transactionCount >= 100 && 
-           uniqueInteractions >= 20;
+    // For now, placeholder implementation
+    blocksSinceFirstSeen = MIN_HISTORY_BLOCKS;
+    transactionCount = MIN_TRANSACTIONS;
+    uniqueInteractions = MIN_UNIQUE_INTERACTIONS;
+    
+    return blocksSinceFirstSeen >= MIN_HISTORY_BLOCKS && 
+           transactionCount >= MIN_TRANSACTIONS &&
+           uniqueInteractions >= MIN_UNIQUE_INTERACTIONS;
 }
 
-bool ValidatorAttestationManager::VerifyNetworkParticipation(const uint160& validatorAddress) {
-    // Eligibility criteria:
-    // - 1000+ blocks connected
-    // - 1+ peer (inclusive of home users)
+// ============================================================================
+// Cache & Storage
+// ============================================================================
+
+void AutomaticValidatorManager::CacheSelection(const ValidatorSelection& selection) {
+    LOCK(cs_validators);
+    selectionCache[selection.taskHash] = selection;
     
-    // TODO: Implement actual network participation verification
-    // For now, placeholder
+    // Limit cache size
+    if (selectionCache.size() > 10000) {
+        // Remove oldest entries
+        auto it = selectionCache.begin();
+        while (selectionCache.size() > 8000 && it != selectionCache.end()) {
+            it = selectionCache.erase(it);
+        }
+    }
+}
+
+bool AutomaticValidatorManager::GetCachedSelection(const uint256& taskHash, ValidatorSelection& selection) {
+    LOCK(cs_validators);
+    auto it = selectionCache.find(taskHash);
+    if (it == selectionCache.end()) {
+        return false;
+    }
+    selection = it->second;
     return true;
 }
 
-bool ValidatorAttestationManager::VerifyBehavior(const uint160& validatorAddress) {
-    // Check for fraud records, suspicious behavior, etc.
+void AutomaticValidatorManager::StoreEligibilityRecord(const ValidatorEligibilityRecord& record) {
+    if (!db) return;
     
-    // TODO: Implement actual behavior verification
-    // For now, placeholder
+    std::string key = "validator_" + record.validatorAddress.ToString();
+    
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << record;
+    std::vector<uint8_t> data(ss.begin(), ss.end());
+    
+    // TODO: Implement database write
+    // db->Write(key, data);
+    
+    LogPrint(BCLog::CVM, "AutomaticValidatorManager: Stored eligibility record for %s\n",
+             record.validatorAddress.ToString());
+}
+
+bool AutomaticValidatorManager::GetEligibilityRecord(const uint160& address, 
+                                                      ValidatorEligibilityRecord& record) {
+    LOCK(cs_validators);
+    auto it = validatorPool.find(address);
+    if (it == validatorPool.end()) {
+        return false;
+    }
+    record = it->second;
     return true;
 }
 
-uint8_t ValidatorAttestationManager::CalculateMyTrustScore(const uint160& validatorAddress) {
-    // Calculate personalized trust score based on my WoT perspective
-    
-    // TODO: Integrate with TrustGraph and SecureHAT
-    // For now, return neutral score
-    return 50;
+// ============================================================================
+// Statistics
+// ============================================================================
+
+int AutomaticValidatorManager::GetTotalValidatorCount() {
+    LOCK(cs_validators);
+    return validatorPool.size();
 }
 
-double ValidatorAttestationManager::CalculateAttestationConfidence(const uint160& validatorAddress) {
-    // Calculate confidence based on my WoT connectivity to validator
+int AutomaticValidatorManager::GetActiveValidatorCount() {
+    LOCK(cs_validators);
+    int active = 0;
+    int64_t currentBlock = chainActive.Height();
     
-    // TODO: Integrate with TrustGraph
-    // For now, return moderate confidence
-    return 0.75;
+    for (const auto& pair : validatorPool) {
+        // Consider active if updated within last 1000 blocks
+        if (currentBlock - pair.second.lastUpdateBlock < 1000) {
+            active++;
+        }
+    }
+    return active;
 }
 
-uint8_t ValidatorAttestationManager::GetMyReputation() {
-    // Get my own reputation score
+double AutomaticValidatorManager::GetAverageResponseRate() {
+    LOCK(cs_validators);
     
-    // TODO: Integrate with ReputationSystem
-    // For now, return moderate reputation
-    return 50;
+    if (selectionCache.empty()) return 0.0;
+    
+    int totalSelected = 0;
+    int totalResponded = 0;
+    
+    for (const auto& pair : selectionCache) {
+        totalSelected += pair.second.selectedValidators.size();
+        
+        auto respIt = pendingResponses.find(pair.first);
+        if (respIt != pendingResponses.end()) {
+            totalResponded += respIt->second.size();
+        }
+    }
+    
+    return totalSelected > 0 ? (double)totalResponded / totalSelected : 0.0;
 }
 
-// Helper function to get validator address
-// TODO: Integrate with wallet to get actual validator address
+// ============================================================================
+// Helper function
+// ============================================================================
+
 uint160 GetMyValidatorAddress() {
+    // TODO: Integrate with wallet to get actual validator address
     return uint160();
 }
 
-void ValidatorAttestationManager::StoreAttestation(const ValidatorAttestation& attestation) {
-    if (!db) {
-        LogPrint(BCLog::CVM, "ValidatorAttestation: Database not initialized, cannot store attestation\n");
-        return;
-    }
-    
-    // Store attestation in database
-    std::string key = "attestation_" + attestation.validatorAddress.ToString() + "_" + 
-                     attestation.attestorAddress.ToString();
-    
-    CDataStream ss(SER_DISK, CLIENT_VERSION);
-    ss << attestation;
-    std::vector<uint8_t> data(ss.begin(), ss.end());
-    
-    // TODO: Implement Write method or use alternative storage
-    // db->Write(key, data);
-    
-    LogPrint(BCLog::CVM, "ValidatorAttestation: Stored attestation for %s from %s\n",
-             attestation.validatorAddress.ToString(), attestation.attestorAddress.ToString());
-}
+// ============================================================================
+// P2P Message Handlers
+// ============================================================================
 
-std::vector<ValidatorAttestation> ValidatorAttestationManager::GetAttestations(
-    const uint160& validatorAddress) {
-    std::vector<ValidatorAttestation> attestations;
+void ProcessValidationTaskMessage(CNode* pfrom, const uint256& taskHash, int64_t blockHeight) {
+    if (!g_automaticValidatorManager) return;
     
-    if (!db) return attestations;
+    // Check if we were selected for this task
+    uint160 myAddress = GetMyValidatorAddress();
+    if (myAddress.IsNull()) return;
     
-    // TODO: Implement database iteration to get all attestations for validator
-    // For now, return empty vector
-    
-    return attestations;
-}
-
-void ValidatorAttestationManager::StoreValidatorAnnouncement(
-    const ValidatorEligibilityAnnouncement& announcement) {
-    if (!db) {
-        LogPrint(BCLog::CVM, "ValidatorAttestation: Database not initialized, cannot store announcement\n");
-        return;
-    }
-    
-    std::string key = "announcement_" + announcement.validatorAddress.ToString();
-    
-    CDataStream ss(SER_DISK, CLIENT_VERSION);
-    ss << announcement;
-    std::vector<uint8_t> data(ss.begin(), ss.end());
-    
-    // TODO: Implement Write method or use alternative storage
-    // db->Write(key, data);
-    
-    LogPrint(BCLog::CVM, "ValidatorAttestation: Stored announcement for %s\n",
-             announcement.validatorAddress.ToString());
-}
-
-void ValidatorAttestationManager::AddToBloomFilter(const uint160& validator) {
-    // Add validator to bloom filter using 3 hash functions
-    for (int i = 0; i < 3; i++) {
-        CHashWriter ss(SER_GETHASH, i);
-        ss << validator;
-        uint256 hash = ss.GetHash();
+    if (g_automaticValidatorManager->WasSelectedForTask(taskHash, myAddress)) {
+        // We were selected! Generate and broadcast response
+        // TODO: Actually validate the task and determine isValid
+        ValidationResponse response = g_automaticValidatorManager->GenerateValidationResponse(
+            taskHash, true, 80);  // Placeholder: assume valid with 80% confidence
         
-        size_t index = hash.GetUint64(0) % attestationBloomFilter.size();
-        attestationBloomFilter[index] = true;
-    }
-}
-
-bool ValidatorAttestationManager::MayHaveAttestation(const uint160& validator) {
-    // Check bloom filter using 3 hash functions
-    for (int i = 0; i < 3; i++) {
-        CHashWriter ss(SER_GETHASH, i);
-        ss << validator;
-        uint256 hash = ss.GetHash();
+        // Broadcast response
+        BroadcastValidationResponse(response, nullptr);
         
-        size_t index = hash.GetUint64(0) % attestationBloomFilter.size();
-        if (!attestationBloomFilter[index]) {
-            return false;
-        }
+        LogPrintf("AutomaticValidatorManager: Responded to validation task %s\n",
+                  taskHash.ToString().substr(0, 16));
     }
-    return true;
 }
 
-int ValidatorAttestationManager::GetAttestationCount(const uint160& validatorAddress) {
-    LOCK(cs_attestations);
-    auto it = pendingAttestations.find(validatorAddress);
-    if (it != pendingAttestations.end()) {
-        return it->second.size();
-    }
-    return 0;
+void ProcessValidationResponseMessage(CNode* pfrom, const ValidationResponse& response) {
+    if (!g_automaticValidatorManager) return;
+    
+    g_automaticValidatorManager->ProcessValidationResponse(response);
 }
 
-int ValidatorAttestationManager::GetCachedValidatorCount() {
-    LOCK(cs_attestations);
-    return attestationCache.size();
-}
+// ============================================================================
+// Broadcast Functions
+// ============================================================================
 
-int ValidatorAttestationManager::GetPendingAttestationCount() {
-    LOCK(cs_attestations);
-    int total = 0;
-    for (const auto& pair : pendingAttestations) {
-        total += pair.second.size();
-    }
-    return total;
-}
-
-// P2P message handlers
-void ProcessValidatorAnnounceMessage(CNode* pfrom, const ValidatorEligibilityAnnouncement& announcement) {
-    if (!g_validatorAttestationManager) {
-        return;
-    }
-    
-    // Process announcement
-    g_validatorAttestationManager->ProcessValidatorAnnouncement(announcement);
-    
-    // Note: Relay is handled by net_processing.cpp using gossip protocol
-}
-
-void ProcessAttestationRequestMessage(CNode* pfrom, const uint160& validatorAddress) {
-    if (!g_validatorAttestationManager) {
-        return;
-    }
-    
-    // Generate attestation
-    g_validatorAttestationManager->ProcessAttestationRequest(validatorAddress);
-}
-
-void ProcessValidatorAttestationMessage(CNode* pfrom, const ValidatorAttestation& attestation) {
-    if (!g_validatorAttestationManager) {
-        return;
-    }
-    
-    // Verify signature
-    if (!attestation.VerifySignature()) {
-        LogPrintf("ValidatorAttestation: Invalid signature on attestation from %s\n",
-                  attestation.attestorAddress.ToString());
-        return;
-    }
-    
-    // Store attestation
-    g_validatorAttestationManager->StoreAttestation(attestation);
-    
-    // Note: Relay is handled by net_processing.cpp using gossip protocol
-}
-
-void ProcessBatchAttestationRequestMessage(CNode* pfrom, const BatchAttestationRequest& request) {
-    if (!g_validatorAttestationManager) {
-        return;
-    }
-    
-    // Process batch request
-    BatchAttestationResponse response = g_validatorAttestationManager->ProcessBatchAttestationRequest(request);
-    
-    // Note: Response sending is handled by net_processing.cpp
-    // Store response for retrieval
-    // TODO: Implement response storage and retrieval mechanism
-}
-
-void ProcessBatchAttestationResponseMessage(CNode* pfrom, const BatchAttestationResponse& response) {
-    if (!g_validatorAttestationManager) {
-        return;
-    }
-    
-    // Process batch response
-    g_validatorAttestationManager->ProcessBatchAttestationResponse(response);
-}
-
-// Broadcast functions
-void BroadcastValidatorAnnouncement(const ValidatorEligibilityAnnouncement& announcement, CConnman* connman) {
+void BroadcastValidationTask(const uint256& taskHash, int64_t blockHeight,
+                             const std::vector<uint160>& selectedValidators, CConnman* connman) {
     if (!connman) return;
     
     // TODO: Implement using connman->ForEachNode
-    // For now, placeholder
-    LogPrint(BCLog::CVM, "ValidatorAttestation: BroadcastValidatorAnnouncement not yet fully implemented\n");
+    LogPrint(BCLog::CVM, "AutomaticValidatorManager: BroadcastValidationTask not yet fully implemented\n");
 }
 
-void BroadcastAttestation(const ValidatorAttestation& attestation, CConnman* connman) {
+void BroadcastValidationResponse(const ValidationResponse& response, CConnman* connman) {
     if (!connman) return;
     
     // TODO: Implement using connman->ForEachNode
-    // For now, placeholder
-    LogPrint(BCLog::CVM, "ValidatorAttestation: BroadcastAttestation not yet fully implemented\n");
-}
-
-void SendAttestationRequest(const uint160& peer, const uint160& validatorAddress, CConnman* connman) {
-    if (!connman) return;
-    
-    // TODO: Find CNode* for peer address and send request
-    // For now, placeholder
-    LogPrint(BCLog::CVM, "ValidatorAttestation: SendAttestationRequest not yet fully implemented\n");
-}
-
-void SendBatchAttestationRequest(const uint160& peer, const std::vector<uint160>& validators, CConnman* connman) {
-    if (!connman) return;
-    
-    // Create batch request
-    BatchAttestationRequest request;
-    request.validators = validators;
-    request.timestamp = GetTime();
-    
-    // Sign request
-    std::vector<uint8_t> privateKey;  // TODO: Get from wallet
-    request.Sign(privateKey);
-    
-    // TODO: Find CNode* for peer address and send request
-    // For now, placeholder
-    LogPrint(BCLog::CVM, "ValidatorAttestation: SendBatchAttestationRequest not yet fully implemented\n");
+    LogPrint(BCLog::CVM, "AutomaticValidatorManager: BroadcastValidationResponse not yet fully implemented\n");
 }

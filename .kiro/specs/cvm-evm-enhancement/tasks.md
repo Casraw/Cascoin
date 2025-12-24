@@ -404,56 +404,59 @@ This implementation plan covers the CVM-EVM enhancement for Cascoin, including E
     - Implement cryptographic proof validation
     - _Requirements: 22.4_
 
-- [ ] 24. Security Monitoring and Audit Logging
-  - [ ] 24.1 Reputation event logging
+- [x] 24. Security Monitoring and Audit Logging
+  - [x] 24.1 Reputation event logging
     - Log all reputation score changes
     - Record all validator responses in HAT v2 consensus
     - _Requirements: 10.3, 10.4_
-  - [ ] 24.2 Anomaly detection
+  - [x] 24.2 Anomaly detection
     - Monitor for unusual reputation score changes
     - Detect abnormal validator response patterns
     - _Requirements: 10.3, 10.4_
-  - [ ] 24.3 Security metrics dashboard
+  - [x] 24.3 Security metrics dashboard
     - Track consensus validation success/failure rates
     - Monitor validator participation and response times
     - _Requirements: 10.3, 10.4_
-  - [ ] 24.4 Access control audit
+  - [x] 24.4 Access control audit
+    - Log all trust score queries and modifications
+    - Record all reputation-gated operation attempts
+    - _Requirements: 10.3, 10.4_
     - Log all trust score queries and modifications
     - Record all reputation-gated operation attempts
     - _Requirements: 10.3, 10.4_
 
-- [ ] 25. Backward Compatibility and Migration Safety
-  - [ ] 25.1 CVM contract compatibility
+- [x] 25. Backward Compatibility and Migration Safety
+  - [x] 25.1 CVM contract compatibility
     - Verify existing CVM contracts execute correctly
     - Test that register-based CVM bytecode still works
     - _Requirements: 10.5_
-  - [ ] 25.2 Node compatibility
+  - [x] 25.2 Node compatibility
     - Test that old nodes can validate blocks with EVM transactions
     - Verify OP_RETURN soft-fork compatibility
     - _Requirements: 10.5_
-  - [ ] 25.3 Reputation system compatibility
+  - [x] 25.3 Reputation system compatibility
     - Ensure HAT v2 consensus doesn't break existing reputation data
     - Validate that trust graph data is preserved
     - _Requirements: 10.5_
-  - [ ] 25.4 Feature flag management
+  - [x] 25.4 Feature flag management
     - Implement feature flags for gradual EVM rollout
     - Add version detection for contract bytecode format
     - _Requirements: 10.5_
 
-- [ ] 26. Network Security and DoS Protection
-  - [ ] 26.1 Transaction flooding protection
+- [x] 26. Network Security and DoS Protection
+  - [x] 26.1 Transaction flooding protection
     - Implement rate limiting for contract deployments
     - Add reputation-based mempool admission policies
     - _Requirements: 10.2, 16.1_
-  - [ ] 26.2 Malicious contract detection
+  - [x] 26.2 Malicious contract detection
     - Implement bytecode pattern analysis for known exploits
     - Detect infinite loops and resource exhaustion patterns
     - _Requirements: 10.2_
-  - [ ] 26.3 Validator DoS protection
+  - [x] 26.3 Validator DoS protection
     - Implement rate limiting for validation requests
     - Add timeout enforcement for validator responses
     - _Requirements: 10.2, 16.4_
-  - [ ] 26.4 Network resource protection
+  - [x] 26.4 Network resource protection
     - Implement bandwidth limits for P2P messages
     - Add rate limiting for RPC calls by reputation
     - _Requirements: 10.2, 16.1, 16.4_
@@ -479,20 +482,20 @@ This implementation plan covers the CVM-EVM enhancement for Cascoin, including E
     - _Requirements: 10.3_
 
 
-- [ ] 28. Documentation and Developer Experience
-  - [ ] 28.1 Create developer documentation
+- [x] 28. Documentation and Developer Experience
+  - [x] 28.1 Create developer documentation
     - Write guide for deploying EVM contracts on Cascoin
     - Document trust-aware features and how to use them
     - _Requirements: 8.1, 8.2_
-  - [ ] 28.2 Add blockchain integration documentation
+  - [x] 28.2 Add blockchain integration documentation
     - Document transaction format for EVM contracts
     - Write guide for mempool integration
     - _Requirements: 1.1, 6.1, 8.2_
-  - [ ] 28.3 Create operator documentation
+  - [x] 28.3 Create operator documentation
     - Write guide for node operators on EVM feature activation
     - Document soft-fork activation process
     - _Requirements: 10.5_
-  - [ ] 28.4 Create security documentation
+  - [x] 28.4 Create security documentation
     - Document HAT v2 consensus security model
     - Write guide for validator node operators
     - _Requirements: 10.1, 10.2, 10.3_
@@ -582,6 +585,12 @@ This implementation plan covers the CVM-EVM enhancement for Cascoin, including E
 - Checkpoints ensure incremental validation
 - Property tests validate universal correctness properties
 - Unit tests validate specific examples and edge cases
+- **IMPORTANT: When starting the daemon or Qt wallet for testing, ALWAYS use testnet mode**
+  - Start daemon: `./src/cascoind -testnet`
+  - Start Qt wallet: `./src/qt/cascoin-qt -testnet`
+  - Use CLI: `./src/cascoin-cli -testnet <command>`
+  - Never run tests against mainnet
+  - Functional tests in `test/functional/` use regtest mode automatically
 
 ## Implementation Status Summary
 

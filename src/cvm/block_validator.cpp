@@ -6,6 +6,7 @@
 #include <cvm/cvm.h>
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
+#include <cvm/access_control_audit.h>
 #include <consensus/validation.h>
 #include <validation.h>
 #include <util.h>
@@ -255,6 +256,26 @@ bool BlockValidator::DeployContract(
         return false;
     }
     
+    // Log contract deployment access control check
+    if (g_accessControlAuditor && m_trustContext) {
+        int16_t deployerReputation = static_cast<int16_t>(m_trustContext->GetReputation(deployer));
+        int16_t requiredReputation = g_accessControlAuditor->GetMinimumReputation(AccessOperationType::CONTRACT_DEPLOYMENT);
+        
+        AccessDecision decision = g_accessControlAuditor->LogReputationGatedOperation(
+            deployer,
+            AccessOperationType::CONTRACT_DEPLOYMENT,
+            "DeployContract",
+            requiredReputation,
+            deployerReputation,
+            "", // resource ID will be contract address after deployment
+            tx.GetHash());
+        
+        if (decision != AccessDecision::GRANTED) {
+            error = "Contract deployment denied by access control";
+            return false;
+        }
+    }
+    
     // Check if VM is available
     if (!m_vm) {
         error = "EnhancedVM not initialized";
@@ -319,6 +340,26 @@ bool BlockValidator::ExecuteContractCall(
     if (caller.IsNull()) {
         error = "Could not extract caller address";
         return false;
+    }
+    
+    // Log contract call access control check
+    if (g_accessControlAuditor && m_trustContext) {
+        int16_t callerReputation = static_cast<int16_t>(m_trustContext->GetReputation(caller));
+        int16_t requiredReputation = g_accessControlAuditor->GetMinimumReputation(AccessOperationType::CONTRACT_CALL);
+        
+        AccessDecision decision = g_accessControlAuditor->LogReputationGatedOperation(
+            caller,
+            AccessOperationType::CONTRACT_CALL,
+            "CallContract",
+            requiredReputation,
+            callerReputation,
+            callData.contractAddress.GetHex(),
+            tx.GetHash());
+        
+        if (decision != AccessDecision::GRANTED) {
+            error = "Contract call denied by access control";
+            return false;
+        }
     }
     
     // Check if VM is available

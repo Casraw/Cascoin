@@ -225,7 +225,13 @@ BITCOIN_CORE_H = \
   cvm/cross_chain_bridge.h \
   cvm/contract_state_sync.h \
   cvm/consensus_safety.h \
-  cvm/trust_graph_sync.h
+  cvm/trust_graph_sync.h \
+  cvm/security_audit.h \
+  cvm/anomaly_detector.h \
+  cvm/security_rpc.h \
+  cvm/access_control_audit.h \
+  cvm/backward_compat.h \
+  cvm/dos_protection.h
 
 
 obj/build.h: FORCE
@@ -332,6 +338,12 @@ libbitcoin_server_a_SOURCES = \
   cvm/contract_state_sync.cpp \
   cvm/consensus_safety.cpp \
   cvm/trust_graph_sync.cpp \
+  cvm/security_audit.cpp \
+  cvm/anomaly_detector.cpp \
+  cvm/security_rpc.cpp \
+  cvm/access_control_audit.cpp \
+  cvm/backward_compat.cpp \
+  cvm/dos_protection.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 
