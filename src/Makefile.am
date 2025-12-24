@@ -104,6 +104,8 @@ BITCOIN_CORE_H = \
   httprpc.h \
   httpserver.h \
   httpserver/cvmdashboard.h \
+  httpserver/cvmdashboard_html.h \
+  httpserver/cvmdashboard_evm.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -217,7 +219,13 @@ BITCOIN_CORE_H = \
   cvm/execution_tracer.h \
   cvm/validator_attestation.h \
   cvm/vote_manipulation_detector.h \
-  cvm/validator_compensation.h
+  cvm/trust_graph_manipulation_detector.h \
+  cvm/validator_compensation.h \
+  cvm/trust_attestation.h \
+  cvm/cross_chain_bridge.h \
+  cvm/contract_state_sync.h \
+  cvm/consensus_safety.h \
+  cvm/trust_graph_sync.h
 
 
 obj/build.h: FORCE
@@ -314,11 +322,16 @@ libbitcoin_server_a_SOURCES = \
   cvm/eclipse_sybil_protection.cpp \
   cvm/consensus_validator.cpp \
   cvm/trust_attestation.cpp \
+  cvm/cross_chain_bridge.cpp \
   cvm/validator_attestation.cpp \
   cvm/validator_keys.cpp \
   cvm/execution_tracer.cpp \
   cvm/validator_compensation.cpp \
   cvm/vote_manipulation_detector.cpp \
+  cvm/trust_graph_manipulation_detector.cpp \
+  cvm/contract_state_sync.cpp \
+  cvm/consensus_safety.cpp \
+  cvm/trust_graph_sync.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

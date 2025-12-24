@@ -37,6 +37,8 @@
 #include <cvm/hat_consensus.h> // Cascoin: HAT v2 Consensus
 #include <cvm/trust_attestation.h> // Cascoin: Trust Attestation
 #include <cvm/validator_attestation.h> // Cascoin: Validator Attestation
+#include <cvm/cross_chain_bridge.h> // Cascoin: Cross-chain trust bridge
+#include <cvm/contract_state_sync.h> // Cascoin: Contract State Sync
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -1160,8 +1162,17 @@ static void ProcessTrustAttestation(const CVM::TrustAttestation& attestation, CN
         }
     }
     
-    // Store attestation in database (if CVM database available)
-    // TODO: Integrate with CVM database to store attestations
+    // Store attestation in cross-chain bridge (if available)
+    if (CVM::g_crossChainBridge) {
+        CVM::g_crossChainBridge->StoreAttestation(attestation);
+        
+        // Also receive the attestation to update trust cache
+        uint16_t srcChainId = static_cast<uint16_t>(attestation.source);
+        CVM::g_crossChainBridge->ReceiveTrustAttestation(srcChainId, attestation);
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Stored attestation in cross-chain bridge for %s\n",
+                 attestation.address.ToString());
+    }
     
     LogPrint(BCLog::NET, "Trust Attestation: Processing attestation for %s (score=%d, source=%d)\n",
              attestation.address.ToString(), attestation.trustScore, (int)attestation.source);
@@ -3488,6 +3499,38 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             ProcessBatchAttestationResponseMessage(pfrom, response);
         } else {
             LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring batch response\n");
+        }
+    }
+
+    // Cascoin: Contract State Sync - Request
+    else if (strCommand == NetMsgType::CONTRACTSTATEREQUEST) {
+        CVM::ContractStateRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "Contract State Sync: Received state request (type=%d) from peer=%d\n",
+                 (int)request.type, pfrom->GetId());
+        
+        // Process request
+        if (CVM::g_contractStateSyncManager) {
+            CVM::g_contractStateSyncManager->ProcessContractStateRequest(pfrom, request, connman);
+        } else {
+            LogPrint(BCLog::NET, "Contract State Sync: Manager not initialized, ignoring request\n");
+        }
+    }
+
+    // Cascoin: Contract State Sync - Response
+    else if (strCommand == NetMsgType::CONTRACTSTATERESPONSE) {
+        CVM::ContractStateResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "Contract State Sync: Received state response (type=%d) from peer=%d\n",
+                 (int)response.type, pfrom->GetId());
+        
+        // Process response
+        if (CVM::g_contractStateSyncManager) {
+            CVM::g_contractStateSyncManager->ProcessContractStateResponse(pfrom, response);
+        } else {
+            LogPrint(BCLog::NET, "Contract State Sync: Manager not initialized, ignoring response\n");
         }
     }
 

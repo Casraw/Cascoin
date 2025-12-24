@@ -21,5 +21,8 @@ std::string GetMimeType(const std::string& path);
 /** Read file from disk */
 std::string ReadDashboardFile(const std::string& filename);
 
+/** Build complete dashboard HTML with EVM extensions */
+std::string BuildCompleteDashboardHTML();
+
 #endif // CASCOIN_HTTPSERVER_CVMDASHBOARD_H
 

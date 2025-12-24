@@ -49,6 +49,7 @@ using namespace boost::placeholders;
 #include <cvm/fee_calculator.h>  // Cascoin: CVM/EVM fee calculation
 #include <cvm/softfork.h>        // Cascoin: CVM soft fork support
 #include <cvm/block_validator.h> // Cascoin: CVM/EVM block validation
+#include <cvm/validator_compensation.h> // Cascoin: HAT v2 validator compensation
 
 #include <future>
 #include <sstream>
@@ -2118,6 +2119,30 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                          error("ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)",
                                block.vtx[0]->GetValueOut(), blockReward),
                                REJECT_INVALID, "bad-cb-amount");
+
+    // Cascoin: HAT v2 - Validate coinbase validator payments (70/30 split)
+    // Only validate if CVM soft fork is active (validator compensation requires CVM)
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        // Calculate block reward without fees for validator payment validation
+        CAmount baseBlockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
+        if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
+            if (block.IsHiveMined(chainparams.GetConsensus()))
+                baseBlockReward += baseBlockReward >> 1;
+            else
+                baseBlockReward = baseBlockReward >> 1;
+        }
+        baseBlockReward += nFees;
+        
+        if (!CheckCoinbaseValidatorPayments(block, baseBlockReward)) {
+            // Log warning but don't reject block during transition period
+            // This allows blocks without validator payments to be accepted
+            // until the network fully transitions to the new system
+            LogPrint(BCLog::CVM, "ConnectBlock(): Validator payment validation failed (non-fatal during transition)\n");
+            // TODO: Make this a consensus rule after activation height
+            // return state.DoS(100, error("ConnectBlock(): invalid validator payments"),
+            //                  REJECT_INVALID, "bad-coinbase-validator-payments");
+        }
+    }
 
     // Cascoin: Ensure that lastScryptBlock+1 coinbase TX pays to the premine address
     // Skip this check for regtest and testnet as they use generatetoaddress

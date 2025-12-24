@@ -4,14 +4,51 @@
 
 #include <httpserver/cvmdashboard.h>
 #include <httpserver/cvmdashboard_html.h>
+#include <httpserver/cvmdashboard_evm.h>
 #include <httpserver.h>
 #include <rpc/protocol.h>
 #include <util.h>
 #include <utilstrencodings.h>
 #include <chainparamsbase.h>
 
-// All HTML/CSS/JS is now embedded in cvmdashboard_html.h
+// All HTML/CSS/JS is now embedded in cvmdashboard_html.h and cvmdashboard_evm.h
 // No external files needed!
+
+/**
+ * Build the complete dashboard HTML by combining base dashboard with EVM extensions
+ * 
+ * Requirements: 1.4, 1.5, 6.1, 6.3, 18.2, 2.1, 14.1, 22.5
+ */
+std::string BuildCompleteDashboardHTML() {
+    std::string html = CVMDashboardHTML::INDEX_HTML;
+    
+    // Find the insertion point (before the footer)
+    size_t footerPos = html.find("<footer class=\"footer\">");
+    if (footerPos != std::string::npos) {
+        // Insert EVM sections before footer
+        std::string evmSections = CVMDashboardEVM::EVM_CONTRACT_SECTION;
+        evmSections += CVMDashboardEVM::GAS_MANAGEMENT_SECTION;
+        evmSections += CVMDashboardEVM::TRUST_AWARE_SECTION;
+        
+        html.insert(footerPos, evmSections);
+    }
+    
+    // Find the script section and add EVM JavaScript
+    size_t scriptEndPos = html.rfind("</script>");
+    if (scriptEndPos != std::string::npos) {
+        std::string evmJS = CVMDashboardEVM::EVM_DASHBOARD_JS;
+        evmJS += CVMDashboardEVM::GAS_MANAGEMENT_JS;
+        evmJS += CVMDashboardEVM::TRUST_AWARE_JS;
+        
+        html.insert(scriptEndPos, evmJS);
+    }
+    
+    return html;
+}
+
+// Cache the complete dashboard HTML
+static std::string g_completeDashboardHTML;
+static bool g_dashboardInitialized = false;
 
 bool CVMDashboardRequestHandler(HTTPRequest* req, const std::string& strReq) {
     LogPrint(BCLog::HTTP, "CVM Dashboard: Request for %s\n", strReq);
@@ -22,15 +59,23 @@ bool CVMDashboardRequestHandler(HTTPRequest* req, const std::string& strReq) {
         return false;
     }
     
-    // Serve embedded HTML page (single-page app)
+    // Build complete dashboard HTML on first request (lazy initialization)
+    if (!g_dashboardInitialized) {
+        g_completeDashboardHTML = BuildCompleteDashboardHTML();
+        g_dashboardInitialized = true;
+        LogPrint(BCLog::HTTP, "CVM Dashboard: Built complete HTML (%d bytes)\n", 
+                 g_completeDashboardHTML.length());
+    }
+    
+    // Serve embedded HTML page (single-page app with EVM extensions)
     req->WriteHeader("Content-Type", "text/html; charset=utf-8");
     req->WriteHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     req->WriteHeader("Pragma", "no-cache");
     req->WriteHeader("Expires", "0");
-    req->WriteReply(HTTP_OK, CVMDashboardHTML::INDEX_HTML);
+    req->WriteReply(HTTP_OK, g_completeDashboardHTML);
     
-    LogPrint(BCLog::HTTP, "CVM Dashboard: Served embedded HTML (%d bytes)\n", 
-             CVMDashboardHTML::INDEX_HTML.length());
+    LogPrint(BCLog::HTTP, "CVM Dashboard: Served complete HTML (%d bytes)\n", 
+             g_completeDashboardHTML.length());
     
     return true;
 }

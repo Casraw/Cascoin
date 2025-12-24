@@ -8,6 +8,7 @@
 #include <cvm/trustgraph.h>
 #include <cvm/validator_keys.h>
 #include <cvm/walletcluster.h>
+#include <cvm/trust_graph_manipulation_detector.h>
 #include <chain.h>
 #include <hash.h>
 #include <random.h>
@@ -193,6 +194,9 @@ HATConsensusValidator::HATConsensusValidator(CVMDatabase& db, SecureHAT& hat, Tr
       m_eclipseSybilProtection(new EclipseSybilProtection(db, graph)),
       m_voteManipulationDetector(new VoteManipulationDetector(db))
 {
+    // Create wallet clusterer for trust graph manipulation detection
+    static WalletClusterer walletClusterer(db);
+    m_trustGraphManipulationDetector.reset(new TrustGraphManipulationDetector(db, graph, walletClusterer));
 }
 
 ValidationRequest HATConsensusValidator::InitiateValidation(
@@ -921,9 +925,26 @@ bool CVM::HATConsensusValidator::IsEligibleValidator(const uint160& address) {
 
 uint256 HATConsensusValidator::GenerateRandomSeed(const uint256& txHash, int blockHeight) {
     CHashWriter ss(SER_GETHASH, 0);
+    
+    // Primary entropy sources
     ss << txHash;
     ss << blockHeight;
-    ss << std::string("HAT_CONSENSUS_VALIDATOR_SELECTION");
+    
+    // Enhanced entropy: Include previous block hash for additional unpredictability
+    // This prevents attackers from pre-computing validator sets before block is mined
+    if (chainActive.Height() > 0 && chainActive.Tip() && chainActive.Tip()->pprev) {
+        ss << chainActive.Tip()->pprev->GetBlockHash();
+    }
+    
+    // Enhanced entropy: Include block timestamp for temporal variation
+    // This adds unpredictability even for same tx hash and block height
+    if (chainActive.Tip()) {
+        ss << chainActive.Tip()->GetBlockTime();
+    }
+    
+    // Domain separation string to prevent cross-protocol attacks
+    ss << std::string("HAT_CONSENSUS_VALIDATOR_SELECTION_V2");
+    
     return ss.GetHash();
 }
 
@@ -2260,9 +2281,6 @@ bool CVM::HATConsensusValidator::DetectCoordinatedSybilAttack(const std::vector<
     return false;
 }
 
-} // namespace CVM
-
-
 // Vote Manipulation Detection Methods
 
 ManipulationDetection HATConsensusValidator::AnalyzeTransactionVoting(const uint256& txHash)
@@ -2273,6 +2291,13 @@ ManipulationDetection HATConsensusValidator::AnalyzeTransactionVoting(const uint
 ManipulationDetection HATConsensusValidator::AnalyzeAddressReputation(const uint160& address)
 {
     return m_voteManipulationDetector->AnalyzeAddress(address);
+}
+
+// Trust Graph Manipulation Detection Methods
+
+TrustManipulationResult HATConsensusValidator::AnalyzeTrustGraphManipulation(const uint160& address)
+{
+    return m_trustGraphManipulationDetector->AnalyzeAddress(address);
 }
 
 } // namespace CVM

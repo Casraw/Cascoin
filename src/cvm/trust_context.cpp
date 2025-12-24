@@ -7,6 +7,7 @@
 #include <cvm/trustgraph.h>
 #include <cvm/reputation.h>
 #include <cvm/securehat.h>
+#include <cvm/cross_chain_bridge.h>
 #include <util.h>
 #include <timedata.h>
 #include <algorithm>
@@ -638,7 +639,69 @@ bool ValidateTrustGateConfiguration(const std::string& operation, uint32_t min_r
 
 bool VerifyTrustAttestation(const std::string& chain, const std::string& proof, 
                            const uint160& address, uint32_t claimed_reputation) {
-    // TODO: Implement cross-chain trust verification
+    // Cross-chain trust verification using the cross-chain bridge
+    
+    // Validate inputs
+    if (chain.empty() || proof.empty()) {
+        LogPrint(BCLog::CVM, "TrustContextUtils: Empty chain or proof for attestation verification\n");
+        return false;
+    }
+    
+    if (claimed_reputation > 100) {
+        LogPrint(BCLog::CVM, "TrustContextUtils: Invalid claimed reputation %d\n", claimed_reputation);
+        return false;
+    }
+    
+    // Map chain name to chain ID
+    uint16_t chainId = 99; // Default to OTHER
+    if (chain == "ethereum" || chain == "eth") {
+        chainId = 1;
+    } else if (chain == "polygon" || chain == "matic") {
+        chainId = 2;
+    } else if (chain == "arbitrum" || chain == "arb") {
+        chainId = 3;
+    } else if (chain == "optimism" || chain == "op") {
+        chainId = 4;
+    } else if (chain == "base") {
+        chainId = 5;
+    } else if (chain == "cascoin" || chain == "cas") {
+        chainId = 0;
+    }
+    
+    // Use the global cross-chain bridge if available
+    if (g_crossChainBridge) {
+        // Check if chain is supported
+        if (!g_crossChainBridge->IsChainSupported(chainId)) {
+            LogPrint(BCLog::CVM, "TrustContextUtils: Chain %s (id=%d) not supported\n", 
+                     chain, chainId);
+            return false;
+        }
+        
+        // Get cross-chain trust scores for this address
+        auto scores = g_crossChainBridge->GetCrossChainTrustScores(address);
+        
+        // Look for a matching verified score from this chain
+        for (const auto& score : scores) {
+            if (score.chainId == chainId && score.isVerified) {
+                // Check if claimed reputation matches (with tolerance)
+                int diff = std::abs(static_cast<int>(score.trustScore) - 
+                                   static_cast<int>(claimed_reputation));
+                if (diff <= 5) { // Allow 5 point tolerance
+                    LogPrint(BCLog::CVM, "TrustContextUtils: Attestation verified for %s from %s "
+                             "(claimed=%d, actual=%d)\n",
+                             address.ToString(), chain, claimed_reputation, score.trustScore);
+                    return true;
+                }
+            }
+        }
+        
+        // No matching verified score found
+        LogPrint(BCLog::CVM, "TrustContextUtils: No verified attestation found for %s from %s\n",
+                 address.ToString(), chain);
+    } else {
+        LogPrint(BCLog::CVM, "TrustContextUtils: Cross-chain bridge not initialized\n");
+    }
+    
     return false;
 }
 

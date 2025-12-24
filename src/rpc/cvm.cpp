@@ -28,6 +28,7 @@
 #include <cvm/enhanced_vm.h>
 #include <cvm/validator_keys.h>
 #include <cvm/hat_consensus.h>
+#include <cvm/validator_compensation.h>
 #include <validation.h>
 #include <consensus/validation.h>
 #include <txmempool.h>
@@ -3922,6 +3923,294 @@ UniValue listvalidators(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue getvalidatorearnings(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getvalidatorearnings \"address\" ( blockcount )\n"
+            "\nGet earnings information for a validator.\n"
+            "\nShows the validator's share of gas fees from the 70/30 split:\n"
+            "- 70% of gas fees go to miners\n"
+            "- 30% of gas fees are split among validators\n"
+            "\nArguments:\n"
+            "1. address      (string, required) Validator address (hex)\n"
+            "2. blockcount   (numeric, optional, default=1000) Number of recent blocks to analyze\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"xxx\",                (string) Validator address\n"
+            "  \"totalEarnings\": n,              (numeric) Total earnings (CAS)\n"
+            "  \"transactionsValidated\": n,      (numeric) Number of transactions validated\n"
+            "  \"blocksParticipated\": n,         (numeric) Number of blocks participated in\n"
+            "  \"averageEarningsPerBlock\": n,    (numeric) Average earnings per block\n"
+            "  \"averageEarningsPerTx\": n,       (numeric) Average earnings per transaction\n"
+            "  \"recentEarnings\": [              (array) Recent earnings by block\n"
+            "    {\n"
+            "      \"blockHeight\": n,            (numeric) Block height\n"
+            "      \"blockHash\": \"xxx\",          (string) Block hash\n"
+            "      \"earnings\": n,               (numeric) Earnings in this block\n"
+            "      \"txCount\": n                 (numeric) Transactions validated\n"
+            "    },\n"
+            "    ...\n"
+            "  ]\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getvalidatorearnings", "\"1234567890abcdef1234567890abcdef12345678\"")
+            + HelpExampleCli("getvalidatorearnings", "\"1234567890abcdef1234567890abcdef12345678\" 500")
+            + HelpExampleRpc("getvalidatorearnings", "\"1234567890abcdef1234567890abcdef12345678\", 500")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    int blockCount = 1000;
+    if (request.params.size() > 1) {
+        blockCount = request.params[1].get_int();
+        if (blockCount < 1 || blockCount > 10000) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Block count must be between 1 and 10000");
+        }
+    }
+
+    // Parse address
+    if (addrStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be 40 hex characters");
+    }
+
+    if (!IsHex(addrStr)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address must be valid hex");
+    }
+
+    std::vector<uint8_t> addrData = ParseHex(addrStr);
+    uint160 validatorAddr;
+    memcpy(validatorAddr.begin(), addrData.data(), 20);
+
+    // Get database instance
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", addrStr);
+
+    CAmount totalEarnings = 0;
+    int transactionsValidated = 0;
+    int blocksParticipated = 0;
+    UniValue recentEarnings(UniValue::VARR);
+
+    // Scan recent blocks for validator participation
+    LOCK(cs_main);
+    
+    int currentHeight = chainActive.Height();
+    int startHeight = std::max(0, currentHeight - blockCount);
+
+    for (int height = currentHeight; height >= startHeight; height--) {
+        CBlockIndex* pindex = chainActive[height];
+        if (!pindex) continue;
+
+        CBlock block;
+        if (!ReadBlockFromDisk(block, pindex, Params().GetConsensus())) {
+            continue;
+        }
+
+        CAmount blockEarnings = 0;
+        int blockTxCount = 0;
+
+        // Check each transaction in the block for validator participation
+        for (size_t i = 1; i < block.vtx.size(); i++) {
+            const CTransaction& tx = *block.vtx[i];
+            
+            CVM::TransactionValidationRecord record;
+            if (CVM::g_cvmdb->GetValidatorParticipation(tx.GetHash(), record)) {
+                // Check if this validator participated
+                for (const uint160& validator : record.validators) {
+                    if (validator == validatorAddr) {
+                        // Calculate this validator's share
+                        // Using placeholder gas values - in production, get from receipt
+                        uint64_t gasUsed = 21000;
+                        CAmount gasPrice = 1000;
+                        GasFeeDistribution dist = CalculateGasFeeDistribution(
+                            gasUsed, gasPrice, record.validators);
+                        
+                        blockEarnings += dist.perValidatorShare;
+                        blockTxCount++;
+                        transactionsValidated++;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (blockEarnings > 0) {
+            blocksParticipated++;
+            totalEarnings += blockEarnings;
+
+            // Add to recent earnings (limit to 100 entries)
+            if (recentEarnings.size() < 100) {
+                UniValue blockInfo(UniValue::VOBJ);
+                blockInfo.pushKV("blockHeight", height);
+                blockInfo.pushKV("blockHash", pindex->GetBlockHash().GetHex());
+                blockInfo.pushKV("earnings", ValueFromAmount(blockEarnings));
+                blockInfo.pushKV("txCount", blockTxCount);
+                recentEarnings.push_back(blockInfo);
+            }
+        }
+    }
+
+    result.pushKV("totalEarnings", ValueFromAmount(totalEarnings));
+    result.pushKV("transactionsValidated", transactionsValidated);
+    result.pushKV("blocksParticipated", blocksParticipated);
+    
+    if (blocksParticipated > 0) {
+        result.pushKV("averageEarningsPerBlock", ValueFromAmount(totalEarnings / blocksParticipated));
+    } else {
+        result.pushKV("averageEarningsPerBlock", ValueFromAmount(0));
+    }
+    
+    if (transactionsValidated > 0) {
+        result.pushKV("averageEarningsPerTx", ValueFromAmount(totalEarnings / transactionsValidated));
+    } else {
+        result.pushKV("averageEarningsPerTx", ValueFromAmount(0));
+    }
+    
+    result.pushKV("recentEarnings", recentEarnings);
+
+    return result;
+}
+
+UniValue getnetworkvalidatorstats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "getnetworkvalidatorstats ( blockcount )\n"
+            "\nGet network-wide validator statistics.\n"
+            "\nShows aggregate statistics for all validators in the network.\n"
+            "\nArguments:\n"
+            "1. blockcount   (numeric, optional, default=1000) Number of recent blocks to analyze\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"totalValidators\": n,            (numeric) Total number of validators\n"
+            "  \"activeValidators\": n,           (numeric) Validators active in period\n"
+            "  \"totalGasFees\": n,               (numeric) Total gas fees collected\n"
+            "  \"minerShare\": n,                 (numeric) Total miner share (70%)\n"
+            "  \"validatorShare\": n,             (numeric) Total validator share (30%)\n"
+            "  \"transactionsValidated\": n,      (numeric) Total transactions validated\n"
+            "  \"averageValidatorsPerTx\": n.nn,  (numeric) Average validators per transaction\n"
+            "  \"topValidators\": [               (array) Top validators by earnings\n"
+            "    {\n"
+            "      \"address\": \"xxx\",            (string) Validator address\n"
+            "      \"earnings\": n,               (numeric) Total earnings\n"
+            "      \"txCount\": n                 (numeric) Transactions validated\n"
+            "    },\n"
+            "    ...\n"
+            "  ]\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getnetworkvalidatorstats", "")
+            + HelpExampleCli("getnetworkvalidatorstats", "500")
+            + HelpExampleRpc("getnetworkvalidatorstats", "500")
+        );
+
+    int blockCount = 1000;
+    if (request.params.size() > 0) {
+        blockCount = request.params[0].get_int();
+        if (blockCount < 1 || blockCount > 10000) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Block count must be between 1 and 10000");
+        }
+    }
+
+    // Get database instance
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    UniValue result(UniValue::VOBJ);
+
+    std::map<uint160, CAmount> validatorEarnings;
+    std::map<uint160, int> validatorTxCounts;
+    std::set<uint160> activeValidators;
+    CAmount totalGasFees = 0;
+    CAmount totalMinerShare = 0;
+    CAmount totalValidatorShare = 0;
+    int totalTransactionsValidated = 0;
+    int totalValidatorParticipations = 0;
+
+    // Scan recent blocks for validator participation
+    LOCK(cs_main);
+    
+    int currentHeight = chainActive.Height();
+    int startHeight = std::max(0, currentHeight - blockCount);
+
+    for (int height = currentHeight; height >= startHeight; height--) {
+        CBlockIndex* pindex = chainActive[height];
+        if (!pindex) continue;
+
+        CBlock block;
+        if (!ReadBlockFromDisk(block, pindex, Params().GetConsensus())) {
+            continue;
+        }
+
+        // Check each transaction in the block for validator participation
+        for (size_t i = 1; i < block.vtx.size(); i++) {
+            const CTransaction& tx = *block.vtx[i];
+            
+            CVM::TransactionValidationRecord record;
+            if (CVM::g_cvmdb->GetValidatorParticipation(tx.GetHash(), record)) {
+                // Using placeholder gas values - in production, get from receipt
+                uint64_t gasUsed = 21000;
+                CAmount gasPrice = 1000;
+                GasFeeDistribution dist = CalculateGasFeeDistribution(
+                    gasUsed, gasPrice, record.validators);
+                
+                totalGasFees += dist.totalGasFee;
+                totalMinerShare += dist.minerShare;
+                totalValidatorShare += dist.validatorShare;
+                totalTransactionsValidated++;
+                totalValidatorParticipations += record.validators.size();
+
+                // Track per-validator earnings
+                for (const uint160& validator : record.validators) {
+                    activeValidators.insert(validator);
+                    validatorEarnings[validator] += dist.perValidatorShare;
+                    validatorTxCounts[validator]++;
+                }
+            }
+        }
+    }
+
+    result.pushKV("totalValidators", (int)activeValidators.size());
+    result.pushKV("activeValidators", (int)activeValidators.size());
+    result.pushKV("totalGasFees", ValueFromAmount(totalGasFees));
+    result.pushKV("minerShare", ValueFromAmount(totalMinerShare));
+    result.pushKV("validatorShare", ValueFromAmount(totalValidatorShare));
+    result.pushKV("transactionsValidated", totalTransactionsValidated);
+    
+    if (totalTransactionsValidated > 0) {
+        result.pushKV("averageValidatorsPerTx", 
+            (double)totalValidatorParticipations / totalTransactionsValidated);
+    } else {
+        result.pushKV("averageValidatorsPerTx", 0.0);
+    }
+
+    // Sort validators by earnings and get top 10
+    std::vector<std::pair<uint160, CAmount>> sortedValidators(
+        validatorEarnings.begin(), validatorEarnings.end());
+    std::sort(sortedValidators.begin(), sortedValidators.end(),
+        [](const auto& a, const auto& b) { return a.second > b.second; });
+
+    UniValue topValidators(UniValue::VARR);
+    int count = 0;
+    for (const auto& [validator, earnings] : sortedValidators) {
+        if (count >= 10) break;
+        
+        UniValue validatorInfo(UniValue::VOBJ);
+        validatorInfo.pushKV("address", validator.ToString());
+        validatorInfo.pushKV("earnings", ValueFromAmount(earnings));
+        validatorInfo.pushKV("txCount", validatorTxCounts[validator]);
+        topValidators.push_back(validatorInfo);
+        count++;
+    }
+    result.pushKV("topValidators", topValidators);
+
+    return result;
+}
+
 UniValue getvalidatorstats(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
@@ -4287,6 +4576,8 @@ static const CRPCCommand commands[] =
     { "validator",          "loadvalidatorfromwallet",    &loadvalidatorfromwallet,     {"address"} },
     { "validator",          "listvalidators",             &listvalidators,              {"minreputation"} },
     { "validator",          "getvalidatorstats",          &getvalidatorstats,           {"address"} },
+    { "validator",          "getvalidatorearnings",       &getvalidatorearnings,        {"address","blockcount"} },
+    { "validator",          "getnetworkvalidatorstats",   &getnetworkvalidatorstats,    {"blockcount"} },
     { "validator",          "getvalidationhistory",       &getvalidationhistory,        {"address","count"} },
     // Sybil attack detection RPC commands (Task 19.2.3)
     { "sybil",              "detectsybilnetwork",         &detectsybilnetwork,          {"address"} },
@@ -4472,7 +4763,7 @@ UniValue getreputationhistory(const JSONRPCRequest& request)
     return result;
 }
 
-static const CRPCCommand commands[] =
+static const CRPCCommand voteManipulationCommands[] =
 { //  category              name                            actor (function)            argNames
   //  --------------------- ------------------------        -----------------------     ----------
     { "cvm",                "analyzevotemanipulation",      &analyzevotemanipulation,   {"txhash"} },
@@ -4484,6 +4775,6 @@ static const CRPCCommand commands[] =
 
 void RegisterVoteManipulationRPCCommands(CRPCTable &t)
 {
-    for (unsigned int vcidx = 0; vcidx < ARRAYLEN(commands); vcidx++)
-        t.appendCommand(commands[vcidx].name, &commands[vcidx]);
+    for (unsigned int vcidx = 0; vcidx < ARRAYLEN(voteManipulationCommands); vcidx++)
+        t.appendCommand(voteManipulationCommands[vcidx].name, &voteManipulationCommands[vcidx]);
 }

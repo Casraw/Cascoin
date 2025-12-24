@@ -51,6 +51,12 @@ const char *ATTESTATION_REQUEST="attestreq";         // Cascoin: Validator Attes
 const char *VALIDATOR_ATTESTATION="validatorattest"; // Cascoin: Validator Attestation
 const char *BATCH_ATTESTATION_REQUEST="batchattest"; // Cascoin: Validator Attestation
 const char *BATCH_ATTESTATION_RESPONSE="batchresp";  // Cascoin: Validator Attestation
+const char *CONTRACTSTATEREQUEST="cstatesync";       // Cascoin: Contract State Sync
+const char *CONTRACTSTATERESPONSE="cstateresp";      // Cascoin: Contract State Sync
+const char *TRUSTGRAPHSTATEREQ="tgstatereq";         // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHSTATE="tgstate";               // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHDELTAREQ="tgdeltareq";         // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHDELTA="tgdelta";               // Cascoin: Trust Graph Sync
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -95,6 +101,12 @@ const static std::string allNetMessageTypes[] = {
     NetMsgType::VALIDATOR_ATTESTATION,     // Cascoin: Validator Attestation
     NetMsgType::BATCH_ATTESTATION_REQUEST, // Cascoin: Validator Attestation
     NetMsgType::BATCH_ATTESTATION_RESPONSE,// Cascoin: Validator Attestation
+    NetMsgType::CONTRACTSTATEREQUEST,      // Cascoin: Contract State Sync
+    NetMsgType::CONTRACTSTATERESPONSE,     // Cascoin: Contract State Sync
+    NetMsgType::TRUSTGRAPHSTATEREQ,        // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHSTATE,           // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHDELTAREQ,        // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHDELTA,           // Cascoin: Trust Graph Sync
 };
 const static std::vector<std::string> allNetMessageTypesVec(allNetMessageTypes, allNetMessageTypes+ARRAYLEN(allNetMessageTypes));
 

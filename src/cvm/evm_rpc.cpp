@@ -14,6 +14,7 @@
 #include <cvm/address_index.h>
 #include <cvm/execution_tracer.h>
 #include <cvm/reputation.h>
+#include <cvm/cross_chain_bridge.h>
 #include <validation.h>
 #include <chainparams.h>
 #include <util.h>
@@ -1240,4 +1241,319 @@ UniValue cas_increaseTime(const JSONRPCRequest& request)
 UniValue evm_increaseTime(const JSONRPCRequest& request)
 {
     return cas_increaseTime(request);
+}
+
+// ===== Cross-Chain Trust RPC Methods =====
+
+UniValue cas_getCrossChainTrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "cas_getCrossChainTrust \"address\"\n"
+            "\nGet cross-chain trust scores for an address.\n"
+            "\nArguments:\n"
+            "1. address         (string, required) The address to query\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"0x...\",           (string) The queried address\n"
+            "  \"aggregatedScore\": n,           (numeric) Aggregated trust score (0-100)\n"
+            "  \"chainScores\": [                (array) Trust scores from each chain\n"
+            "    {\n"
+            "      \"chainId\": n,               (numeric) Chain ID\n"
+            "      \"chainName\": \"...\",       (string) Chain name\n"
+            "      \"trustScore\": n,            (numeric) Trust score from this chain\n"
+            "      \"timestamp\": n,             (numeric) When score was recorded\n"
+            "      \"verified\": true|false      (boolean) Whether score is verified\n"
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_getCrossChainTrust", "\"0x1234567890123456789012345678901234567890\"")
+            + HelpExampleRpc("cas_getCrossChainTrust", "\"0x1234567890123456789012345678901234567890\"")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    uint160 address = ParseAddress(addrStr);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", AddressToHex(address));
+    
+    if (!CVM::g_crossChainBridge) {
+        result.pushKV("aggregatedScore", 0);
+        result.pushKV("chainScores", UniValue(UniValue::VARR));
+        result.pushKV("error", "Cross-chain bridge not initialized");
+        return result;
+    }
+    
+    // Get aggregated score
+    uint8_t aggregatedScore = CVM::g_crossChainBridge->GetAggregatedTrustScore(address);
+    result.pushKV("aggregatedScore", aggregatedScore);
+    
+    // Get individual chain scores
+    auto scores = CVM::g_crossChainBridge->GetCrossChainTrustScores(address);
+    UniValue chainScores(UniValue::VARR);
+    
+    for (const auto& score : scores) {
+        UniValue scoreObj(UniValue::VOBJ);
+        scoreObj.pushKV("chainId", score.chainId);
+        
+        // Get chain name
+        const CVM::ChainConfig* config = CVM::g_crossChainBridge->GetChainConfig(score.chainId);
+        if (config) {
+            scoreObj.pushKV("chainName", config->chainName);
+        } else {
+            scoreObj.pushKV("chainName", "Unknown");
+        }
+        
+        scoreObj.pushKV("trustScore", score.trustScore);
+        scoreObj.pushKV("timestamp", (int64_t)score.timestamp);
+        scoreObj.pushKV("verified", score.isVerified);
+        chainScores.push_back(scoreObj);
+    }
+    
+    result.pushKV("chainScores", chainScores);
+    
+    return result;
+}
+
+UniValue cas_getSupportedChains(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "cas_getSupportedChains\n"
+            "\nGet list of supported cross-chain bridges.\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"chainId\": n,                 (numeric) Chain ID\n"
+            "    \"chainName\": \"...\",         (string) Chain name\n"
+            "    \"isActive\": true|false,       (boolean) Whether bridge is active\n"
+            "    \"minConfirmations\": n         (numeric) Minimum confirmations required\n"
+            "  }\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_getSupportedChains", "")
+            + HelpExampleRpc("cas_getSupportedChains", "")
+        );
+
+    UniValue result(UniValue::VARR);
+    
+    if (!CVM::g_crossChainBridge) {
+        return result;
+    }
+    
+    auto chainIds = CVM::g_crossChainBridge->GetSupportedChains();
+    
+    for (uint16_t chainId : chainIds) {
+        const CVM::ChainConfig* config = CVM::g_crossChainBridge->GetChainConfig(chainId);
+        if (config) {
+            UniValue chainObj(UniValue::VOBJ);
+            chainObj.pushKV("chainId", config->chainId);
+            chainObj.pushKV("chainName", config->chainName);
+            chainObj.pushKV("isActive", config->isActive);
+            chainObj.pushKV("minConfirmations", (int64_t)config->minConfirmations);
+            chainObj.pushKV("maxAttestationAge", (int64_t)config->maxAttestationAge);
+            result.push_back(chainObj);
+        }
+    }
+    
+    return result;
+}
+
+UniValue cas_generateTrustProof(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "cas_generateTrustProof \"address\"\n"
+            "\nGenerate a trust state proof for an address.\n"
+            "\nThis proof can be used to verify trust scores on other chains.\n"
+            "\nArguments:\n"
+            "1. address         (string, required) The address to generate proof for\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"0x...\",           (string) The address\n"
+            "  \"trustScore\": n,                (numeric) Trust score (0-100)\n"
+            "  \"blockHeight\": n,               (numeric) Block height of proof\n"
+            "  \"blockHash\": \"...\",           (string) Block hash\n"
+            "  \"stateRoot\": \"...\",           (string) State root\n"
+            "  \"proofHash\": \"...\"            (string) Hash of the proof\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_generateTrustProof", "\"0x1234567890123456789012345678901234567890\"")
+            + HelpExampleRpc("cas_generateTrustProof", "\"0x1234567890123456789012345678901234567890\"")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    uint160 address = ParseAddress(addrStr);
+    
+    if (!CVM::g_crossChainBridge) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Cross-chain bridge not initialized");
+    }
+    
+    CVM::TrustStateProof proof = CVM::g_crossChainBridge->GenerateTrustStateProof(address);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", AddressToHex(proof.address));
+    result.pushKV("trustScore", proof.trustScore);
+    result.pushKV("blockHeight", (int64_t)proof.blockHeight);
+    result.pushKV("blockHash", Uint256ToHex(proof.blockHash));
+    result.pushKV("stateRoot", Uint256ToHex(proof.stateRoot));
+    result.pushKV("proofHash", Uint256ToHex(proof.GetHash()));
+    
+    return result;
+}
+
+UniValue cas_verifyTrustProof(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 4)
+        throw std::runtime_error(
+            "cas_verifyTrustProof \"address\" trustScore \"stateRoot\" sourceChainId\n"
+            "\nVerify a trust state proof from another chain.\n"
+            "\nArguments:\n"
+            "1. address         (string, required) The address\n"
+            "2. trustScore      (numeric, required) Claimed trust score (0-100)\n"
+            "3. stateRoot       (string, required) State root from source chain\n"
+            "4. sourceChainId   (numeric, required) Source chain ID\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"valid\": true|false,            (boolean) Whether proof is valid\n"
+            "  \"address\": \"0x...\",           (string) The address\n"
+            "  \"trustScore\": n,                (numeric) Verified trust score\n"
+            "  \"sourceChain\": \"...\"          (string) Source chain name\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_verifyTrustProof", "\"0x1234...\" 75 \"0xabcd...\" 1")
+            + HelpExampleRpc("cas_verifyTrustProof", "\"0x1234...\", 75, \"0xabcd...\", 1")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    uint160 address = ParseAddress(addrStr);
+    int trustScore = request.params[1].get_int();
+    std::string stateRootStr = request.params[2].get_str();
+    int sourceChainId = request.params[3].get_int();
+    
+    if (trustScore < 0 || trustScore > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Trust score must be 0-100");
+    }
+    
+    if (!CVM::g_crossChainBridge) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Cross-chain bridge not initialized");
+    }
+    
+    // Create a proof structure for verification
+    CVM::TrustStateProof proof;
+    proof.address = address;
+    proof.trustScore = static_cast<uint8_t>(trustScore);
+    proof.stateRoot = ParseUint256(stateRootStr);
+    
+    bool valid = CVM::g_crossChainBridge->VerifyTrustStateProof(proof, static_cast<uint16_t>(sourceChainId));
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("valid", valid);
+    result.pushKV("address", AddressToHex(address));
+    result.pushKV("trustScore", trustScore);
+    
+    const CVM::ChainConfig* config = CVM::g_crossChainBridge->GetChainConfig(static_cast<uint16_t>(sourceChainId));
+    if (config) {
+        result.pushKV("sourceChain", config->chainName);
+    } else {
+        result.pushKV("sourceChain", "Unknown");
+    }
+    
+    return result;
+}
+
+UniValue cas_getCrossChainStats(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "cas_getCrossChainStats\n"
+            "\nGet cross-chain trust bridge statistics.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"totalAttestations\": n,         (numeric) Total attestations stored\n"
+            "  \"supportedChains\": n,           (numeric) Number of supported chains\n"
+            "  \"attestationsByChain\": {        (object) Attestations per chain\n"
+            "    \"chainName\": n\n"
+            "  }\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_getCrossChainStats", "")
+            + HelpExampleRpc("cas_getCrossChainStats", "")
+        );
+
+    UniValue result(UniValue::VOBJ);
+    
+    if (!CVM::g_crossChainBridge) {
+        result.pushKV("error", "Cross-chain bridge not initialized");
+        return result;
+    }
+    
+    result.pushKV("totalAttestations", (int64_t)CVM::g_crossChainBridge->GetAttestationCount());
+    result.pushKV("supportedChains", (int64_t)CVM::g_crossChainBridge->GetSupportedChains().size());
+    
+    auto countsByChain = CVM::g_crossChainBridge->GetAttestationCountByChain();
+    UniValue chainCounts(UniValue::VOBJ);
+    
+    for (const auto& pair : countsByChain) {
+        const CVM::ChainConfig* config = CVM::g_crossChainBridge->GetChainConfig(pair.first);
+        std::string chainName = config ? config->chainName : "Unknown";
+        chainCounts.pushKV(chainName, (int64_t)pair.second);
+    }
+    
+    result.pushKV("attestationsByChain", chainCounts);
+    
+    return result;
+}
+
+UniValue cas_sendTrustAttestation(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 3)
+        throw std::runtime_error(
+            "cas_sendTrustAttestation \"address\" trustScore destChainId\n"
+            "\nSend a trust attestation to another chain.\n"
+            "\nArguments:\n"
+            "1. address         (string, required) The address to attest\n"
+            "2. trustScore      (numeric, required) Trust score (0-100)\n"
+            "3. destChainId     (numeric, required) Destination chain ID\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false,          (boolean) Whether attestation was sent\n"
+            "  \"attestationHash\": \"...\"      (string) Hash of the attestation\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("cas_sendTrustAttestation", "\"0x1234...\" 75 1")
+            + HelpExampleRpc("cas_sendTrustAttestation", "\"0x1234...\", 75, 1")
+        );
+
+    std::string addrStr = request.params[0].get_str();
+    uint160 address = ParseAddress(addrStr);
+    int trustScore = request.params[1].get_int();
+    int destChainId = request.params[2].get_int();
+    
+    if (trustScore < 0 || trustScore > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Trust score must be 0-100");
+    }
+    
+    if (!CVM::g_crossChainBridge) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Cross-chain bridge not initialized");
+    }
+    
+    // Create attestation
+    CVM::TrustAttestation attestation;
+    attestation.address = address;
+    attestation.trustScore = static_cast<int16_t>(trustScore);
+    attestation.source = CVM::AttestationSource::CASCOIN_MAINNET;
+    attestation.timestamp = GetTime();
+    attestation.attestationHash = attestation.GetHash();
+    
+    // Send attestation
+    bool success = CVM::g_crossChainBridge->SendTrustAttestation(
+        static_cast<uint16_t>(destChainId), address, attestation);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", success);
+    result.pushKV("attestationHash", Uint256ToHex(attestation.attestationHash));
+    
+    return result;
 }

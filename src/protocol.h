@@ -263,6 +263,18 @@ extern const char *VALIDATOR_ATTESTATION;
 extern const char *BATCH_ATTESTATION_REQUEST;
 // Cascoin: Validator Attestation: Batch attestation response
 extern const char *BATCH_ATTESTATION_RESPONSE;
+// Cascoin: Contract State Sync: Request contract state
+extern const char *CONTRACTSTATEREQUEST;
+// Cascoin: Contract State Sync: Response with contract state
+extern const char *CONTRACTSTATERESPONSE;
+// Cascoin: Trust Graph Sync: Request trust graph state hash
+extern const char *TRUSTGRAPHSTATEREQ;
+// Cascoin: Trust Graph Sync: Response with trust graph state
+extern const char *TRUSTGRAPHSTATE;
+// Cascoin: Trust Graph Sync: Request trust graph delta since block
+extern const char *TRUSTGRAPHDELTAREQ;
+// Cascoin: Trust Graph Sync: Response with trust graph delta
+extern const char *TRUSTGRAPHDELTA;
 };
 
 /* Get a vector of all valid message types (see above) */

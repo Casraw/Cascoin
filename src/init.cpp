@@ -53,6 +53,8 @@
 #endif
 #include <warnings.h>
 #include <cvm/cvmdb.h>  // Cascoin: CVM Database
+#include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
+#include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -258,6 +260,12 @@ void Shutdown()
         pcoinsdbview.reset();
         pblocktree.reset();
     }
+    
+    // Shutdown cross-chain trust bridge
+    CVM::ShutdownCrossChainBridge();
+    
+    // Shutdown contract state sync
+    CVM::ShutdownContractStateSync();
     
     // Shutdown CVM database
     CVM::ShutdownCVMDatabase();
@@ -1669,6 +1677,20 @@ bool AppInitMain()
         return InitError(_("Failed to initialize CVM database"));
     }
     LogPrintf("CVM database initialized successfully\n");
+    
+    // Initialize cross-chain trust bridge
+    LogPrintf("Initializing cross-chain trust bridge...\n");
+    CVM::InitializeCrossChainBridge(CVM::g_cvmdb.get());
+    LogPrintf("Cross-chain trust bridge initialized successfully\n");
+    
+    // Initialize contract state synchronization
+    LogPrintf("Initializing contract state sync manager...\n");
+    if (!CVM::InitContractStateSync(CVM::g_cvmdb.get())) {
+        LogPrintf("Warning: Failed to initialize contract state sync manager\n");
+        // Non-fatal - node can still operate without state sync
+    } else {
+        LogPrintf("Contract state sync manager initialized successfully\n");
+    }
 
     // ********************************************************* Step 9: data directory maintenance
 

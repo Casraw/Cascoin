@@ -3,12 +3,11 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cvm/vote_manipulation_detector.h>
-#include <util/system.h>
-#include <logging.h>
+#include <util.h>
 #include <algorithm>
 #include <cmath>
 
-VoteManipulationDetector::VoteManipulationDetector(CVMDatabase& database)
+VoteManipulationDetector::VoteManipulationDetector(CVM::CVMDatabase& database)
     : db(database)
 {
     LoadFlaggedAddresses();
@@ -422,14 +421,14 @@ void VoteManipulationDetector::PruneReputationHistory(int keepBlocks)
 void VoteManipulationDetector::SaveFlaggedAddresses()
 {
     // Serialize flagged addresses to database
-    std::vector<unsigned char> data;
+    std::vector<uint8_t> data;
     data.reserve(flaggedAddresses.size() * 20);
     
     for (const auto& addr : flaggedAddresses) {
         data.insert(data.end(), addr.begin(), addr.end());
     }
     
-    db.Write("flagged_addresses", data);
+    db.WriteGeneric("flagged_addresses", data);
     
     LogPrint(BCLog::CVM, "VoteManipulationDetector: Saved %d flagged addresses to database\n",
              flaggedAddresses.size());
@@ -437,8 +436,8 @@ void VoteManipulationDetector::SaveFlaggedAddresses()
 
 void VoteManipulationDetector::LoadFlaggedAddresses()
 {
-    std::vector<unsigned char> data;
-    if (!db.Read("flagged_addresses", data)) {
+    std::vector<uint8_t> data;
+    if (!db.ReadGeneric("flagged_addresses", data)) {
         return; // No data
     }
     

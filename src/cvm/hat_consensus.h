@@ -15,6 +15,7 @@
 #include <cvm/trustgraph.h>
 #include <cvm/eclipse_sybil_protection.h>
 #include <cvm/vote_manipulation_detector.h>
+#include <cvm/trust_graph_manipulation_detector.h>
 #include <vector>
 #include <map>
 #include <set>
@@ -873,6 +874,13 @@ public:
     VoteManipulationDetector& GetVoteManipulationDetector() { return *m_voteManipulationDetector; }
     
     /**
+     * Get trust graph manipulation detector
+     * 
+     * @return Reference to trust graph manipulation detector
+     */
+    TrustGraphManipulationDetector& GetTrustGraphManipulationDetector() { return *m_trustGraphManipulationDetector; }
+    
+    /**
      * Analyze transaction for vote manipulation
      * 
      * @param txHash Transaction hash
@@ -887,6 +895,14 @@ public:
      * @return Manipulation detection result
      */
     ManipulationDetection AnalyzeAddressReputation(const uint160& address);
+    
+    /**
+     * Analyze address for trust graph manipulation
+     * 
+     * @param address Address to analyze
+     * @return Trust manipulation detection result
+     */
+    TrustManipulationResult AnalyzeTrustGraphManipulation(const uint160& address);
     
     /**
      * Process validation request from P2P network
@@ -1138,6 +1154,7 @@ private:
     TrustGraph& trustGraph;
     std::unique_ptr<EclipseSybilProtection> m_eclipseSybilProtection;
     std::unique_ptr<VoteManipulationDetector> m_voteManipulationDetector;
+    std::unique_ptr<TrustGraphManipulationDetector> m_trustGraphManipulationDetector;
     
     // Validator peer mapping
     struct ValidatorPeerInfo {
@@ -1163,6 +1180,32 @@ private:
     static constexpr uint32_t MAX_MESSAGES_PER_WINDOW = 100;  // Max 100 messages per minute
     
 public:
+    // ============================================================================
+    // Consensus Security Parameters
+    // ============================================================================
+    // These parameters are derived from security analysis (see task-22.1-security-analysis.md)
+    //
+    // MIN_VALIDATORS: Minimum number of validators required for consensus
+    // - Provides Byzantine fault tolerance for up to 30% malicious validators
+    // - Statistical significance: 95% confidence with ±31% margin of error
+    // - Recommendation: Consider increasing to 15-20 for tighter confidence intervals
+    //
+    // CONSENSUS_THRESHOLD: Required agreement percentage for consensus
+    // - 70% threshold provides BFT guarantee (n >= 3f + 1 where f = 3)
+    // - Balances security (higher threshold) vs liveness (lower threshold)
+    //
+    // WOT_COVERAGE_THRESHOLD: Minimum percentage of validators with WoT connection
+    // - Ensures at least 30% of validators can verify WoT component
+    // - Prevents acceptance based solely on non-WoT components
+    //
+    // SCORE_TOLERANCE: Maximum allowed difference between claimed and calculated scores
+    // - ±5 points accounts for legitimate measurement variance
+    // - Prevents false positives from minor calculation differences
+    //
+    // VALIDATION_TIMEOUT: Maximum time to wait for validator responses
+    // - 30 seconds balances responsiveness vs network latency tolerance
+    // ============================================================================
+    
     // Consensus parameters
     static constexpr int MIN_VALIDATORS = 10;
     static constexpr double CONSENSUS_THRESHOLD = 0.70;
