@@ -40,6 +40,23 @@ const char *CMPCTBLOCK="cmpctblock";
 const char *GETBLOCKTXN="getblocktxn";
 const char *BLOCKTXN="blocktxn";
 const char *RIALTO="rialto";    // Cascoin: Rialto
+const char *VALANNOUNCE="valannounce";    // Cascoin: HAT v2 Consensus
+const char *VALCHALLENGE="valchallenge";  // Cascoin: HAT v2 Consensus
+const char *VALRESPONSE="valresponse";    // Cascoin: HAT v2 Consensus
+const char *DAODISPUTE="daodispute";      // Cascoin: HAT v2 Consensus
+const char *DAORESOLUTION="daoresolution"; // Cascoin: HAT v2 Consensus
+const char *TRUSTATTEST="trustattest";    // Cascoin: Trust Attestation
+const char *VALIDATOR_ANNOUNCE="validatorannounce";  // Cascoin: Validator Attestation
+const char *ATTESTATION_REQUEST="attestreq";         // Cascoin: Validator Attestation
+const char *VALIDATOR_ATTESTATION="validatorattest"; // Cascoin: Validator Attestation
+const char *BATCH_ATTESTATION_REQUEST="batchattest"; // Cascoin: Validator Attestation
+const char *BATCH_ATTESTATION_RESPONSE="batchresp";  // Cascoin: Validator Attestation
+const char *CONTRACTSTATEREQUEST="cstatesync";       // Cascoin: Contract State Sync
+const char *CONTRACTSTATERESPONSE="cstateresp";      // Cascoin: Contract State Sync
+const char *TRUSTGRAPHSTATEREQ="tgstatereq";         // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHSTATE="tgstate";               // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHDELTAREQ="tgdeltareq";         // Cascoin: Trust Graph Sync
+const char *TRUSTGRAPHDELTA="tgdelta";               // Cascoin: Trust Graph Sync
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -73,6 +90,23 @@ const static std::string allNetMessageTypes[] = {
     NetMsgType::GETBLOCKTXN,
     NetMsgType::BLOCKTXN,
     NetMsgType::RIALTO,     // Cascoin: Rialto
+    NetMsgType::VALANNOUNCE,    // Cascoin: HAT v2 Consensus
+    NetMsgType::VALCHALLENGE,   // Cascoin: HAT v2 Consensus
+    NetMsgType::VALRESPONSE,    // Cascoin: HAT v2 Consensus
+    NetMsgType::DAODISPUTE,     // Cascoin: HAT v2 Consensus
+    NetMsgType::DAORESOLUTION,  // Cascoin: HAT v2 Consensus
+    NetMsgType::TRUSTATTEST,    // Cascoin: Trust Attestation
+    NetMsgType::VALIDATOR_ANNOUNCE,        // Cascoin: Validator Attestation
+    NetMsgType::ATTESTATION_REQUEST,       // Cascoin: Validator Attestation
+    NetMsgType::VALIDATOR_ATTESTATION,     // Cascoin: Validator Attestation
+    NetMsgType::BATCH_ATTESTATION_REQUEST, // Cascoin: Validator Attestation
+    NetMsgType::BATCH_ATTESTATION_RESPONSE,// Cascoin: Validator Attestation
+    NetMsgType::CONTRACTSTATEREQUEST,      // Cascoin: Contract State Sync
+    NetMsgType::CONTRACTSTATERESPONSE,     // Cascoin: Contract State Sync
+    NetMsgType::TRUSTGRAPHSTATEREQ,        // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHSTATE,           // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHDELTAREQ,        // Cascoin: Trust Graph Sync
+    NetMsgType::TRUSTGRAPHDELTA,           // Cascoin: Trust Graph Sync
 };
 const static std::vector<std::string> allNetMessageTypesVec(allNetMessageTypes, allNetMessageTypes+ARRAYLEN(allNetMessageTypes));
 

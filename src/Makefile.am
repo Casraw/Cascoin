@@ -18,7 +18,7 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS)
+BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS) $(SQLITE3_CFLAGS)
 
 BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
 BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
@@ -103,6 +103,9 @@ BITCOIN_CORE_H = \
   fs.h \
   httprpc.h \
   httpserver.h \
+  httpserver/cvmdashboard.h \
+  httpserver/cvmdashboard_html.h \
+  httpserver/cvmdashboard_evm.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -177,7 +180,60 @@ BITCOIN_CORE_H = \
   zmq/zmqnotificationinterface.h \
   zmq/zmqpublishnotifier.h \
   rialto.h \
-  beenft.h
+  beenft.h \
+  bctdb.h \
+  cvm/cvm.h \
+  cvm/vmstate.h \
+  cvm/opcodes.h \
+  cvm/contract.h \
+  cvm/cvmdb.h \
+  cvm/reputation.h \
+  cvm/softfork.h \
+  cvm/txbuilder.h \
+  cvm/blockprocessor.h \
+  cvm/trustgraph.h \
+  cvm/behaviormetrics.h \
+  cvm/graphanalysis.h \
+  cvm/securehat.h \
+  cvm/walletcluster.h \
+  cvm/cvmtx.h \
+  cvm/evmc_host.h \
+  cvm/trust_context.h \
+  cvm/bytecode_detector.h \
+  cvm/enhanced_vm.h \
+  cvm/evm_engine.h \
+  cvm/enhanced_storage.h \
+  cvm/sustainable_gas.h \
+  cvm/gas_allowance.h \
+  cvm/tx_priority.h \
+  cvm/gas_subsidy.h \
+  cvm/reputation_signature.h \
+  cvm/resource_manager.h \
+  cvm/cleanup_manager.h \
+  cvm/mempool_manager.h \
+  cvm/fee_calculator.h \
+  cvm/mempool_priority.h \
+  cvm/block_validator.h \
+  cvm/evm_rpc.h \
+  cvm/validator_keys.h \
+  cvm/execution_tracer.h \
+  cvm/validator_attestation.h \
+  cvm/vote_manipulation_detector.h \
+  cvm/trust_graph_manipulation_detector.h \
+  cvm/validator_compensation.h \
+  cvm/trust_attestation.h \
+  cvm/cross_chain_bridge.h \
+  cvm/contract_state_sync.h \
+  cvm/consensus_safety.h \
+  cvm/trust_graph_sync.h \
+  cvm/security_audit.h \
+  cvm/anomaly_detector.h \
+  cvm/security_rpc.h \
+  cvm/access_control_audit.h \
+  cvm/backward_compat.h \
+  cvm/dos_protection.h \
+  cvm/metrics.h \
+  cvm/graceful_degradation.h
 
 
 obj/build.h: FORCE
@@ -200,6 +256,7 @@ libbitcoin_server_a_SOURCES = \
   consensus/tx_verify.cpp \
   httprpc.cpp \
   httpserver.cpp \
+  httpserver/cvmdashboard.cpp \
   init.cpp \
   dbwrapper.cpp \
   merkleblock.cpp \
@@ -231,6 +288,67 @@ libbitcoin_server_a_SOURCES = \
   versionbits.cpp \
   rialto.cpp \
   beenft.cpp \
+  bctdb.cpp \
+  cvm/cvm.cpp \
+  cvm/vmstate.cpp \
+  cvm/opcodes.cpp \
+  cvm/contract.cpp \
+  cvm/cvmdb.cpp \
+  cvm/reputation.cpp \
+  cvm/softfork.cpp \
+  cvm/txbuilder.cpp \
+  cvm/blockprocessor.cpp \
+  cvm/trustgraph.cpp \
+  cvm/behaviormetrics.cpp \
+  cvm/graphanalysis.cpp \
+  cvm/securehat.cpp \
+  cvm/walletcluster.cpp \
+  cvm/cvmtx.cpp \
+  cvm/evmc_host.cpp \
+  cvm/trust_context.cpp \
+  cvm/bytecode_detector.cpp \
+  cvm/enhanced_vm.cpp \
+  cvm/evm_engine.cpp \
+  cvm/enhanced_storage.cpp \
+  cvm/sustainable_gas.cpp \
+  cvm/gas_allowance.cpp \
+  cvm/tx_priority.cpp \
+  cvm/gas_subsidy.cpp \
+  cvm/reputation_signature.cpp \
+  cvm/resource_manager.cpp \
+  cvm/cleanup_manager.cpp \
+  cvm/mempool_manager.cpp \
+  cvm/fee_calculator.cpp \
+  cvm/mempool_priority.cpp \
+  cvm/block_validator.cpp \
+  cvm/activation.cpp \
+  cvm/receipt.cpp \
+  cvm/address_index.cpp \
+  cvm/nonce_manager.cpp \
+  cvm/evm_rpc.cpp \
+  cvm/hat_consensus.cpp \
+  cvm/eclipse_sybil_protection.cpp \
+  cvm/consensus_validator.cpp \
+  cvm/trust_attestation.cpp \
+  cvm/cross_chain_bridge.cpp \
+  cvm/validator_attestation.cpp \
+  cvm/validator_keys.cpp \
+  cvm/execution_tracer.cpp \
+  cvm/validator_compensation.cpp \
+  cvm/vote_manipulation_detector.cpp \
+  cvm/trust_graph_manipulation_detector.cpp \
+  cvm/contract_state_sync.cpp \
+  cvm/consensus_safety.cpp \
+  cvm/trust_graph_sync.cpp \
+  cvm/security_audit.cpp \
+  cvm/anomaly_detector.cpp \
+  cvm/security_rpc.cpp \
+  cvm/access_control_audit.cpp \
+  cvm/backward_compat.cpp \
+  cvm/dos_protection.cpp \
+  cvm/metrics.cpp \
+  cvm/graceful_degradation.cpp \
+  rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_ZMQ
@@ -472,7 +590,11 @@ cascoind_LDADD = \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS)
+
+if ENABLE_EVMC
+cascoind_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 
 # bitcoin-cli binary #
 cascoin_cli_SOURCES = bitcoin-cli.cpp
@@ -491,6 +613,10 @@ cascoin_cli_LDADD = \
   $(LIBBITCOIN_CRYPTO)
 
 cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+
+if ENABLE_EVMC
+cascoin_cli_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoin-tx binary #
@@ -512,6 +638,10 @@ cascoin_tx_LDADD = \
   $(LIBSECP256K1)
 
 cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+
+if ENABLE_EVMC
+cascoin_tx_LDADD += -levmone -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoinconsensus library #
@@ -525,6 +655,10 @@ endif
 
 libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
+
+if ENABLE_EVMC
+libbitcoinconsensus_la_LIBADD += -levmone -levmc-loader -levmc-instructions
+endif
 libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 

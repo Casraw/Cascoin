@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cascoin CVM Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🔗 Cascoin CVM Dashboard</h1>
+                <p class="subtitle">Interactive Trust Network & Reputation System</p>
+            </div>
+            <div class="status" id="connectionStatus">
+                <span class="status-indicator"></span>
+                <span class="status-text">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">⭐</div>
+                <div class="stat-content">
+                    <h3>My Reputation</h3>
+                    <div class="stat-value" id="myReputation">--</div>
+                    <div class="stat-progress">
+                        <div class="stat-progress-bar" id="repProgress"></div>
+                    </div>
+                    <p class="stat-label">out of 100</p>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">🤝</div>
+                <div class="stat-content">
+                    <h3>Trust Relations</h3>
+                    <div class="stat-value" id="trustCount">--</div>
+                    <p class="stat-label">Active connections</p>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">🗳️</div>
+                <div class="stat-content">
+                    <h3>Votes Submitted</h3>
+                    <div class="stat-value" id="voteCount">--</div>
+                    <p class="stat-label">Reputation votes</p>
+                </div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-icon">🌐</div>
+                <div class="stat-content">
+                    <h3>Network Size</h3>
+                    <div class="stat-value" id="networkSize">--</div>
+                    <p class="stat-label">Total addresses</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="content-grid">
+            <!-- Trust Graph Visualization -->
+            <div class="card large">
+                <div class="card-header">
+                    <h2>🌐 Trust Network Graph</h2>
+                    <button class="btn-secondary" onclick="refreshGraph()">🔄 Refresh</button>
+                </div>
+                <div class="card-body">
+                    <div id="trustGraph" class="graph-container">
+                        <div class="graph-placeholder">
+                            <p>Loading trust network...</p>
+                            <p class="text-muted">Interactive graph will appear here</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="card">
+                <div class="card-header">
+                    <h2>📜 Recent Activity</h2>
+                </div>
+                <div class="card-body">
+                    <div id="recentActivity" class="activity-list">
+                        <div class="activity-placeholder">
+                            Loading recent transactions...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Statistics Table -->
+        <div class="card">
+            <div class="card-header">
+                <h2>📊 Network Statistics</h2>
+            </div>
+            <div class="card-body">
+                <table class="stats-table">
+                    <tbody>
+                        <tr>
+                            <td>Total Trust Edges</td>
+                            <td id="totalEdges">--</td>
+                        </tr>
+                        <tr>
+                            <td>Total Votes</td>
+                            <td id="totalVotes">--</td>
+                        </tr>
+                        <tr>
+                            <td>Active Disputes</td>
+                            <td id="activeDisputes">--</td>
+                        </tr>
+                        <tr>
+                            <td>Slashed Votes</td>
+                            <td id="slashedVotes">--</td>
+                        </tr>
+                        <tr>
+                            <td>Min Bond Amount</td>
+                            <td id="minBond">--</td>
+                        </tr>
+                        <tr>
+                            <td>Bond Per Vote Point</td>
+                            <td id="bondPerPoint">--</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Cascoin CVM Dashboard v1.0 | <a href="https://cascoin.org" target="_blank">cascoin.org</a></p>
+            <p class="text-muted">Last update: <span id="lastUpdate">Never</span></p>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
+

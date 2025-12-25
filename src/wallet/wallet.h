@@ -679,7 +679,10 @@ struct CBeeCreationTransactionInfo
     CAmount rewardsPaid;
     CAmount profit;
     int blocksFound;
-    int blocksLeft;
+    int blocksLeft;          // Blocks until expiration
+    int creationHeight;      // Block height when BCT was created
+    int maturityHeight;      // Block height when BCT becomes mature
+    int expirationHeight;    // Block height when BCT expires
 };
 
 // Cascoin: Hive: Mining optimisations: Bee range structure
@@ -1030,6 +1033,20 @@ public:
     bool CreateTransaction(const std::vector<CRecipient>& vecSend, CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRet, int& nChangePosInOut,
                            std::string& strFailReason, const CCoinControl& coin_control, bool sign = true);
     bool CommitTransaction(CWalletTx& wtxNew, CReserveKey& reservekey, CConnman* connman, CValidationState& state);
+
+    /**
+     * CVM/EVM Contract Transaction Creation
+     * Create transactions for deploying and calling smart contracts
+     */
+    bool CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
+                                            const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
+                                            CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                            const CCoinControl* coin_control = nullptr);
+    
+    bool CreateContractCallTransaction(const uint160& contractAddress, const std::vector<uint8_t>& callData,
+                                       uint64_t gasLimit, CAmount value, CWalletTx& wtxNew,
+                                       CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                       const CCoinControl* coin_control = nullptr);
 
     void ListAccountCreditDebit(const std::string& strAccount, std::list<CAccountingEntry>& entries);
     bool AddAccountingEntry(const CAccountingEntry&);

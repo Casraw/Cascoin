@@ -31,6 +31,7 @@
 #include <rialto.h>             // LitcoinCash: Rialto
 #include <net_processing.h>     // LitcoinCash: Rialto
 #include <beenft.h>             // Cascoin: Bee NFT System
+#include <bctdb.h>              // Cascoin: BCT persistent database
 
 #include <init.h>  // For StartShutdown
 
@@ -5645,9 +5646,95 @@ UniValue rescanblockchain(const JSONRPCRequest& request)
     else {
         throw JSONRPCError(RPC_MISC_ERROR, "Rescan failed. Potentially corrupted data files.");
     }
+    
+    // Cascoin: BCT: Also trigger BCT database rescan when wallet rescan completes
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (bctDb->isInitialized()) {
+        LogPrintf("BCT: Triggering BCT database rescan after wallet rescan (heights %d to %d)\n", 
+                  pindexStart->nHeight, stopBlock->nHeight);
+        // Use wallet-based rescan to only include BCTs that belong to this wallet
+        int bctsFound = bctDb->rescanFromWallet(pwallet, pindexStart->nHeight, stopBlock->nHeight);
+        LogPrintf("BCT: BCT database rescan complete, found %d BCTs\n", bctsFound);
+    }
+    
     UniValue response(UniValue::VOBJ);
     response.pushKV("start_height", pindexStart->nHeight);
     response.pushKV("stop_height", stopBlock->nHeight);
+    return response;
+}
+
+UniValue rescanbctdatabase(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() > 2) {
+        throw std::runtime_error(
+            "rescanbctdatabase ( start_height ) ( stop_height )\n"
+            "\nRescan the blockchain for BCT (Bee Creation Transaction) data.\n"
+            "This rebuilds the BCT database from the specified block range.\n"
+            "\nArguments:\n"
+            "1. start_height    (numeric, optional, default=0) block height where the rescan should start\n"
+            "2. stop_height     (numeric, optional) the last block height that should be scanned.\n"
+            "                   If none is provided it will rescan up to the tip at return time of this call.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"start_height\"     (numeric) The block height where the rescan started\n"
+            "  \"stop_height\"      (numeric) The block height where the rescan stopped\n"
+            "  \"bcts_found\"       (numeric) Number of BCTs found during rescan\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("rescanbctdatabase", "100000 120000")
+            + HelpExampleRpc("rescanbctdatabase", "100000, 120000")
+            );
+    }
+
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (!bctDb->isInitialized()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "BCT database is not initialized");
+    }
+
+    int startHeight = 0;
+    int stopHeight = -1;
+    int chainHeight = 0;
+
+    {
+        LOCK(cs_main);
+        chainHeight = chainActive.Height();
+
+        if (!request.params[0].isNull()) {
+            startHeight = request.params[0].get_int();
+            if (startHeight < 0 || startHeight > chainHeight) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid start_height");
+            }
+        }
+
+        if (!request.params[1].isNull()) {
+            stopHeight = request.params[1].get_int();
+            if (stopHeight < 0 || stopHeight > chainHeight) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid stop_height");
+            }
+            if (stopHeight < startHeight) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "stop_height must be greater than or equal to start_height");
+            }
+        } else {
+            stopHeight = chainHeight;
+        }
+    }
+
+    // Perform the rescan using wallet-based function to only include our BCTs
+    int bctsFound = bctDb->rescanFromWallet(pwallet, startHeight, stopHeight);
+    
+    if (bctsFound < 0) {
+        throw JSONRPCError(RPC_MISC_ERROR, "BCT rescan failed");
+    }
+
+    UniValue response(UniValue::VOBJ);
+    response.pushKV("start_height", startHeight);
+    response.pushKV("stop_height", stopHeight);
+    response.pushKV("bcts_found", bctsFound);
     return response;
 }
 
@@ -5749,6 +5836,7 @@ static const CRPCCommand commands[] =
 	{ "wallet",             "walletpassphrase_hive_rialto", &walletpassphrase_hive_rialto, {"passphrase"} },        // Cascoin: Rialto: Leaving old synonym for backwards compat
     { "wallet",             "removeprunedfunds",        &removeprunedfunds,        {"txid"} },
     { "wallet",             "rescanblockchain",         &rescanblockchain,         {"start_height", "stop_height"} },
+    { "wallet",             "rescanbctdatabase",        &rescanbctdatabase,        {"start_height", "stop_height"} },  // Cascoin: BCT database rescan
 
     { "generating",         "generate",                 &generate,                 {"nblocks","maxtries"} },
 };

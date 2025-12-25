@@ -20,7 +20,7 @@
 #include <QProgressBar>
 #include <QTimer>
 
-#include <qt/bctdatabase.h>
+#include <bctdb.h>  // For BCTDatabaseSQLite
 
 class WalletModel;
 class BeeNFTTableModel;
@@ -57,7 +57,7 @@ private:
     WalletModel *walletModel;
     BeeNFTTableModel *beeNFTModel;
     const PlatformStyle *platformStyle;
-    BCTDatabase *bctDatabase;
+    // BCTDatabaseSQLite is accessed via singleton - no member needed
 
     // UI Components
     QTabWidget *tabWidget;

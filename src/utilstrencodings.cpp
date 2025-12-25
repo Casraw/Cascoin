@@ -611,7 +611,11 @@ int64_t atoi64(const std::string& str)
 
 int atoi(const std::string& str)
 {
-    return atoi(str.c_str());
+    int32_t result = 0;
+    if (ParseInt32(str, &result)) {
+        return result;
+    }
+    return 0;
 }
 
 /** Upper bound for mantissa.

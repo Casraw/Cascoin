@@ -93,6 +93,8 @@ private:
     double beePopIndex;
     int lastGlobalCheckHeight;
     virtual void resizeEvent(QResizeEvent *event);
+    virtual void showEvent(QShowEvent *event);
+    virtual void hideEvent(QHideEvent *event);
     QCPItemText *graphMouseoverText;
     QCPItemTracer *graphTracerMature;
     QCPItemTracer *graphTracerImmature;
@@ -100,6 +102,7 @@ private:
     QSharedPointer<QCPAxisTickerGI> giTicker;
     QTimer *updateTimer;  // Timer for debouncing checkbox state changes
     QTimer *periodicRefreshTimer;  // Timer for periodic labyrinth refresh
+    QTimer *blockUpdateTimer = nullptr;  // Timer for debouncing block change updates
 
     void updateTotalCostDisplay();
     void initGraph();
