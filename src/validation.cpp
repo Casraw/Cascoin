@@ -2081,25 +2081,30 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
         static CVM::BlockValidator blockValidator;
         static bool blockValidatorInitialized = false;
         
-        // Initialize on first use
-        if (!blockValidatorInitialized) {
-            // TODO: Initialize with CVM database when available
+        // Initialize on first use with CVM database
+        if (!blockValidatorInitialized && CVM::g_cvmdb) {
+            blockValidator.Initialize(CVM::g_cvmdb.get());
             blockValidatorInitialized = true;
         }
         
-        // Validate CVM/EVM transactions in block
-        CVM::BlockValidationResult cvmResult = blockValidator.ValidateBlock(
-            block, state, pindex, view, chainparams.GetConsensus(), fJustCheck
-        );
-        
-        if (!cvmResult.success) {
-            return error("ConnectBlock(): CVM/EVM validation failed: %s", cvmResult.error);
-        }
-        
-        if (cvmResult.contractsExecuted > 0 || cvmResult.contractsDeployed > 0) {
-            LogPrint(BCLog::CVM, "ConnectBlock(): CVM/EVM validation succeeded - "
-                     "contracts executed: %d, deployed: %d, gas used: %d\n",
-                     cvmResult.contractsExecuted, cvmResult.contractsDeployed, cvmResult.totalGasUsed);
+        // Skip CVM validation if not initialized (pre-activation or db not ready)
+        if (!blockValidatorInitialized) {
+            LogPrint(BCLog::CVM, "ConnectBlock(): CVM validator not initialized, skipping CVM validation\n");
+        } else {
+            // Validate CVM/EVM transactions in block
+            CVM::BlockValidationResult cvmResult = blockValidator.ValidateBlock(
+                block, state, pindex, view, chainparams.GetConsensus(), fJustCheck
+            );
+            
+            if (!cvmResult.success) {
+                return error("ConnectBlock(): CVM/EVM validation failed: %s", cvmResult.error);
+            }
+            
+            if (cvmResult.contractsExecuted > 0 || cvmResult.contractsDeployed > 0) {
+                LogPrint(BCLog::CVM, "ConnectBlock(): CVM/EVM validation succeeded - "
+                         "contracts executed: %d, deployed: %d, gas used: %d\n",
+                         cvmResult.contractsExecuted, cvmResult.contractsDeployed, cvmResult.totalGasUsed);
+            }
         }
     }
 

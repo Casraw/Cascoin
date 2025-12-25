@@ -27,8 +27,16 @@ EnhancedVM::EnhancedVM(CVMDatabase* db, std::shared_ptr<TrustContext> trust_ctx)
 #ifdef ENABLE_EVMC
     // Initialize EVMC host and EVM engine if available
     if (trust_context) {
-        evmc_host = std::make_unique<EVMCHost>(database, *trust_context);
-        evm_engine = std::make_unique<EVMEngine>(database, trust_context);
+        try {
+            evmc_host = std::make_unique<EVMCHost>(database, *trust_context);
+            evm_engine = std::make_unique<EVMEngine>(database, trust_context);
+            LogPrint(BCLog::CVM, "EnhancedVM: EVM engine initialized successfully\n");
+        } catch (const std::exception& e) {
+            LogPrintf("EnhancedVM: EVM engine initialization failed: %s (EVM features disabled)\n", e.what());
+            evmc_host.reset();
+            evm_engine.reset();
+            // Continue without EVM - CVM will still work
+        }
     }
 #endif
     
