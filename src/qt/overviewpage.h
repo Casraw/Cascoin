@@ -46,6 +46,7 @@ Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
     void beeButtonClicked();                    // Cascoin: Hive
     void outOfSyncWarningClicked();
+    void cvmDashboardButtonClicked();           // Cascoin: CVM Dashboard
 
 private:
     Ui::OverviewPage *ui;
@@ -71,6 +72,7 @@ private Q_SLOTS:
     void on_beeButton_clicked();                // Cascoin: Hive: Bee button handler
     void updateHiveSummary();                   // Cascoin: Hive: Update hive summary
     void on_unlockWalletButton_clicked();       // Cascoin: Rialto: Unlock wallet button handler
+    void on_cvmDashboardButton_clicked();       // Cascoin: CVM: Open dashboard in browser
 };
 
 #endif // BITCOIN_QT_OVERVIEWPAGE_H

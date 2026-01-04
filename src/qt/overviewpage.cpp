@@ -17,8 +17,15 @@
 #include <qt/hivetablemodel.h>  // Cascoin: Hive
 #include <qt/hivedialog.h>      // Cascoin: Hive: For formatLargeNoLocale()
 
+#include <util.h>             // Cascoin: CVM: For gArgs
+#include <chainparamsbase.h>  // Cascoin: CVM: For BaseParams()
+
 #include <QAbstractItemDelegate>
 #include <QPainter>
+#include <QMessageBox>        // Cascoin: CVM: For dialogs
+#include <QPushButton>        // Cascoin: CVM: For custom buttons
+#include <QClipboard>         // Cascoin: CVM: For copying URL
+#include <QApplication>       // Cascoin: CVM: For clipboard access
 
 #define DECORATION_SIZE 54
 #define NUM_ITEMS 5
@@ -364,4 +371,61 @@ void OverviewPage::on_beeButton_clicked() {
 void OverviewPage::on_unlockWalletButton_clicked() {
     if(walletModel)
         walletModel->requestUnlock(true);
+}
+
+// Cascoin: CVM: Handle CVM Dashboard button click
+void OverviewPage::on_cvmDashboardButton_clicked() {
+    // Debug: Log button click
+    LogPrintf("CVM Dashboard button clicked\n");
+    
+    // Check if dashboard is enabled
+    if (!gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard is disabled in config\n");
+        QMessageBox::warning(this, tr("CVM Dashboard"),
+            tr("The CVM Dashboard is currently disabled.\n\n"
+               "To enable it, add the following line to your cascoin.conf:\n"
+               "cvmdashboard=1\n\n"
+               "Then restart the wallet."),
+            QMessageBox::Ok);
+        return;
+    }
+    
+    // Get RPC port from settings
+    int rpcPort = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+    LogPrintf("Using RPC port: %d\n", rpcPort);
+    
+    // Build dashboard URL
+    QString dashboardUrl = QString("http://localhost:%1/dashboard/").arg(rpcPort);
+    LogPrintf("Dashboard URL: %s\n", dashboardUrl.toStdString());
+    
+    // Show URL in a dialog with copy functionality
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle(tr("CVM Dashboard"));
+    msgBox.setIcon(QMessageBox::Information);
+    msgBox.setText(tr("CVM Dashboard URL:"));
+    msgBox.setInformativeText(tr("Copy this URL and open it in your browser:\n\n%1").arg(dashboardUrl));
+    msgBox.setDetailedText(tr("The CVM Dashboard provides:\n"
+                             "• Smart contract deployment and management\n"
+                             "• Contract execution and debugging\n"
+                             "• Web-of-Trust reputation system\n"
+                             "• Transaction and block explorer\n"
+                             "• Real-time network statistics"));
+    
+    // Add copy button
+    QPushButton *copyButton = msgBox.addButton(tr("Copy URL"), QMessageBox::ActionRole);
+    msgBox.addButton(QMessageBox::Ok);
+    
+    msgBox.exec();
+    
+    // Handle copy button click
+    if (msgBox.clickedButton() == copyButton) {
+        QClipboard *clipboard = QApplication::clipboard();
+        clipboard->setText(dashboardUrl);
+        LogPrintf("Dashboard URL copied to clipboard\n");
+        
+        // Show confirmation
+        QMessageBox::information(this, tr("CVM Dashboard"), 
+            tr("URL copied to clipboard!\n\nPaste it into your browser address bar."),
+            QMessageBox::Ok);
+    }
 }

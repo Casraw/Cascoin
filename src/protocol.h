@@ -240,6 +240,45 @@ extern const char *BLOCKTXN;
 
 // Cascoin: Rialto: A Rialto message, sent in response to a getdata request.
 extern const char *RIALTO;
+
+// Cascoin: HAT v2 Consensus: Validator address announcement
+extern const char *VALANNOUNCE;
+// Cascoin: HAT v2 Consensus: Validation challenge message
+extern const char *VALCHALLENGE;
+// Cascoin: HAT v2 Consensus: Validation response message
+extern const char *VALRESPONSE;
+// Cascoin: HAT v2 Consensus: DAO dispute message
+extern const char *DAODISPUTE;
+// Cascoin: HAT v2 Consensus: DAO resolution message
+extern const char *DAORESOLUTION;
+// Cascoin: Trust Attestation: Cross-chain trust score update
+extern const char *TRUSTATTEST;
+// Cascoin: Validator Attestation: Validator eligibility announcement
+extern const char *VALIDATOR_ANNOUNCE;
+// Cascoin: Validator Attestation: Attestation request
+extern const char *ATTESTATION_REQUEST;
+// Cascoin: Validator Attestation: Validator attestation
+extern const char *VALIDATOR_ATTESTATION;
+// Cascoin: Validator Attestation: Batch attestation request
+extern const char *BATCH_ATTESTATION_REQUEST;
+// Cascoin: Validator Attestation: Batch attestation response
+extern const char *BATCH_ATTESTATION_RESPONSE;
+// Cascoin: Contract State Sync: Request contract state
+extern const char *CONTRACTSTATEREQUEST;
+// Cascoin: Contract State Sync: Response with contract state
+extern const char *CONTRACTSTATERESPONSE;
+// Cascoin: Trust Graph Sync: Request trust graph state hash
+extern const char *TRUSTGRAPHSTATEREQ;
+// Cascoin: Trust Graph Sync: Response with trust graph state
+extern const char *TRUSTGRAPHSTATE;
+// Cascoin: Trust Graph Sync: Request trust graph delta since block
+extern const char *TRUSTGRAPHDELTAREQ;
+// Cascoin: Trust Graph Sync: Response with trust graph delta
+extern const char *TRUSTGRAPHDELTA;
+// Cascoin: Automatic Validator System: Validation task broadcast
+extern const char *VALTASK;
+// Cascoin: Automatic Validator System: Validation response broadcast
+extern const char *VALRESP;
 };
 
 /* Get a vector of all valid message types (see above) */

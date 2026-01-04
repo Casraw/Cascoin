@@ -56,12 +56,17 @@ public:
     bool setData(const QModelIndex &index, const QVariant &value, int role);
     QVariant headerData(int section, Qt::Orientation orientation, int role) const;
 
+Q_SIGNALS:
+    void progressChanged(int progress, const QString& message);  // Progress feedback for long operations
+
 public Q_SLOTS:
     void sort(int column, Qt::SortOrder order = Qt::AscendingOrder);
+    void onDatabaseUpdated();  // Slot to handle BCTDatabaseSQLite updates
 
 private:
     static QString secondsToString(qint64 seconds);
     void addBCT(const CBeeCreationTransactionInfo &bct);
+    void loadFromSQLiteDatabase(bool includeDeadBees);  // Load data from BCTDatabaseSQLite
 
     const PlatformStyle *platformStyle;
     WalletModel *walletModel;
@@ -73,6 +78,7 @@ private:
     CAmount cost, rewardsPaid, profit;
     bool updateInProgress;  // Flag to prevent concurrent updates
     bool pendingUpdate;     // If an update was requested while one is running
+    bool lastIncludeDeadBees;  // Remember last filter setting for refresh
 };
 
 #endif // BITCOIN_QT_HIVETABLEMODEL_H

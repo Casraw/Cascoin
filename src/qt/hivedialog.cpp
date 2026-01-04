@@ -24,13 +24,16 @@
 #include <qt/walletmodel.h>
 #include <qt/tinypie.h>
 #include <qt/qcustomplot.h>
+#include <bctdb.h>  // For BCTDatabaseSQLite summary
 
 #include <qt/optionsdialog.h> // Cascoin: Hive: Mining optimisations
 
 #include <QAction>
 #include <QCursor>
+#include <QHideEvent>
 #include <QMessageBox>
 #include <QScrollBar>
+#include <QShowEvent>
 #include <QTextDocument>
 
 #include <util.h>
@@ -74,10 +77,11 @@ HiveDialog::HiveDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     connect(updateTimer, SIGNAL(timeout()), this, SLOT(onUpdateTimerTimeout()));
 
     // Initialize periodic refresh timer to ensure labyrinth stays current
+    // Only refresh when dialog is visible to avoid unnecessary background work
     periodicRefreshTimer = new QTimer(this);
-    periodicRefreshTimer->setInterval(60000); // 60 seconds
+    periodicRefreshTimer->setInterval(120000); // 120 seconds (reduced frequency)
     connect(periodicRefreshTimer, SIGNAL(timeout()), this, SLOT(onPeriodicRefresh()));
-    periodicRefreshTimer->start(); // Start the periodic refresh timer
+    // Don't start automatically - will be started when dialog becomes visible
 
     initGraph();
     ui->beePopGraph->hide();
@@ -88,7 +92,8 @@ void HiveDialog::setClientModel(ClientModel *_clientModel) {
 
     if (_clientModel) {
         connect(_clientModel, SIGNAL(numBlocksChanged(int,QDateTime,double,bool)), this, SLOT(onBlocksChanged()));
-        connect(_clientModel, SIGNAL(numConnectionsChanged(int)), this, SLOT(updateData()));    // TODO: This may be too expensive to call here, and the only point is to update The Labyrinth status icon.
+        // Removed: numConnectionsChanged was triggering expensive updateData() calls
+        // The status icon update is now handled more efficiently in updateHiveSummary()
     }
 }
 
@@ -241,6 +246,19 @@ void HiveDialog::updateHiveSummary() {
 
     model->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
 
+    // IMPORTANT: Always get total rewards from database (including expired BCTs)
+    // This ensures the summary shows all rewards even when expired BCTs are hidden in the table
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (bctDb && bctDb->isInitialized()) {
+        BCTSummary dbSummary = bctDb->getSummary();
+        // Use database totals for rewards-related fields (includes all BCTs)
+        blocksFound = dbSummary.blocksFound;
+        rewardsPaid = dbSummary.totalRewards;
+        cost = dbSummary.totalCost;
+        profit = dbSummary.totalProfit;
+        dead = dbSummary.expiredCount;
+    }
+
     // Update labels
     setAmountField(ui->rewardsPaidLabel, rewardsPaid);
     setAmountField(ui->costLabel, cost);
@@ -340,6 +358,11 @@ void HiveDialog::onUpdateTimerTimeout() {
 }
 
 void HiveDialog::onPeriodicRefresh() {
+    // Only refresh if dialog is visible to avoid unnecessary background work
+    if (!isVisible()) {
+        return;
+    }
+    
     // Periodic refresh to ensure labyrinth stays current even if some notifications are missed
     if (model && model->getHiveTableModel()) {
         model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
@@ -387,13 +410,28 @@ void HiveDialog::on_createBeesButton_clicked() {
 
 // Cascoin: Auto-update labyrinth when new blocks are found
 void HiveDialog::onBlocksChanged() {
-    // Update both the global summary and the hive table data
-    updateData();
-    
-    // Also refresh the hive table to reflect any status changes (immature->mature, etc.)
-    if (model && model->getHiveTableModel()) {
-        model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+    // Only update if this dialog is currently visible to avoid unnecessary work
+    if (!isVisible()) {
+        return;
     }
+    
+    // Use debounced update to prevent rapid successive calls from blocking UI
+    // The updateTimer already handles debouncing, reuse it for block changes too
+    if (!blockUpdateTimer) {
+        blockUpdateTimer = new QTimer(this);
+        blockUpdateTimer->setSingleShot(true);
+        blockUpdateTimer->setInterval(500); // 500ms debounce for block updates
+        connect(blockUpdateTimer, &QTimer::timeout, this, [this]() {
+            // Update global summary (lightweight)
+            updateData();
+            
+            // Refresh hive table in background (already threaded in updateBCTs)
+            if (model && model->getHiveTableModel()) {
+                model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+            }
+        });
+    }
+    blockUpdateTimer->start();
 }
 
 // Cascoin: Hive: Mining optimisations: Shortcut to Hive mining options
@@ -536,4 +574,20 @@ void HiveDialog::onMouseMove(QMouseEvent *event) {
 void HiveDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
     columnResizingFixer->stretchColumnWidth(HiveTableModel::Rewards);
+}
+
+void HiveDialog::showEvent(QShowEvent *event) {
+    QDialog::showEvent(event);
+    // Start periodic refresh when dialog becomes visible
+    if (periodicRefreshTimer && !periodicRefreshTimer->isActive()) {
+        periodicRefreshTimer->start();
+    }
+}
+
+void HiveDialog::hideEvent(QHideEvent *event) {
+    QDialog::hideEvent(event);
+    // Stop periodic refresh when dialog is hidden to save resources
+    if (periodicRefreshTimer && periodicRefreshTimer->isActive()) {
+        periodicRefreshTimer->stop();
+    }
 }

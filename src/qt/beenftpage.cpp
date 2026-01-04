@@ -34,21 +34,15 @@ BeeNFTPage::BeeNFTPage(const PlatformStyle *_platformStyle, QWidget *parent) :
     QWidget(parent),
     walletModel(0),
     beeNFTModel(0),
-    platformStyle(_platformStyle),
-    bctDatabase(new BCTDatabase())
+    platformStyle(_platformStyle)
 {
-    // Set as global BCTDatabase instance for synchronization with wallet data
-    BCTDatabase::setInstance(bctDatabase);
+    // BCTDatabaseSQLite is accessed via singleton - no initialization needed here
     setupUI();
 }
 
 BeeNFTPage::~BeeNFTPage()
 {
-    // Clear global instance before deleting
-    if (BCTDatabase::instance() == bctDatabase) {
-        BCTDatabase::setInstance(nullptr);
-    }
-    delete bctDatabase;
+    // BCTDatabaseSQLite is a singleton - no cleanup needed here
 }
 
 void BeeNFTPage::setModel(WalletModel *_walletModel)
@@ -377,31 +371,21 @@ void BeeNFTPage::loadAvailableMice()
 
 void BeeNFTPage::loadAvailableMiceFromWallet()
 {
-    // Load BCTs from local database (much faster than blockchain sync)
+    // Load BCTs from SQLite database (much faster than blockchain sync)
     
     mouseSelectionCombo->clear();
     mouseSelectionCombo->addItem(tr("Select a mouse to tokenize..."), "");
     
-    if (!bctDatabase) {
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (!bctDb || !bctDb->isInitialized()) {
         mouseSelectionCombo->addItem(tr("BCT database not available"), "");
         return;
     }
     
-    // Initialize database asynchronously to avoid blocking GUI
-    // Don't initialize here, use cached data or show loading message
-    
-    // Try to load from cache file first (fast) - simplified without try-catch
-    if (!bctDatabase->loadFromFile()) {
-        // If no cache exists, show placeholder and setup lazy loading
-        mouseSelectionCombo->addItem(tr("BCT database loading... Please wait"), "");
-        mouseSelectionCombo->addItem(tr("(Database will be ready shortly)"), "");
-        return;
-    }
+    // Load all mature BCTs from SQLite database
+    std::vector<BCTRecord> bctList = bctDb->getBCTsByStatus("mature");
         
-    // Load all BCTs from local database cache
-    QList<BCTDatabase::BCTInfo> bctList = bctDatabase->getAllBCTs();
-        
-    if (bctList.isEmpty()) {
+    if (bctList.empty()) {
         // Just show placeholder - don't create sample data on startup
         mouseSelectionCombo->addItem(tr("No BCT data available yet"), "");
         mouseSelectionCombo->addItem(tr("(Data will load as blockchain syncs)"), "");
@@ -411,32 +395,24 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
     int totalAvailableMice = 0;
     int matureBCTs = 0;
     
-    for (const BCTDatabase::BCTInfo& bct : bctList) {
-        // Only show mature BCTs
-        if (bct.status != "mature") continue;
-        
+    for (const BCTRecord& bct : bctList) {
         matureBCTs++;
         
-        // Add each individual mouse from this BCT
-        for (int mouseIndex = 0; mouseIndex < bct.availableMice.size(); mouseIndex++) {
-            QString mouseId = bct.availableMice[mouseIndex];
-            QString displayText = QString("Mouse #%1 in BCT %2 (ID: %3)")
-                               .arg(mouseIndex)
-                               .arg(bct.txid.left(8) + "...")
-                               .arg(mouseId.left(8) + "...");
-            
-            // Store data in format "bctId:mouseIndex" for tokenization
-            QString mouseData = QString("%1:%2").arg(bct.txid).arg(mouseIndex);
-            mouseSelectionCombo->addItem(displayText, mouseData);
-            totalAvailableMice++;
-        }
+        // Add BCT entry with bee count
+        QString displayText = QString("BCT %1 — %2 mice available (mature)")
+                           .arg(QString::fromStdString(bct.txid).left(8) + "...")
+                           .arg(bct.beeCount);
+        
+        // Store BCT txid for tokenization
+        mouseSelectionCombo->addItem(displayText, QString::fromStdString(bct.txid));
+        totalAvailableMice += bct.beeCount;
     }
     
     // Insert summary at top
     if (totalAvailableMice > 0) {
         mouseSelectionCombo->insertItem(1, tr("--- %1 Available Mice from %2 Mature BCTs ---").arg(totalAvailableMice).arg(matureBCTs), "");
         mouseSelectionCombo->insertSeparator(2);
-        mouseSelectionCombo->insertItem(3, tr("(Using local BCT database - instant loading)"), "");
+        mouseSelectionCombo->insertItem(3, tr("(Using SQLite BCT database - instant loading)"), "");
         mouseSelectionCombo->insertSeparator(4);
     } else {
         mouseSelectionCombo->clear();
@@ -446,37 +422,9 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
 
 void BeeNFTPage::loadSampleBCTData()
 {
-    if (!bctDatabase) return;
-    
-    // Create sample BCT data quickly for immediate GUI response
-    QStringList sampleTxids = {
-        "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789a",
-        "b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789ab",
-        "c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789abc",
-        "d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789abcd",
-        "e5f67890abcdef1234567890abcdef1234567890abcdef123456789abcde",
-        "f67890abcdef1234567890abcdef1234567890abcdef123456789abcdef",
-        "67890abcdef1234567890abcdef1234567890abcdef123456789abcdef6",
-        "7890abcdef1234567890abcdef1234567890abcdef123456789abcdef67"
-    };
-    
-    for (int i = 0; i < sampleTxids.size(); ++i) {
-        BCTDatabase::BCTInfo bct;
-        bct.txid = sampleTxids[i];
-        bct.status = "mature";
-        bct.totalMice = (i % 8) + 1; // 1-8 mice per BCT  
-        bct.blocksLeft = 0;
-        bct.honeyAddress = QString("CAddr%1Sample123...").arg(i + 1);
-        bct.timestamp = QDateTime::currentSecsSinceEpoch() - (i * 3600);
-        
-        // Generate available mice for this BCT
-        for (int mouseIndex = 0; mouseIndex < bct.totalMice; ++mouseIndex) {
-            QString mouseId = QString("%1:%2").arg(bct.txid).arg(mouseIndex);
-            bct.availableMice.append(mouseId);
-        }
-        
-        bctDatabase->addBCT(bct);
-    }
+    // Sample data is no longer needed - BCTDatabaseSQLite is populated from blockchain
+    // This function is kept for compatibility but does nothing
+    LogPrintf("BeeNFTPage::loadSampleBCTData() - Sample data not needed with SQLite database\n");
 }
 
 void BeeNFTPage::tokenizeBee()

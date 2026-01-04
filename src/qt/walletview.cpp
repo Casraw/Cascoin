@@ -33,6 +33,7 @@
 #include <QHBoxLayout>
 #include <QProgressDialog>
 #include <QPushButton>
+#include <QTimer>               // Cascoin: For deferred UI updates
 #include <QVBoxLayout>
 #include <QInputDialog>         // Cascoin: Key import helper
 
@@ -182,10 +183,18 @@ void WalletView::processNewTransaction(const QModelIndex& parent, int start, int
     if (!ttm || ttm->processingQueuedTransactions())
         return;
 
+    // Only show notifications for transactions from the last hour
+    // This prevents notification spam when the node was offline for a while
+    QModelIndex index = ttm->index(start, 0, parent);
+    QDateTime txDateTime = ttm->data(index, TransactionTableModel::DateRole).toDateTime();
+    QDateTime oneHourAgo = QDateTime::currentDateTime().addSecs(-3600);
+    
+    if (txDateTime < oneHourAgo)
+        return;
+
     QString date = ttm->index(start, TransactionTableModel::Date, parent).data().toString();
     qint64 amount = ttm->index(start, TransactionTableModel::Amount, parent).data(Qt::EditRole).toULongLong();
     QString type = ttm->index(start, TransactionTableModel::Type, parent).data().toString();
-    QModelIndex index = ttm->index(start, 0, parent);
     QString address = ttm->data(index, TransactionTableModel::AddressRole).toString();
     QString label = ttm->data(index, TransactionTableModel::LabelRole).toString();
 
@@ -200,8 +209,11 @@ void WalletView::gotoOverviewPage()
 // Cascoin: Hive page
 void WalletView::gotoHivePage()
 {
-    hivePage->updateData();
     setCurrentWidget(hivePage);
+    // Defer updateData() to allow the UI to render first, preventing perceived lag
+    QTimer::singleShot(50, hivePage, [this]() {
+        hivePage->updateData();
+    });
 }
 
 // Cascoin: Bee NFT page
