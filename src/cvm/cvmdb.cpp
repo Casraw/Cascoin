@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cvm/cvmdb.h>
+#include <cvm/validator_attestation.h>
 #include <util.h>
 #include <clientversion.h>
 
@@ -419,6 +420,110 @@ bool CVMDatabase::GetValidatorParticipation(const uint256& txHash, TransactionVa
 bool CVMDatabase::HasValidatorParticipation(const uint256& txHash) {
     TransactionValidationRecord record;
     return ReadValidatorParticipation(txHash, record);
+}
+
+// Validator eligibility record persistence
+bool CVMDatabase::WriteValidatorRecord(const ValidatorEligibilityRecord& record) {
+    // Key format: DB_VALIDATOR_RECORD + "validator_" + address.ToString()
+    // This matches the key format used in AutomaticValidatorManager::StoreEligibilityRecord
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + record.validatorAddress.ToString();
+    
+    // Serialize using CDataStream with SER_DISK
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << record;
+    
+    // Convert to vector for storage
+    std::vector<uint8_t> data(ss.begin(), ss.end());
+    
+    bool result = db->Write(dbKey, data);
+    
+    if (result) {
+        LogPrint(BCLog::CVM, "CVMDatabase: Wrote validator record for %s\n",
+                 record.validatorAddress.ToString());
+    } else {
+        LogPrintf("CVMDatabase: Failed to write validator record for %s\n",
+                  record.validatorAddress.ToString());
+    }
+    
+    return result;
+}
+
+bool CVMDatabase::ReadValidatorRecord(const uint160& address, ValidatorEligibilityRecord& record) {
+    // Key format: DB_VALIDATOR_RECORD + "validator_" + address.ToString()
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + address.ToString();
+    
+    std::vector<uint8_t> data;
+    if (!db->Read(dbKey, data)) {
+        return false;
+    }
+    
+    // Deserialize using CDataStream with SER_DISK
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> record;
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("CVMDatabase: Failed to deserialize validator record for %s: %s\n",
+                  address.ToString(), e.what());
+        return false;
+    }
+}
+
+bool CVMDatabase::IterateValidatorRecords(std::function<bool(const ValidatorEligibilityRecord&)> callback) {
+    // Create iterator
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    
+    // Seek to the first validator record key
+    // Key prefix: DB_VALIDATOR_RECORD + "validator_"
+    std::string prefix = std::string(1, DB_VALIDATOR_RECORD) + "validator_";
+    pcursor->Seek(prefix);
+    
+    int count = 0;
+    int errors = 0;
+    
+    while (pcursor->Valid()) {
+        // Get the key
+        std::string key;
+        if (!pcursor->GetKey(key)) {
+            break;
+        }
+        
+        // Check if key starts with our prefix
+        if (key.compare(0, prefix.length(), prefix) != 0) {
+            break;  // No more validator records
+        }
+        
+        // Get the value
+        std::vector<uint8_t> data;
+        if (pcursor->GetValue(data)) {
+            try {
+                // Deserialize the record
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ValidatorEligibilityRecord record;
+                ss >> record;
+                
+                // Call the callback
+                if (!callback(record)) {
+                    // Callback returned false, stop iteration
+                    break;
+                }
+                count++;
+            } catch (const std::exception& e) {
+                LogPrintf("CVMDatabase: Failed to deserialize validator record: %s\n", e.what());
+                errors++;
+            }
+        }
+        
+        pcursor->Next();
+    }
+    
+    LogPrint(BCLog::CVM, "CVMDatabase: Iterated %d validator records (%d errors)\n", count, errors);
+    return errors == 0;
+}
+
+bool CVMDatabase::DeleteValidatorRecord(const uint160& address) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + address.ToString();
+    return db->Erase(dbKey);
 }
 
 } // namespace CVM

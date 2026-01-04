@@ -212,6 +212,55 @@ public:
     );
     
     /**
+     * Resolve contract's P2SH address for value transfer
+     * 
+     * Generates a P2SH script that can receive funds for a contract.
+     * The script format is: OP_HASH160 <Hash160(contractScript)> OP_EQUAL
+     * 
+     * This enables value transfers to contracts by creating a standard
+     * P2SH output that the contract can spend.
+     * 
+     * Requirements: 12.1
+     * 
+     * @param contractAddress The contract's uint160 address
+     * @param scriptPubKeyOut Output parameter for the P2SH scriptPubKey
+     * @return true if P2SH script was successfully generated
+     */
+    static bool ResolveContractP2SH(
+        const uint160& contractAddress,
+        CScript& scriptPubKeyOut
+    );
+    
+    /**
+     * Build DAO slash transaction
+     * 
+     * Constructs a transaction that spends a bond output to a slash recipient.
+     * This is used when the DAO votes to slash a malicious actor's bond.
+     * 
+     * The transaction requires DAO multisig authorization to spend the bond.
+     * 
+     * Requirements: 12.2
+     * 
+     * @param bondTxHash Hash of the transaction containing the bond output
+     * @param bondOutputIndex Index of the bond output in the transaction
+     * @param slashRecipient Address to receive the slashed funds
+     * @param slashAmount Amount to slash (can be partial)
+     * @param daoSignatures Vector of DAO member signatures authorizing the slash
+     * @param txOut Output parameter for the constructed transaction
+     * @param error Output parameter for error message if fails
+     * @return true if transaction was successfully built
+     */
+    static bool BuildDAOSlashTransaction(
+        const uint256& bondTxHash,
+        uint32_t bondOutputIndex,
+        const uint160& slashRecipient,
+        CAmount slashAmount,
+        const std::vector<std::vector<uint8_t>>& daoSignatures,
+        CMutableTransaction& txOut,
+        std::string& error
+    );
+    
+    /**
      * Sign a CVM transaction
      * 
      * @param wallet Wallet with keys

@@ -101,6 +101,13 @@ public:
     /**
      * Validate gas subsidy for transaction
      * 
+     * Validates:
+     * - Subsidy amount is within bounds (max 50% of gas used)
+     * - Reputation-based calculation is correct
+     * - Operation is marked as beneficial
+     * - Minimum reputation requirement (50+)
+     * - Block height is valid
+     * 
      * @param tx Transaction
      * @param subsidy Subsidy to validate
      * @return true if valid
@@ -108,7 +115,7 @@ public:
     bool ValidateGasSubsidy(
         const CTransaction& tx,
         const GasSubsidyTracker::SubsidyRecord& subsidy
-    );
+    ) const;
     
     // ===== Priority Management =====
     

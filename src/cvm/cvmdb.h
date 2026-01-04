@@ -14,6 +14,11 @@
 #include <map>
 #include <memory>
 #include <vector>
+#include <functional>
+
+// Forward declaration for ValidatorEligibilityRecord (defined in validator_attestation.h)
+// Note: This struct is NOT in the CVM namespace
+struct ValidatorEligibilityRecord;
 
 namespace CVM {
 
@@ -48,6 +53,7 @@ static const char DB_CONTRACT_LIST = 'L';     // List of all contracts
 static const char DB_RECEIPT = 'R';           // Transaction receipt: 'R' + txhash -> TransactionReceipt
 static const char DB_RECEIPT_BLOCK = 'X';     // Block receipts index: 'X' + blockhash -> vector<txhash>
 static const char DB_VALIDATOR_PARTICIPATION = 'V';  // Validator participation: 'V' + txhash -> TransactionValidationRecord
+static const char DB_VALIDATOR_RECORD = 'E';  // Validator eligibility: 'E' + address -> ValidatorEligibilityRecord
 
 /**
  * CVMDatabase - LevelDB-backed storage for CVM state
@@ -112,6 +118,12 @@ public:
     bool ReadValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record);
     bool GetValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record);
     bool HasValidatorParticipation(const uint256& txHash);
+    
+    // Validator eligibility record persistence (for validator pool management)
+    bool WriteValidatorRecord(const ValidatorEligibilityRecord& record);
+    bool ReadValidatorRecord(const uint160& address, ValidatorEligibilityRecord& record);
+    bool IterateValidatorRecords(std::function<bool(const ValidatorEligibilityRecord&)> callback);
+    bool DeleteValidatorRecord(const uint160& address);
     
     // Generic key-value storage (for Web-of-Trust and other extensions)
     bool WriteGeneric(const std::string& key, const std::vector<uint8_t>& value);

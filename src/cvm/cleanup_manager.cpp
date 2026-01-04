@@ -4,6 +4,7 @@
 
 #include <cvm/cleanup_manager.h>
 #include <cvm/cvmdb.h>
+#include <cvm/contract.h>
 #include <cvm/enhanced_storage.h>
 #include <cvm/reputation.h>
 #include <util.h>
@@ -272,6 +273,12 @@ CleanupManager::CleanupStats CleanupManager::RunGarbageCollection(uint64_t curre
         m_storage->CleanupTrustCache(86400);  // 24 hours
     }
     
+    // 5. Trigger database compaction to reclaim disk space
+    // Only do this if we actually cleaned up contracts
+    if (!contractsToCleanup.empty()) {
+        ReclaimStorage();
+    }
+    
     // Update last cleanup block
     {
         std::lock_guard<std::mutex> lock(m_statsMutex);
@@ -425,14 +432,124 @@ uint64_t CleanupManager::ReclaimResources(const uint160& contractAddr)
     // Calculate storage size before cleanup
     uint64_t storageSize = CalculateStorageSize(contractAddr);
     
-    // TODO: Implement actual resource reclamation
-    // This would involve:
-    // 1. Deleting all storage entries for the contract
-    // 2. Removing contract metadata
-    // 3. Cleaning up any associated resources
+    // 1. Delete all storage entries for the contract
+    if (!DeleteContractStorage(contractAddr)) {
+        LogPrintf("CVM: Failed to delete storage for contract %s\n", contractAddr.ToString());
+        return 0;
+    }
     
-    // For now, just return the calculated size
+    // 2. Update contract metadata to mark as cleaned up
+    if (!UpdateContractMetadata(contractAddr, true)) {
+        LogPrintf("CVM: Failed to update metadata for contract %s\n", contractAddr.ToString());
+        // Continue anyway - storage was deleted
+    }
+    
+    // 3. Trigger database compaction to reclaim space
+    // Note: We don't call ReclaimStorage() here for every contract
+    // as compaction is expensive. It's called periodically in RunGarbageCollection()
+    
+    LogPrintf("CVM: Reclaimed resources for contract %s (%d bytes)\n",
+              contractAddr.ToString(), storageSize);
+    
     return storageSize;
+}
+
+// ===== Resource Reclamation Implementation =====
+
+bool CleanupManager::DeleteContractStorage(const uint160& contractAddr)
+{
+    if (!m_db) {
+        LogPrintf("CVM: DeleteContractStorage failed - database not initialized\n");
+        return false;
+    }
+    
+    // Build the storage key prefix: "contract_<addr>_storage_"
+    std::string prefix = "contract_" + contractAddr.ToString() + "_storage_";
+    
+    // Get all keys with this prefix
+    std::vector<std::string> keysToDelete = m_db->ListKeysWithPrefix(prefix);
+    
+    if (keysToDelete.empty()) {
+        LogPrint(BCLog::CVM, "CVM: No storage entries found for contract %s\n",
+                 contractAddr.ToString());
+        return true;  // Nothing to delete is still success
+    }
+    
+    // Delete each storage entry via LevelDB batch for efficiency
+    int deletedCount = 0;
+    int errorCount = 0;
+    
+    for (const std::string& key : keysToDelete) {
+        if (m_db->EraseGeneric(key)) {
+            deletedCount++;
+        } else {
+            errorCount++;
+            LogPrintf("CVM: Failed to delete storage key: %s\n", key);
+        }
+    }
+    
+    LogPrintf("CVM: Deleted %d storage entries for contract %s (%d errors)\n",
+              deletedCount, contractAddr.ToString(), errorCount);
+    
+    return errorCount == 0;
+}
+
+bool CleanupManager::UpdateContractMetadata(const uint160& contractAddr, bool isCleanedUp)
+{
+    if (!m_db) {
+        LogPrintf("CVM: UpdateContractMetadata failed - database not initialized\n");
+        return false;
+    }
+    
+    // Read existing contract metadata
+    Contract contract;
+    if (!m_db->ReadContract(contractAddr, contract)) {
+        LogPrintf("CVM: Contract %s not found for metadata update\n", contractAddr.ToString());
+        return false;
+    }
+    
+    // Update the isCleanedUp flag
+    contract.isCleanedUp = isCleanedUp;
+    
+    // Write back the updated metadata
+    if (!m_db->WriteContract(contractAddr, contract)) {
+        LogPrintf("CVM: Failed to write updated metadata for contract %s\n",
+                  contractAddr.ToString());
+        return false;
+    }
+    
+    LogPrint(BCLog::CVM, "CVM: Updated metadata for contract %s (isCleanedUp=%d)\n",
+             contractAddr.ToString(), isCleanedUp);
+    
+    return true;
+}
+
+bool CleanupManager::ReclaimStorage()
+{
+    if (!m_db) {
+        LogPrintf("CVM: ReclaimStorage failed - database not initialized\n");
+        return false;
+    }
+    
+    LogPrintf("CVM: Triggering database compaction for space reclamation\n");
+    
+    // Get the underlying LevelDB wrapper
+    CDBWrapper& dbWrapper = m_db->GetDB();
+    
+    // Compact the entire database by specifying a range from empty to empty
+    // This tells LevelDB to compact all keys
+    // We use string keys since that's what the CVM database uses
+    std::string startKey = "";
+    std::string endKey = "\xff\xff\xff\xff";  // High value to cover all keys
+    
+    dbWrapper.CompactRange(startKey, endKey);
+    
+    // Also flush any pending writes
+    m_db->Flush();
+    
+    LogPrintf("CVM: Database compaction completed\n");
+    
+    return true;
 }
 
 } // namespace CVM

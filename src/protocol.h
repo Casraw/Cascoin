@@ -275,6 +275,10 @@ extern const char *TRUSTGRAPHSTATE;
 extern const char *TRUSTGRAPHDELTAREQ;
 // Cascoin: Trust Graph Sync: Response with trust graph delta
 extern const char *TRUSTGRAPHDELTA;
+// Cascoin: Automatic Validator System: Validation task broadcast
+extern const char *VALTASK;
+// Cascoin: Automatic Validator System: Validation response broadcast
+extern const char *VALRESP;
 };
 
 /* Get a vector of all valid message types (see above) */

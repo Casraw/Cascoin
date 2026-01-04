@@ -122,6 +122,47 @@ public:
         uint64_t gasUsed
     );
     
+    /**
+     * Extract sender address from transaction inputs
+     * 
+     * Parses P2PKH and P2WPKH scripts to extract the sender address.
+     * Uses the first input for sender determination.
+     * 
+     * Requirements: 9.2
+     * 
+     * @param tx Transaction to extract sender from
+     * @param senderOut Output parameter for the extracted sender address
+     * @return true if sender was successfully extracted
+     */
+    static bool ExtractSenderAddress(const CTransaction& tx, uint160& senderOut);
+    
+    /**
+     * Get pool balance from database
+     * 
+     * Queries LevelDB with key "pool_<id>_balance" and returns cached value on failure.
+     * 
+     * Requirements: 9.3
+     * 
+     * @param poolId The pool identifier
+     * @return The pool balance, or 0 if not found
+     */
+    static CAmount GetPoolBalance(const std::string& poolId);
+    
+    /**
+     * Extract gas usage and costs from CVM transaction
+     * 
+     * Parses OP_RETURN data to extract gas information from CVM transactions.
+     * Gas info is encoded in the OP_RETURN data for contract deployments and calls.
+     * 
+     * Requirements: 9.4
+     * 
+     * @param tx Transaction to extract gas info from
+     * @param gasUsed Output parameter for gas used
+     * @param gasCost Output parameter for gas cost
+     * @return true if gas info was successfully extracted
+     */
+    static bool ExtractGasInfo(const CTransaction& tx, uint64_t& gasUsed, CAmount& gasCost);
+    
 private:
     /**
      * Validate reputation score is in valid range

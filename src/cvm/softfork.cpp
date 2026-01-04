@@ -5,12 +5,17 @@
 #include <cvm/softfork.h>
 #include <cvm/cvm.h>
 #include <cvm/cvmdb.h>
+#include <cvm/reputation.h>
+#include <cvm/securehat.h>
 #include <consensus/params.h>
 #include <script/script.h>
 #include <script/standard.h>
 #include <hash.h>
 #include <util.h>
 #include <streams.h>
+#include <coins.h>
+#include <validation.h>
+#include <pubkey.h>
 
 namespace CVM {
 
@@ -542,11 +547,18 @@ bool ValidateEVMDeployment(const CTransaction& tx,
     // Check reputation requirement (if database available)
     if (g_cvmdb) {
         // Get deployer address from transaction inputs
-        // Note: This is a simplified check - full implementation would extract actual deployer
-        uint8_t minReputation = 50;  // Minimum reputation for contract deployment
-        
-        // TODO: Extract deployer address from tx inputs and check reputation
-        // For now, we'll allow deployment (reputation check can be added later)
+        // Requirements: 11.1, 11.2
+        uint160 deployer;
+        if (ExtractDeployerAddress(tx, deployer)) {
+            // Check deployer reputation meets minimum threshold (50)
+            if (!CheckDeployerReputation(deployer, 50.0)) {
+                error = "Deployer reputation below minimum threshold (50)";
+                return false;
+            }
+        } else {
+            LogPrint(BCLog::CVM, "CVM: Could not extract deployer address for reputation check\n");
+            // Allow deployment if we can't extract deployer (fail-open for soft fork)
+        }
     }
     
     return true;
@@ -583,9 +595,12 @@ bool ValidateEVMCall(const CTransaction& tx,
         }
         
         // Verify format matches if specified
-        if (callData.format != BytecodeFormat::UNKNOWN) {
-            // TODO: Check contract format matches expected format
-            // This would require storing format in contract metadata
+        // Requirements: 11.3
+        if (callData.format != BytecodeFormat::UNKNOWN && !contract.code.empty()) {
+            if (!VerifyContractFormat(contract.code, callData.format)) {
+                error = "Contract format does not match expected format";
+                return false;
+            }
         }
     }
     
@@ -666,6 +681,234 @@ bool ParseCVMDeployData(const std::vector<uint8_t>& data, CVMDeployData& deployD
 
 bool ParseCVMCallData(const std::vector<uint8_t>& data, CVMCallData& callData) {
     return callData.Deserialize(data);
+}
+
+/**
+ * Extract deployer address from contract deployment transaction
+ * 
+ * Uses the same logic as sender extraction in consensus_validator.cpp.
+ * Parses P2PKH and P2WPKH scripts to extract the deployer address
+ * from the first input of the transaction.
+ * 
+ * Requirements: 11.1
+ * 
+ * @param tx Transaction to extract deployer from
+ * @param deployerOut Output parameter for the extracted deployer address
+ * @return true if deployer was successfully extracted
+ */
+bool ExtractDeployerAddress(const CTransaction& tx, uint160& deployerOut)
+{
+    // Cannot extract deployer from coinbase transactions
+    if (tx.IsCoinBase()) {
+        LogPrint(BCLog::CVM, "SoftFork: Cannot extract deployer from coinbase transaction\n");
+        return false;
+    }
+    
+    // Must have at least one input
+    if (tx.vin.empty()) {
+        LogPrint(BCLog::CVM, "SoftFork: Transaction has no inputs\n");
+        return false;
+    }
+    
+    // Use the first input for deployer determination
+    const CTxIn& firstInput = tx.vin[0];
+    
+    // Get the previous output to extract the address
+    // We need to look up the UTXO that this input is spending
+    {
+        LOCK(cs_main);
+        
+        if (!pcoinsTip) {
+            LogPrint(BCLog::CVM, "SoftFork: pcoinsTip not available\n");
+            return false;
+        }
+        
+        Coin coin;
+        if (!pcoinsTip->GetCoin(firstInput.prevout, coin)) {
+            LogPrint(BCLog::CVM, "SoftFork: Could not find UTXO for input %s:%d\n",
+                     firstInput.prevout.hash.ToString(), firstInput.prevout.n);
+            return false;
+        }
+        
+        // Extract destination from the scriptPubKey
+        CTxDestination dest;
+        if (!ExtractDestination(coin.out.scriptPubKey, dest)) {
+            LogPrint(BCLog::CVM, "SoftFork: Could not extract destination from scriptPubKey\n");
+            return false;
+        }
+        
+        // Handle P2PKH (CKeyID)
+        const CKeyID* keyID = boost::get<CKeyID>(&dest);
+        if (keyID) {
+            memcpy(deployerOut.begin(), keyID->begin(), 20);
+            LogPrint(BCLog::CVM, "SoftFork: Extracted P2PKH deployer: %s\n",
+                     deployerOut.ToString());
+            return true;
+        }
+        
+        // Handle P2WPKH (WitnessV0KeyHash)
+        const WitnessV0KeyHash* witnessKeyHash = boost::get<WitnessV0KeyHash>(&dest);
+        if (witnessKeyHash) {
+            memcpy(deployerOut.begin(), witnessKeyHash->begin(), 20);
+            LogPrint(BCLog::CVM, "SoftFork: Extracted P2WPKH deployer: %s\n",
+                     deployerOut.ToString());
+            return true;
+        }
+        
+        // Handle P2SH (CScriptID) - less common for deployer extraction
+        const CScriptID* scriptID = boost::get<CScriptID>(&dest);
+        if (scriptID) {
+            memcpy(deployerOut.begin(), scriptID->begin(), 20);
+            LogPrint(BCLog::CVM, "SoftFork: Extracted P2SH deployer: %s\n",
+                     deployerOut.ToString());
+            return true;
+        }
+        
+        LogPrint(BCLog::CVM, "SoftFork: Unsupported script type for deployer extraction\n");
+        return false;
+    }
+}
+
+/**
+ * Check if deployer has sufficient reputation for contract deployment
+ * 
+ * Verifies that the deployer's reputation meets the minimum threshold (50).
+ * Uses HAT v2 (SecureHAT) if available, falls back to ASRS.
+ * 
+ * Requirements: 11.2
+ * 
+ * @param deployer Address of the contract deployer
+ * @param minReputation Minimum reputation threshold (default: 50)
+ * @return true if deployer meets reputation requirement
+ */
+bool CheckDeployerReputation(const uint160& deployer, double minReputation)
+{
+    if (!g_cvmdb) {
+        LogPrint(BCLog::CVM, "SoftFork: CVM database not available for reputation check\n");
+        // Allow deployment if database unavailable (fail-open for soft fork compatibility)
+        return true;
+    }
+    
+    double reputation = 50.0;  // Default to medium reputation
+    
+    // Try HAT v2 (SecureHAT) first
+    try {
+        SecureHAT secureHat(*g_cvmdb);
+        uint160 defaultViewer;  // Use null viewer for consensus calculation
+        int16_t hatScore = secureHat.CalculateFinalTrust(deployer, defaultViewer);
+        
+        // HAT score is 0-100
+        if (hatScore >= 0 && hatScore <= 100) {
+            reputation = static_cast<double>(hatScore);
+            LogPrint(BCLog::CVM, "SoftFork: HAT v2 reputation for deployer %s: %.2f\n",
+                     deployer.ToString(), reputation);
+        }
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::CVM, "SoftFork: HAT v2 failed for deployer %s: %s, falling back to ASRS\n",
+                 deployer.ToString(), e.what());
+        
+        // Fall back to ASRS (Anti-Scam Reputation System)
+        try {
+            ReputationSystem repSystem(*g_cvmdb);
+            ReputationScore score;
+            
+            if (repSystem.GetReputation(deployer, score)) {
+                // Convert ASRS score (-10000 to +10000) to 0-100 scale
+                // Map: -10000 -> 0, 0 -> 50, +10000 -> 100
+                int64_t normalized = ((score.score + 10000) * 100) / 20000;
+                normalized = std::max(int64_t(0), std::min(int64_t(100), normalized));
+                reputation = static_cast<double>(normalized);
+                
+                LogPrint(BCLog::CVM, "SoftFork: ASRS reputation for deployer %s: raw=%d, normalized=%.2f\n",
+                         deployer.ToString(), score.score, reputation);
+            }
+        } catch (const std::exception& e) {
+            LogPrint(BCLog::CVM, "SoftFork: ASRS fallback failed for deployer %s: %s\n",
+                     deployer.ToString(), e.what());
+        }
+    }
+    
+    // Check if reputation meets minimum threshold
+    bool meetsThreshold = reputation >= minReputation;
+    
+    if (!meetsThreshold) {
+        LogPrint(BCLog::CVM, "SoftFork: Deployer %s reputation %.2f below minimum %.2f\n",
+                 deployer.ToString(), reputation, minReputation);
+    }
+    
+    return meetsThreshold;
+}
+
+/**
+ * Verify contract format byte matches expected format
+ * 
+ * Checks the format byte at offset 0 of the contract data to ensure
+ * it matches the expected bytecode format.
+ * 
+ * Requirements: 11.3
+ * 
+ * @param contractData Contract bytecode data
+ * @param expectedFormat Expected bytecode format
+ * @return true if format matches or is compatible
+ */
+bool VerifyContractFormat(const std::vector<uint8_t>& contractData, BytecodeFormat expectedFormat)
+{
+    // Empty contract data is invalid
+    if (contractData.empty()) {
+        LogPrint(BCLog::CVM, "SoftFork: Contract data is empty\n");
+        return false;
+    }
+    
+    // Get format byte at offset 0
+    uint8_t formatByte = contractData[0];
+    
+    // Determine actual format from the format byte
+    BytecodeFormat actualFormat = BytecodeFormat::UNKNOWN;
+    
+    // CVM native format starts with specific magic bytes
+    // CVM bytecode typically starts with version byte 0x01
+    if (formatByte == 0x01) {
+        actualFormat = BytecodeFormat::CVM_NATIVE;
+    }
+    // EVM bytecode typically starts with 0x60 (PUSH1) or 0x73 (PUSH20 for constructor)
+    // or other common EVM opcodes
+    else if (formatByte == 0x60 || formatByte == 0x61 || formatByte == 0x73 || 
+             formatByte == 0x5b) {
+        actualFormat = BytecodeFormat::EVM_BYTECODE;
+    }
+    // Check for EVM contract creation code pattern (0x6080604052...)
+    else if (contractData.size() >= 4 && 
+             contractData[0] == 0x60 && contractData[1] == 0x80 &&
+             contractData[2] == 0x60 && contractData[3] == 0x40) {
+        actualFormat = BytecodeFormat::EVM_BYTECODE;
+    }
+    // Explicit EVM format marker (0x02)
+    else if (formatByte == 0x02) {
+        actualFormat = BytecodeFormat::EVM_BYTECODE;
+    }
+    
+    LogPrint(BCLog::CVM, "SoftFork: Contract format byte=0x%02x, detected=%d, expected=%d\n",
+             formatByte, static_cast<int>(actualFormat), static_cast<int>(expectedFormat));
+    
+    // If expected format is UNKNOWN, accept any format
+    if (expectedFormat == BytecodeFormat::UNKNOWN) {
+        return true;
+    }
+    
+    // If actual format is UNKNOWN, we couldn't determine it - allow for flexibility
+    if (actualFormat == BytecodeFormat::UNKNOWN) {
+        LogPrint(BCLog::CVM, "SoftFork: Could not determine contract format, allowing deployment\n");
+        return true;
+    }
+    
+    // Check if formats match
+    if (actualFormat != expectedFormat) {
+        LogPrint(BCLog::CVM, "SoftFork: Contract format mismatch: expected %d, got %d\n",
+                 static_cast<int>(expectedFormat), static_cast<int>(actualFormat));
+        return false;
+    }
+    
+    return true;
 }
 
 } // namespace CVM

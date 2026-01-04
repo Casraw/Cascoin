@@ -57,6 +57,8 @@ const char *TRUSTGRAPHSTATEREQ="tgstatereq";         // Cascoin: Trust Graph Syn
 const char *TRUSTGRAPHSTATE="tgstate";               // Cascoin: Trust Graph Sync
 const char *TRUSTGRAPHDELTAREQ="tgdeltareq";         // Cascoin: Trust Graph Sync
 const char *TRUSTGRAPHDELTA="tgdelta";               // Cascoin: Trust Graph Sync
+const char *VALTASK="valtask";                       // Cascoin: Automatic Validator System
+const char *VALRESP="valresp";                       // Cascoin: Automatic Validator System
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -107,6 +109,8 @@ const static std::string allNetMessageTypes[] = {
     NetMsgType::TRUSTGRAPHSTATE,           // Cascoin: Trust Graph Sync
     NetMsgType::TRUSTGRAPHDELTAREQ,        // Cascoin: Trust Graph Sync
     NetMsgType::TRUSTGRAPHDELTA,           // Cascoin: Trust Graph Sync
+    NetMsgType::VALTASK,                   // Cascoin: Automatic Validator System
+    NetMsgType::VALRESP,                   // Cascoin: Automatic Validator System
 };
 const static std::vector<std::string> allNetMessageTypesVec(allNetMessageTypes, allNetMessageTypes+ARRAYLEN(allNetMessageTypes));
 

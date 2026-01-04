@@ -320,6 +320,19 @@ public:
      * @return Map with statistics
      */
     std::map<std::string, uint64_t> GetGraphStats() const;
+    
+    /**
+     * Check if address is a DAO member
+     * 
+     * DAO membership requirements:
+     * 1. Minimum reputation score (70+)
+     * 2. Minimum stake (100 CAS bonded)
+     * 3. Active participation (voted in last 10,000 blocks)
+     * 
+     * @param address Address to check
+     * @return true if address is a DAO member
+     */
+    bool IsDAOMember(const uint160& address) const;
 
 private:
     CVMDatabase& database;
@@ -342,11 +355,6 @@ private:
      * Larger absolute vote values require larger bonds to prevent spam.
      */
     CAmount CalculateRequiredBond(int16_t voteValue) const;
-    
-    /**
-     * Check if address is a DAO member
-     */
-    bool IsDAOMember(const uint160& address) const;
 };
 
 /**

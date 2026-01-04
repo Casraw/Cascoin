@@ -22,8 +22,9 @@ public:
     std::vector<uint8_t> code; // Contract bytecode
     int deploymentHeight;      // Block height when deployed
     uint256 deploymentTx;      // Transaction that deployed contract
+    bool isCleanedUp;          // Whether contract storage has been cleaned up
     
-    Contract() : deploymentHeight(0) {}
+    Contract() : deploymentHeight(0), isCleanedUp(false) {}
     
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>
@@ -32,6 +33,7 @@ public:
         READWRITE(code);
         READWRITE(deploymentHeight);
         READWRITE(deploymentTx);
+        READWRITE(isCleanedUp);
     }
 };
 

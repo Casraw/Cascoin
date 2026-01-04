@@ -1003,6 +1003,63 @@ public:
     );
     
     /**
+     * Notify DAO members of escalated dispute via P2P network
+     * 
+     * Broadcasts dispute notification to all connected peers.
+     * DAO members will self-identify and process the dispute.
+     * Uses MSG_DAO_DISPUTE message type.
+     * 
+     * @param disputeId Dispute ID
+     * @param daoMembers List of DAO member addresses
+     * @param connman Connection manager
+     */
+    void NotifyDAOMembers(
+        const uint256& disputeId,
+        const std::vector<uint160>& daoMembers,
+        CConnman* connman
+    );
+    
+    /**
+     * Package dispute evidence for DAO review
+     * 
+     * Serializes validator responses and trust graph snapshot
+     * at the time of dispute for DAO arbitration.
+     * 
+     * @param responses Validator responses
+     * @param senderAddress Address of transaction sender
+     * @return Serialized evidence data
+     */
+    std::vector<uint8_t> PackageDisputeEvidence(
+        const std::vector<ValidationResponse>& responses,
+        const uint160& senderAddress
+    );
+    
+    /**
+     * Load transaction evidence for fraud recording
+     * 
+     * Retrieves transaction from mempool or blockchain
+     * for inclusion in fraud attempt records.
+     * 
+     * @param txHash Transaction hash
+     * @param txOut Output transaction reference
+     * @return true if transaction found
+     */
+    bool LoadTransactionEvidence(
+        const uint256& txHash,
+        CTransactionRef& txOut
+    );
+    
+    /**
+     * Get list of DAO members
+     * 
+     * Queries database for addresses that qualify as DAO members
+     * based on reputation, stake, and activity requirements.
+     * 
+     * @return Vector of DAO member addresses
+     */
+    std::vector<uint160> GetDAOMemberList();
+    
+    /**
      * Announce validator address to network
      * 
      * Called when node starts up if it's configured as a validator.

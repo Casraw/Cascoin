@@ -26,23 +26,27 @@ BOOST_AUTO_TEST_CASE(reputation_multiplier)
 {
     cvm::SustainableGasSystem gas_system;
     
-    // Test reputation multipliers
-    // Reputation 0-49: 1.0x (no discount)
+    // Test reputation multipliers (linear interpolation per design doc)
+    // Reputation 0 = 1.0x (full cost)
+    // Reputation 50 = 0.75x (25% discount)
+    // Reputation 100 = 0.5x (50% discount)
     BOOST_CHECK_CLOSE(gas_system.CalculateReputationMultiplier(0), 1.0, 0.01);
-    BOOST_CHECK_CLOSE(gas_system.CalculateReputationMultiplier(49), 1.0, 0.01);
+    BOOST_CHECK_CLOSE(gas_system.CalculateReputationMultiplier(50), 0.75, 0.01);
+    BOOST_CHECK_CLOSE(gas_system.CalculateReputationMultiplier(100), 0.5, 0.01);
     
-    // Reputation 50-79: should have some discount
-    double mult50 = gas_system.CalculateReputationMultiplier(50);
-    BOOST_CHECK_LE(mult50, 1.0);
-    BOOST_CHECK_GE(mult50, 0.5);
+    // Intermediate values should follow linear interpolation
+    double mult25 = gas_system.CalculateReputationMultiplier(25);
+    BOOST_CHECK_CLOSE(mult25, 0.875, 0.01);  // 1.0 - (25/200) = 0.875
     
-    // Reputation 80-100: should have maximum discount (0.5x)
-    double mult80 = gas_system.CalculateReputationMultiplier(80);
-    double mult100 = gas_system.CalculateReputationMultiplier(100);
-    BOOST_CHECK_LE(mult80, 1.0);
-    BOOST_CHECK_GE(mult80, 0.5);
-    BOOST_CHECK_LE(mult100, 1.0);
-    BOOST_CHECK_GE(mult100, 0.5);
+    double mult75 = gas_system.CalculateReputationMultiplier(75);
+    BOOST_CHECK_CLOSE(mult75, 0.625, 0.01);  // 1.0 - (75/200) = 0.625
+    
+    // All multipliers should be in valid range [0.5, 1.0]
+    for (uint8_t rep = 0; rep <= 100; rep += 10) {
+        double mult = gas_system.CalculateReputationMultiplier(rep);
+        BOOST_CHECK_GE(mult, 0.5);
+        BOOST_CHECK_LE(mult, 1.0);
+    }
 }
 
 BOOST_AUTO_TEST_CASE(free_gas_eligibility)

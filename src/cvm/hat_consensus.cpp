@@ -9,6 +9,7 @@
 #include <cvm/validator_keys.h>
 #include <cvm/walletcluster.h>
 #include <cvm/trust_graph_manipulation_detector.h>
+#include <cvm/reputation.h>
 #include <chain.h>
 #include <hash.h>
 #include <random.h>
@@ -18,10 +19,13 @@
 #include <net.h>
 #include <netmessagemaker.h>
 #include <protocol.h>
+#include <validation.h>
+#include <chainparams.h>
 #include <algorithm>
 #include <cmath>
 
-extern CChain chainActive;
+// External declarations - chainActive is already declared in validation.h
+extern std::unique_ptr<CConnman> g_connman;
 
 namespace CVM {
 
@@ -511,8 +515,8 @@ DisputeCase HATConsensusValidator::CreateDisputeCase(
     dispute.approved = false;
     dispute.resolutionTimestamp = 0;
     
-    // Package evidence
-    // TODO: Serialize validator responses and trust graph data
+    // Package evidence: Serialize validator responses and trust graph data
+    dispute.evidenceData = PackageDisputeEvidence(responses, dispute.senderAddress);
     
     return dispute;
 }
@@ -529,7 +533,18 @@ bool CVM::HATConsensusValidator::EscalateToDAO(const DisputeCase& dispute) {
     LogPrint(BCLog::CVM, "HAT Consensus: Escalated tx %s to DAO for dispute resolution\n",
              dispute.txHash.ToString());
     
-    // TODO: Notify DAO members via P2P network
+    // Notify DAO members via P2P network
+    // Get list of DAO members from database
+    std::vector<uint160> daoMembers = GetDAOMemberList();
+    
+    if (!daoMembers.empty()) {
+        NotifyDAOMembers(dispute.disputeId, daoMembers, g_connman.get());
+        LogPrint(BCLog::CVM, "HAT Consensus: Notified %zu DAO members about dispute %s\n",
+                 daoMembers.size(), dispute.disputeId.ToString());
+    } else {
+        LogPrint(BCLog::CVM, "HAT Consensus: No DAO members found to notify for dispute %s\n",
+                 dispute.disputeId.ToString());
+    }
     
     return true;
 }
@@ -1205,16 +1220,46 @@ void CVM::HATConsensusValidator::ProcessDAOResolution(
     } else {
         UpdateMempoolState(dispute.txHash, TransactionState::REJECTED);
         
-        // Record fraud attempt
-        RecordFraudAttempt(
-            dispute.senderAddress,
-            CTransaction(), // TODO: Load transaction
-            dispute.selfReportedScore,
-            HATv2Score() // TODO: Calculate actual score
-        );
+        // Load transaction evidence for fraud recording
+        CTransactionRef txRef;
+        bool txLoaded = LoadTransactionEvidence(dispute.txHash, txRef);
         
-        LogPrint(BCLog::NET, "HAT v2: Transaction %s rejected by DAO, fraud recorded\n",
-                 dispute.txHash.ToString());
+        // Calculate actual score from validator responses (median)
+        HATv2Score actualScore;
+        if (!dispute.validatorResponses.empty()) {
+            std::vector<int16_t> scores;
+            for (const auto& response : dispute.validatorResponses) {
+                scores.push_back(response.calculatedScore.finalScore);
+            }
+            std::sort(scores.begin(), scores.end());
+            int16_t medianScore = scores[scores.size() / 2];
+            
+            // Use first validator's detailed score as template, update final score
+            actualScore = dispute.validatorResponses[0].calculatedScore;
+            actualScore.finalScore = medianScore;
+        }
+        
+        // Record fraud attempt with loaded transaction
+        if (txLoaded && txRef) {
+            RecordFraudAttempt(
+                dispute.senderAddress,
+                *txRef,
+                dispute.selfReportedScore,
+                actualScore
+            );
+            LogPrint(BCLog::NET, "HAT v2: Transaction %s rejected by DAO, fraud recorded with full tx evidence\n",
+                     dispute.txHash.ToString());
+        } else {
+            // Fall back to recording without full transaction
+            RecordFraudAttempt(
+                dispute.senderAddress,
+                CTransaction(),
+                dispute.selfReportedScore,
+                actualScore
+            );
+            LogPrint(BCLog::NET, "HAT v2: Transaction %s rejected by DAO, fraud recorded (tx not found)\n",
+                     dispute.txHash.ToString());
+        }
     }
 }
 
@@ -1320,6 +1365,189 @@ void CVM::HATConsensusValidator::BroadcastDAOResolution(
                     disputeId, approved, resolutionTimestamp));
         }
     });
+}
+
+// ============================================================================
+// DAO Integration Functions (Task 8)
+// ============================================================================
+
+void CVM::HATConsensusValidator::NotifyDAOMembers(
+    const uint256& disputeId,
+    const std::vector<uint160>& daoMembers,
+    CConnman* connman)
+{
+    if (!connman) {
+        LogPrintf("HAT v2: Cannot notify DAO members - no connection manager\n");
+        return;
+    }
+    
+    if (daoMembers.empty()) {
+        LogPrint(BCLog::CVM, "HAT v2: No DAO members to notify for dispute %s\n",
+                 disputeId.ToString());
+        return;
+    }
+    
+    LogPrint(BCLog::NET, "HAT v2: Notifying %zu DAO members about dispute %s\n",
+             daoMembers.size(), disputeId.ToString());
+    
+    // Load the dispute case for broadcasting
+    DisputeCase dispute = GetDisputeCase(disputeId);
+    if (dispute.disputeId.IsNull()) {
+        LogPrintf("HAT v2: Cannot notify DAO members - dispute %s not found\n",
+                 disputeId.ToString());
+        return;
+    }
+    
+    // Broadcast DAO dispute message to all connected peers
+    // DAO members will self-identify and process the dispute
+    // Using MSG_DAO_DISPUTE message type (DAODISPUTE)
+    uint32_t broadcastCount = 0;
+    connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::DAODISPUTE, dispute));
+            broadcastCount++;
+        }
+    });
+    
+    LogPrint(BCLog::NET, "HAT v2: Broadcast DAO dispute notification to %u peers for %zu DAO members\n",
+             broadcastCount, daoMembers.size());
+}
+
+std::vector<uint8_t> CVM::HATConsensusValidator::PackageDisputeEvidence(
+    const std::vector<ValidationResponse>& responses,
+    const uint160& senderAddress)
+{
+    LogPrint(BCLog::CVM, "HAT v2: Packaging dispute evidence for %zu validator responses\n",
+             responses.size());
+    
+    // Create evidence data stream
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    
+    // Write header
+    ss << std::string("HAT_DISPUTE_EVIDENCE_V1");
+    ss << GetTime();  // Timestamp
+    ss << chainActive.Height();  // Block height at dispute time
+    
+    // Serialize all validator responses
+    ss << (uint32_t)responses.size();
+    for (const auto& response : responses) {
+        ss << response;
+    }
+    
+    // Include trust graph snapshot for the sender address
+    // This captures the trust relationships at the time of dispute
+    std::vector<TrustEdge> incomingTrust = trustGraph.GetIncomingTrust(senderAddress);
+    std::vector<TrustEdge> outgoingTrust = trustGraph.GetOutgoingTrust(senderAddress);
+    
+    // Serialize trust graph data
+    ss << (uint32_t)incomingTrust.size();
+    for (const auto& edge : incomingTrust) {
+        ss << edge;
+    }
+    
+    ss << (uint32_t)outgoingTrust.size();
+    for (const auto& edge : outgoingTrust) {
+        ss << edge;
+    }
+    
+    // Include sender's reputation votes
+    std::vector<BondedVote> votes = trustGraph.GetVotesForAddress(senderAddress);
+    ss << (uint32_t)votes.size();
+    for (const auto& vote : votes) {
+        ss << vote;
+    }
+    
+    // Calculate evidence hash for integrity verification
+    uint256 evidenceHash = Hash(ss.begin(), ss.end());
+    ss << evidenceHash;
+    
+    LogPrint(BCLog::CVM, "HAT v2: Packaged dispute evidence: %zu bytes, %zu responses, "
+             "%zu incoming trust, %zu outgoing trust, %zu votes, hash=%s\n",
+             ss.size(), responses.size(), incomingTrust.size(), 
+             outgoingTrust.size(), votes.size(), evidenceHash.ToString());
+    
+    return std::vector<uint8_t>(ss.begin(), ss.end());
+}
+
+bool CVM::HATConsensusValidator::LoadTransactionEvidence(
+    const uint256& txHash,
+    CTransactionRef& txOut)
+{
+    LogPrint(BCLog::CVM, "HAT v2: Loading transaction evidence for %s\n", txHash.ToString());
+    
+    // Try to load transaction from mempool or blockchain
+    uint256 hashBlock;
+    
+    // Use GetTransaction which searches mempool first, then blockchain
+    if (GetTransaction(txHash, txOut, Params().GetConsensus(), hashBlock, true)) {
+        if (hashBlock.IsNull()) {
+            LogPrint(BCLog::CVM, "HAT v2: Loaded transaction %s from mempool\n",
+                     txHash.ToString());
+        } else {
+            LogPrint(BCLog::CVM, "HAT v2: Loaded transaction %s from block %s\n",
+                     txHash.ToString(), hashBlock.ToString());
+        }
+        
+        return true;
+    }
+    
+    LogPrint(BCLog::CVM, "HAT v2: Transaction %s not found in mempool or blockchain\n",
+             txHash.ToString());
+    return false;
+}
+
+std::vector<uint160> CVM::HATConsensusValidator::GetDAOMemberList()
+{
+    std::vector<uint160> daoMembers;
+    
+    LogPrint(BCLog::CVM, "HAT v2: Retrieving DAO member list\n");
+    
+    // Query all addresses with DAO activity records
+    std::vector<std::string> activityKeys = database.ListKeysWithPrefix("dao_activity_");
+    
+    for (const auto& key : activityKeys) {
+        // Extract address from key (format: "dao_activity_<address>")
+        if (key.length() < 14) continue;  // "dao_activity_" = 13 chars
+        
+        std::string addrHex = key.substr(13);
+        uint160 address;
+        address.SetHex(addrHex);
+        
+        // Verify the address is still a valid DAO member
+        if (trustGraph.IsDAOMember(address)) {
+            daoMembers.push_back(address);
+        }
+    }
+    
+    // Also check validator stats for addresses with high reputation
+    // that might qualify as DAO members
+    std::vector<std::string> validatorKeys = database.ListKeysWithPrefix("validator_stats_");
+    
+    for (const auto& key : validatorKeys) {
+        if (key.length() < 17) continue;  // "validator_stats_" = 16 chars
+        
+        std::string addrHex = key.substr(16);
+        uint160 address;
+        address.SetHex(addrHex);
+        
+        // Check if already in list
+        bool alreadyAdded = false;
+        for (const auto& member : daoMembers) {
+            if (member == address) {
+                alreadyAdded = true;
+                break;
+            }
+        }
+        
+        if (!alreadyAdded && trustGraph.IsDAOMember(address)) {
+            daoMembers.push_back(address);
+        }
+    }
+    
+    LogPrint(BCLog::CVM, "HAT v2: Found %zu DAO members\n", daoMembers.size());
+    
+    return daoMembers;
 }
 
 void CVM::HATConsensusValidator::AnnounceValidatorAddress(

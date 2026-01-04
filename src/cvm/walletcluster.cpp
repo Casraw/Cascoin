@@ -396,14 +396,67 @@ void WalletClusterer::SaveClusters()
 
 void WalletClusterer::LoadClusters()
 {
-    // Load clusters from database
-    // This is a simplified version - in production, you'd iterate through all keys
-    
+    // Load clusters from database using ListKeysWithPrefix
     LogPrintf("WalletClusterer: Loading clusters from database...\n");
     
-    // For now, we'll rebuild on first use
-    // TODO: Implement proper database iteration
-    cache_valid = false;
+    // Clear existing data
+    clusters.clear();
+    address_to_cluster.clear();
+    
+    int clusterCount = 0;
+    int mappingCount = 0;
+    
+    // Load cluster info records (keys starting with "wc_")
+    std::vector<std::string> clusterKeys = database.ListKeysWithPrefix("wc_");
+    for (const std::string& key : clusterKeys) {
+        try {
+            std::vector<uint8_t> data;
+            if (database.ReadGeneric(key, data)) {
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                WalletClusterInfo info;
+                ss >> info;
+                clusters[info.cluster_id] = info;
+                clusterCount++;
+            }
+        } catch (const std::exception& e) {
+            LogPrintf("WalletClusterer: Failed to deserialize cluster from key %s: %s\n", 
+                      key.c_str(), e.what());
+        }
+    }
+    
+    // Load address-to-cluster mappings (keys starting with "wca_")
+    std::vector<std::string> mappingKeys = database.ListKeysWithPrefix("wca_");
+    for (const std::string& key : mappingKeys) {
+        try {
+            std::vector<uint8_t> data;
+            if (database.ReadGeneric(key, data)) {
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                uint160 clusterRoot;
+                ss >> clusterRoot;
+                
+                // Extract address from key (format: "wca_<address>")
+                std::string addrStr = key.substr(4);  // Skip "wca_"
+                uint160 address;
+                address.SetHex(addrStr);
+                
+                address_to_cluster[address] = clusterRoot;
+                mappingCount++;
+            }
+        } catch (const std::exception& e) {
+            LogPrintf("WalletClusterer: Failed to deserialize address mapping from key %s: %s\n", 
+                      key.c_str(), e.what());
+        }
+    }
+    
+    if (clusterCount > 0 || mappingCount > 0) {
+        cache_valid = true;
+        LogPrintf("WalletClusterer: Loaded %d clusters and %d address mappings from database\n",
+                  clusterCount, mappingCount);
+    } else {
+        // No data found, will rebuild on first use
+        cache_valid = false;
+        LogPrintf("WalletClusterer: No cluster data found in database, will rebuild on first use\n");
+    }
 }
 
 std::vector<uint256> WalletClusterer::GetAddressTransactions(const uint160& address)

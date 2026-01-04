@@ -287,6 +287,49 @@ bool ParseCVMDeployData(const std::vector<uint8_t>& data, CVMDeployData& deployD
  */
 bool ParseCVMCallData(const std::vector<uint8_t>& data, CVMCallData& callData);
 
+/**
+ * Extract deployer address from contract deployment transaction
+ * 
+ * Uses the same logic as sender extraction in consensus_validator.cpp.
+ * Parses P2PKH and P2WPKH scripts to extract the deployer address
+ * from the first input of the transaction.
+ * 
+ * Requirements: 11.1
+ * 
+ * @param tx Transaction to extract deployer from
+ * @param deployerOut Output parameter for the extracted deployer address
+ * @return true if deployer was successfully extracted
+ */
+bool ExtractDeployerAddress(const CTransaction& tx, uint160& deployerOut);
+
+/**
+ * Check if deployer has sufficient reputation for contract deployment
+ * 
+ * Verifies that the deployer's reputation meets the minimum threshold.
+ * Uses HAT v2 (SecureHAT) if available, falls back to ASRS.
+ * 
+ * Requirements: 11.2
+ * 
+ * @param deployer Address of the contract deployer
+ * @param minReputation Minimum reputation threshold (default: 50.0)
+ * @return true if deployer meets reputation requirement
+ */
+bool CheckDeployerReputation(const uint160& deployer, double minReputation = 50.0);
+
+/**
+ * Verify contract format byte matches expected format
+ * 
+ * Checks the format byte at offset 0 of the contract data to ensure
+ * it matches the expected bytecode format.
+ * 
+ * Requirements: 11.3
+ * 
+ * @param contractData Contract bytecode data
+ * @param expectedFormat Expected bytecode format
+ * @return true if format matches or is compatible
+ */
+bool VerifyContractFormat(const std::vector<uint8_t>& contractData, BytecodeFormat expectedFormat);
+
 } // namespace CVM
 
 #endif // CASCOIN_CVM_SOFTFORK_H

@@ -6,6 +6,7 @@
 #define CASCOIN_CVM_SUSTAINABLE_GAS_H
 
 #include <cstdint>
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
@@ -17,6 +18,7 @@ class EnhancedStorage;
 
 namespace CVM {
     class TrustContext;
+    class CVMDatabase;
 }
 
 namespace cvm {
@@ -92,6 +94,13 @@ class SustainableGasSystem {
 public:
     SustainableGasSystem();
     ~SustainableGasSystem();
+    
+    /**
+     * Set the CVM database for reputation queries
+     * 
+     * @param db Pointer to CVM database
+     */
+    void SetDatabase(CVM::CVMDatabase* db) { m_db = db; }
     
     // ===== Reputation-Adjusted Gas Costs (Requirements 6.1, 6.2, 18.1, 18.3) =====
     
@@ -289,6 +298,24 @@ public:
      */
     double CalculateNetworkTrustDensity();
     
+    /**
+     * Get current gas price multiplier based on network congestion
+     * 
+     * Tracks gas usage over the last 100 blocks and calculates a multiplier
+     * based on congestion vs target gas per block.
+     * 
+     * @return Price multiplier clamped to [0.5, 2.0] range
+     */
+    double GetCurrentPriceMultiplier();
+    
+    /**
+     * Record gas usage for a block
+     * 
+     * @param blockHeight Block height
+     * @param gasUsed Total gas used in the block
+     */
+    void RecordBlockGasUsage(int64_t blockHeight, uint64_t gasUsed);
+    
     // ===== Utility Methods =====
     
     /**
@@ -307,6 +334,9 @@ public:
     void ResetRateLimits();
     
 private:
+    // CVM database for reputation queries
+    CVM::CVMDatabase* m_db;
+    
     // Gas parameters
     GasParameters gasParams;
     
@@ -321,6 +351,16 @@ private:
     
     // Rate limiting state
     std::map<uint160, RateLimitState> rateLimits;
+    
+    // Block gas usage tracking for price multiplier calculation
+    std::deque<uint64_t> m_recentBlockGas;
+    int64_t m_lastRecordedBlock;
+    
+    // Target gas per block (10M gas)
+    static const uint64_t TARGET_GAS_PER_BLOCK = 10000000;
+    
+    // Maximum blocks to track for congestion calculation
+    static const size_t MAX_TRACKED_BLOCKS = 100;
     
     // Helper methods
     uint64_t GetBaseOpcodeCost(uint8_t opcode);

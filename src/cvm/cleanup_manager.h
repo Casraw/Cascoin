@@ -251,6 +251,35 @@ public:
      */
     std::set<uint160> GetMarkedContracts() const;
     
+    // ===== Resource Reclamation =====
+    
+    /**
+     * Delete all storage entries for a contract
+     * Iterates keys with prefix "contract_<addr>_storage_" and deletes each entry
+     * 
+     * @param contractAddr Contract address to delete storage for
+     * @return true if storage was deleted successfully
+     */
+    bool DeleteContractStorage(const uint160& contractAddr);
+    
+    /**
+     * Update contract metadata to mark as cleaned up
+     * Sets isCleanedUp = true in contract metadata
+     * 
+     * @param contractAddr Contract address to update
+     * @param isCleanedUp Whether the contract has been cleaned up
+     * @return true if metadata was updated successfully
+     */
+    bool UpdateContractMetadata(const uint160& contractAddr, bool isCleanedUp);
+    
+    /**
+     * Trigger database compaction to reclaim disk space
+     * Compacts the LevelDB database after cleanup operations
+     * 
+     * @return true if compaction was triggered successfully
+     */
+    bool ReclaimStorage();
+    
 private:
     CVMDatabase* m_db;
     EnhancedStorage* m_storage;

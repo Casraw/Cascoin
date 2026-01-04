@@ -14,7 +14,11 @@
 #include <cstdint>
 
 class CNode;
-class CVMDatabase;
+
+// Forward declaration for CVMDatabase (in CVM namespace)
+namespace CVM {
+    class CVMDatabase;
+}
 
 /**
  * Automatic Validator Selection System
@@ -218,7 +222,7 @@ struct AggregatedValidationResult {
  */
 class AutomaticValidatorManager {
 private:
-    CVMDatabase* db;
+    CVM::CVMDatabase* db;
     CCriticalSection cs_validators;
     
     // Validator pool (discovered automatically)
@@ -243,10 +247,13 @@ private:
     static const int MIN_UNIQUE_INTERACTIONS = 20;        // 20+ unique addresses
     
 public:
-    AutomaticValidatorManager(CVMDatabase* database);
+    AutomaticValidatorManager(CVM::CVMDatabase* database);
     ~AutomaticValidatorManager();
     
     // ========== Pool Management (Automatic) ==========
+    
+    // Load validator pool from database on startup
+    void LoadValidatorPool();
     
     // Scan blockchain and update validator pool
     void UpdateValidatorPool();
@@ -296,6 +303,9 @@ public:
     bool VerifyHistoryRequirement(const uint160& address, int& blocksSinceFirstSeen, 
                                   int& transactionCount, int& uniqueInteractions);
     
+    // Verify anti-Sybil requirements (funding source diversity)
+    bool VerifyAntiSybilRequirement(const uint160& address);
+    
     // ========== Cache & Storage ==========
     
     void CacheSelection(const ValidatorSelection& selection);
@@ -324,6 +334,23 @@ class CConnman;
 void BroadcastValidationTask(const uint256& taskHash, int64_t blockHeight, 
                              const std::vector<uint160>& selectedValidators, CConnman* connman);
 void BroadcastValidationResponse(const ValidationResponse& response, CConnman* connman);
+
+// Send message to specific peer (for attestation responses)
+bool SendToPeer(CNode* peer, const std::string& msgType, const std::vector<uint8_t>& data, CConnman* connman);
+
+// Helper function to derive validator address from public key
+// Uses standard Bitcoin P2PKH derivation (Hash160 of public key)
+class CPubKey;
+uint160 DeriveValidatorAddress(const CPubKey& pubkey);
+
+// Helper function to get the local validator's address
+// Integrates with wallet to get primary receiving address
+uint160 GetMyValidatorAddress();
+
+// Helper function to get the validator's private key for signing
+// Checks wallet lock status before access
+class CKey;
+bool GetValidatorKey(CKey& keyOut);
 
 // Global automatic validator manager instance
 extern AutomaticValidatorManager* g_automaticValidatorManager;
@@ -438,7 +465,7 @@ struct BatchAttestationResponse {
  */
 class ValidatorAttestationManager {
 private:
-    CVMDatabase* db;
+    CVM::CVMDatabase* db;
     CCriticalSection cs_attestations;
     
     // Attestation storage
@@ -446,7 +473,7 @@ private:
     std::map<uint160, ValidatorEligibilityAnnouncement> announcements;
     
 public:
-    ValidatorAttestationManager(CVMDatabase* database) : db(database) {}
+    ValidatorAttestationManager(CVM::CVMDatabase* database) : db(database) {}
     ~ValidatorAttestationManager() {}
     
     // Process incoming announcements

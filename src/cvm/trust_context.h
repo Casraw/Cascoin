@@ -195,6 +195,15 @@ private:
     void InitializeDefaultTrustGates();
     void InitializeDefaultAccessPolicies();
     
+    // Cross-chain trust verification methods
+    bool VerifyCrossChainTrust(const CrossChainAttestation& attestation) const;
+    bool VerifyLayerZeroAttestation(const CrossChainAttestation& attestation, uint16_t chainId) const;
+    bool VerifyCCIPAttestation(const CrossChainAttestation& attestation, uint16_t chainId) const;
+    bool IsKnownLayerZeroOracle(const CPubKey& pubkey, uint16_t chainId) const;
+    bool IsKnownLayerZeroRelayer(const CPubKey& pubkey, uint16_t chainId) const;
+    bool IsKnownChainlinkDON(const CPubKey& pubkey, uint16_t chainId) const;
+    bool IsCCIPMessageProcessed(const uint256& messageId) const;
+    
     // Constants
     static constexpr uint32_t HIGH_REPUTATION_THRESHOLD = 80;
     static constexpr uint32_t MEDIUM_REPUTATION_THRESHOLD = 60;

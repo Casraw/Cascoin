@@ -39,17 +39,61 @@ bool ReputationStateProof::Verify() const {
     
     // Verify merkle proof if provided
     if (!merkle_proof.empty()) {
-        // Compute leaf hash
-        uint256 leaf = Hash(BEGIN(address), END(address));
+        // Compute leaf hash: Hash256(address || reputation || timestamp)
+        CHashWriter leafHasher(SER_GETHASH, 0);
+        leafHasher << address;
+        leafHasher << reputation_score;
+        leafHasher << timestamp;
+        uint256 leaf = leafHasher.GetHash();
         
-        // TODO: Implement full merkle proof verification
-        // For now, just check that proof is not empty
-        if (merkle_proof.empty()) {
+        // Verify the merkle proof against the state root
+        if (!VerifyReputationMerkleProof(state_root, leaf, merkle_proof)) {
             return false;
         }
     }
     
     return true;
+}
+
+bool ReputationStateProof::VerifyReputationMerkleProof(
+    const uint256& root,
+    const uint256& leaf,
+    const std::vector<uint256>& proof) const {
+    
+    // Standard binary merkle tree verification
+    // The proof contains sibling hashes from leaf to root
+    
+    if (proof.empty()) {
+        // If no proof provided, leaf must equal root (single element tree)
+        return leaf == root;
+    }
+    
+    // Start with the leaf hash
+    uint256 currentHash = leaf;
+    
+    // Walk up the merkle tree using the proof elements
+    // Each proof element is a sibling hash at that level
+    for (const auto& proofElement : proof) {
+        // Combine current hash with proof element
+        // Order is determined by comparing hashes (smaller hash first)
+        // This ensures consistent ordering regardless of position in tree
+        CHashWriter hasher(SER_GETHASH, 0);
+        
+        if (currentHash < proofElement) {
+            // Current hash is on the left
+            hasher << currentHash;
+            hasher << proofElement;
+        } else {
+            // Current hash is on the right
+            hasher << proofElement;
+            hasher << currentHash;
+        }
+        
+        currentHash = hasher.GetHash();
+    }
+    
+    // Final hash should match the root
+    return currentHash == root;
 }
 
 bool ReputationStateProof::IsValid(int64_t current_time, int current_height) const {
@@ -288,17 +332,30 @@ std::vector<uint256> ReputationSignatureManager::BuildMerkleProof(
     
     std::vector<uint256> proof;
     
-    // Create leaf hash
-    CHashWriter ss(SER_GETHASH, 0);
-    ss << address;
-    ss << reputation;
-    uint256 leaf = ss.GetHash();
+    // Create leaf hash: Hash256(address || reputation || timestamp)
+    // Note: timestamp is included for freshness, using current time
+    CHashWriter leafHasher(SER_GETHASH, 0);
+    leafHasher << address;
+    leafHasher << reputation;
+    leafHasher << GetTime();
+    uint256 leaf = leafHasher.GetHash();
     
-    // Add leaf to proof
-    proof.push_back(leaf);
+    // In a full implementation, this would:
+    // 1. Query the reputation state tree for the address
+    // 2. Build the merkle path from leaf to root
+    // 3. Return the sibling hashes along the path
     
-    // In a full implementation, this would build a complete merkle path
-    // For now, we just add the leaf
+    // For now, we create a simple proof structure
+    // The proof contains sibling hashes from leaf to root
+    
+    // Generate a deterministic sibling hash based on the leaf
+    // This simulates a two-element tree where we know both leaves
+    CHashWriter siblingHasher(SER_GETHASH, 0);
+    siblingHasher << leaf;
+    siblingHasher << std::string("sibling");
+    uint256 sibling = siblingHasher.GetHash();
+    
+    proof.push_back(sibling);
     
     return proof;
 }
@@ -308,18 +365,40 @@ bool ReputationSignatureManager::VerifyMerkleProof(
     const uint256& root,
     const uint256& leaf) const {
     
+    // Standard binary merkle tree verification
+    // The proof contains sibling hashes from leaf to root
+    
     if (proof.empty()) {
-        return false;
+        // If no proof provided, leaf must equal root (single element tree)
+        return leaf == root;
     }
     
-    // Simplified verification - just check leaf is in proof
-    for (const auto& node : proof) {
-        if (node == leaf) {
-            return true;
+    // Start with the leaf hash
+    uint256 currentHash = leaf;
+    
+    // Walk up the merkle tree using the proof elements
+    // Each proof element is a sibling hash at that level
+    for (const auto& proofElement : proof) {
+        // Combine current hash with proof element
+        // Order is determined by comparing hashes (smaller hash first)
+        // This ensures consistent ordering regardless of position in tree
+        CHashWriter hasher(SER_GETHASH, 0);
+        
+        if (currentHash < proofElement) {
+            // Current hash is on the left
+            hasher << currentHash;
+            hasher << proofElement;
+        } else {
+            // Current hash is on the right
+            hasher << proofElement;
+            hasher << currentHash;
         }
+        
+        currentHash = hasher.GetHash();
     }
     
-    return false;
+    // Final hash should match the root
+    return currentHash == root;
 }
 
 uint256 ReputationSignatureManager::ComputeStateRoot() const {
@@ -332,5 +411,79 @@ uint256 ReputationSignatureManager::ComputeStateRoot() const {
     ss << GetTime();
     return ss.GetHash();
 }
+
+// ReputationMerkleUtils implementation
+
+namespace ReputationMerkleUtils {
+
+uint256 ComputeReputationLeafHash(
+    const uint160& address,
+    uint32_t reputation,
+    int64_t timestamp) {
+    
+    // Leaf = Hash256(address || reputation || timestamp)
+    CHashWriter leafHasher(SER_GETHASH, 0);
+    leafHasher << address;
+    leafHasher << reputation;
+    leafHasher << timestamp;
+    return leafHasher.GetHash();
+}
+
+bool VerifyMerkleProofWithLeaf(
+    const uint256& root,
+    const uint256& leaf,
+    const std::vector<uint256>& proof) {
+    
+    // Standard binary merkle tree verification
+    // The proof contains sibling hashes from leaf to root
+    
+    if (proof.empty()) {
+        // If no proof provided, leaf must equal root (single element tree)
+        return leaf == root;
+    }
+    
+    // Start with the leaf hash
+    uint256 currentHash = leaf;
+    
+    // Walk up the merkle tree using the proof elements
+    // Each proof element is a sibling hash at that level
+    for (const auto& proofElement : proof) {
+        // Combine current hash with proof element
+        // Order is determined by comparing hashes (smaller hash first)
+        // This ensures consistent ordering regardless of position in tree
+        CHashWriter hasher(SER_GETHASH, 0);
+        
+        if (currentHash < proofElement) {
+            // Current hash is on the left
+            hasher << currentHash;
+            hasher << proofElement;
+        } else {
+            // Current hash is on the right
+            hasher << proofElement;
+            hasher << currentHash;
+        }
+        
+        currentHash = hasher.GetHash();
+    }
+    
+    // Final hash should match the root
+    return currentHash == root;
+}
+
+bool VerifyReputationMerkleProof(
+    const uint256& root,
+    const uint160& address,
+    uint32_t reputation,
+    int64_t timestamp,
+    const std::vector<uint256>& proof) {
+    
+    // Compute the leaf hash
+    uint256 leaf = ComputeReputationLeafHash(address, reputation, timestamp);
+    
+    // Verify the proof
+    return VerifyMerkleProofWithLeaf(root, leaf, proof);
+}
+
+} // namespace ReputationMerkleUtils
 
 } // namespace CVM

@@ -10,6 +10,9 @@
 #include <cvm/hat_consensus.h>
 #include <cvm/dos_protection.h>
 #include <chain.h>
+#include <sync.h>
+#include <txmempool.h>
+#include <validation.h>
 #include <util.h>
 #include <utiltime.h>
 #include <univalue.h>
@@ -18,13 +21,22 @@
 #include <pubkey.h>
 #include <key.h>
 
-extern CChain chainActive;
+extern CChain& chainActive;
+extern CCriticalSection cs_main;
+extern CTxMemPool mempool;
 
 namespace CVM {
 
 // Rate limiting constants
 static const int64_t RATE_LIMIT_WINDOW = 60;  // 60 seconds
 static const uint32_t MAX_SUBMISSIONS_PER_WINDOW = 10;  // For low reputation
+
+// Helper function to get current block height with proper locking
+static int GetCurrentBlockHeight()
+{
+    LOCK(cs_main);
+    return chainActive.Height();
+}
 
 MempoolManager::MempoolManager()
     : m_db(nullptr)
@@ -48,6 +60,11 @@ MempoolManager::~MempoolManager()
 void MempoolManager::Initialize(CVMDatabase* db)
 {
     m_db = db;
+    
+    // Set database on gas system for trust density calculations
+    if (m_gasSystem && db) {
+        m_gasSystem->SetDatabase(db);
+    }
     
     // Initialize managers (they don't have Initialize methods, just set db)
     // TODO: Add Initialize methods to GasAllowanceTracker and GasSubsidyTracker if needed
@@ -212,15 +229,60 @@ bool MempoolManager::CheckFreeGasEligibility(
 }
 
 bool MempoolManager::ValidateGasSubsidy(
-    const CTransaction& tx,
-    const GasSubsidyTracker::SubsidyRecord& subsidy)
+    const CTransaction& /* tx */,
+    const GasSubsidyTracker::SubsidyRecord& subsidy) const
 {
     if (!m_gasSubsidyManager) {
         return false;
     }
     
-    // Validate subsidy exists and is active
-    // TODO: Implement subsidy validation
+    // Validate subsidy record
+    
+    // 1. Check that subsidy amount is within reasonable bounds
+    // Maximum subsidy is 50% of gas used (for 100 reputation)
+    uint64_t maxSubsidy = subsidy.gasUsed / 2;
+    if (subsidy.subsidyAmount > maxSubsidy) {
+        LogPrint(BCLog::CVM, "MempoolManager: Subsidy amount %d exceeds maximum %d for gas used %d\n",
+                 subsidy.subsidyAmount, maxSubsidy, subsidy.gasUsed);
+        return false;
+    }
+    
+    // 2. Verify reputation-based subsidy calculation
+    // Subsidy percentage = reputation / 2 (max 50% at reputation 100)
+    uint64_t expectedSubsidyPercent = subsidy.reputation / 2;
+    uint64_t expectedSubsidy = (subsidy.gasUsed * expectedSubsidyPercent) / 100;
+    
+    // Allow 1% tolerance for rounding
+    uint64_t tolerance = subsidy.gasUsed / 100;
+    if (subsidy.subsidyAmount > expectedSubsidy + tolerance) {
+        LogPrint(BCLog::CVM, "MempoolManager: Subsidy amount %d exceeds expected %d for reputation %d\n",
+                 subsidy.subsidyAmount, expectedSubsidy, subsidy.reputation);
+        return false;
+    }
+    
+    // 3. Check that the operation is marked as beneficial if subsidy is claimed
+    if (subsidy.subsidyAmount > 0 && !subsidy.isBeneficial) {
+        LogPrint(BCLog::CVM, "MempoolManager: Subsidy claimed for non-beneficial operation\n");
+        return false;
+    }
+    
+    // 4. Verify minimum reputation for subsidy eligibility
+    // Only addresses with reputation >= 50 can receive subsidies
+    static const uint8_t MIN_SUBSIDY_REPUTATION = 50;
+    if (subsidy.subsidyAmount > 0 && subsidy.reputation < MIN_SUBSIDY_REPUTATION) {
+        LogPrint(BCLog::CVM, "MempoolManager: Reputation %d below minimum %d for subsidy\n",
+                 subsidy.reputation, MIN_SUBSIDY_REPUTATION);
+        return false;
+    }
+    
+    // 5. Check block height is valid (not in the future)
+    int currentHeight = GetCurrentBlockHeight();
+    if (subsidy.blockHeight > currentHeight) {
+        LogPrint(BCLog::CVM, "MempoolManager: Subsidy block height %d is in the future (current: %d)\n",
+                 subsidy.blockHeight, currentHeight);
+        return false;
+    }
+    
     return true;
 }
 
@@ -282,7 +344,9 @@ uint64_t MempoolManager::GetRemainingFreeGas(const uint160& address)
     
     // Create trust context for reputation lookup
     TrustContext trust;
-    int64_t currentBlock = 0;  // TODO: Get actual current block height
+    
+    // Get actual current block height
+    int64_t currentBlock = GetCurrentBlockHeight();
     
     auto state = m_gasAllowanceManager->GetAllowanceState(address, trust, currentBlock);
     return state.dailyAllowance > state.usedToday ? 
@@ -395,10 +459,9 @@ CAmount MempoolManager::GetGasPrice()
         return basePrice;
     }
     
-    // Get current gas price trend from sustainable gas system
+    // Get current gas price multiplier from sustainable gas system
     // The system tracks price multipliers based on network congestion
-    // TODO: Implement GetCurrentPriceMultiplier in SustainableGasSystem
-    double priceMultiplier = 1.0; // Default multiplier
+    double priceMultiplier = m_gasSystem->GetCurrentPriceMultiplier();
     
     // Apply multiplier (ranges from 0.5x to 2.0x based on congestion)
     CAmount adjustedPrice = static_cast<CAmount>(basePrice * priceMultiplier);
@@ -447,8 +510,16 @@ MempoolManager::GetPriorityDistribution()
     distribution[TransactionPriorityManager::PriorityLevel::NORMAL] = 0;
     distribution[TransactionPriorityManager::PriorityLevel::LOW] = 0;
     
-    // TODO: Iterate through mempool and count by priority
-    // This would require access to the actual mempool
+    // Iterate through mempool and count by priority
+    // Access mempool.mapTx with proper locking
+    {
+        LOCK(mempool.cs);
+        for (const auto& entry : mempool.mapTx) {
+            const CTransaction& tx = entry.GetTx();
+            auto priority = GetTransactionPriority(tx);
+            distribution[priority.level]++;
+        }
+    }
     
     return distribution;
 }

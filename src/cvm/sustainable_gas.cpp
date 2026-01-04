@@ -4,8 +4,12 @@
 
 #include <cvm/sustainable_gas.h>
 #include <cvm/trust_context.h>
+#include <cvm/cvmdb.h>
+#include <cvm/reputation.h>
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <numeric>
 
 namespace cvm {
 
@@ -30,7 +34,9 @@ static const uint64_t GAS_BLOCKHASH = 20;
 static const uint64_t GAS_EXTCODECOPY = 7;
 
 SustainableGasSystem::SustainableGasSystem()
-    : gasParams()
+    : m_db(nullptr)
+    , gasParams()
+    , m_lastRecordedBlock(0)
 {
 }
 
@@ -297,10 +303,111 @@ void SustainableGasSystem::UpdateBaseCosts(double networkTrustDensity)
 
 double SustainableGasSystem::CalculateNetworkTrustDensity()
 {
-    // This would need to query the reputation system for network-wide statistics
-    // For now, return a placeholder
-    // TODO: Integrate with reputation system to calculate actual trust density
-    return 0.5;  // 50% trust density
+    // If no database is available, return default trust density
+    if (!m_db) {
+        return 0.5;  // 50% trust density as default
+    }
+    
+    // Query reputation system for network-wide statistics
+    // Trust density is calculated as the ratio of addresses with positive reputation
+    // to total addresses with any reputation score
+    
+    CVM::ReputationSystem repSystem(*m_db);
+    
+    // Get all reputation keys from database
+    std::vector<std::string> reputationKeys = m_db->ListKeysWithPrefix("reputation_");
+    
+    if (reputationKeys.empty()) {
+        return 0.5;  // Default if no reputation data
+    }
+    
+    int64_t totalAddresses = 0;
+    int64_t positiveReputationAddresses = 0;
+    int64_t totalReputationScore = 0;
+    
+    for (const auto& key : reputationKeys) {
+        std::vector<uint8_t> data;
+        if (m_db->ReadGeneric(key, data) && data.size() >= sizeof(int64_t)) {
+            // Deserialize reputation score
+            int64_t score = 0;
+            memcpy(&score, data.data(), sizeof(int64_t));
+            
+            totalAddresses++;
+            totalReputationScore += score;
+            
+            // Count addresses with positive reputation (score > 0)
+            if (score > 0) {
+                positiveReputationAddresses++;
+            }
+        }
+    }
+    
+    if (totalAddresses == 0) {
+        return 0.5;  // Default if no valid reputation data
+    }
+    
+    // Calculate trust density as ratio of positive reputation addresses
+    // This gives a value between 0.0 and 1.0
+    double trustDensity = static_cast<double>(positiveReputationAddresses) / totalAddresses;
+    
+    // Also factor in average reputation score
+    // Normalize average score from [-10000, +10000] to [0, 1]
+    double avgScore = static_cast<double>(totalReputationScore) / totalAddresses;
+    double normalizedAvgScore = (avgScore + 10000.0) / 20000.0;
+    normalizedAvgScore = std::max(0.0, std::min(1.0, normalizedAvgScore));
+    
+    // Combine both metrics (weighted average)
+    // 60% weight on positive address ratio, 40% on average score
+    double combinedDensity = (trustDensity * 0.6) + (normalizedAvgScore * 0.4);
+    
+    return combinedDensity;
+}
+
+double SustainableGasSystem::GetCurrentPriceMultiplier()
+{
+    // If we don't have enough data, return default multiplier
+    if (m_recentBlockGas.empty()) {
+        return 1.0;
+    }
+    
+    // Calculate average gas usage over tracked blocks
+    uint64_t totalGas = std::accumulate(m_recentBlockGas.begin(), m_recentBlockGas.end(), 0ULL);
+    double avgGas = static_cast<double>(totalGas) / m_recentBlockGas.size();
+    
+    // Calculate multiplier based on congestion vs target
+    // If avgGas == TARGET_GAS_PER_BLOCK, multiplier = 1.0
+    // If avgGas > TARGET_GAS_PER_BLOCK, multiplier > 1.0 (up to 2.0)
+    // If avgGas < TARGET_GAS_PER_BLOCK, multiplier < 1.0 (down to 0.5)
+    double congestionRatio = avgGas / static_cast<double>(TARGET_GAS_PER_BLOCK);
+    
+    // Linear interpolation:
+    // congestionRatio = 0.0 -> multiplier = 0.5
+    // congestionRatio = 1.0 -> multiplier = 1.0
+    // congestionRatio = 2.0 -> multiplier = 2.0
+    double multiplier = 0.5 + (congestionRatio * 0.5);
+    
+    // Clamp to [0.5, 2.0] range as per requirements
+    multiplier = std::max(0.5, std::min(2.0, multiplier));
+    
+    return multiplier;
+}
+
+void SustainableGasSystem::RecordBlockGasUsage(int64_t blockHeight, uint64_t gasUsed)
+{
+    // Only record if this is a new block (avoid duplicates)
+    if (blockHeight <= m_lastRecordedBlock && m_lastRecordedBlock > 0) {
+        return;
+    }
+    
+    m_lastRecordedBlock = blockHeight;
+    
+    // Add gas usage to tracking deque
+    m_recentBlockGas.push_back(gasUsed);
+    
+    // Maintain maximum of 100 blocks
+    while (m_recentBlockGas.size() > MAX_TRACKED_BLOCKS) {
+        m_recentBlockGas.pop_front();
+    }
 }
 
 void SustainableGasSystem::ResetRateLimits()

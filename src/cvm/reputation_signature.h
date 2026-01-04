@@ -48,6 +48,14 @@ struct ReputationStateProof {
     // Verify proof validity
     bool Verify() const;
     
+    // Verify merkle proof for reputation data
+    // Standard binary merkle tree verification
+    // Leaf = Hash256(address || reputation || timestamp)
+    bool VerifyReputationMerkleProof(
+        const uint256& root,
+        const uint256& leaf,
+        const std::vector<uint256>& proof) const;
+    
     // Check if proof is still valid (not expired)
     bool IsValid(int64_t current_time, int current_height) const;
 };
@@ -205,6 +213,59 @@ private:
     // Compute reputation state root
     uint256 ComputeStateRoot() const;
 };
+
+/**
+ * Utility functions for reputation merkle proof verification
+ */
+namespace ReputationMerkleUtils {
+    /**
+     * Verify a reputation merkle proof
+     * 
+     * Standard binary merkle tree verification where:
+     * - Leaf = Hash256(address || reputation || timestamp)
+     * - Proof contains sibling hashes from leaf to root
+     * - Hash ordering: smaller hash is always on the left
+     * 
+     * @param root The merkle root to verify against
+     * @param address The address whose reputation is being proven
+     * @param reputation The reputation score being proven
+     * @param timestamp The timestamp of the reputation snapshot
+     * @param proof The merkle proof (sibling hashes from leaf to root)
+     * @return true if the proof is valid
+     */
+    bool VerifyReputationMerkleProof(
+        const uint256& root,
+        const uint160& address,
+        uint32_t reputation,
+        int64_t timestamp,
+        const std::vector<uint256>& proof);
+    
+    /**
+     * Compute the leaf hash for a reputation entry
+     * 
+     * @param address The address
+     * @param reputation The reputation score
+     * @param timestamp The timestamp
+     * @return The leaf hash
+     */
+    uint256 ComputeReputationLeafHash(
+        const uint160& address,
+        uint32_t reputation,
+        int64_t timestamp);
+    
+    /**
+     * Verify a generic merkle proof given a pre-computed leaf hash
+     * 
+     * @param root The merkle root to verify against
+     * @param leaf The pre-computed leaf hash
+     * @param proof The merkle proof (sibling hashes from leaf to root)
+     * @return true if the proof is valid
+     */
+    bool VerifyMerkleProofWithLeaf(
+        const uint256& root,
+        const uint256& leaf,
+        const std::vector<uint256>& proof);
+}
 
 } // namespace CVM
 
