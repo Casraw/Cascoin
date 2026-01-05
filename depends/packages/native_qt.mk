@@ -18,6 +18,7 @@ $(package)_config_opts += -no-dbus -no-freetype -no-pkg-config
 
 # CMake options kept minimal; rely on defaults for host build
 $(package)_cmake_opts := -DCMAKE_PREFIX_PATH=$(build_prefix)
+$(package)_cmake_opts += -DQT_GENERATE_SBOM=OFF
 endef
 
 $(package)_top_download_path=$(qt_details_top_download_path)

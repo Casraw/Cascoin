@@ -10,9 +10,16 @@ The recommended method is cross-compiling on Linux using the Mingw-w64 toolchain
 Install the required dependencies on Ubuntu/Debian:
 
 ```bash
-sudo apt install build-essential libtool autotools-dev automake pkg-config bsdmainutils curl git
+sudo apt install build-essential libtool autotools-dev automake pkg-config bsdmainutils curl git gperf cmake
 sudo apt install g++-mingw-w64-x86-64
+sudo apt install libxcb1-dev libxcb-util-dev libxcb-cursor-dev libxcb-render-util0-dev \
+  libxcb-keysyms1-dev libxcb-image0-dev libxcb-icccm4-dev libxcb-xkb-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev
 ```
+
+Note: 
+- `gperf` is required for building fontconfig 2.15.0+ in the depends system.
+- The `libxcb-*` and `libxkbcommon-*` packages are required for building native_qt (Qt6 host tools).
 
 For Ubuntu 16.04+ and WSL, set the default mingw32 g++ compiler to posix:
 

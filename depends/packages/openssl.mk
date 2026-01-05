@@ -1,11 +1,11 @@
 package=openssl
-$(package)_version=3.2.3
-$(package)_download_path=https://www.openssl.org/source
+$(package)_version=3.5.0
+$(package)_download_path=https://github.com/openssl/openssl/releases/download/openssl-$($(package)_version)
 $(package)_file_name=$(package)-$($(package)_version).tar.gz
-$(package)_sha256_hash=52b5f1c6b8022bc5868c308c54fb77705e702d6c6f4594f99a0df216acf46239
+$(package)_sha256_hash=344d0a79f1a9b08029b0744e2cc401a43f9c90acd1044d09a530b4885a8e9fc0
 
 define $(package)_set_vars
-$(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)"
+$(package)_config_env=AR="$($(package)_ar)" RANLIB="$($(package)_ranlib)" CC="$($(package)_cc)" RC="$($(package)_rc)"
 $(package)_config_opts=--prefix=$(host_prefix) --openssldir=$(host_prefix)/etc/openssl
 $(package)_config_opts+=--libdir=lib
 $(package)_config_opts+=no-camellia
@@ -61,7 +61,7 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  $(MAKE) DESTDIR=$($(package)_staging_dir) install_sw
+  $(MAKE) DESTDIR=$($(package)_staging_dir) install_dev
 endef
 
 define $(package)_postprocess_cmds

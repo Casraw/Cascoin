@@ -16,8 +16,15 @@ sudo apt-get update
 sudo apt-get install -y \
   build-essential autoconf automake libtool pkg-config \
   curl ca-certificates cmake git \
-  bsdmainutils
+  bsdmainutils gperf \
+  libxcb1-dev libxcb-util-dev libxcb-cursor-dev libxcb-render-util0-dev \
+  libxcb-keysyms1-dev libxcb-image0-dev libxcb-icccm4-dev libxcb-xkb-dev \
+  libxkbcommon-dev libxkbcommon-x11-dev
 ```
+
+Note: 
+- `gperf` is required for building fontconfig 2.15.0+ in the depends system.
+- The `libxcb-*` and `libxkbcommon-*` packages are required for Qt6 XCB platform support.
 
 ### Build Steps
 
