@@ -72,8 +72,8 @@ define $(package)_postprocess_cmds
   mkdir -p bin && \
   cd bin && \
   for tool in moc rcc uic; do \
-    if [ -f ../libexec/$$tool ] && [ ! -e $$tool ]; then \
-      ln -sf ../libexec/$$tool $$tool; \
+    if [ -f ../libexec/"$$$$tool" ] && [ ! -e "$$$$tool" ]; then \
+      ln -sf ../libexec/"$$$$tool" "$$$$tool"; \
     fi; \
   done
 endef

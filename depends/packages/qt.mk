@@ -165,7 +165,7 @@ $(package)_config_env_darwin := OBJC="$$($(package)_cc)"
 $(package)_config_env_darwin += OBJCXX="$$($(package)_cxx)"
 
 $(package)_cmake_opts := -DCMAKE_PREFIX_PATH=$(host_prefix)
-$(package)_cmake_opts += -DQT_FEATURE_cxx20=ON
+$(package)_cmake_opts += -DQT_FEATURE_cxx20=OFF
 $(package)_cmake_opts += -DQT_ENABLE_CXX_EXTENSIONS=OFF
 $(package)_cmake_opts += -DQT_GENERATE_SBOM=OFF
 ifneq ($(V),)
@@ -298,13 +298,13 @@ define $(package)_postprocess_cmds
   mkdir -p native/bin && \
   cd native/bin && \
   for tool in moc rcc uic; do \
-    if [ -f ../../libexec/$$tool ] && [ ! -e $$tool ]; then \
-      ln -sf ../../libexec/$$tool $$tool; \
+    if [ -f ../../libexec/"$$$$tool" ] && [ ! -e "$$$$tool" ]; then \
+      ln -sf ../../libexec/"$$$$tool" "$$$$tool"; \
     fi; \
   done && \
   for tool in lrelease lconvert lupdate; do \
-    if [ -f ../../bin/$$tool ] && [ ! -e $$tool ]; then \
-      ln -sf ../../bin/$$tool $$tool; \
+    if [ -f ../../bin/"$$$$tool" ] && [ ! -e "$$$$tool" ]; then \
+      ln -sf ../../bin/"$$$$tool" "$$$$tool"; \
     fi; \
   done
 endef
