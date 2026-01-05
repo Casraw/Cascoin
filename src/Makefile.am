@@ -593,7 +593,7 @@ cascoind_LDADD = \
 cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS)
 
 if ENABLE_EVMC
-cascoind_LDADD += -levmone -levmone_precompiles -lblst -levmc-loader -levmc-instructions
+cascoind_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
 endif
 
 # bitcoin-cli binary #
@@ -615,7 +615,7 @@ cascoin_cli_LDADD = \
 cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
 
 if ENABLE_EVMC
-cascoin_cli_LDADD += -levmone -levmone_precompiles -lblst -levmc-loader -levmc-instructions
+cascoin_cli_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
 endif
 #
 
@@ -640,7 +640,7 @@ cascoin_tx_LDADD = \
 cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
 
 if ENABLE_EVMC
-cascoin_tx_LDADD += -levmone -levmone_precompiles -lblst -levmc-loader -levmc-instructions
+cascoin_tx_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
 endif
 #
 
@@ -657,7 +657,7 @@ libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
 
 if ENABLE_EVMC
-libbitcoinconsensus_la_LIBADD += -levmone -levmone_precompiles -lblst -levmc-loader -levmc-instructions
+libbitcoinconsensus_la_LIBADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
 endif
 libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)

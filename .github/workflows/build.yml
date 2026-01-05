@@ -125,7 +125,8 @@ jobs:
           Cflags: -I${includedir}
           EOF
           
-          # Create evmone pkg-config file (includes precompiles and blst for v0.18.0)
+          # Create evmone pkg-config file (without precompiles for system builds)
+          # Note: evmone_precompiles and blst are only available in depends builds
           sudo tee /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
           prefix=/usr/local
           exec_prefix=${prefix}
@@ -136,7 +137,7 @@ jobs:
           Description: Fast Ethereum Virtual Machine implementation
           Version: 0.18.0
           Requires: evmc
-          Libs: -L${libdir} -levmone -levmone_precompiles -lblst
+          Libs: -L${libdir} -levmone
           Cflags: -I${includedir}
           EOF
           

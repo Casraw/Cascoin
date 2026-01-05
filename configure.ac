@@ -1032,6 +1032,9 @@ AC_ARG_ENABLE([evmc],
   [use_evmc=$enableval],
   [use_evmc=yes])
 
+dnl Option to specify additional evmone precompiles libraries (used by depends system)
+AC_ARG_VAR([EVMONE_PRECOMPILES_LIBS], [Additional libraries for evmone precompiles (e.g., -levmone_precompiles -lblst)])
+
 if test "x$use_evmc" = "xyes"; then
   if test x$use_pkgconfig = xyes; then
     m4_ifdef(
@@ -1090,6 +1093,7 @@ fi
 
 AC_SUBST(EVMC_CFLAGS)
 AC_SUBST(EVMC_LIBS)
+AC_SUBST(EVMONE_PRECOMPILES_LIBS)
 
 save_CXXFLAGS="${CXXFLAGS}"
 CXXFLAGS="${CXXFLAGS} ${CRYPTO_CFLAGS} ${SSL_CFLAGS}"
