@@ -66,7 +66,7 @@ std::string SecurityEvent::GetSeverityString() const {
         case SecuritySeverity::DEBUG: return "DEBUG";
         case SecuritySeverity::INFO: return "INFO";
         case SecuritySeverity::WARNING: return "WARNING";
-        case SecuritySeverity::ERROR: return "ERROR";
+        case SecuritySeverity::ERR_SEVERITY: return "ERR_SEVERITY";
         case SecuritySeverity::CRITICAL: return "CRITICAL";
         default: return "UNKNOWN";
     }

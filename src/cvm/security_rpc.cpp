@@ -510,7 +510,7 @@ UniValue setsecurityconfig(const JSONRPCRequest& request)
         if (levelStr == "DEBUG") level = CVM::SecuritySeverity::DEBUG;
         else if (levelStr == "INFO") level = CVM::SecuritySeverity::INFO;
         else if (levelStr == "WARNING") level = CVM::SecuritySeverity::WARNING;
-        else if (levelStr == "ERROR") level = CVM::SecuritySeverity::ERROR;
+        else if (levelStr == "ERROR") level = CVM::SecuritySeverity::ERR_SEVERITY;
         else if (levelStr == "CRITICAL") level = CVM::SecuritySeverity::CRITICAL;
         else {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid logging level");

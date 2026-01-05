@@ -51,7 +51,9 @@ define $(package)_build_cmds
 endef
 
 define $(package)_stage_cmds
-  cd build && $(MAKE) DESTDIR=$($(package)_staging_dir) install
+  cd build && $(MAKE) DESTDIR=$($(package)_staging_dir) install && \
+  cp lib/evmone_precompiles/libevmone_precompiles.a $($(package)_staging_dir)$(host_prefix)/lib/ && \
+  cp deps/src/blst/libblst.a $($(package)_staging_dir)$(host_prefix)/lib/
 endef
 
 define $(package)_postprocess_cmds

@@ -78,7 +78,7 @@ enum class SecuritySeverity {
     DEBUG,      // Debug information
     INFO,       // Informational
     WARNING,    // Potential issue
-    ERROR,      // Error condition
+    ERR_SEVERITY,      // Error condition
     CRITICAL    // Critical security event
 };
 

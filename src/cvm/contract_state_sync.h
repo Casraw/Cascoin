@@ -113,7 +113,7 @@ struct ContractStateResponse {
         METADATA = 1,           // Contract metadata
         CHUNK = 2,              // Contract state chunk
         STATE_PROOF = 3,        // Storage proof
-        ERROR = 255             // Error response
+        ERR_STATE = 255             // Error response
     };
     
     ResponseType type;
@@ -123,7 +123,7 @@ struct ContractStateResponse {
     std::vector<uint256> stateProof;
     std::string errorMessage;
     
-    ContractStateResponse() : type(ResponseType::ERROR) {}
+    ContractStateResponse() : type(ResponseType::ERR_STATE) {}
     
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>

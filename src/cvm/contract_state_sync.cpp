@@ -172,13 +172,13 @@ void ContractStateSyncManager::ProcessContractStateRequest(CNode* pfrom,
                 }
                 response = HandleStateProofRequest(request.contractAddresses[0], key);
             } else {
-                response.type = ContractStateResponse::ResponseType::ERROR;
+                response.type = ContractStateResponse::ResponseType::ERR_STATE;
                 response.errorMessage = "No contract address specified";
             }
             break;
             
         default:
-            response.type = ContractStateResponse::ResponseType::ERROR;
+            response.type = ContractStateResponse::ResponseType::ERR_STATE;
             response.errorMessage = "Unknown request type";
             break;
     }
@@ -271,7 +271,7 @@ void ContractStateSyncManager::ProcessContractStateResponse(CNode* pfrom,
             // State proofs are typically requested for verification, not sync
             break;
             
-        case ContractStateResponse::ResponseType::ERROR:
+        case ContractStateResponse::ResponseType::ERR_STATE:
             LogPrintf("ContractStateSync: Error response: %s\n", response.errorMessage);
             break;
     }
@@ -376,7 +376,7 @@ ContractStateResponse ContractStateSyncManager::HandleMetadataRequest(
     response.type = ContractStateResponse::ResponseType::METADATA;
     
     if (!database) {
-        response.type = ContractStateResponse::ResponseType::ERROR;
+        response.type = ContractStateResponse::ResponseType::ERR_STATE;
         response.errorMessage = "Database not available";
         return response;
     }
@@ -410,7 +410,7 @@ ContractStateResponse ContractStateSyncManager::HandleChunkRequest(
     response.type = ContractStateResponse::ResponseType::CHUNK;
     
     if (!database) {
-        response.type = ContractStateResponse::ResponseType::ERROR;
+        response.type = ContractStateResponse::ResponseType::ERR_STATE;
         response.errorMessage = "Database not available";
         return response;
     }

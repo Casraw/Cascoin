@@ -445,7 +445,7 @@ public:
         DEBUG,
         INFO,
         WARNING,
-        ERROR,
+        ERR_LOG,
         CRITICAL
     };
     

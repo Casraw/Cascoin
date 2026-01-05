@@ -837,7 +837,7 @@ void TrustOperationLogger::LogFraudAttempt(const uint160& address, const uint256
 {
     LogEntry entry;
     entry.timestamp = GetCurrentTimestamp();
-    entry.level = LogLevel::ERROR;
+    entry.level = LogLevel::ERR_LOG;
     entry.category = "fraud_attempt";
     entry.address = address;
     entry.txHash = txHash;
@@ -899,7 +899,7 @@ void TrustOperationLogger::LogAnomalyDetection(const uint160& address, const std
 {
     LogEntry entry;
     entry.timestamp = GetCurrentTimestamp();
-    entry.level = (severity > 0.7) ? LogLevel::ERROR : ((severity > 0.4) ? LogLevel::WARNING : LogLevel::INFO);
+    entry.level = (severity > 0.7) ? LogLevel::ERR_LOG : ((severity > 0.4) ? LogLevel::WARNING : LogLevel::INFO);
     entry.category = "anomaly_detection";
     entry.address = address;
     entry.blockHeight = m_currentBlockHeight;
@@ -1012,7 +1012,7 @@ std::string TrustOperationLogger::LevelToString(LogLevel level) const
         case LogLevel::DEBUG: return "DEBUG";
         case LogLevel::INFO: return "INFO";
         case LogLevel::WARNING: return "WARNING";
-        case LogLevel::ERROR: return "ERROR";
+        case LogLevel::ERR_LOG: return "ERROR";
         case LogLevel::CRITICAL: return "CRITICAL";
         default: return "UNKNOWN";
     }
