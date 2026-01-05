@@ -68,4 +68,12 @@ define $(package)_stage_cmds
   cmake --install . --prefix $($(package)_staging_prefix_dir)
 endef
 
-
+define $(package)_postprocess_cmds
+  mkdir -p bin && \
+  cd bin && \
+  for tool in moc rcc uic; do \
+    if [ -f ../libexec/$$tool ] && [ ! -e $$tool ]; then \
+      ln -sf ../libexec/$$tool $$tool; \
+    fi; \
+  done
+endef

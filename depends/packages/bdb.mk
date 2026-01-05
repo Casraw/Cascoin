@@ -6,9 +6,9 @@ $(package)_sha256_hash=76a25560d9e52a198d37a31440fd07632b5f1f8f9f2b6d5438f4bc3e7
 $(package)_build_subdir=build_unix
 
 define $(package)_set_vars
-$(package)_config_opts=--disable-shared --enable-cxx --disable-replication --with-mutex=POSIX/pthreads/library
+$(package)_config_opts=--disable-shared --enable-cxx --disable-replication
 $(package)_config_opts_mingw32=--enable-mingw
-$(package)_config_opts_linux=--with-pic
+$(package)_config_opts_linux=--with-pic --with-mutex=POSIX/pthreads/library
 $(package)_cflags=-Wno-error=incompatible-pointer-types -Wno-error=int-conversion
 $(package)_cxxflags=-std=c++17
 $(package)_ldflags_linux=-lpthread

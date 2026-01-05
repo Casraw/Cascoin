@@ -144,13 +144,13 @@ This implementation plan updates the Cascoin Core depends system to use current,
     - Document build time and any warnings
     - _Requirements: 11.1_
 
-  - [-] 6.2 Full depends build for Windows
+  - [x] 6.2 Full depends build for Windows
     - Clean depends directory
     - Build all packages: `make -C depends HOST=x86_64-w64-mingw32 -j$(nproc)`
     - Document build time and any warnings
     - _Requirements: 11.2_
 
-  - [ ] 6.3 Build main project with updated depends
+  - [x] 6.3 Build main project with updated depends
     - Configure with updated depends: `./configure --prefix=$(pwd)/depends/x86_64-pc-linux-gnu`
     - Build cascoind and cascoin-qt
     - Run unit tests: `make check`
