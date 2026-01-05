@@ -618,7 +618,7 @@ jobs:
       - name: Build depends (${{ env.HOST }})
         shell: bash
         run: |
-          make -C depends HOST=${HOST} -j"$(nproc)"
+          make -C depends HOST=${HOST} JOBS=$(nproc)
           # show whether native ccache was staged
           ls -lah depends/*/native/bin || true
           ls -lah depends/${HOST}
@@ -630,45 +630,19 @@ jobs:
       - name: Configure (Windows ${HOST}, Qt6 GUI, wallet, incompatible BDB)
         shell: bash
         run: |
-          export CONFIG_SITE="$PWD/depends/${HOST}/share/config.site"
-          echo "=== Checking Qt6 tools from depends ==="
-          ls -la "$PWD/depends/${HOST}/native/libexec/" | head -10
-          echo "=== Checking Qt6 libraries ==="
-          ls -la "$PWD/depends/x86_64-w64-mingw32/lib/" | grep -i qt || echo "No Qt libraries found"
-          echo "=== Checking Qt6 includes ==="
-          ls -la "$PWD/depends/x86_64-w64-mingw32/include/" | grep -i qt || echo "No Qt includes found"
-          echo "=== Running configure ==="
-          CFLAGS="-g -D_WIN32_WINNT=0x0601" CXXFLAGS="-g -D_WIN32_WINNT=0x0601" \
-          export PATH=/usr/lib/qt6/bin:$PATH
-          CPPFLAGS="-I$PWD/depends/x86_64-w64-mingw32/include" \
-          LDFLAGS="-L$PWD/depends/x86_64-w64-mingw32/lib" \
-          PKG_CONFIG_PATH="$PWD/depends/x86_64-w64-mingw32/lib/pkgconfig" \
-          ./configure \
-            --prefix=$PWD/depends/x86_64-w64-mingw32 \
-            --host=x86_64-w64-mingw32 \
+          CONFIG_SITE="$PWD/depends/${HOST}/share/config.site" ./configure \
+            --prefix=/ \
             --disable-tests \
             --disable-bench \
-            --with-gui=qt6 \
-            --with-qt-incdir=$PWD/depends/x86_64-w64-mingw32/include \
-            --with-qt-libdir=$PWD/depends/x86_64-w64-mingw32/lib \
-            --with-qt-bindir=$PWD/depends/x86_64-w64-mingw32/native/libexec:/usr/lib/qt6/bin \
             --with-incompatible-bdb
-          echo "=== Configure completed, checking config.log for Qt6 detection ==="
-          grep -A 5 -B 5 "checking for Qt" config.log || echo "Qt check not found in config.log"
-          grep -A 5 -B 5 "GUI.*qt" config.log || echo "GUI check not found in config.log"
+          echo "=== Configure completed ==="
+          tail -20 config.log || true
       - name: Build (Windows ${HOST})
         shell: bash
         run: |
-          echo "=== Starting build ==="
-          echo "Available make targets:"
-          make help | head -20 || true
-          echo "=== Building all targets ==="
-          make -j"$(nproc)"
-          echo "=== Build completed, checking what was built ==="
-          echo "Files in src/:"
-          ls -la src/ | head -20 || true
-          echo "Files in src/qt/:"
-          ls -la src/qt/ || true
+          make -j$(nproc)
+          echo "=== Build completed ==="
+          ls -la src/*.exe || true
 
       - name: Strip Windows binaries (non-fatal) and keep debug symbols
         shell: bash
