@@ -63,7 +63,7 @@ jobs:
           # Build EVMC
           echo "Building EVMC..."
           cd /tmp
-          rm -rf evmc evmone  # Clean up any existing directories
+          rm -rf evmc evmone blst  # Clean up any existing directories
           git clone --recursive https://github.com/ethereum/evmc.git
           cd evmc
           git checkout v12.1.0
@@ -77,6 +77,16 @@ jobs:
             -DBUILD_SHARED_LIBS=ON
           make -j$(nproc)
           sudo make install
+          
+          # Build blst (BLS12-381 library required by evmone 0.18.0 precompiles)
+          echo "Building blst..."
+          cd /tmp
+          git clone https://github.com/supranational/blst.git
+          cd blst
+          git checkout v0.3.13
+          ./build.sh
+          sudo cp libblst.a /usr/local/lib/
+          sudo cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
           
           # Build evmone
           echo "Building evmone..."
@@ -115,7 +125,7 @@ jobs:
           Cflags: -I${includedir}
           EOF
           
-          # Create evmone pkg-config file
+          # Create evmone pkg-config file (includes precompiles and blst for v0.18.0)
           sudo tee /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
           prefix=/usr/local
           exec_prefix=${prefix}
@@ -126,7 +136,7 @@ jobs:
           Description: Fast Ethereum Virtual Machine implementation
           Version: 0.18.0
           Requires: evmc
-          Libs: -L${libdir} -levmone
+          Libs: -L${libdir} -levmone -levmone_precompiles -lblst
           Cflags: -I${includedir}
           EOF
           
@@ -137,8 +147,10 @@ jobs:
           pkg-config --exists evmone && echo "✓ evmone pkg-config found" || echo "✗ evmone pkg-config not found"
           pkg-config --modversion evmc || echo "EVMC version not available"
           pkg-config --modversion evmone || echo "evmone version not available"
+          echo "Installed libraries:"
           ls -la /usr/local/lib/libevmc* || echo "EVMC libraries not found in /usr/local/lib"
           ls -la /usr/local/lib/libevmone* || echo "evmone libraries not found in /usr/local/lib"
+          ls -la /usr/local/lib/libblst* || echo "blst library not found in /usr/local/lib"
           ls -la /usr/local/include/evmc/ || echo "EVMC headers not found in /usr/local/include"
 
       - name: Ensure ccache directory exists

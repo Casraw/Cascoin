@@ -173,7 +173,7 @@ sudo apt-get install -y cmake git ninja-build libgmp-dev
 
 # Install EVMC 12.1.0
 cd /tmp
-rm -rf evmc evmone
+rm -rf evmc evmone blst
 git clone --recursive https://github.com/ethereum/evmc.git
 cd evmc
 git checkout v12.1.0
@@ -187,6 +187,15 @@ cmake .. \
   -DBUILD_SHARED_LIBS=ON
 make -j$(nproc)
 sudo make install
+
+# Install blst (BLS12-381 library required by evmone 0.18.0 precompiles)
+cd /tmp
+git clone https://github.com/supranational/blst.git
+cd blst
+git checkout v0.3.13
+./build.sh
+sudo cp libblst.a /usr/local/lib/
+sudo cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
 
 # Install evmone 0.18.0
 cd /tmp
