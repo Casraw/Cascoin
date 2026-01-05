@@ -3,9 +3,14 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cvm/vote_manipulation_detector.h>
+#include <chain.h>
+#include <sync.h>
+#include <validation.h>
 #include <util.h>
 #include <algorithm>
 #include <cmath>
+
+extern CChain& chainActive;
 
 VoteManipulationDetector::VoteManipulationDetector(CVM::CVMDatabase& database)
     : db(database)
@@ -393,7 +398,11 @@ void VoteManipulationDetector::PruneVoteHistory(size_t keepCount)
 
 void VoteManipulationDetector::PruneReputationHistory(int keepBlocks)
 {
-    int currentHeight = 0; // TODO: Get current block height
+    int currentHeight = 0;
+    {
+        LOCK(cs_main);
+        currentHeight = chainActive.Height();
+    }
     
     for (auto it = reputationHistory.begin(); it != reputationHistory.end(); ) {
         auto& history = it->second;

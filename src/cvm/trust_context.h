@@ -7,6 +7,7 @@
 
 #include <uint256.h>
 #include <serialize.h>
+#include <pubkey.h>
 #include <map>
 #include <string>
 #include <vector>

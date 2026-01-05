@@ -21,8 +21,9 @@ BOOST_AUTO_TEST_CASE(cvm_contract_validation)
 {
     CVM::BackwardCompatManager manager;
     
-    // Valid CVM bytecode (PUSH 0x42, STOP)
-    std::vector<uint8_t> valid_bytecode = ParseHex("01014200");
+    // Valid CVM bytecode (PUSH 1 byte 0x42, STOP 0x44)
+    // OP_PUSH=0x01, size=0x01, data=0x42, OP_STOP=0x44
+    std::vector<uint8_t> valid_bytecode = ParseHex("01014244");
     std::string error;
     
     BOOST_CHECK(manager.ValidateCVMContract(valid_bytecode, error));
@@ -56,8 +57,8 @@ BOOST_AUTO_TEST_CASE(cvm_bytecode_format_detection)
 {
     CVM::BackwardCompatManager manager;
     
-    // CVM bytecode pattern
-    std::vector<uint8_t> cvm_bytecode = ParseHex("01014200");
+    // CVM bytecode pattern (PUSH 1 byte 0x42, STOP 0x44)
+    std::vector<uint8_t> cvm_bytecode = ParseHex("01014244");
     CVM::BytecodeFormat format = manager.DetectBytecodeFormat(cvm_bytecode);
     
     // Should detect as CVM or UNKNOWN for short bytecode
@@ -69,8 +70,8 @@ BOOST_AUTO_TEST_CASE(cvm_contract_checker_validation)
 {
     CVM::CVMContractChecker checker;
     
-    // Valid CVM bytecode
-    std::vector<uint8_t> bytecode = ParseHex("01014200");
+    // Valid CVM bytecode (PUSH 1 byte 0x42, STOP 0x44)
+    std::vector<uint8_t> bytecode = ParseHex("01014244");
     
     CVM::CVMContractChecker::ValidationResult result = checker.ValidateContract(bytecode);
     
@@ -82,8 +83,8 @@ BOOST_AUTO_TEST_CASE(cvm_register_based_verification)
 {
     CVM::CVMContractChecker checker;
     
-    // CVM uses register-based patterns
-    std::vector<uint8_t> bytecode = ParseHex("01014200");
+    // CVM uses register-based patterns (PUSH 1 byte 0x42, STOP 0x44)
+    std::vector<uint8_t> bytecode = ParseHex("01014244");
     
     // This should not crash and return a boolean
     bool is_register_based = checker.VerifyRegisterBasedBytecode(bytecode);
@@ -244,8 +245,8 @@ BOOST_AUTO_TEST_CASE(feature_flag_bytecode_version)
 {
     CVM::FeatureFlagManager manager;
     
-    // CVM bytecode
-    std::vector<uint8_t> cvm_bytecode = ParseHex("01014200");
+    // CVM bytecode (PUSH 1 byte 0x42, STOP 0x44)
+    std::vector<uint8_t> cvm_bytecode = ParseHex("01014244");
     
     CVM::FeatureFlagManager::BytecodeVersionInfo info = manager.DetectBytecodeVersion(cvm_bytecode);
     
@@ -307,7 +308,7 @@ BOOST_AUTO_TEST_CASE(backward_compat_utils_all_flags)
 
 BOOST_AUTO_TEST_CASE(backward_compat_utils_version_header)
 {
-    std::vector<uint8_t> bytecode = ParseHex("01014200");
+    std::vector<uint8_t> bytecode = ParseHex("01014244");
     
     // Original bytecode should not have version header
     BOOST_CHECK(!CVM::BackwardCompatUtils::HasVersionHeader(bytecode));

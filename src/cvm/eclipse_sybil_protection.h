@@ -21,6 +21,60 @@ class TrustGraph;
 class WalletClusterAnalyzer;
 
 /**
+ * Validation Timestamp
+ * 
+ * Records a single validation event with timing information for coordinated attack detection.
+ */
+struct ValidationTimestamp {
+    uint256 taskHash;                   // Hash of the validation task
+    int64_t timestamp;                  // Unix timestamp of validation response
+    uint160 validatorAddress;           // Address of the validator
+    
+    ValidationTimestamp() : timestamp(0) {}
+    ValidationTimestamp(const uint256& task, int64_t ts, const uint160& addr)
+        : taskHash(task), timestamp(ts), validatorAddress(addr) {}
+    
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(taskHash);
+        READWRITE(timestamp);
+        READWRITE(validatorAddress);
+    }
+};
+
+/**
+ * Coordinated Attack Detection Result
+ * 
+ * Result of timing analysis for coordinated attack detection.
+ */
+struct CoordinatedAttackResult {
+    bool isCoordinatedAttack;           // True if coordinated attack detected
+    double confidence;                  // Confidence level (0.0-1.0)
+    std::vector<uint160> suspiciousValidators; // Validators involved
+    int64_t minTimestamp;               // Earliest response timestamp
+    int64_t maxTimestamp;               // Latest response timestamp
+    size_t clusteredResponses;          // Number of responses within 1 second
+    std::string reason;                 // Detection reason
+    
+    CoordinatedAttackResult() 
+        : isCoordinatedAttack(false), confidence(0.0), 
+          minTimestamp(0), maxTimestamp(0), clusteredResponses(0) {}
+    
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(isCoordinatedAttack);
+        READWRITE(confidence);
+        READWRITE(suspiciousValidators);
+        READWRITE(minTimestamp);
+        READWRITE(maxTimestamp);
+        READWRITE(clusteredResponses);
+        READWRITE(reason);
+    }
+};
+
+/**
  * Validator Network Info
  * 
  * Tracks network topology information for a validator.
@@ -32,12 +86,40 @@ struct ValidatorNetworkInfo {
     uint64_t firstSeen;                 // Block height first seen
     uint32_t validationCount;           // Total validations performed
     uint32_t accurateValidations;       // Accurate validations
+    std::vector<ValidationTimestamp> validationTimestamps; // Sliding window of last 100 validations
+    
+    // Maximum number of validation timestamps to store (sliding window)
+    static constexpr size_t MAX_VALIDATION_TIMESTAMPS = 100;
     
     ValidatorNetworkInfo() : firstSeen(0), validationCount(0), accurateValidations(0) {}
     
     double GetAccuracy() const {
         if (validationCount == 0) return 0.0;
         return static_cast<double>(accurateValidations) / validationCount;
+    }
+    
+    /**
+     * Add a validation timestamp, maintaining sliding window of last 100
+     */
+    void AddValidationTimestamp(const ValidationTimestamp& ts) {
+        validationTimestamps.push_back(ts);
+        // Maintain sliding window of last MAX_VALIDATION_TIMESTAMPS
+        if (validationTimestamps.size() > MAX_VALIDATION_TIMESTAMPS) {
+            validationTimestamps.erase(validationTimestamps.begin());
+        }
+    }
+    
+    /**
+     * Get validation timestamps for a specific task
+     */
+    std::vector<ValidationTimestamp> GetTimestampsForTask(const uint256& taskHash) const {
+        std::vector<ValidationTimestamp> result;
+        for (const auto& ts : validationTimestamps) {
+            if (ts.taskHash == taskHash) {
+                result.push_back(ts);
+            }
+        }
+        return result;
     }
     
     ADD_SERIALIZE_METHODS;
@@ -49,6 +131,7 @@ struct ValidatorNetworkInfo {
         READWRITE(firstSeen);
         READWRITE(validationCount);
         READWRITE(accurateValidations);
+        READWRITE(validationTimestamps);
     }
 };
 
@@ -258,6 +341,53 @@ public:
         const std::vector<uint160>& validators,
         const std::map<uint160, int>& votes
     );
+    
+    /**
+     * Record a validation timestamp for a validator
+     * 
+     * Stores the timestamp in the validator's network info, maintaining
+     * a sliding window of the last 100 validations.
+     * 
+     * @param validatorAddr Validator address
+     * @param taskHash Hash of the validation task
+     * @param timestamp Unix timestamp of the validation response
+     */
+    void RecordValidationTimestamp(
+        const uint160& validatorAddr,
+        const uint256& taskHash,
+        int64_t timestamp
+    );
+    
+    /**
+     * Detect coordinated timing attacks
+     * 
+     * Analyzes validation timestamps to detect patterns where 5+ validators
+     * respond within 1 second of each other, indicating potential coordination.
+     * 
+     * @param taskHash Hash of the validation task to analyze
+     * @param timestamps Vector of validation timestamps for the task
+     * @return Detection result with confidence and suspicious validators
+     */
+    CoordinatedAttackResult DetectCoordinatedAttack(
+        const uint256& taskHash,
+        const std::vector<ValidationTimestamp>& timestamps
+    );
+    
+    /**
+     * Collect validation timestamps for a task from all validators
+     * 
+     * @param taskHash Hash of the validation task
+     * @param validators List of validators to check
+     * @return Vector of all validation timestamps for the task
+     */
+    std::vector<ValidationTimestamp> CollectTaskTimestamps(
+        const uint256& taskHash,
+        const std::vector<uint160>& validators
+    );
+    
+    // Configuration constants for coordinated attack detection
+    static constexpr size_t MIN_COORDINATED_VALIDATORS = 5;  // Minimum validators for coordinated attack
+    static constexpr int64_t COORDINATION_WINDOW_MS = 1000;  // 1 second window in milliseconds
 
 private:
     CVMDatabase& m_db;

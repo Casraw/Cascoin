@@ -28,6 +28,7 @@ BITCOIN_TESTS =\
   test/cvm_bytecode_detector_tests.cpp \
   test/cvm_consensus_safety_tests.cpp \
   test/cvm_enhanced_storage_tests.cpp \
+  test/cvm_integration_tests.cpp \
   test/cvm_sustainable_gas_tests.cpp \
   test/cvm_trust_context_tests.cpp \
   test/arith_uint256_tests.cpp \

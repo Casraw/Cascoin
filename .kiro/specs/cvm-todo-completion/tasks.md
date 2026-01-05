@@ -242,37 +242,37 @@ This implementation plan addresses the ~49 TODO items across 16 CVM source files
     - **Property 19: Merkle Proof Verification**
     - **Validates: Requirements 13.2**
 
-- [-] 18. Implement Cleanup Manager Resource Reclamation
-  - [ ] 18.1 Implement DeleteContractStorage() in cleanup_manager.cpp
+- [x] 18. Implement Cleanup Manager Resource Reclamation
+  - [x] 18.1 Implement DeleteContractStorage() in cleanup_manager.cpp
     - Iterate keys with prefix "contract_<addr>_storage_"
     - Delete each storage entry via LevelDB batch
     - _Requirements: 14.1_
-  - [ ] 18.2 Implement UpdateContractMetadata() for cleanup status
+  - [x] 18.2 Implement UpdateContractMetadata() for cleanup status
     - Set contract metadata isCleanedUp = true
     - _Requirements: 14.2_
-  - [ ] 18.3 Implement ReclaimStorage() database compaction
+  - [x] 18.3 Implement ReclaimStorage() database compaction
     - Trigger LevelDB compaction for space reclamation
     - _Requirements: 14.3_
   - [ ]* 18.4 Write property test for cleanup completeness
     - **Property 20: Contract Cleanup Completeness**
     - **Validates: Requirements 14.1, 14.2**
 
-- [ ] 19. Implement Vote Manipulation Detection
-  - [ ] 19.1 Fix GetCurrentBlockHeight() in vote_manipulation_detector.cpp
+- [x] 19. Implement Vote Manipulation Detection
+  - [x] 19.1 Fix GetCurrentBlockHeight() in vote_manipulation_detector.cpp
     - Replace placeholder with chainActive.Height()
     - Use proper locking
     - _Requirements: 15.1_
-  - [ ] 19.2 Implement PruneReputationHistory() with accurate height
+  - [x] 19.2 Implement PruneReputationHistory() with accurate height
     - Use actual block height for time-based calculations
     - Prune history older than 10,000 blocks
     - _Requirements: 15.2_
 
-- [ ] 20. Implement Eclipse and Sybil Protection
-  - [ ] 20.1 Add validation timestamps to ValidatorNetworkInfo
+- [x] 20. Implement Eclipse and Sybil Protection
+  - [x] 20.1 Add validation timestamps to ValidatorNetworkInfo
     - Store timestamps in validationTimestamps vector
     - Maintain sliding window of last 100 validations
     - _Requirements: 16.1_
-  - [ ] 20.2 Implement DetectCoordinatedAttack() timing analysis
+  - [x] 20.2 Implement DetectCoordinatedAttack() timing analysis
     - Flag patterns where 5+ validators respond within 1 second
     - Report suspicious patterns for DAO review
     - _Requirements: 16.2_
@@ -280,29 +280,29 @@ This implementation plan addresses the ~49 TODO items across 16 CVM source files
     - **Property 21: Timing Pattern Detection**
     - **Validates: Requirements 16.1, 16.2**
 
-- [ ] 21. Implement Gas Tracking Integration
-  - [ ] 21.1 Fix gas tracking in validator_compensation.cpp
+- [x] 21. Implement Gas Tracking Integration
+  - [x] 21.1 Fix gas tracking in validator_compensation.cpp
     - Integrate with actual gas tracking system
     - Extract actual gas usage from transactions
     - _Requirements: 8.1, 9.4_
 
-- [ ] 22. Final Checkpoint - Full compilation and test suite
+- [x] 22. Final Checkpoint - Full compilation and test suite
   - Ensure all CVM code compiles without errors
   - Run full unit test suite
   - Run property-based tests (minimum 100 iterations each)
   - Ask the user if questions arise
 
-- [ ] 23. Write Integration Tests
-  - [ ] 23.1 Write P2P validator communication integration test
+- [x] 23. Write Integration Tests
+  - [x] 23.1 Write P2P validator communication integration test
     - Test message flow between nodes
     - _Requirements: 3.1, 3.2, 3.3, 3.4_
-  - [ ] 23.2 Write end-to-end validation cycle test
+  - [x] 23.2 Write end-to-end validation cycle test
     - Test complete validation from task creation to response
     - _Requirements: 1.1, 1.2, 3.1, 3.2_
-  - [ ] 23.3 Write soft fork activation integration test
+  - [x] 23.3 Write soft fork activation integration test
     - Test CVM activation at correct height
     - _Requirements: 10.1_
-  - [ ] 23.4 Write DAO dispute flow integration test
+  - [x] 23.4 Write DAO dispute flow integration test
     - Test dispute escalation and notification
     - _Requirements: 6.1, 6.2, 6.3_
 

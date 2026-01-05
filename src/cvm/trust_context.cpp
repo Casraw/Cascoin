@@ -19,6 +19,9 @@
 
 namespace CVM {
 
+// Global trust context instance (used by consensus_validator.cpp)
+std::shared_ptr<TrustContext> g_trustContext;
+
 TrustContext::TrustContext() 
     : database(nullptr), caller_reputation(0), contract_reputation(0) {
     InitializeDefaultTrustGates();

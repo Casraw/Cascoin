@@ -5,6 +5,8 @@
 #include <cvm/validator_compensation.h>
 #include <cvm/cvmdb.h>
 #include <cvm/hat_consensus.h>
+#include <cvm/consensus_validator.h>
+#include <cvm/softfork.h>
 #include <primitives/block.h>
 #include <consensus/consensus.h>
 #include <util.h>
@@ -69,27 +71,37 @@ bool CalculateBlockValidatorPayments(
     for (size_t i = 1; i < block.vtx.size(); i++) {
         const CTransaction& tx = *block.vtx[i];
         
-        // Check if this is a contract transaction (has gas usage)
-        // For now, we'll use a simple heuristic: check if transaction has OP_RETURN output
-        // TODO: Integrate with actual gas tracking system
-        bool isContractTx = false;
+        // Check if this is a CVM/EVM contract transaction
+        // Use the actual gas tracking system via ConsensusValidator::ExtractGasInfo
         uint64_t gasUsed = 0;
-        CAmount gasPrice = 0;
+        CAmount gasCost = 0;
         
-        for (const CTxOut& out : tx.vout) {
-            if (out.scriptPubKey.size() > 0 && out.scriptPubKey[0] == OP_RETURN) {
-                isContractTx = true;
-                // TODO: Extract actual gas usage from transaction
-                // For now, use placeholder values
-                gasUsed = 21000;  // Minimum gas for a transaction
-                gasPrice = 1000;  // 0.00001 CAS per gas
-                break;
-            }
+        // Extract actual gas usage from transaction using the gas tracking system
+        // Requirements: 8.1, 9.4
+        if (!CVM::ConsensusValidator::ExtractGasInfo(tx, gasUsed, gasCost)) {
+            // Not a contract transaction or failed to extract gas info
+            // Skip this transaction - no gas fees to distribute
+            continue;
         }
         
-        if (!isContractTx) {
-            continue;  // Not a contract transaction, no gas fees
+        // Validate that we have meaningful gas usage
+        if (gasUsed == 0) {
+            LogPrint(BCLog::CVM, "CalculateBlockValidatorPayments: Transaction %s has zero gas usage, skipping\n",
+                tx.GetHash().ToString());
+            continue;
         }
+        
+        // Calculate gas price from gas cost and gas used
+        // gasCost = gasUsed * gasPrice, so gasPrice = gasCost / gasUsed
+        CAmount gasPrice = (gasUsed > 0) ? (gasCost / static_cast<CAmount>(gasUsed)) : 0;
+        
+        // Ensure minimum gas price of 1 satoshi per gas unit if there's any cost
+        if (gasCost > 0 && gasPrice == 0) {
+            gasPrice = 1;
+        }
+        
+        LogPrint(BCLog::CVM, "CalculateBlockValidatorPayments: Transaction %s - gasUsed=%d, gasCost=%s, gasPrice=%s\n",
+            tx.GetHash().ToString(), gasUsed, FormatMoney(gasCost), FormatMoney(gasPrice));
         
         // Get validators who participated in this transaction
         std::vector<uint160> validators;

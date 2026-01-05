@@ -249,6 +249,144 @@ void EclipseSybilProtection::RecordValidationResult(const uint160& validatorAddr
     }
 }
 
+void EclipseSybilProtection::RecordValidationTimestamp(
+    const uint160& validatorAddr,
+    const uint256& taskHash,
+    int64_t timestamp)
+{
+    ValidatorNetworkInfo info;
+    std::string key = MakeDBKey(DB_VALIDATOR_NETWORK, validatorAddr);
+    
+    // Read existing info or create new
+    if (!ReadFromDatabase(m_db, key, info)) {
+        info.address = validatorAddr;
+        info.firstSeen = 0;  // Will be set properly when UpdateValidatorNetworkInfo is called
+    }
+    
+    // Create and add the validation timestamp
+    ValidationTimestamp ts(taskHash, timestamp, validatorAddr);
+    info.AddValidationTimestamp(ts);
+    
+    // Write back to database
+    WriteToDatabase(m_db, key, info);
+    
+    LogPrint(BCLog::CVM, "EclipseSybilProtection: Recorded validation timestamp for %s, task %s at %ld (total timestamps: %zu)\n",
+            validatorAddr.ToString(), taskHash.ToString().substr(0, 16), timestamp, 
+            info.validationTimestamps.size());
+}
+
+CoordinatedAttackResult EclipseSybilProtection::DetectCoordinatedAttack(
+    const uint256& taskHash,
+    const std::vector<ValidationTimestamp>& timestamps)
+{
+    CoordinatedAttackResult result;
+    
+    if (timestamps.size() < MIN_COORDINATED_VALIDATORS) {
+        // Not enough validators to detect coordination
+        LogPrint(BCLog::CVM, "EclipseSybilProtection: Not enough timestamps (%zu) to detect coordination (need %zu)\n",
+                timestamps.size(), MIN_COORDINATED_VALIDATORS);
+        return result;
+    }
+    
+    // Sort timestamps by time
+    std::vector<ValidationTimestamp> sortedTimestamps = timestamps;
+    std::sort(sortedTimestamps.begin(), sortedTimestamps.end(),
+        [](const ValidationTimestamp& a, const ValidationTimestamp& b) {
+            return a.timestamp < b.timestamp;
+        });
+    
+    // Find the largest cluster of responses within COORDINATION_WINDOW_MS (1 second)
+    size_t maxClusterSize = 0;
+    size_t maxClusterStart = 0;
+    
+    for (size_t i = 0; i < sortedTimestamps.size(); i++) {
+        size_t clusterSize = 1;
+        int64_t windowStart = sortedTimestamps[i].timestamp;
+        
+        // Count how many responses fall within 1 second of this timestamp
+        for (size_t j = i + 1; j < sortedTimestamps.size(); j++) {
+            if (sortedTimestamps[j].timestamp - windowStart <= COORDINATION_WINDOW_MS) {
+                clusterSize++;
+            } else {
+                break;  // Timestamps are sorted, so no more will be in window
+            }
+        }
+        
+        if (clusterSize > maxClusterSize) {
+            maxClusterSize = clusterSize;
+            maxClusterStart = i;
+        }
+    }
+    
+    result.clusteredResponses = maxClusterSize;
+    
+    // Check if we have a coordinated attack (5+ validators within 1 second)
+    if (maxClusterSize >= MIN_COORDINATED_VALIDATORS) {
+        result.isCoordinatedAttack = true;
+        
+        // Collect suspicious validators from the cluster
+        result.minTimestamp = sortedTimestamps[maxClusterStart].timestamp;
+        result.maxTimestamp = sortedTimestamps[maxClusterStart].timestamp;
+        
+        for (size_t i = maxClusterStart; i < sortedTimestamps.size(); i++) {
+            if (sortedTimestamps[i].timestamp - result.minTimestamp <= COORDINATION_WINDOW_MS) {
+                result.suspiciousValidators.push_back(sortedTimestamps[i].validatorAddress);
+                if (sortedTimestamps[i].timestamp > result.maxTimestamp) {
+                    result.maxTimestamp = sortedTimestamps[i].timestamp;
+                }
+            } else {
+                break;
+            }
+        }
+        
+        // Calculate confidence based on cluster density
+        // Higher confidence if more validators respond in shorter time
+        int64_t timeSpan = result.maxTimestamp - result.minTimestamp;
+        if (timeSpan == 0) {
+            // All responses at exact same time - very suspicious
+            result.confidence = 1.0;
+        } else {
+            // Confidence increases with more validators and shorter time span
+            double densityFactor = static_cast<double>(maxClusterSize) / MIN_COORDINATED_VALIDATORS;
+            double timeFactor = 1.0 - (static_cast<double>(timeSpan) / COORDINATION_WINDOW_MS);
+            result.confidence = std::min(1.0, (densityFactor * 0.6 + timeFactor * 0.4));
+        }
+        
+        result.reason = "Coordinated attack detected: " + std::to_string(maxClusterSize) + 
+                       " validators responded within " + std::to_string(result.maxTimestamp - result.minTimestamp) + 
+                       "ms window";
+        
+        LogPrint(BCLog::CVM, "EclipseSybilProtection: %s (confidence: %.0f%%, task: %s)\n",
+                result.reason, result.confidence * 100, taskHash.ToString().substr(0, 16));
+    } else {
+        LogPrint(BCLog::CVM, "EclipseSybilProtection: No coordinated attack detected for task %s (max cluster: %zu)\n",
+                taskHash.ToString().substr(0, 16), maxClusterSize);
+    }
+    
+    return result;
+}
+
+std::vector<ValidationTimestamp> EclipseSybilProtection::CollectTaskTimestamps(
+    const uint256& taskHash,
+    const std::vector<uint160>& validators)
+{
+    std::vector<ValidationTimestamp> allTimestamps;
+    
+    for (const auto& validator : validators) {
+        ValidatorNetworkInfo info;
+        if (GetValidatorNetworkInfo(validator, info)) {
+            // Get timestamps for this specific task
+            std::vector<ValidationTimestamp> validatorTimestamps = info.GetTimestampsForTask(taskHash);
+            allTimestamps.insert(allTimestamps.end(), validatorTimestamps.begin(), validatorTimestamps.end());
+        }
+    }
+    
+    LogPrint(BCLog::CVM, "EclipseSybilProtection: Collected %zu timestamps for task %s from %zu validators\n",
+            allTimestamps.size(), taskHash.ToString().substr(0, 16), validators.size());
+    
+    return allTimestamps;
+}
+
 bool EclipseSybilProtection::GetValidatorNetworkInfo(const uint160& validatorAddr, ValidatorNetworkInfo& info)
 {
     std::string key = MakeDBKey(DB_VALIDATOR_NETWORK, validatorAddr);
@@ -525,18 +663,34 @@ bool EclipseSybilProtection::DetectCoordinatedBehavior(const std::vector<uint160
 {
     if (validators.size() < 2) return false;
     
-    // Get validation timestamps for each validator
-    std::map<uint160, std::vector<uint64_t>> validationTimestamps;
+    // Collect all recent validation timestamps from validators
+    std::map<uint256, std::vector<ValidationTimestamp>> taskTimestamps;
     
     for (const auto& validator : validators) {
         ValidatorNetworkInfo info;
         if (GetValidatorNetworkInfo(validator, info)) {
-            // TODO: Store validation timestamps in ValidatorNetworkInfo
-            // For now, we'll use a simplified check based on validation count similarity
+            // Group timestamps by task hash
+            for (const auto& ts : info.validationTimestamps) {
+                taskTimestamps[ts.taskHash].push_back(ts);
+            }
         }
     }
     
-    // Check if validators have suspiciously similar validation counts
+    // Check each task for coordinated timing patterns
+    for (const auto& pair : taskTimestamps) {
+        const uint256& taskHash = pair.first;
+        const std::vector<ValidationTimestamp>& timestamps = pair.second;
+        
+        // Use DetectCoordinatedAttack to analyze timing patterns
+        CoordinatedAttackResult attackResult = DetectCoordinatedAttack(taskHash, timestamps);
+        if (attackResult.isCoordinatedAttack) {
+            LogPrint(BCLog::CVM, "EclipseSybilProtection: Coordinated behavior detected via timing analysis for task %s\n",
+                    taskHash.ToString().substr(0, 16));
+            return true;
+        }
+    }
+    
+    // Also check if validators have suspiciously similar validation counts (original check)
     std::vector<uint32_t> validationCounts;
     for (const auto& validator : validators) {
         ValidatorNetworkInfo info;
