@@ -27,6 +27,11 @@ define $(package)_set_vars
   $(package)_config_opts_darwin+=-DCMAKE_CXX_COMPILER=$(host)-clang++
 endef
 
+define $(package)_preprocess_cmds
+  sed -i 's/cable_add_archive_package()/#cable_add_archive_package() # disabled for CMake compatibility/' CMakeLists.txt && \
+  sed -i 's/<Windows.h>/<windows.h>/g' lib/loader/loader.c
+endef
+
 define $(package)_config_cmds
   mkdir -p build && cd build && cmake .. $($(package)_config_opts)
 endef

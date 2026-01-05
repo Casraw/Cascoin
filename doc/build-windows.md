@@ -112,7 +112,7 @@ Once the source code is ready the build steps are below.
 
     PATH=$(echo "$PATH" | sed -e 's/:\/mnt.*//g') # strip out problematic Windows %PATH% imported var
     cd depends
-    make HOST=x86_64-w64-mingw32
+    make HOST=x86_64-w64-mingw32 JOBS=$(nproc)
     cd ..
     ./autogen.sh # not required when building from tarball
     CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure --prefix=/
@@ -161,7 +161,7 @@ Then build using:
 
     PATH=$(echo "$PATH" | sed -e 's/:\/mnt.*//g') # strip out problematic Windows %PATH% imported var
     cd depends
-    make HOST=i686-w64-mingw32
+    make HOST=i686-w64-mingw32 JOBS=$(nproc)
     cd ..
     ./autogen.sh # not required when building from tarball
     CONFIG_SITE=$PWD/depends/i686-w64-mingw32/share/config.site ./configure --prefix=/

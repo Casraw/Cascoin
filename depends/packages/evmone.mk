@@ -1,17 +1,7 @@
 package=evmone
 $(package)_version=0.18.0
-$(package)_download_path=https://github.com/ethereum/evmone/archive/refs/tags/
-$(package)_file_name=v$($(package)_version).tar.gz
-$(package)_sha256_hash=e9f1f43c82d8b5675b7e8b2c0ce7ffba808508475ebf59c9dc9700c3379dcd93
-$(package)_dependencies=evmc
-
-# Additional source for evmc submodule
-$(package)_extra_sources=evmc-12.1.0.tar.gz
-
-define $(package)_fetch_cmds
-$(call fetch_file,$(package),$($(package)_download_path),$($(package)_download_file),$($(package)_file_name),$($(package)_sha256_hash)) && \
-$(call fetch_file,$(package),https://github.com/ethereum/evmc/archive/refs/tags/,v12.1.0.tar.gz,evmc-12.1.0.tar.gz,0d5458015bf38a5358fad04cc290d21ec40122d1eb6420e0b33ae25546984bcd)
-endef
+$(package)_download_path=https://github.com/ipsilon/evmone.git
+$(package)_dependencies=evmc intx
 
 define $(package)_set_vars
   $(package)_config_opts=-DCMAKE_INSTALL_PREFIX=$(host_prefix)
@@ -22,31 +12,42 @@ define $(package)_set_vars
   $(package)_config_opts+=-DHUNTER_ENABLED=OFF
   $(package)_config_opts+=-DCMAKE_PREFIX_PATH=$(host_prefix)
   $(package)_config_opts+=-Devmc_DIR=$(host_prefix)/lib/cmake/evmc
-  # Cross-compilation settings for MinGW
-  $(package)_config_opts_mingw32=-DCMAKE_SYSTEM_NAME=Windows
-  $(package)_config_opts_mingw32+=-DCMAKE_C_COMPILER=$(host)-gcc
-  $(package)_config_opts_mingw32+=-DCMAKE_CXX_COMPILER=$(host)-g++
-  $(package)_config_opts_mingw32+=-DCMAKE_RC_COMPILER=$(host)-windres
-  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH=$(host_prefix)
-  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
-  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
-  $(package)_config_opts_mingw32+=-DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
-  # Darwin cross-compilation
-  $(package)_config_opts_darwin=-DCMAKE_SYSTEM_NAME=Darwin
+  $(package)_config_opts+=-Dintx_DIR=$(host_prefix)/lib/cmake/intx
+endef
+
+# Clone repo with submodules in fetch step, create marker file
+define $(package)_fetch_cmds
+  git clone --depth 1 --branch v$($(package)_version) --recursive https://github.com/ipsilon/evmone.git $($(package)_source_dir)/evmone-$($(package)_version) && \
+  echo "git-clone" > $($(package)_source_dir)/evmone-$($(package)_version).marker
+endef
+
+# Move cloned repo into extract directory
+define $(package)_extract_cmds
+  cp -r $($(package)_source_dir)/evmone-$($(package)_version)/* . && \
+  cp -r $($(package)_source_dir)/evmone-$($(package)_version)/.[!.]* . 2>/dev/null || true
 endef
 
 define $(package)_preprocess_cmds
-  rm -rf evmc && \
-  mkdir -p evmc && \
-  tar --strip-components=1 -xf $($(package)_source_dir)/evmc-12.1.0.tar.gz -C evmc
+  sed -i 's/cable_add_archive_package()/#cable_add_archive_package()/' evmc/CMakeLists.txt && \
+  sed -i 's/cable_add_archive_package()/#cable_add_archive_package()/' CMakeLists.txt && \
+  sed -i 's/<Windows.h>/<windows.h>/g' evmc/lib/loader/loader.c
 endef
 
 define $(package)_config_cmds
-  mkdir -p build && cd build && cmake .. $($(package)_config_opts)
+  echo "set(CMAKE_SYSTEM_NAME Windows)" > toolchain.cmake && \
+  echo "set(CMAKE_C_COMPILER $(host)-gcc)" >> toolchain.cmake && \
+  echo "set(CMAKE_CXX_COMPILER $(host)-g++)" >> toolchain.cmake && \
+  echo "set(CMAKE_RC_COMPILER $(host)-windres)" >> toolchain.cmake && \
+  echo "set(CMAKE_FIND_ROOT_PATH $(host_prefix))" >> toolchain.cmake && \
+  echo "set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)" >> toolchain.cmake && \
+  echo "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)" >> toolchain.cmake && \
+  echo "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> toolchain.cmake && \
+  echo 'set(CMAKE_RC_CREATE_STATIC_LIBRARY "<CMAKE_AR> rc <TARGET> <LINK_FLAGS> <OBJECTS>")' >> toolchain.cmake && \
+  mkdir -p build && cd build && cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake $($(package)_config_opts)
 endef
 
 define $(package)_build_cmds
-  cd build && $(MAKE)
+  cd build && $(MAKE) -j$(JOBS)
 endef
 
 define $(package)_stage_cmds

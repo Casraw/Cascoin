@@ -8,6 +8,11 @@ NO_WALLET ?=
 NO_UPNP ?=
 FALLBACK_DOWNLOAD_PATH ?= https://bitcoincore.org/depends-sources
 
+# Number of parallel jobs for internal package builds
+# Usage: make HOST=x86_64-w64-mingw32 JOBS=8
+# Defaults to 4 if not specified
+JOBS ?= 4
+
 BUILD = $(shell ./config.guess)
 HOST ?= $(BUILD)
 PATCHES_PATH = $(BASEDIR)/patches

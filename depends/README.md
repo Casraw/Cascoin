@@ -12,6 +12,10 @@ For example:
 
     make HOST=x86_64-w64-mingw32 -j4
 
+For faster builds, use the JOBS variable to parallelize internal package compilation:
+
+    make HOST=x86_64-w64-mingw32 JOBS=$(nproc)
+
 A prefix will be generated that's suitable for plugging into Cascoin's
 configure. In the above example, a dir named x86_64-w64-mingw32 will be
 created. To use it for Cascoin:
@@ -57,6 +61,7 @@ The following can be set when running make: make FOO=bar
     DEBUG: disable some optimizations and enable more runtime checking
     HOST_ID_SALT: Optional salt to use when generating host package ids
     BUILD_ID_SALT: Optional salt to use when generating build package ids
+    JOBS: Number of parallel jobs for internal package builds (default: 4)
 
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
 options will be passed to cascoin's configure. In this case, `--disable-wallet`.
