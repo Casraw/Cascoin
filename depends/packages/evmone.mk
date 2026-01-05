@@ -33,7 +33,13 @@ define $(package)_preprocess_cmds
   sed -i 's/<Windows.h>/<windows.h>/g' evmc/lib/loader/loader.c
 endef
 
-define $(package)_config_cmds
+# Linux native build - no toolchain file needed
+define $(package)_config_cmds_linux
+  mkdir -p build && cd build && cmake .. $($(package)_config_opts)
+endef
+
+# Windows cross-compile - needs toolchain file
+define $(package)_config_cmds_mingw32
   echo "set(CMAKE_SYSTEM_NAME Windows)" > toolchain.cmake && \
   echo "set(CMAKE_C_COMPILER $(host)-gcc)" >> toolchain.cmake && \
   echo "set(CMAKE_CXX_COMPILER $(host)-g++)" >> toolchain.cmake && \
@@ -44,6 +50,17 @@ define $(package)_config_cmds
   echo "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)" >> toolchain.cmake && \
   echo 'set(CMAKE_RC_CREATE_STATIC_LIBRARY "<CMAKE_AR> rc <TARGET> <LINK_FLAGS> <OBJECTS>")' >> toolchain.cmake && \
   mkdir -p build && cd build && cmake .. -DCMAKE_TOOLCHAIN_FILE=../toolchain.cmake $($(package)_config_opts)
+endef
+
+# Darwin cross-compile
+define $(package)_config_cmds_darwin
+  mkdir -p build && cd build && cmake .. $($(package)_config_opts) \
+    -DCMAKE_C_COMPILER=$($(package)_cc) \
+    -DCMAKE_CXX_COMPILER=$($(package)_cxx)
+endef
+
+define $(package)_config_cmds
+  $($(package)_config_cmds_$(host_os))
 endef
 
 define $(package)_build_cmds
@@ -60,14 +77,14 @@ define $(package)_postprocess_cmds
   rm -rf share && \
   mkdir -p lib/pkgconfig && \
   echo "prefix=$(host_prefix)" > lib/pkgconfig/evmone.pc && \
-  echo "exec_prefix=\$${prefix}" >> lib/pkgconfig/evmone.pc && \
-  echo "libdir=\$${exec_prefix}/lib" >> lib/pkgconfig/evmone.pc && \
-  echo "includedir=\$${prefix}/include" >> lib/pkgconfig/evmone.pc && \
+  echo "exec_prefix=\${prefix}" >> lib/pkgconfig/evmone.pc && \
+  echo "libdir=\${exec_prefix}/lib" >> lib/pkgconfig/evmone.pc && \
+  echo "includedir=\${prefix}/include" >> lib/pkgconfig/evmone.pc && \
   echo "" >> lib/pkgconfig/evmone.pc && \
   echo "Name: evmone" >> lib/pkgconfig/evmone.pc && \
   echo "Description: Fast Ethereum Virtual Machine implementation" >> lib/pkgconfig/evmone.pc && \
   echo "Version: $($(package)_version)" >> lib/pkgconfig/evmone.pc && \
   echo "Requires: evmc" >> lib/pkgconfig/evmone.pc && \
-  echo "Libs: -L\$${libdir} -levmone" >> lib/pkgconfig/evmone.pc && \
-  echo "Cflags: -I\$${includedir}" >> lib/pkgconfig/evmone.pc
+  echo "Libs: -L\${libdir} -levmone" >> lib/pkgconfig/evmone.pc && \
+  echo "Cflags: -I\${includedir}" >> lib/pkgconfig/evmone.pc
 endef
