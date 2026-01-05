@@ -1,10 +1,75 @@
 Cascoin Core – Build Instructions (Linux)
 ==========================================
 
-This guide describes building Cascoin Core on Linux with Wallet and Qt6 GUI – exclusively using system libraries (without the `depends/` system).
+This guide describes two methods for building Cascoin Core on Linux:
+1. **Depends System** (recommended) - Reproducible builds with all dependencies included
+2. **System Libraries** - Uses libraries from your distribution
 
-Prerequisites (Ubuntu/Debian)
-------------------------------
+## Method 1: Depends System (Recommended)
+
+The depends system builds all required libraries from source, ensuring reproducible builds and statically linked binaries.
+
+### Prerequisites
+
+```bash
+sudo apt-get update
+sudo apt-get install -y \
+  build-essential autoconf automake libtool pkg-config \
+  curl ca-certificates cmake git \
+  bsdmainutils
+```
+
+### Build Steps
+
+```bash
+# Step 1: Build dependencies (this takes a while the first time)
+cd depends
+make JOBS=$(nproc)
+cd ..
+
+# Step 2: Generate build files
+./autogen.sh
+
+# Step 3: Configure with depends
+CONFIG_SITE=$PWD/depends/x86_64-linux-gnu/share/config.site ./configure \
+  --prefix=/ \
+  --disable-tests \
+  --disable-bench
+
+# Step 4: Build
+make -j$(nproc)
+```
+
+### Build with GUI (Qt6)
+
+The depends system can also build Qt6:
+
+```bash
+cd depends
+make JOBS=$(nproc)
+cd ..
+./autogen.sh
+CONFIG_SITE=$PWD/depends/x86_64-linux-gnu/share/config.site ./configure \
+  --prefix=/ \
+  --disable-tests \
+  --disable-bench
+make -j$(nproc)
+```
+
+### Advantages of Depends System
+
+- **Reproducible builds**: Same source = same binary
+- **Static linking**: Most libraries are built into the executable
+- **No system dependency conflicts**: Works on any Linux distribution
+- **Controlled versions**: All library versions are pinned
+
+---
+
+## Method 2: System Libraries
+
+Uses libraries from your distribution's package manager. Faster initial build but less portable.
+
+### Prerequisites (Ubuntu/Debian)
 
 ```bash
 sudo apt-get update
@@ -18,30 +83,22 @@ sudo apt-get install -y \
   cmake git
 ```
 
-For Debian 13 add this: 'libdb5.3++-dev'
-
+For Debian 13 (Trixie), also install:
 ```bash
-sudo apt-get update
-sudo apt-get install -y \
-  build-essential autoconf automake libtool pkg-config \
-  qt6-base-dev qt6-base-dev-tools qt6-tools-dev-tools \
-  libprotobuf-dev protobuf-compiler \
-  libevent-dev libboost-all-dev \
-  libminiupnpc-dev libssl-dev libzmq3-dev libqrencode-dev \
-  libdb++-dev libsqlite3-dev libdb5.3++-dev
+sudo apt-get install -y libdb5.3++-dev
 ```
 
-### EVMC und evmone Installation (für EVM-Kompatibilität)
+### EVMC and evmone Installation (for EVM Compatibility)
 
-Da EVMC und evmone nicht in den Standard-Repositories verfügbar sind, müssen sie manuell kompiliert werden:
+EVMC and evmone must be compiled manually:
 
 ```bash
-# Zusätzliche Abhängigkeiten für EVMC/evmone
+# Additional dependencies
 sudo apt-get install -y cmake git ninja-build libgmp-dev
 
-# EVMC 12.1.0 installieren
+# Install EVMC 12.1.0
 cd /tmp
-rm -rf evmc evmone  # Aufräumen falls vorhanden
+rm -rf evmc evmone
 git clone --recursive https://github.com/ethereum/evmc.git
 cd evmc
 git checkout v12.1.0
@@ -56,7 +113,7 @@ cmake .. \
 make -j$(nproc)
 sudo make install
 
-# evmone 0.18.0 installieren
+# Install evmone 0.18.0
 cd /tmp
 git clone --recursive https://github.com/ethereum/evmone.git
 cd evmone
@@ -71,35 +128,18 @@ cmake .. \
 make -j$(nproc)
 sudo make install
 
-# Bibliotheken aktualisieren
+# Update library cache
 sudo ldconfig
-
-# Installation verifizieren
-echo "EVMC-Installation prüfen..."
-pkg-config --exists evmc && echo "✓ EVMC gefunden" || echo "✗ EVMC nicht gefunden"
-pkg-config --modversion evmc || echo "EVMC-Version nicht verfügbar"
-ls -la /usr/local/lib/libevmc* || echo "EVMC-Bibliotheken nicht gefunden"
-ls -la /usr/local/lib/libevmone* || echo "evmone-Bibliotheken nicht gefunden"
 ```
 
-Notes:
-- If your distribution only provides newer Berkeley DB versions, configure with `--with-incompatible-bdb` (wallets will then not be portable to official releases).
-- Qt6 tools (`moc`, `uic`, `rcc`, `lrelease`) are typically located in `/usr/lib/qt6/libexec` or `/usr/bin`.
-
-Build Steps
------------
-
-### Ubuntu / Debian (general)
+### Build Steps (System Libraries)
 
 ```bash
-cd /pfad/zu/Cascoin
+cd /path/to/Cascoin
 ./autogen.sh
 
-# PKG_CONFIG_PATH für EVMC setzen
 export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
-# Konfiguration mit EVMC-Unterstützung
-PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" \
 ./configure \
   --with-gui=qt6 \
   --enable-wallet \
@@ -115,22 +155,14 @@ PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" \
   LRELEASE=$(command -v lrelease || command -v lrelease-qt6 || echo /usr/lib/qt6/libexec/lrelease) \
   LUPDATE=$(command -v lupdate || command -v lupdate-qt6 || echo /usr/lib/qt6/libexec/lupdate)
 
-# Konfiguration verifizieren
-echo "EVMC-Konfiguration prüfen..."
-grep -i "evmc" config.log | tail -5 || echo "Keine EVMC-Einträge in config.log"
-grep "ENABLE_EVMC" config.h || echo "ENABLE_EVMC nicht in config.h gefunden"
-
-make -j"$(nproc)"
+make -j$(nproc)
 ```
 
-### Debian 13 (Trixie)
+### Debian 13 (Trixie) Specific
 
-On Debian 13, the Qt6 translation tools (`lrelease`, `lupdate`) are located in `/usr/lib/qt6/bin/` instead of `/usr/lib/qt6/libexec/`:
+Qt6 tools are in different locations on Debian 13:
 
 ```bash
-cd /pfad/zu/Cascoin
-./autogen.sh
-
 ./configure \
   --with-gui=qt6 \
   --enable-wallet \
@@ -143,31 +175,53 @@ cd /pfad/zu/Cascoin
   LRELEASE=/usr/lib/qt6/bin/lrelease \
   LUPDATE=/usr/lib/qt6/bin/lupdate
 
-make -j"$(nproc)"
+make -j$(nproc)
 ```
 
-Generated Binaries
------------------
+---
+
+## Generated Binaries
 
 - GUI Wallet: `src/qt/cascoin-qt`
 - Daemon: `src/cascoind`
 - CLI: `src/cascoin-cli`
 - TX Tool: `src/cascoin-tx`
 
-Optional Features
------------------
+## Optional Features
 
-- Without GUI: `./configure --with-gui=no`
-- Disable tests/bench: `--disable-tests --disable-bench`
-- QR codes in GUI: Install `libqrencode-dev` and set `--with-qrencode`
-- ZMQ: Install `libzmq3-dev` and set `--enable-zmq`
-- EVMC (EVM compatibility): Compile EVMC 12.1.0 and evmone 0.18.0 manually (see instructions above) and set `--enable-evmc`
-- Disable EVMC: `--disable-evmc` (if EVM features are not needed)
+| Feature | Configure Flag |
+|---------|---------------|
+| Without GUI | `--with-gui=no` |
+| Disable tests | `--disable-tests` |
+| Disable benchmarks | `--disable-bench` |
+| QR codes in GUI | `--with-qrencode` |
+| ZMQ notifications | `--enable-zmq` |
+| EVMC (EVM compat) | `--enable-evmc` |
+| Disable EVMC | `--disable-evmc` |
 
-Troubleshooting
----------------
+## Troubleshooting
 
-- Qt6 tools not found (moc/uic/rcc/lrelease): Make sure the packages `qt6-base-dev-tools` and `qt6-tools-dev-tools` are installed, and specify their paths as shown above in `./configure`.
-- Berkeley DB error message: Use `--with-incompatible-bdb` (wallets will then not be portable) or build BDB 4.8 separately and link against it.
-- EVMC libraries not found: Compile EVMC and evmone manually (see instructions above) or use `--disable-evmc` to disable EVM features.
-- Missing libraries: Install the corresponding `-dev` packages (see list above) and run `./configure` again.
+### Qt6 tools not found
+Ensure `qt6-base-dev-tools` and `qt6-tools-dev-tools` are installed, then specify paths in configure.
+
+### Berkeley DB error
+Use `--with-incompatible-bdb` (wallets won't be portable to official releases).
+
+### EVMC libraries not found
+Either compile EVMC/evmone manually (see above) or use `--disable-evmc`.
+
+### Missing libraries
+Install the corresponding `-dev` packages and re-run configure.
+
+## Clean Build
+
+```bash
+make clean
+# For depends system:
+rm -rf depends/x86_64-linux-gnu
+rm -rf depends/built/x86_64-linux-gnu
+```
+
+## Depends System Documentation
+
+For more details on the depends system, see [depends/README.md](../depends/README.md).
