@@ -15,6 +15,7 @@ steps:
     image: ubuntu:24.04
     commands:
       - echo "Workspace is $PWD"
+      - export WORKSPACE="$PWD"
       - ls -la
       
       # Dependencies installieren
@@ -84,9 +85,10 @@ steps:
         Cflags: -I${includedir}
         EVMONEPC
       
-      # Cascoin bauen
-      - ./autogen.sh
+      # Cascoin bauen (explizit im Workspace)
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
       - |
+        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
         CFLAGS="-g" CXXFLAGS="-g" \
         MOC=/usr/lib/qt6/libexec/moc \
@@ -101,10 +103,11 @@ steps:
           --with-evmc=/usr/local \
           --with-evmone=/usr/local \
           --with-incompatible-bdb
-      - make -j$(nproc)
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && make -j$(nproc)
       
       # Binaries strippen
       - |
+        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
         for b in src/qt/*-qt src/*coind src/*coin-cli; do
           if [ -x "$b" ]; then
             echo "Processing $b"
@@ -114,6 +117,6 @@ steps:
         done
       
       # Ergebnis anzeigen
-      - ls -lah src/ || true
-      - ls -lah src/qt/ || true
-      - file src/qt/*-qt || true
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/ || true
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/qt/ || true
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && file src/qt/*-qt || true
