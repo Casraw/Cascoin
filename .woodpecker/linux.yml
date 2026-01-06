@@ -96,6 +96,7 @@ steps:
         EOF
       
       # Cascoin bauen (explizit im Workspace)
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
       - |
         cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
