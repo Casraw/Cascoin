@@ -31,7 +31,7 @@ steps:
       - cd /tmp && git clone --recursive https://github.com/ethereum/evmone.git && cd evmone && git checkout v0.18.0 && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON && make -j$(nproc) && make install
       - ldconfig
       - mkdir -p /usr/local/lib/pkgconfig
-      - "printf 'prefix=/usr/local\\nexec_prefix=$${prefix}\\nlibdir=$${exec_prefix}/lib\\nincludedir=$${prefix}/include\\n\\nName: evmc\\nDescription: Ethereum Virtual Machine Connector\\nVersion: 12.1.0\\nLibs: -L$${libdir}\\nCflags: -I$${includedir}\\n' > /usr/local/lib/pkgconfig/evmc.pc"
+      - "printf 'prefix=/usr/local\\nexec_prefix=$${prefix}\\nlibdir=$${exec_prefix}/lib\\nincludedir=$${prefix}/include\\n\\nName: evmc\\nDescription: Ethereum Virtual Machine Connector\\nVersion: 12.1.0\\nLibs: -L$${libdir} -levmc-loader\\nCflags: -I$${includedir}\\n' > /usr/local/lib/pkgconfig/evmc.pc"
       - "printf 'prefix=/usr/local\\nexec_prefix=$${prefix}\\nlibdir=$${exec_prefix}/lib\\nincludedir=$${prefix}/include\\n\\nName: evmone\\nDescription: Fast Ethereum Virtual Machine implementation\\nVersion: 0.18.0\\nRequires: evmc\\nLibs: -L$${libdir} -levmone\\nCflags: -I$${includedir}\\n' > /usr/local/lib/pkgconfig/evmone.pc"
       - cat /usr/local/lib/pkgconfig/evmc.pc
       - cat /usr/local/lib/pkgconfig/evmone.pc
