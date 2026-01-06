@@ -28,7 +28,7 @@ steps:
           qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
           qt6-l10n-tools \
           libqt6core5compat6-dev binutils ccache libdb-dev libdb++-dev libdb5.3++-dev \
-          cmake git ninja-build libgmp-dev || true
+          cmake git ninja-build libgmp-dev bsdextrautils || true
       
       # EVMC bauen
       - |
