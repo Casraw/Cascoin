@@ -33,9 +33,13 @@ steps:
       - |
         apt-get install -y \
           autoconf automake libtool build-essential pkg-config curl ca-certificates \
-          g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+          g++-mingw-w64-x86-64-posix mingw-w64 binutils-mingw-w64 \
           zip unzip cmake gperf python3 bsdextrautils faketime libfaketime \
           rsync git qt6-tools-dev qt6-tools-dev-tools qt6-l10n-tools
+      
+      # Set POSIX threading alternatives as default (required for std::condition_variable)
+      - update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+      - update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
       
       # Submodules initialisieren
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive

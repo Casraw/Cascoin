@@ -575,12 +575,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake libtool build-essential pkg-config curl ca-certificates \
-            g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+            g++-mingw-w64-x86-64-posix mingw-w64 binutils-mingw-w64 \
             zip unzip cmake gperf \
             python3 faketime libfaketime \
             rsync git
           # bsdextrautils nur auf neueren Ubuntu-Versionen verfügbar
           sudo apt-get install -y bsdextrautils || true
+          # Set POSIX threading alternatives as default (required for std::condition_variable)
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
 
       - name: Prepare depends cache directories
         shell: bash
