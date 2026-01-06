@@ -46,6 +46,8 @@ jobs:
             binutils ccache \
             libdb-dev libdb++-dev libsqlite3-dev \
             cmake git || true
+          # hexdump für Tests (bsdmainutils auf Ubuntu 20.04, bsdextrautils auf 22.04+)
+          sudo apt-get install -y bsdmainutils || sudo apt-get install -y bsdextrautils || true
           # Fallback: install all Boost dev libs if specific ones are insufficient on this runner
           sudo apt-get install -y libboost-all-dev || true
           # Try specific BDB package name if the generic one isn't available
@@ -575,9 +577,10 @@ jobs:
             autoconf automake libtool build-essential pkg-config curl ca-certificates \
             g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
             zip unzip cmake gperf \
-            python3 bsdextrautils faketime libfaketime \
-            rsync git \
-            qt6-tools-dev qt6-tools-dev-tools
+            python3 faketime libfaketime \
+            rsync git
+          # bsdextrautils nur auf neueren Ubuntu-Versionen verfügbar
+          sudo apt-get install -y bsdextrautils || true
 
       - name: Prepare depends cache directories
         shell: bash
