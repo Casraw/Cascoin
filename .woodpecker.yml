@@ -1,0 +1,175 @@
+# Woodpecker CI Workflow für Cascoin Core
+# Für eigene Woodpecker-Instanz auf Codeberg
+# Dokumentation: https://woodpecker-ci.org/docs/usage/workflow-syntax
+
+# Labels für eigenen Agent (anpassen an deine Agent-Konfiguration)
+labels:
+  platform: linux/amd64
+  # Optionale Labels für spezifische Agents:
+  # location: home-server
+  # type: build-agent
+
+when:
+  - event: push
+  - event: pull_request
+  - event: tag
+  - event: manual
+
+steps:
+  # ============================================
+  # Linux Build (alles in einem Step für Persistenz)
+  # ============================================
+  - name: build-linux
+    image: ubuntu:24.04
+    commands:
+      # Dependencies installieren
+      - apt-get update
+      - |
+        apt-get install -y \
+          autoconf automake libtool build-essential pkg-config curl ca-certificates \
+          libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev \
+          libboost-test-dev libboost-thread-dev libboost-program-options-dev libboost-dev \
+          libssl-dev libzmq3-dev libminiupnpc-dev \
+          libprotobuf-dev protobuf-compiler \
+          libqrencode-dev libsqlite3-dev \
+          qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
+          libqt6core5compat6-dev \
+          binutils ccache \
+          libdb-dev libdb++-dev \
+          cmake git ninja-build libgmp-dev || true
+      - apt-get install -y libboost-all-dev libdb5.3++-dev || true
+      
+      # EVMC bauen
+      - cd /tmp
+      - git clone --recursive https://github.com/ethereum/evmc.git
+      - cd evmc && git checkout v12.1.0
+      - mkdir -p build && cd build
+      - cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMC_TESTING=OFF -DEVMC_TOOLS=OFF -DEVMC_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON
+      - make -j$(nproc) && make install
+      
+      # blst bauen
+      - cd /tmp
+      - git clone https://github.com/supranational/blst.git
+      - cd blst && git checkout v0.3.13
+      - ./build.sh
+      - cp libblst.a /usr/local/lib/
+      - cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
+      
+      # evmone bauen
+      - cd /tmp
+      - git clone --recursive https://github.com/ethereum/evmone.git
+      - cd evmone && git checkout v0.18.0
+      - mkdir -p build && cd build
+      - cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON
+      - make -j$(nproc) && make install
+      - ldconfig
+      
+      # pkg-config für EVMC erstellen
+      - mkdir -p /usr/local/lib/pkgconfig
+      - |
+        cat > /usr/local/lib/pkgconfig/evmc.pc << 'EVMCPC'
+        prefix=/usr/local
+        exec_prefix=${prefix}
+        libdir=${exec_prefix}/lib
+        includedir=${prefix}/include
+        Name: evmc
+        Description: Ethereum Virtual Machine Connector
+        Version: 12.1.0
+        Libs: -L${libdir} -levmc-loader -levmc-instructions
+        Cflags: -I${includedir}
+        EVMCPC
+      - |
+        cat > /usr/local/lib/pkgconfig/evmone.pc << 'EVMONEPC'
+        prefix=/usr/local
+        exec_prefix=${prefix}
+        libdir=${exec_prefix}/lib
+        includedir=${prefix}/include
+        Name: evmone
+        Description: Fast Ethereum Virtual Machine implementation
+        Version: 0.18.0
+        Requires: evmc
+        Libs: -L${libdir} -levmone
+        Cflags: -I${includedir}
+        EVMONEPC
+      
+      # Zurück zum Workspace und bauen
+      - cd ${CI_WORKSPACE}
+      - ./autogen.sh
+      - |
+        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+        CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
+        MOC=/usr/lib/qt6/libexec/moc \
+        UIC=/usr/lib/qt6/libexec/uic \
+        RCC=/usr/lib/qt6/libexec/rcc \
+        ./configure \
+          --with-gui=qt6 \
+          --with-boost=/usr \
+          --with-boost-libdir=/usr/lib/x86_64-linux-gnu \
+          --enable-wallet \
+          --enable-evmc \
+          --with-evmc=/usr/local \
+          --with-evmone=/usr/local \
+          --with-incompatible-bdb
+      - make -j$(nproc)
+      
+      # Binaries strippen
+      - |
+        for b in src/qt/*-qt src/*coind src/*coin-cli; do
+          if [ -x "$b" ]; then
+            echo "Processing $b"
+            objcopy --only-keep-debug "$b" "$b.debug" || true
+            strip --strip-unneeded "$b" || true
+          fi
+        done
+      
+      # Ergebnis anzeigen
+      - ls -lah src/ || true
+      - ls -lah src/qt/ || true
+      - file src/qt/*-qt || true
+
+  # ============================================
+  # Windows Cross-Compile Build (nur bei Tags/Manual)
+  # ============================================
+  - name: build-windows
+    image: ubuntu:24.04
+    environment:
+      HOST: x86_64-w64-mingw32
+    commands:
+      # Dependencies installieren
+      - apt-get update
+      - |
+        apt-get install -y \
+          autoconf automake libtool build-essential pkg-config curl ca-certificates \
+          g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+          zip unzip cmake gperf python3 bsdextrautils faketime libfaketime \
+          rsync git qt6-tools-dev qt6-tools-dev-tools
+      
+      # Depends bauen
+      - make -C depends HOST=$HOST JOBS=$(nproc)
+      
+      # Cascoin bauen
+      - ./autogen.sh
+      - |
+        CONFIG_SITE="$PWD/depends/$HOST/share/config.site" ./configure \
+          --prefix=/ \
+          --disable-tests \
+          --disable-bench \
+          --with-incompatible-bdb
+      - make -j$(nproc)
+      
+      # Binaries strippen
+      - |
+        for b in src/*.exe src/qt/*.exe; do
+          if [ -f "$b" ]; then
+            echo "Processing $b"
+            ${HOST}-objcopy --only-keep-debug "$b" "$b.debug" || true
+            ${HOST}-strip --strip-unneeded "$b" || true
+          fi
+        done
+      
+      # Ergebnis anzeigen
+      - ls -la src/*.exe || true
+      - ls -la src/qt/*.exe || true
+    when:
+      - event: tag
+      - event: manual
