@@ -23,7 +23,7 @@ on:
 
 jobs:
   build-linux:
-    runs-on: self-hosted
+    runs-on: default
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -559,7 +559,7 @@ jobs:
 
 
   build-windows:
-    runs-on: self-hosted
+    runs-on: default
     timeout-minutes: 120
     env:
       HOST: x86_64-w64-mingw32
@@ -724,7 +724,7 @@ jobs:
 
 
   release:
-    runs-on: self-hosted
+    runs-on: default
     needs:
       - build-linux
       - build-windows
