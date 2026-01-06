@@ -75,27 +75,27 @@ steps:
       
       # pkg-config für EVMC erstellen
       - mkdir -p /usr/local/lib/pkgconfig
-      - echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo '' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'Name: evmc' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'Description: Ethereum Virtual Machine Connector' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'Version: 12.1.0' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'Libs: -L${libdir}' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/evmc.pc
-      - echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'exec_prefix=${prefix}' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'libdir=${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'includedir=${prefix}/include' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo '' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Name: evmone' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Description: Fast Ethereum Virtual Machine implementation' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Version: 0.18.0' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Requires: evmc' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Libs: -L${libdir} -levmone' >> /usr/local/lib/pkgconfig/evmone.pc
-      - echo 'Cflags: -I${includedir}' >> /usr/local/lib/pkgconfig/evmone.pc
+      - "echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'exec_prefix=$${prefix}' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'libdir=$${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'includedir=$${prefix}/include' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo '' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'Name: evmc' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'Description: Ethereum Virtual Machine Connector' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'Version: 12.1.0' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'Libs: -L$${libdir}' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'Cflags: -I$${includedir}' >> /usr/local/lib/pkgconfig/evmc.pc"
+      - "echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'exec_prefix=$${prefix}' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'libdir=$${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'includedir=$${prefix}/include' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo '' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Name: evmone' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Description: Fast Ethereum Virtual Machine implementation' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Version: 0.18.0' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Requires: evmc' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Libs: -L$${libdir} -levmone' >> /usr/local/lib/pkgconfig/evmone.pc"
+      - "echo 'Cflags: -I$${includedir}' >> /usr/local/lib/pkgconfig/evmone.pc"
       
       # Cascoin bauen (explizit im Workspace)
       - |
