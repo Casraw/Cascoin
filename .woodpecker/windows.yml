@@ -41,6 +41,11 @@ steps:
       - update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
       - update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
       
+      # Verify POSIX threading is active
+      - x86_64-w64-mingw32-g++ --version
+      - echo "Threading model should show 'posix':"
+      - x86_64-w64-mingw32-g++ -v 2>&1 | grep -i thread || true
+      
       # Submodules initialisieren
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive
       
