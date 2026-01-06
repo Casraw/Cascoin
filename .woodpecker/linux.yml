@@ -73,10 +73,11 @@ steps:
         exec_prefix=${prefix}
         libdir=${exec_prefix}/lib
         includedir=${prefix}/include
+
         Name: evmc
         Description: Ethereum Virtual Machine Connector
         Version: 12.1.0
-        Libs: -L${libdir} -levmc-loader -levmc-instructions
+        Libs: -L${libdir}
         Cflags: -I${includedir}
         EVMCPC
       - |
@@ -85,6 +86,7 @@ steps:
         exec_prefix=${prefix}
         libdir=${exec_prefix}/lib
         includedir=${prefix}/include
+
         Name: evmone
         Description: Fast Ethereum Virtual Machine implementation
         Version: 0.18.0
