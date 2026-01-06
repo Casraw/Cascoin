@@ -12,7 +12,7 @@ when:
 
 steps:
   - name: build-linux
-    image: ubuntu:24.04
+    image: ubuntu:25.04
     commands:
       - echo "Workspace is $PWD"
       - export WORKSPACE="$PWD"
