@@ -68,32 +68,32 @@ steps:
       # pkg-config für EVMC erstellen
       - mkdir -p /usr/local/lib/pkgconfig
       - |
-        cat > /usr/local/lib/pkgconfig/evmc.pc << 'EVMCPC'
+        cat > /usr/local/lib/pkgconfig/evmc.pc << 'EOF'
         prefix=/usr/local
-        exec_prefix=${prefix}
-        libdir=${exec_prefix}/lib
-        includedir=${prefix}/include
+        exec_prefix=\${prefix}
+        libdir=\${exec_prefix}/lib
+        includedir=\${prefix}/include
 
         Name: evmc
         Description: Ethereum Virtual Machine Connector
         Version: 12.1.0
-        Libs: -L${libdir}
-        Cflags: -I${includedir}
-        EVMCPC
+        Libs: -L\${libdir}
+        Cflags: -I\${includedir}
+        EOF
       - |
-        cat > /usr/local/lib/pkgconfig/evmone.pc << 'EVMONEPC'
+        cat > /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
         prefix=/usr/local
-        exec_prefix=${prefix}
-        libdir=${exec_prefix}/lib
-        includedir=${prefix}/include
+        exec_prefix=\${prefix}
+        libdir=\${exec_prefix}/lib
+        includedir=\${prefix}/include
 
         Name: evmone
         Description: Fast Ethereum Virtual Machine implementation
         Version: 0.18.0
         Requires: evmc
-        Libs: -L${libdir} -levmone
-        Cflags: -I${includedir}
-        EVMONEPC
+        Libs: -L\${libdir} -levmone
+        Cflags: -I\${includedir}
+        EOF
       
       # Cascoin bauen (explizit im Workspace)
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
