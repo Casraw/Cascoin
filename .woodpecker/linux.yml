@@ -13,6 +13,9 @@ when:
 steps:
   - name: build-linux
     image: ubuntu:25.04
+    environment:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
     commands:
       - echo "Workspace is $PWD"
       - export WORKSPACE="$PWD"
@@ -33,9 +36,17 @@ steps:
       # UTF-8 Locale konfigurieren (für lrelease/Qt)
       - |
         sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
-        locale-gen
-      - export LANG=en_US.UTF-8
-      - export LC_ALL=en_US.UTF-8
+        locale-gen en_US.UTF-8
+        update-locale LANG=en_US.UTF-8
+      
+      # lrelease Pfad prüfen
+      - |
+        echo "Checking lrelease locations..."
+        which lrelease || echo "lrelease not in PATH"
+        which lrelease-qt6 || echo "lrelease-qt6 not in PATH"
+        ls -la /usr/lib/qt6/libexec/lrelease 2>/dev/null || echo "Not in /usr/lib/qt6/libexec/"
+        ls -la /usr/lib/qt6/bin/lrelease 2>/dev/null || echo "Not in /usr/lib/qt6/bin/"
+        find /usr -name "lrelease*" -type f 2>/dev/null | head -5
       
       # EVMC bauen
       - |
@@ -113,7 +124,7 @@ steps:
           --with-evmc=/usr/local \
           --with-evmone=/usr/local \
           --with-incompatible-bdb
-      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 make -j$(nproc)
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && make -j$(nproc)
       
       # Binaries strippen
       - |
