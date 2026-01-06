@@ -1,13 +1,8 @@
-# Woodpecker CI Workflow für Cascoin Core
-# Für eigene Woodpecker-Instanz auf Codeberg
-# Dokumentation: https://woodpecker-ci.org/docs/usage/workflow-syntax
+# Linux Build Pipeline
+# Läuft parallel zu anderen Pipelines
 
-# Labels für eigenen Agent (anpassen an deine Agent-Konfiguration)
 labels:
   platform: linux/amd64
-  # Optionale Labels für spezifische Agents:
-  # location: home-server
-  # type: build-agent
 
 when:
   - event: push
@@ -16,15 +11,22 @@ when:
   - event: manual
 
 steps:
-  # ============================================
-  # Linux Build (alles in einem Step für Persistenz)
-  # ============================================
+  - name: restore-cache
+    image: meltwater/drone-cache
+    settings:
+      backend: filesystem
+      restore: true
+      cache_key: "cascoin-linux"
+      archive_format: gzip
+      mount:
+        - .ccache
+    volumes:
+      - /tmp/cache:/tmp/cache
+
   - name: build-linux
     image: ubuntu:24.04
     commands:
-      # Workspace-Pfad speichern
-      - export WORKSPACE="$PWD"
-      - echo "Workspace is $WORKSPACE"
+      - echo "Workspace is $PWD"
       - ls -la
       
       # Dependencies installieren
@@ -32,19 +34,19 @@ steps:
       - |
         apt-get install -y \
           autoconf automake libtool build-essential pkg-config curl ca-certificates \
-          libevent-dev libboost-system-dev libboost-filesystem-dev libboost-chrono-dev \
-          libboost-test-dev libboost-thread-dev libboost-program-options-dev libboost-dev \
-          libssl-dev libzmq3-dev libminiupnpc-dev \
-          libprotobuf-dev protobuf-compiler \
-          libqrencode-dev libsqlite3-dev \
+          libevent-dev libboost-all-dev libssl-dev libzmq3-dev libminiupnpc-dev \
+          libprotobuf-dev protobuf-compiler libqrencode-dev libsqlite3-dev \
           qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
-          libqt6core5compat6-dev \
-          binutils ccache \
-          libdb-dev libdb++-dev \
+          libqt6core5compat6-dev binutils ccache libdb-dev libdb++-dev libdb5.3++-dev \
           cmake git ninja-build libgmp-dev || true
-      - apt-get install -y libboost-all-dev libdb5.3++-dev || true
       
-      # EVMC bauen (in /tmp, dann zurück)
+      # ccache konfigurieren
+      - mkdir -p .ccache
+      - ccache --set-config=cache_dir=$PWD/.ccache
+      - ccache --set-config=max_size=2G
+      - ccache --zero-stats
+      
+      # EVMC bauen
       - |
         cd /tmp
         git clone --recursive https://github.com/ethereum/evmc.git
@@ -100,7 +102,7 @@ steps:
         Cflags: -I${includedir}
         EVMONEPC
       
-      # Cascoin bauen (im Workspace)
+      # Cascoin bauen
       - ./autogen.sh
       - |
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -119,6 +121,9 @@ steps:
           --with-incompatible-bdb
       - make -j$(nproc)
       
+      # ccache Statistiken
+      - ccache --show-stats
+      
       # Binaries strippen
       - |
         for b in src/qt/*-qt src/*coind src/*coin-cli; do
@@ -134,46 +139,16 @@ steps:
       - ls -lah src/qt/ || true
       - file src/qt/*-qt || true
 
-  # ============================================
-  # Windows Cross-Compile Build (nur bei Tags/Manual)
-  # ============================================
-  - name: build-windows
-    image: ubuntu:24.04
-    environment:
-      HOST: x86_64-w64-mingw32
-    commands:
-      # Dependencies installieren
-      - apt-get update
-      - |
-        apt-get install -y \
-          autoconf automake libtool build-essential pkg-config curl ca-certificates \
-          g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
-          zip unzip cmake gperf python3 bsdextrautils faketime libfaketime \
-          rsync git qt6-tools-dev qt6-tools-dev-tools
-      
-      # Depends bauen
-      - make -C depends HOST=$HOST JOBS=$(nproc)
-      
-      # Cascoin bauen
-      - ./autogen.sh
-      - |
-        CONFIG_SITE="$PWD/depends/$HOST/share/config.site" ./configure \
-          --prefix=/ \
-          --disable-tests \
-          --disable-bench \
-          --with-incompatible-bdb
-      - make -j$(nproc)
-      
-      # Binaries strippen
-      - |
-        for b in src/*.exe src/qt/*.exe; do
-          if [ -f "$b" ]; then
-            echo "Processing $b"
-            ${HOST}-objcopy --only-keep-debug "$b" "$b.debug" || true
-            ${HOST}-strip --strip-unneeded "$b" || true
-          fi
-        done
-      
-      # Ergebnis anzeigen
-      - ls -la src/*.exe || true
-      - ls -la src/qt/*.exe || true
+  - name: save-cache
+    image: meltwater/drone-cache
+    settings:
+      backend: filesystem
+      rebuild: true
+      cache_key: "cascoin-linux"
+      archive_format: gzip
+      mount:
+        - .ccache
+    volumes:
+      - /tmp/cache:/tmp/cache
+    when:
+      - status: [ success, failure ]

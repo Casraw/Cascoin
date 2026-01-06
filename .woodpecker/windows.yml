@@ -1,0 +1,84 @@
+# Windows Cross-Compile Build Pipeline
+# Läuft parallel zu anderen Pipelines
+
+labels:
+  platform: linux/amd64
+
+when:
+  - event: push
+  - event: pull_request
+  - event: tag
+  - event: manual
+
+steps:
+  - name: restore-cache
+    image: meltwater/drone-cache
+    settings:
+      backend: filesystem
+      restore: true
+      cache_key: "cascoin-windows"
+      archive_format: gzip
+      mount:
+        - depends/built
+        - depends/sources
+    volumes:
+      - /tmp/cache:/tmp/cache
+
+  - name: build-windows
+    image: ubuntu:24.04
+    environment:
+      HOST: x86_64-w64-mingw32
+    commands:
+      - echo "Workspace is $PWD"
+      - ls -la
+      
+      # Dependencies installieren
+      - apt-get update
+      - |
+        apt-get install -y \
+          autoconf automake libtool build-essential pkg-config curl ca-certificates \
+          g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+          zip unzip cmake gperf python3 bsdextrautils faketime libfaketime \
+          rsync git qt6-tools-dev qt6-tools-dev-tools
+      
+      # Depends bauen (nutzt Cache wenn vorhanden)
+      - make -C depends HOST=$HOST JOBS=$(nproc)
+      
+      # Cascoin bauen
+      - ./autogen.sh
+      - |
+        CONFIG_SITE="$PWD/depends/$HOST/share/config.site" ./configure \
+          --prefix=/ \
+          --disable-tests \
+          --disable-bench \
+          --with-incompatible-bdb
+      - make -j$(nproc)
+      
+      # Binaries strippen
+      - |
+        for b in src/*.exe src/qt/*.exe; do
+          if [ -f "$b" ]; then
+            echo "Processing $b"
+            ${HOST}-objcopy --only-keep-debug "$b" "$b.debug" || true
+            ${HOST}-strip --strip-unneeded "$b" || true
+          fi
+        done
+      
+      # Ergebnis anzeigen
+      - ls -la src/*.exe || true
+      - ls -la src/qt/*.exe || true
+
+  - name: save-cache
+    image: meltwater/drone-cache
+    settings:
+      backend: filesystem
+      rebuild: true
+      cache_key: "cascoin-windows"
+      archive_format: gzip
+      mount:
+        - depends/built
+        - depends/sources
+    volumes:
+      - /tmp/cache:/tmp/cache
+    when:
+      - status: [ success, failure ]
