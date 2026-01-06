@@ -4,6 +4,14 @@
 labels:
   platform: linux/amd64
 
+# Submodules mit clonen
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      recursive: true
+      submodule_update_remote: true
+
 when:
   - event: push
   - event: pull_request

@@ -4,6 +4,14 @@
 labels:
   platform: linux/amd64
 
+# Submodules mit clonen
+clone:
+  git:
+    image: woodpeckerci/plugin-git
+    settings:
+      recursive: true
+      submodule_update_remote: true
+
 when:
   - event: push
   - event: pull_request
@@ -96,7 +104,14 @@ steps:
         EOF
       
       # Cascoin bauen (explizit im Workspace)
-      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive
+      - |
+        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
+        echo "Checking submodules..."
+        git submodule status
+        git submodule update --init --recursive
+        git submodule status
+        ls -la src/secp256k1/ || echo "secp256k1 dir missing"
+        ls -la src/secp256k1/include/ || echo "secp256k1/include dir missing"
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
       - |
         cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
