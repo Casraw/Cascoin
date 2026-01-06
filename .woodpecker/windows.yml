@@ -11,19 +11,6 @@ when:
   - event: manual
 
 steps:
-  - name: restore-cache
-    image: meltwater/drone-cache
-    settings:
-      backend: filesystem
-      restore: true
-      cache_key: "cascoin-windows"
-      archive_format: gzip
-      mount:
-        - depends/built
-        - depends/sources
-    volumes:
-      - /tmp/cache:/tmp/cache
-
   - name: build-windows
     image: ubuntu:24.04
     environment:
@@ -41,7 +28,7 @@ steps:
           zip unzip cmake gperf python3 bsdextrautils faketime libfaketime \
           rsync git qt6-tools-dev qt6-tools-dev-tools
       
-      # Depends bauen (nutzt Cache wenn vorhanden)
+      # Depends bauen
       - make -C depends HOST=$HOST JOBS=$(nproc)
       
       # Cascoin bauen
@@ -67,18 +54,3 @@ steps:
       # Ergebnis anzeigen
       - ls -la src/*.exe || true
       - ls -la src/qt/*.exe || true
-
-  - name: save-cache
-    image: meltwater/drone-cache
-    settings:
-      backend: filesystem
-      rebuild: true
-      cache_key: "cascoin-windows"
-      archive_format: gzip
-      mount:
-        - depends/built
-        - depends/sources
-    volumes:
-      - /tmp/cache:/tmp/cache
-    when:
-      - status: [ success, failure ]

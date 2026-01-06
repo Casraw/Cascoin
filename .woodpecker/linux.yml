@@ -11,18 +11,6 @@ when:
   - event: manual
 
 steps:
-  - name: restore-cache
-    image: meltwater/drone-cache
-    settings:
-      backend: filesystem
-      restore: true
-      cache_key: "cascoin-linux"
-      archive_format: gzip
-      mount:
-        - .ccache
-    volumes:
-      - /tmp/cache:/tmp/cache
-
   - name: build-linux
     image: ubuntu:24.04
     commands:
@@ -39,12 +27,6 @@ steps:
           qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
           libqt6core5compat6-dev binutils ccache libdb-dev libdb++-dev libdb5.3++-dev \
           cmake git ninja-build libgmp-dev || true
-      
-      # ccache konfigurieren
-      - mkdir -p .ccache
-      - ccache --set-config=cache_dir=$PWD/.ccache
-      - ccache --set-config=max_size=2G
-      - ccache --zero-stats
       
       # EVMC bauen
       - |
@@ -106,7 +88,7 @@ steps:
       - ./autogen.sh
       - |
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
-        CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
+        CFLAGS="-g" CXXFLAGS="-g" \
         MOC=/usr/lib/qt6/libexec/moc \
         UIC=/usr/lib/qt6/libexec/uic \
         RCC=/usr/lib/qt6/libexec/rcc \
@@ -120,9 +102,6 @@ steps:
           --with-evmone=/usr/local \
           --with-incompatible-bdb
       - make -j$(nproc)
-      
-      # ccache Statistiken
-      - ccache --show-stats
       
       # Binaries strippen
       - |
@@ -138,17 +117,3 @@ steps:
       - ls -lah src/ || true
       - ls -lah src/qt/ || true
       - file src/qt/*-qt || true
-
-  - name: save-cache
-    image: meltwater/drone-cache
-    settings:
-      backend: filesystem
-      rebuild: true
-      cache_key: "cascoin-linux"
-      archive_format: gzip
-      mount:
-        - .ccache
-    volumes:
-      - /tmp/cache:/tmp/cache
-    when:
-      - status: [ success, failure ]
