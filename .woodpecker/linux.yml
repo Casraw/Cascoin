@@ -1,10 +1,8 @@
 # Linux Build Pipeline
-# Läuft parallel zu anderen Pipelines
 
 labels:
   platform: linux/amd64
 
-# Submodules mit clonen
 clone:
   git:
     image: woodpeckerci/plugin-git
@@ -23,122 +21,25 @@ steps:
     image: ubuntu:25.04
     commands:
       - echo "Workspace is $PWD"
-      - export WORKSPACE="$PWD"
       - ls -la
-      
-      # Dependencies installieren
       - apt-get update
-      - |
-        apt-get install -y \
-          autoconf automake libtool build-essential pkg-config curl ca-certificates \
-          libevent-dev libboost-all-dev libssl-dev libzmq3-dev libminiupnpc-dev \
-          libprotobuf-dev protobuf-compiler libqrencode-dev libsqlite3-dev \
-          qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
-          qt6-l10n-tools \
-          libqt6core5compat6-dev binutils ccache libdb-dev libdb++-dev libdb5.3++-dev \
-          cmake git ninja-build libgmp-dev bsdextrautils locales || true
-      
-      # UTF-8 Locale konfigurieren (für lrelease/Qt)
-      - |
-        sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
-        locale-gen en_US.UTF-8
-        export LANG=en_US.UTF-8
-        export LC_ALL=en_US.UTF-8
-      
-      # EVMC bauen
-      - |
-        cd /tmp
-        git clone --recursive https://github.com/ethereum/evmc.git
-        cd evmc && git checkout v12.1.0
-        mkdir -p build && cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMC_TESTING=OFF -DEVMC_TOOLS=OFF -DEVMC_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON
-        make -j$(nproc) && make install
-      
-      # blst bauen
-      - |
-        cd /tmp
-        git clone https://github.com/supranational/blst.git
-        cd blst && git checkout v0.3.13
-        ./build.sh
-        cp libblst.a /usr/local/lib/
-        cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
-      
-      # evmone bauen
-      - |
-        cd /tmp
-        git clone --recursive https://github.com/ethereum/evmone.git
-        cd evmone && git checkout v0.18.0
-        mkdir -p build && cd build
-        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON
-        make -j$(nproc) && make install
-        ldconfig
-      
-      # pkg-config für EVMC erstellen
+      - apt-get install -y autoconf automake libtool build-essential pkg-config curl ca-certificates libevent-dev libboost-all-dev libssl-dev libzmq3-dev libminiupnpc-dev libprotobuf-dev protobuf-compiler libqrencode-dev libsqlite3-dev qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev qt6-l10n-tools libqt6core5compat6-dev binutils ccache libdb-dev libdb++-dev libdb5.3++-dev cmake git ninja-build libgmp-dev bsdextrautils locales || true
+      - sed -i '/en_US.UTF-8/s/^# //g' /etc/locale.gen
+      - locale-gen en_US.UTF-8
+      - cd /tmp && git clone --recursive https://github.com/ethereum/evmc.git && cd evmc && git checkout v12.1.0 && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMC_TESTING=OFF -DEVMC_TOOLS=OFF -DEVMC_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON && make -j$(nproc) && make install
+      - cd /tmp && git clone https://github.com/supranational/blst.git && cd blst && git checkout v0.3.13 && ./build.sh && cp libblst.a /usr/local/lib/ && cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
+      - cd /tmp && git clone --recursive https://github.com/ethereum/evmone.git && cd evmone && git checkout v0.18.0 && mkdir -p build && cd build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON && make -j$(nproc) && make install
+      - ldconfig
       - mkdir -p /usr/local/lib/pkgconfig
-      - "echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'exec_prefix=$${prefix}' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'libdir=$${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'includedir=$${prefix}/include' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo '' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'Name: evmc' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'Description: Ethereum Virtual Machine Connector' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'Version: 12.1.0' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'Libs: -L$${libdir}' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'Cflags: -I$${includedir}' >> /usr/local/lib/pkgconfig/evmc.pc"
-      - "echo 'prefix=/usr/local' > /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'exec_prefix=$${prefix}' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'libdir=$${exec_prefix}/lib' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'includedir=$${prefix}/include' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo '' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Name: evmone' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Description: Fast Ethereum Virtual Machine implementation' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Version: 0.18.0' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Requires: evmc' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Libs: -L$${libdir} -levmone' >> /usr/local/lib/pkgconfig/evmone.pc"
-      - "echo 'Cflags: -I$${includedir}' >> /usr/local/lib/pkgconfig/evmone.pc"
-      
-      # Cascoin bauen (explizit im Workspace)
-      - |
-        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
-        echo "Checking submodules..."
-        git submodule status
-        git submodule update --init --recursive
-        git submodule status
-        ls -la src/secp256k1/ || echo "secp256k1 dir missing"
-        ls -la src/secp256k1/include/ || echo "secp256k1/include dir missing"
+      - printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: evmc\nDescription: Ethereum Virtual Machine Connector\nVersion: 12.1.0\nLibs: -L${libdir}\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/evmc.pc
+      - printf 'prefix=/usr/local\nexec_prefix=${prefix}\nlibdir=${exec_prefix}/lib\nincludedir=${prefix}/include\n\nName: evmone\nDescription: Fast Ethereum Virtual Machine implementation\nVersion: 0.18.0\nRequires: evmc\nLibs: -L${libdir} -levmone\nCflags: -I${includedir}\n' > /usr/local/lib/pkgconfig/evmone.pc
+      - cat /usr/local/lib/pkgconfig/evmc.pc
+      - cat /usr/local/lib/pkgconfig/evmone.pc
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -la src/secp256k1/include/ || echo "secp256k1 missing"
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
-      - |
-        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
-        export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
-        CFLAGS="-g" CXXFLAGS="-g" \
-        MOC=/usr/lib/qt6/libexec/moc \
-        UIC=/usr/lib/qt6/libexec/uic \
-        RCC=/usr/lib/qt6/libexec/rcc \
-        LRELEASE=/usr/lib/qt6/bin/lrelease \
-        LUPDATE=/usr/lib/qt6/bin/lupdate \
-        ./configure \
-          --with-gui=qt6 \
-          --with-boost=/usr \
-          --with-boost-libdir=/usr/lib/x86_64-linux-gnu \
-          --enable-wallet \
-          --enable-evmc \
-          --with-evmc=/usr/local \
-          --with-evmone=/usr/local \
-          --with-incompatible-bdb
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" && CFLAGS="-g" CXXFLAGS="-g" MOC=/usr/lib/qt6/libexec/moc UIC=/usr/lib/qt6/libexec/uic RCC=/usr/lib/qt6/libexec/rcc LRELEASE=/usr/lib/qt6/bin/lrelease LUPDATE=/usr/lib/qt6/bin/lupdate ./configure --with-gui=qt6 --with-boost=/usr --with-boost-libdir=/usr/lib/x86_64-linux-gnu --enable-wallet --enable-evmc --with-evmc=/usr/local --with-evmone=/usr/local --with-incompatible-bdb
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 make -j$(nproc)
-      
-      # Binaries strippen
-      - |
-        cd /woodpecker/src/codeberg.org/Cascoin/Cascoin
-        for b in src/qt/*-qt src/*coind src/*coin-cli; do
-          if [ -x "$b" ]; then
-            echo "Processing $b"
-            objcopy --only-keep-debug "$b" "$b.debug" || true
-            strip --strip-unneeded "$b" || true
-          fi
-        done
-      
-      # Ergebnis anzeigen
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/ || true
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/qt/ || true
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && file src/qt/*-qt || true
