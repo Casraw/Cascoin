@@ -95,6 +95,8 @@ steps:
         MOC=/usr/lib/qt6/libexec/moc \
         UIC=/usr/lib/qt6/libexec/uic \
         RCC=/usr/lib/qt6/libexec/rcc \
+        LRELEASE=$(command -v lrelease || command -v lrelease-qt6 || echo /usr/lib/qt6/libexec/lrelease) \
+        LUPDATE=$(command -v lupdate || command -v lupdate-qt6 || echo /usr/lib/qt6/libexec/lupdate) \
         ./configure \
           --with-gui=qt6 \
           --with-boost=/usr \
