@@ -22,6 +22,11 @@ steps:
   - name: build-linux
     image: ubuntu:24.04
     commands:
+      # Workspace-Pfad speichern
+      - export WORKSPACE="$PWD"
+      - echo "Workspace is $WORKSPACE"
+      - ls -la
+      
       # Dependencies installieren
       - apt-get update
       - |
@@ -39,30 +44,33 @@ steps:
           cmake git ninja-build libgmp-dev || true
       - apt-get install -y libboost-all-dev libdb5.3++-dev || true
       
-      # EVMC bauen
-      - cd /tmp
-      - git clone --recursive https://github.com/ethereum/evmc.git
-      - cd evmc && git checkout v12.1.0
-      - mkdir -p build && cd build
-      - cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMC_TESTING=OFF -DEVMC_TOOLS=OFF -DEVMC_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON
-      - make -j$(nproc) && make install
+      # EVMC bauen (in /tmp, dann zurück)
+      - |
+        cd /tmp
+        git clone --recursive https://github.com/ethereum/evmc.git
+        cd evmc && git checkout v12.1.0
+        mkdir -p build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMC_TESTING=OFF -DEVMC_TOOLS=OFF -DEVMC_EXAMPLES=OFF -DBUILD_SHARED_LIBS=ON
+        make -j$(nproc) && make install
       
       # blst bauen
-      - cd /tmp
-      - git clone https://github.com/supranational/blst.git
-      - cd blst && git checkout v0.3.13
-      - ./build.sh
-      - cp libblst.a /usr/local/lib/
-      - cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
+      - |
+        cd /tmp
+        git clone https://github.com/supranational/blst.git
+        cd blst && git checkout v0.3.13
+        ./build.sh
+        cp libblst.a /usr/local/lib/
+        cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
       
       # evmone bauen
-      - cd /tmp
-      - git clone --recursive https://github.com/ethereum/evmone.git
-      - cd evmone && git checkout v0.18.0
-      - mkdir -p build && cd build
-      - cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON
-      - make -j$(nproc) && make install
-      - ldconfig
+      - |
+        cd /tmp
+        git clone --recursive https://github.com/ethereum/evmone.git
+        cd evmone && git checkout v0.18.0
+        mkdir -p build && cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DEVMONE_TESTING=OFF -DEVMONE_FUZZING=OFF -DBUILD_SHARED_LIBS=ON
+        make -j$(nproc) && make install
+        ldconfig
       
       # pkg-config für EVMC erstellen
       - mkdir -p /usr/local/lib/pkgconfig
@@ -92,8 +100,7 @@ steps:
         Cflags: -I${includedir}
         EVMONEPC
       
-      # Zurück zum Workspace und bauen
-      - cd ${CI_WORKSPACE}
+      # Cascoin bauen (im Workspace)
       - ./autogen.sh
       - |
         export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
@@ -170,6 +177,3 @@ steps:
       # Ergebnis anzeigen
       - ls -la src/*.exe || true
       - ls -la src/qt/*.exe || true
-    when:
-      - event: tag
-      - event: manual
