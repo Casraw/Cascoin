@@ -260,6 +260,7 @@ const CLogCategoryDesc LogCategories[] =
     {BCLog::MINOTAURX, "minotaurx"},  // Cascoin: MinotaurX+Hive1.2
     {BCLog::RIALTO, "rialto"},        // Cascoin: Rialto
     {BCLog::CVM, "cvm"},              // Cascoin: CVM smart contracts
+    {BCLog::L2, "l2"},                // Cascoin: L2 Layer 2 system
     {BCLog::ALL, "1"},
     {BCLog::ALL, "all"},
 };

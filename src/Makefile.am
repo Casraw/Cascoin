@@ -233,7 +233,15 @@ BITCOIN_CORE_H = \
   cvm/backward_compat.h \
   cvm/dos_protection.h \
   cvm/metrics.h \
-  cvm/graceful_degradation.h
+  cvm/graceful_degradation.h \
+  l2/l2_common.h \
+  l2/l2_chainparams.h \
+  l2/l2_config.h \
+  l2/leader_election.h \
+  l2/sequencer_discovery.h \
+  l2/sparse_merkle_tree.h \
+  l2/account_state.h \
+  l2/state_manager.h
 
 
 obj/build.h: FORCE
@@ -348,6 +356,13 @@ libbitcoin_server_a_SOURCES = \
   cvm/dos_protection.cpp \
   cvm/metrics.cpp \
   cvm/graceful_degradation.cpp \
+  l2/l2_common.cpp \
+  l2/l2_chainparams.cpp \
+  l2/l2_config.cpp \
+  l2/leader_election.cpp \
+  l2/sequencer_discovery.cpp \
+  l2/sparse_merkle_tree.cpp \
+  l2/state_manager.cpp \
   rpc/cvm.cpp \
   $(BITCOIN_CORE_H)
 

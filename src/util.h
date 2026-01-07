@@ -107,6 +107,7 @@ namespace BCLog {
         MINOTAURX   = (1 << 22),    // Cascoin: MinotaurX+Hive1.2
         RIALTO      = (1 << 23),    // Cascoin: Rialto
         CVM         = (1 << 24),    // Cascoin: CVM smart contracts
+        L2          = (1 << 25),    // Cascoin: L2 Layer 2 system
         ALL         = ~(uint32_t)0,
     };
 }

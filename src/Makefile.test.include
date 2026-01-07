@@ -53,6 +53,10 @@ BITCOIN_TESTS =\
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
   test/key_tests.cpp \
+  test/l2_leader_election_tests.cpp \
+  test/l2_sequencer_discovery_tests.cpp \
+  test/l2_sparse_merkle_tree_tests.cpp \
+  test/l2_state_manager_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
   test/main_tests.cpp \

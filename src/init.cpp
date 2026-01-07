@@ -55,6 +55,7 @@
 #include <cvm/cvmdb.h>  // Cascoin: CVM Database
 #include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
 #include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
+#include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -177,6 +178,7 @@ void Interrupt()
     InterruptRPC();
     InterruptREST();
     InterruptTorControl();
+    l2::InterruptL2();  // Cascoin: L2 Layer 2
     if (g_connman)
         g_connman->Interrupt();
 }
@@ -269,6 +271,9 @@ void Shutdown()
     
     // Shutdown CVM database
     CVM::ShutdownCVMDatabase();
+    
+    // Cascoin: L2 Layer 2 shutdown
+    l2::StopL2();
     
 #ifdef ENABLE_WALLET
     StopWallets();
@@ -540,6 +545,9 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-rpcworkqueue=<n>", strprintf("Set the depth of the work queue to service RPC calls (default: %d)", DEFAULT_HTTP_WORKQUEUE));
         strUsage += HelpMessageOpt("-rpcservertimeout=<n>", strprintf("Timeout during HTTP requests (default: %d)", DEFAULT_HTTP_SERVER_TIMEOUT));
     }
+
+    // Cascoin: L2 Layer 2 options
+    strUsage += l2::GetL2HelpMessage();
 
     // Cascoin: Hive: Mining optimisations
     strUsage += HelpMessageOpt("-hivecheckdelay=<ms>", strprintf(_("Time between Hive checks in ms. This should be left at default unless performance degradation is observed (default: %u)"), DEFAULT_HIVE_CHECK_DELAY));
@@ -1204,6 +1212,12 @@ bool AppInitParameterInteraction()
             }
         }
     }
+
+    // Cascoin: L2 Layer 2 initialization
+    if (!l2::InitL2Config()) {
+        return InitError(_("Failed to initialize L2 configuration."));
+    }
+
     return true;
 }
 
@@ -1892,6 +1906,11 @@ bool AppInitMain()
         } else {
             LogPrintf("Warning: Failed to initialize BCT database\n");
         }
+    }
+
+    // Cascoin: L2 Layer 2 startup
+    if (!l2::StartL2()) {
+        LogPrintf("Warning: Failed to start L2 subsystem\n");
     }
 
     return true;
