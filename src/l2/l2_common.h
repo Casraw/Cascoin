@@ -19,6 +19,7 @@
 #include <serialize.h>
 
 #include <cstdint>
+#include <ostream>
 #include <string>
 #include <vector>
 
@@ -120,6 +121,69 @@ std::string L2TxTypeToString(L2TxType type);
  * Convert WithdrawalStatus to string for logging
  */
 std::string WithdrawalStatusToString(WithdrawalStatus status);
+
+/**
+ * Stream output operators for enum types (needed for Boost.Test)
+ */
+inline std::ostream& operator<<(std::ostream& os, L2TxType type) {
+    return os << L2TxTypeToString(type);
+}
+
+inline std::ostream& operator<<(std::ostream& os, WithdrawalStatus status) {
+    return os << WithdrawalStatusToString(status);
+}
+
+inline std::ostream& operator<<(std::ostream& os, L2NodeMode mode) {
+    switch (mode) {
+        case L2NodeMode::DISABLED: return os << "DISABLED";
+        case L2NodeMode::LIGHT_CLIENT: return os << "LIGHT_CLIENT";
+        case L2NodeMode::FULL_NODE: return os << "FULL_NODE";
+        default: return os << "UNKNOWN";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, ConsensusState state) {
+    switch (state) {
+        case ConsensusState::WAITING_FOR_PROPOSAL: return os << "WAITING_FOR_PROPOSAL";
+        case ConsensusState::COLLECTING_VOTES: return os << "COLLECTING_VOTES";
+        case ConsensusState::CONSENSUS_REACHED: return os << "CONSENSUS_REACHED";
+        case ConsensusState::CONSENSUS_FAILED: return os << "CONSENSUS_FAILED";
+        case ConsensusState::FAILOVER_IN_PROGRESS: return os << "FAILOVER_IN_PROGRESS";
+        default: return os << "UNKNOWN";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, VoteType vote) {
+    switch (vote) {
+        case VoteType::ACCEPT: return os << "ACCEPT";
+        case VoteType::REJECT: return os << "REJECT";
+        case VoteType::ABSTAIN: return os << "ABSTAIN";
+        default: return os << "UNKNOWN";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, MessageStatus status) {
+    switch (status) {
+        case MessageStatus::PENDING: return os << "PENDING";
+        case MessageStatus::EXECUTED: return os << "EXECUTED";
+        case MessageStatus::FAILED: return os << "FAILED";
+        case MessageStatus::CHALLENGED: return os << "CHALLENGED";
+        case MessageStatus::FINALIZED: return os << "FINALIZED";
+        default: return os << "UNKNOWN";
+    }
+}
+
+inline std::ostream& operator<<(std::ostream& os, FraudProofType type) {
+    switch (type) {
+        case FraudProofType::INVALID_STATE_TRANSITION: return os << "INVALID_STATE_TRANSITION";
+        case FraudProofType::INVALID_TRANSACTION: return os << "INVALID_TRANSACTION";
+        case FraudProofType::INVALID_SIGNATURE: return os << "INVALID_SIGNATURE";
+        case FraudProofType::DATA_WITHHOLDING: return os << "DATA_WITHHOLDING";
+        case FraudProofType::TIMESTAMP_MANIPULATION: return os << "TIMESTAMP_MANIPULATION";
+        case FraudProofType::DOUBLE_SPEND: return os << "DOUBLE_SPEND";
+        default: return os << "UNKNOWN";
+    }
+}
 
 } // namespace l2
 

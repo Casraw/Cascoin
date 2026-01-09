@@ -59,6 +59,15 @@ const char *TRUSTGRAPHDELTAREQ="tgdeltareq";         // Cascoin: Trust Graph Syn
 const char *TRUSTGRAPHDELTA="tgdelta";               // Cascoin: Trust Graph Sync
 const char *VALTASK="valtask";                       // Cascoin: Automatic Validator System
 const char *VALRESP="valresp";                       // Cascoin: Automatic Validator System
+const char *L2SEQANNOUNCE="l2seqannounce";           // Cascoin: L2 Network
+const char *L2BLOCK="l2block";                       // Cascoin: L2 Network
+const char *L2VOTE="l2vote";                         // Cascoin: L2 Network
+const char *L2GETBLOCKS="l2getblocks";               // Cascoin: L2 Network
+const char *L2HEADERS="l2headers";                   // Cascoin: L2 Network
+const char *L2GETHEADERS="l2getheaders";             // Cascoin: L2 Network
+const char *L2TX="l2tx";                             // Cascoin: L2 Network
+const char *L2INV="l2inv";                           // Cascoin: L2 Network
+const char *L2GETDATA="l2getdata";                   // Cascoin: L2 Network
 } // namespace NetMsgType
 
 /** All known message types. Keep this in the same order as the list of
@@ -111,6 +120,15 @@ const static std::string allNetMessageTypes[] = {
     NetMsgType::TRUSTGRAPHDELTA,           // Cascoin: Trust Graph Sync
     NetMsgType::VALTASK,                   // Cascoin: Automatic Validator System
     NetMsgType::VALRESP,                   // Cascoin: Automatic Validator System
+    NetMsgType::L2SEQANNOUNCE,             // Cascoin: L2 Network
+    NetMsgType::L2BLOCK,                   // Cascoin: L2 Network
+    NetMsgType::L2VOTE,                    // Cascoin: L2 Network
+    NetMsgType::L2GETBLOCKS,               // Cascoin: L2 Network
+    NetMsgType::L2HEADERS,                 // Cascoin: L2 Network
+    NetMsgType::L2GETHEADERS,              // Cascoin: L2 Network
+    NetMsgType::L2TX,                      // Cascoin: L2 Network
+    NetMsgType::L2INV,                     // Cascoin: L2 Network
+    NetMsgType::L2GETDATA,                 // Cascoin: L2 Network
 };
 const static std::vector<std::string> allNetMessageTypesVec(allNetMessageTypes, allNetMessageTypes+ARRAYLEN(allNetMessageTypes));
 
@@ -211,6 +229,10 @@ std::string CInv::GetCommand() const
     case MSG_BLOCK:          return cmd.append(NetMsgType::BLOCK);
     case MSG_FILTERED_BLOCK: return cmd.append(NetMsgType::MERKLEBLOCK);
     case MSG_CMPCT_BLOCK:    return cmd.append(NetMsgType::CMPCTBLOCK);
+    case MSG_L2_BLOCK:       return cmd.append(NetMsgType::L2BLOCK);       // Cascoin: L2
+    case MSG_L2_TX:          return cmd.append(NetMsgType::L2TX);          // Cascoin: L2
+    case MSG_L2_SEQANNOUNCE: return cmd.append(NetMsgType::L2SEQANNOUNCE); // Cascoin: L2
+    case MSG_L2_VOTE:        return cmd.append(NetMsgType::L2VOTE);        // Cascoin: L2
     default:
         throw std::out_of_range(strprintf("CInv::GetCommand(): type=%d unknown type", type));
     }

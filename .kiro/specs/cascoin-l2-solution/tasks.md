@@ -30,6 +30,21 @@ make -j$(nproc)
 make check -j$(nproc)
 ```
 
+**L2 Tests parallel ausführen (schneller, mit Fortschrittsanzeige):**
+```bash
+# Benötigt GNU parallel: sudo apt install parallel
+src/test/run_l2_tests_parallel.sh
+
+# Mit benutzerdefinierter Anzahl paralleler Jobs:
+src/test/run_l2_tests_parallel.sh 8
+```
+
+Das Skript zeigt:
+- Fortschrittsbalken mit ETA
+- Einzelne Testzeiten pro Test-Suite
+- Zusammenfassung mit Pass/Fail-Status
+- Top 5 langsamste Tests
+
 ## Tasks
 
 - [x] 1. Project Setup und Core Infrastructure
@@ -138,347 +153,351 @@ make check -j$(nproc)
     - **Property 3: Failover Consistency**
     - **Validates: Requirements 2b.2, 2b.3, 2b.5**
 
-- [ ] 7. Sequencer Consensus Protocol
-  - [ ] 7.1 Implementiere L2BlockProposal und SequencerVote Strukturen
+- [x] 7. Sequencer Consensus Protocol
+  - [x] 7.1 Implementiere L2BlockProposal und SequencerVote Strukturen
     - Definiere Block Proposal Format
     - Definiere Vote Format mit ACCEPT/REJECT/ABSTAIN
     - Implementiere Signatur-Handling
     - _Requirements: 2a.4, 2a.5_
 
-  - [ ] 7.2 Implementiere SequencerConsensus Klasse (`src/l2/sequencer_consensus.h/cpp`)
+  - [x] 7.2 Implementiere SequencerConsensus Klasse (`src/l2/sequencer_consensus.h/cpp`)
     - Implementiere ProposeBlock() (Leader only)
     - Implementiere VoteOnProposal()
     - Implementiere ProcessVote()
     - _Requirements: 2a.3, 2a.4, 2a.5_
 
-  - [ ] 7.3 Implementiere Consensus Determination
+  - [x] 7.3 Implementiere Consensus Determination
     - Implementiere HasConsensus() mit 2/3 Threshold
     - Implementiere CalculateWeightedVotes()
     - Implementiere HandleConsensusFailed()
     - _Requirements: 2a.5, 2a.6_
 
-  - [ ] 7.4 Write property test for Consensus Threshold Safety
+  - [x] 7.4 Write property test for Consensus Threshold Safety
     - **Property 11: Consensus Threshold Safety**
     - **Validates: Requirements 2a.5, 22.1**
 
-- [ ] 8. Checkpoint - Sequencer Network Tests
+- [x] 8. Checkpoint - Sequencer Network Tests
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 9. L2 Block und Transaction Strukturen
-  - [ ] 9.1 Implementiere L2Block Struktur (`src/l2/l2_block.h`)
+- [x] 9. L2 Block und Transaction Strukturen
+  - [x] 9.1 Implementiere L2Block Struktur (`src/l2/l2_block.h`)
     - Definiere Block Header mit stateRoot, transactionsRoot
     - Füge Sequencer Signatures hinzu
     - Implementiere GetHash() und ValidateStructure()
     - _Requirements: 3.1, 3.5_
 
-  - [ ] 9.2 Implementiere L2Transaction Struktur (`src/l2/l2_transaction.h`)
+  - [x] 9.2 Implementiere L2Transaction Struktur (`src/l2/l2_transaction.h`)
     - Erweitere CTransaction für L2-spezifische Felder
     - Füge L2TxType enum hinzu
     - Implementiere Encrypted Transaction Support
     - _Requirements: 8.1, 16.1_
 
-  - [ ] 9.3 Implementiere L2 Block Validation
+  - [x] 9.3 Implementiere L2 Block Validation
     - Implementiere Block Header Validation
     - Implementiere Transaction Validation
     - Implementiere Signature Verification
     - _Requirements: 3.1, 2a.5_
 
-- [ ] 10. Encrypted Mempool (MEV Protection)
-  - [ ] 10.1 Implementiere EncryptedTransaction Struktur
+- [x] 10. Encrypted Mempool (MEV Protection)
+  - [x] 10.1 Implementiere EncryptedTransaction Struktur
     - Definiere verschlüsseltes Transaktionsformat
     - Implementiere Commitment Hash Berechnung
     - Füge Rate Limiting Felder hinzu
     - _Requirements: 16.1, 26.2_
 
-  - [ ] 10.2 Implementiere EncryptedMempool Klasse (`src/l2/encrypted_mempool.h/cpp`)
+  - [x] 10.2 Implementiere EncryptedMempool Klasse (`src/l2/encrypted_mempool.h/cpp`)
     - Implementiere SubmitEncryptedTx()
     - Implementiere GetTransactionsForBlock()
     - Implementiere RandomizeOrdering()
     - _Requirements: 16.1, 16.3_
 
-  - [ ] 10.3 Implementiere Threshold Decryption
+  - [x] 10.3 Implementiere Threshold Decryption
     - Implementiere ContributeDecryptionShare()
     - Implementiere ThresholdDecrypt() mit Shamir's Secret Sharing
     - Implementiere CanDecrypt() Check
     - _Requirements: 16.2_
 
-  - [ ] 10.4 Write property test for MEV Protection Round-Trip
+  - [x] 10.4 Write property test for MEV Protection Round-Trip
     - **Property 7: MEV Protection Round-Trip**
     - **Validates: Requirements 16.1, 16.2**
 
-- [ ] 11. Bridge Contract
-  - [ ] 11.1 Implementiere Deposit/Withdrawal Strukturen (`src/l2/bridge_contract.h`)
+- [x] 11. Bridge Contract
+  - [x] 11.1 Implementiere Deposit/Withdrawal Strukturen (`src/l2/bridge_contract.h`)
     - Definiere DepositEvent Struktur
     - Definiere WithdrawalRequest Struktur
     - Definiere WithdrawalStatus enum
     - _Requirements: 4.1, 4.2_
 
-  - [ ] 11.2 Implementiere BridgeContract Klasse (`src/l2/bridge_contract.cpp`)
+  - [x] 11.2 Implementiere BridgeContract Klasse (`src/l2/bridge_contract.cpp`)
     - Implementiere ProcessDeposit()
     - Implementiere InitiateWithdrawal()
     - Implementiere FinalizeWithdrawal()
     - _Requirements: 4.1, 4.2, 4.3_
 
-  - [ ] 11.3 Implementiere Fast Withdrawal für High-Reputation Users
+  - [x] 11.3 Implementiere Fast Withdrawal für High-Reputation Users
     - Implementiere FastWithdrawal()
     - Implementiere CalculateChallengePeriod() basierend auf Reputation
     - Integriere HAT v2 Score Prüfung
     - _Requirements: 4.4, 6.2_
 
-  - [ ] 11.4 Write property test for Deposit-Withdrawal Balance
+  - [x] 11.4 Write property test for Deposit-Withdrawal Balance
     - **Property 4: Deposit-Withdrawal Balance**
     - **Validates: Requirements 4.1, 4.2, 4.5**
 
-  - [ ] 11.5 Implementiere Emergency Withdrawal
+  - [x] 11.5 Implementiere Emergency Withdrawal
     - Implementiere EmergencyWithdrawal()
     - Implementiere Balance Proof Verification
     - Füge Emergency Mode Detection hinzu
     - _Requirements: 12.1, 12.2, 12.3_
 
-  - [ ] 11.6 Write property test for Emergency Exit Completeness
+  - [x] 11.6 Write property test for Emergency Exit Completeness
     - **Property 12: Emergency Exit Completeness**
     - **Validates: Requirements 12.1, 12.2, 12.3**
 
-- [ ] 12. Checkpoint - Bridge Contract Tests
+- [x] 12. Checkpoint - Bridge Contract Tests
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 13. Fraud Proof System
-  - [ ] 13.1 Implementiere FraudProof Strukturen (`src/l2/fraud_proof.h`)
+- [x] 13. Fraud Proof System
+  - [x] 13.1 Implementiere FraudProof Strukturen (`src/l2/fraud_proof.h`)
     - Definiere FraudProofType enum
     - Definiere FraudProof Struktur mit Evidence
     - Definiere InteractiveFraudProofStep
     - _Requirements: 5.1, 5.6_
 
-  - [ ] 13.2 Implementiere FraudProofSystem Klasse (`src/l2/fraud_proof.cpp`)
+  - [x] 13.2 Implementiere FraudProofSystem Klasse (`src/l2/fraud_proof.cpp`)
     - Implementiere SubmitFraudProof()
     - Implementiere VerifyFraudProof()
     - Implementiere ReExecuteOnL1()
     - _Requirements: 5.1, 5.2_
 
-  - [ ] 13.3 Write property test for Fraud Proof Soundness
+  - [x] 13.3 Write property test for Fraud Proof Soundness
     - **Property 5: Fraud Proof Soundness**
     - **Validates: Requirements 5.2, 5.3**
 
-  - [ ] 13.4 Implementiere Interactive Fraud Proofs
+  - [x] 13.4 Implementiere Interactive Fraud Proofs
     - Implementiere StartInteractiveProof()
     - Implementiere SubmitInteractiveStep()
     - Implementiere BinarySearchInvalidStep()
     - _Requirements: 5.6_
 
-  - [ ] 13.5 Implementiere Slashing und Rewards
+  - [x] 13.5 Implementiere Slashing und Rewards
     - Implementiere SlashSequencer()
     - Implementiere RewardChallenger()
     - Integriere mit Reputation System
     - _Requirements: 5.4, 5.5_
 
-  - [ ] 13.6 Write property test for Sequencer Stake Slashing
+  - [x] 13.6 Write property test for Sequencer Stake Slashing
     - **Property 17: Sequencer Stake Slashing**
     - **Validates: Requirements 5.4, 16.6**
 
-- [ ] 14. Data Availability Layer
-  - [ ] 14.1 Implementiere BatchData Struktur (`src/l2/data_availability.h`)
+- [x] 14. Data Availability Layer
+  - [x] 14.1 Implementiere BatchData Struktur (`src/l2/data_availability.h`)
     - Definiere Batch Format für L1 Submission
     - Definiere DACommitment für Sampling
     - Implementiere Serialisierung
     - _Requirements: 3.2, 3.4, 7.1_
 
-  - [ ] 14.2 Implementiere DataAvailabilityLayer Klasse (`src/l2/data_availability.cpp`)
+  - [x] 14.2 Implementiere DataAvailabilityLayer Klasse (`src/l2/data_availability.cpp`)
     - Implementiere PublishBatch()
     - Implementiere CompressTransactions() mit zstd
     - Implementiere DecompressTransactions()
     - _Requirements: 7.1, 7.5_
 
-  - [ ] 14.3 Implementiere DA Sampling
+  - [x] 14.3 Implementiere DA Sampling
     - Implementiere GenerateDACommitment()
     - Implementiere ErasureEncode()
     - Implementiere SampleDataAvailability()
     - _Requirements: 7.2, 24.4_
 
-  - [ ] 14.4 Write property test for Data Availability Reconstruction
+  - [x] 14.4 Write property test for Data Availability Reconstruction
     - **Property 13: Data Availability Reconstruction**
     - **Validates: Requirements 7.3, 11.6, 41.2**
+    - **Status: PASSED** - All DA tests pass including compression round-trip, erasure coding, reconstruction with missing shard, DA commitment verification, batch round-trip, and DA sampling confidence
 
-- [ ] 15. Cross-Layer Messaging
-  - [ ] 15.1 Implementiere Message Strukturen (`src/l2/cross_layer_messaging.h`)
+- [x] 15. Cross-Layer Messaging
+  - [x] 15.1 Implementiere Message Strukturen (`src/l2/cross_layer_messaging.h`)
     - Definiere L1ToL2Message Struktur
     - Definiere L2ToL1Message Struktur
     - Definiere MessageStatus enum
     - _Requirements: 9.1, 9.2_
 
-  - [ ] 15.2 Implementiere CrossLayerMessaging Klasse (`src/l2/cross_layer_messaging.cpp`)
+  - [x] 15.2 Implementiere CrossLayerMessaging Klasse (`src/l2/cross_layer_messaging.cpp`)
     - Implementiere SendL1ToL2()
     - Implementiere ProcessL1ToL2Message()
     - Implementiere SendL2ToL1()
     - _Requirements: 9.1, 9.2, 9.3_
 
-  - [ ] 15.3 Implementiere Reentrancy Protection
+  - [x] 15.3 Implementiere Reentrancy Protection
     - Implementiere ExecuteMessageSafe() mit Mutex
     - Implementiere Message Queuing für nächsten Block
     - Füge Reentrancy Guards hinzu
     - _Requirements: 28.1, 28.2, 28.4_
 
-  - [ ] 15.4 Write property test for Cross-Layer Message Integrity
+  - [x] 15.4 Write property test for Cross-Layer Message Integrity
     - **Property 9: Cross-Layer Message Integrity**
     - **Validates: Requirements 9.1, 9.2, 9.4**
 
-- [ ] 16. Checkpoint - Core L2 Functionality Tests
-  - Ensure all tests pass, ask the user if questions arise.
+- [x] 16. Checkpoint - Core L2 Functionality Tests
+  - All L2 test suites pass (13/13 test suites, all tests passing)
 
 
-- [ ] 17. Reputation Integration
-  - [ ] 17.1 Implementiere L2ReputationData Struktur (`src/l2/l2_reputation.h`)
+- [x] 17. Reputation Integration
+  - [x] 17.1 Implementiere L2ReputationData Struktur (`src/l2/l2_reputation.h`)
     - Definiere L2-spezifische Reputation Felder
     - Definiere ReputationBenefits Struktur
     - Implementiere Serialisierung
     - _Requirements: 10.1, 10.2_
 
-  - [ ] 17.2 Implementiere L2ReputationManager Klasse (`src/l2/l2_reputation.cpp`)
+  - [x] 17.2 Implementiere L2ReputationManager Klasse (`src/l2/l2_reputation.cpp`)
     - Implementiere ImportL1Reputation()
     - Implementiere GetAggregatedReputation()
     - Implementiere UpdateL2Reputation()
     - _Requirements: 10.1, 10.3, 10.4_
 
-  - [ ] 17.3 Write property test for Reputation Aggregation Consistency
+  - [x] 17.3 Write property test for Reputation Aggregation Consistency
     - **Property 10: Reputation Aggregation Consistency**
     - **Validates: Requirements 10.3, 10.5**
 
-  - [ ] 17.4 Implementiere Reputation-Based Benefits
+  - [x] 17.4 Implementiere Reputation-Based Benefits
     - Implementiere GetBenefits()
     - Implementiere QualifiesForFastWithdrawal()
     - Implementiere GetGasDiscount()
     - _Requirements: 6.1, 6.2, 18.5_
 
-- [ ] 18. L2 RPC Interface
-  - [ ] 18.1 Implementiere L2 RPC Commands (`src/rpc/l2.cpp`)
+- [x] 18. L2 RPC Interface
+  - [x] 18.1 Implementiere L2 RPC Commands (`src/rpc/l2.cpp`)
     - Implementiere `l2_getBalance`
     - Implementiere `l2_getTransactionCount`
     - Implementiere `l2_getBlockByNumber`
     - _Requirements: 11.7, 40.1_
 
-  - [ ] 18.2 Implementiere L2 Deployment RPC
+  - [x] 18.2 Implementiere L2 Deployment RPC
     - Implementiere `l2_deploy`
     - Implementiere `l2_getChainInfo`
     - Implementiere `l2_listChains`
     - _Requirements: 1.1, 1.5_
 
-  - [ ] 18.3 Implementiere Sequencer RPC
+  - [x] 18.3 Implementiere Sequencer RPC
     - Implementiere `l2_announceSequencer`
     - Implementiere `l2_getSequencers`
     - Implementiere `l2_getLeader`
     - _Requirements: 2.5, 2.6_
 
-  - [ ] 18.4 Implementiere Bridge RPC
+  - [x] 18.4 Implementiere Bridge RPC
     - Implementiere `l2_deposit`
     - Implementiere `l2_withdraw`
     - Implementiere `l2_getWithdrawalStatus`
     - _Requirements: 4.1, 4.2_
 
-- [ ] 19. L2 P2P Network Integration
-  - [ ] 19.1 Erweitere P2P Message Types (`src/protocol.h`)
+- [x] 19. L2 P2P Network Integration
+  - [x] 19.1 Erweitere P2P Message Types (`src/protocol.h`)
     - Füge `SEQANNOUNCE` Message Type hinzu
     - Füge `L2BLOCK` Message Type hinzu
     - Füge `L2VOTE` Message Type hinzu
     - _Requirements: 2.5, 2a.3, 11.8_
 
-  - [ ] 19.2 Implementiere L2 Message Handler (`src/net_processing.cpp`)
+  - [x] 19.2 Implementiere L2 Message Handler (`src/net_processing.cpp`)
     - Implementiere ProcessSeqAnnounce Handler
     - Implementiere ProcessL2Block Handler
     - Implementiere ProcessL2Vote Handler
     - _Requirements: 2.2, 2a.4_
 
-  - [ ] 19.3 Implementiere L2 Peer Management
+  - [x] 19.3 Implementiere L2 Peer Management
     - Erweitere Peer Info um L2 Capabilities
     - Implementiere L2-spezifisches Peer Scoring
     - Füge L2 Sync Logic hinzu
     - _Requirements: 11.5, 11.6_
 
-- [ ] 20. Checkpoint - RPC und P2P Tests
-  - Ensure all tests pass, ask the user if questions arise.
+- [x] 20. Checkpoint - RPC und P2P Tests
+  - All L2 test suites pass (13/13)
+  - DA sampling issue fixed (simplified Merkle proof verification)
+  - RPC commands implemented in `src/rpc/l2.cpp`
+  - P2P peer management implemented in `src/l2/l2_peer_manager.cpp`
 
-- [ ] 21. L2 Chain Registry auf L1
-  - [ ] 21.1 Implementiere L2Registry CVM Contract
+- [x] 21. L2 Chain Registry auf L1
+  - [x] 21.1 Implementiere L2Registry CVM Contract
     - Erstelle Contract für L2 Chain Registration
     - Implementiere registerL2Chain() Funktion
     - Implementiere getL2ChainInfo() Funktion
     - _Requirements: 1.1, 1.5_
 
-  - [ ] 21.2 Implementiere L2 Deployment Validation
+  - [x] 21.2 Implementiere L2 Deployment Validation
     - Validiere Deployment Parameter
     - Prüfe Deployer Stake
     - Generiere unique Chain ID
     - _Requirements: 1.2, 1.3, 1.4_
 
-- [ ] 22. Rate Limiting und Spam Protection
-  - [ ] 22.1 Implementiere Rate Limiter (`src/l2/rate_limiter.h/cpp`)
+- [x] 22. Rate Limiting und Spam Protection
+  - [x] 22.1 Implementiere Rate Limiter (`src/l2/rate_limiter.h/cpp`)
     - Implementiere per-Address Rate Limiting
     - Implementiere Reputation-basierte Limits
     - Implementiere Adaptive Gas Pricing
     - _Requirements: 26.2, 26.3, 26.5_
 
-  - [ ] 22.2 Write property test for Rate Limit Enforcement
+  - [x] 22.2 Write property test for Rate Limit Enforcement
     - **Property 14: Rate Limit Enforcement**
     - **Validates: Requirements 26.2, 26.3**
 
-- [ ] 23. Timestamp Validation
-  - [ ] 23.1 Implementiere Timestamp Validator (`src/l2/timestamp_validator.h/cpp`)
+- [x] 23. Timestamp Validation
+  - [x] 23.1 Implementiere Timestamp Validator (`src/l2/timestamp_validator.h/cpp`)
     - Implementiere L1 Timestamp Binding
     - Implementiere Monotonicity Check
     - Implementiere Future Timestamp Rejection
     - _Requirements: 27.1, 27.2, 27.3_
 
-  - [ ] 23.2 Write property test for Timestamp Monotonicity
+  - [x] 23.2 Write property test for Timestamp Monotonicity
     - **Property 15: Timestamp Monotonicity**
     - **Validates: Requirements 27.2, 27.3**
 
-- [ ] 24. Challenge System
-  - [ ] 24.1 Implementiere Challenge Handler (`src/l2/challenge_handler.h/cpp`)
+- [x] 24. Challenge System
+  - [x] 24.1 Implementiere Challenge Handler (`src/l2/challenge_handler.h/cpp`)
     - Implementiere ChallengeWithdrawal()
     - Implementiere ValidateChallenge()
     - Implementiere ProcessChallengeResult()
     - _Requirements: 4.6, 29.1, 29.2_
 
-  - [ ] 24.2 Write property test for Challenge Bond Handling
+  - [x] 24.2 Write property test for Challenge Bond Handling
     - **Property 16: Challenge Bond Slashing**
     - **Validates: Requirements 29.1, 29.2**
 
-- [ ] 25. Forced Transaction Inclusion
-  - [ ] 25.1 Implementiere Forced Inclusion System (`src/l2/forced_inclusion.h/cpp`)
+- [x] 25. Forced Transaction Inclusion
+  - [x] 25.1 Implementiere Forced Inclusion System (`src/l2/forced_inclusion.h/cpp`)
     - Implementiere L1 Transaction Submission
     - Implementiere Inclusion Tracking
     - Implementiere Sequencer Slashing bei Ignorieren
     - _Requirements: 17.1, 17.2, 17.3_
 
-  - [ ] 25.2 Write property test for Forced Inclusion Guarantee
+  - [x] 25.2 Write property test for Forced Inclusion Guarantee
     - **Property 19: Forced Inclusion Guarantee**
     - **Validates: Requirements 17.2, 17.3**
 
-- [ ] 26. Gas Fee Distribution
-  - [ ] 26.1 Implementiere Fee Distributor (`src/l2/fee_distributor.h/cpp`)
+- [x] 26. Gas Fee Distribution
+  - [x] 26.1 Implementiere Fee Distributor (`src/l2/fee_distributor.h/cpp`)
     - Implementiere 70/20/10 Fee Split
     - Implementiere Sequencer Reward Tracking
     - Implementiere Fee Burning
     - _Requirements: 18.2, 38.2_
 
-  - [ ] 26.2 Write property test for Gas Fee Distribution
+  - [x] 26.2 Write property test for Gas Fee Distribution
     - **Property 18: Gas Fee Distribution**
     - **Validates: Requirements 18.2, 38.2**
 
-- [ ] 27. Checkpoint - Advanced Features Tests
+- [x] 27. Checkpoint - Advanced Features Tests
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 28. L1 Reorg Handling
-  - [ ] 28.1 Implementiere Reorg Monitor (`src/l2/reorg_monitor.h/cpp`)
+- [x] 28. L1 Reorg Handling
+  - [x] 28.1 Implementiere Reorg Monitor (`src/l2/reorg_monitor.h/cpp`)
     - Implementiere L1 Reorg Detection
     - Implementiere State Revert Logic
     - Implementiere Transaction Replay
     - _Requirements: 19.1, 19.2, 19.3_
 
-  - [ ] 28.2 Write property test for L1 Reorg Recovery
+  - [x] 28.2 Write property test for L1 Reorg Recovery
     - **Property 20: L1 Reorg Recovery**
     - **Validates: Requirements 19.2, 19.3**
 
-- [ ] 29. Anti-Collusion Detection
-  - [ ] 29.1 Implementiere Collusion Detector (`src/l2/collusion_detector.h/cpp`)
+- [x] 29. Anti-Collusion Detection
+  - [x] 29.1 Implementiere Collusion Detector (`src/l2/collusion_detector.h/cpp`)
     - Implementiere Timing Correlation Detection
     - Implementiere Voting Pattern Analysis
     - Implementiere Wallet Cluster Integration

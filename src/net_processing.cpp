@@ -39,6 +39,11 @@
 #include <cvm/validator_attestation.h> // Cascoin: Validator Attestation
 #include <cvm/cross_chain_bridge.h> // Cascoin: Cross-chain trust bridge
 #include <cvm/contract_state_sync.h> // Cascoin: Contract State Sync
+#include <l2/sequencer_discovery.h> // Cascoin: L2 Sequencer Discovery
+#include <l2/sequencer_consensus.h> // Cascoin: L2 Sequencer Consensus
+#include <l2/l2_block.h> // Cascoin: L2 Block structures
+#include <l2/l2_transaction.h> // Cascoin: L2 Transaction structures
+#include <l2/l2_peer_manager.h> // Cascoin: L2 Peer Management
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -3532,6 +3537,308 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         } else {
             LogPrint(BCLog::NET, "Contract State Sync: Manager not initialized, ignoring response\n");
         }
+    }
+
+    // =========================================================================
+    // Cascoin: L2 Network Message Handlers
+    // =========================================================================
+
+    // Cascoin: L2 Network - Sequencer Announcement
+    else if (strCommand == NetMsgType::L2SEQANNOUNCE) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring sequencer announcement (L2 disabled)\n");
+            return true;
+        }
+
+        l2::SeqAnnounceMsg announcement;
+        vRecv >> announcement;
+        
+        LogPrint(BCLog::NET, "L2: Received sequencer announcement from peer=%d: address=%s, stake=%lld, hatScore=%u\n",
+                 pfrom->GetId(), announcement.sequencerAddress.ToString(),
+                 announcement.stakeAmount, announcement.hatScore);
+        
+        // Validate announcement timestamp
+        if (announcement.IsExpired()) {
+            LogPrint(BCLog::NET, "L2: Sequencer announcement expired from peer=%d\n", pfrom->GetId());
+            return true;
+        }
+        
+        if (announcement.IsFromFuture()) {
+            LogPrint(BCLog::NET, "L2: Sequencer announcement from future from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Process the announcement
+        if (l2::IsSequencerDiscoveryInitialized()) {
+            l2::GetSequencerDiscovery().ProcessSeqAnnounce(announcement, pfrom);
+            
+            // Relay to other L2-capable peers
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->fSuccessfullyConnected && 
+                    pnode->GetId() != pfrom->GetId() &&
+                    (pnode->nServices & NODE_L2)) {
+                    connman->PushMessage(pnode,
+                        CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2SEQANNOUNCE, announcement));
+                }
+            });
+        } else {
+            LogPrint(BCLog::NET, "L2: Sequencer discovery not initialized, ignoring announcement\n");
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Block
+    else if (strCommand == NetMsgType::L2BLOCK) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 block (L2 disabled)\n");
+            return true;
+        }
+
+        l2::L2Block block;
+        vRecv >> block;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 block #%llu from peer=%d: hash=%s, txCount=%zu\n",
+                 block.GetBlockNumber(), pfrom->GetId(),
+                 block.GetHash().ToString(), block.GetTransactionCount());
+        
+        // Validate basic block structure
+        if (!block.ValidateStructure()) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 block structure from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Process the block (this would integrate with L2 state manager)
+        // For now, relay to other L2-capable peers
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode->fSuccessfullyConnected && 
+                pnode->GetId() != pfrom->GetId() &&
+                (pnode->nServices & NODE_L2)) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2BLOCK, block));
+            }
+        });
+        
+        LogPrint(BCLog::NET, "L2: Relayed L2 block #%llu to L2-capable peers\n", block.GetBlockNumber());
+    }
+
+    // Cascoin: L2 Network - Sequencer Vote
+    else if (strCommand == NetMsgType::L2VOTE) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring sequencer vote (L2 disabled)\n");
+            return true;
+        }
+
+        l2::SequencerVote vote;
+        vRecv >> vote;
+        
+        LogPrint(BCLog::NET, "L2: Received sequencer vote from peer=%d: voter=%s, block=%s, vote=%d\n",
+                 pfrom->GetId(), vote.voterAddress.ToString(),
+                 vote.blockHash.ToString(), static_cast<int>(vote.vote));
+        
+        // Process the vote
+        if (l2::IsSequencerConsensusInitialized()) {
+            if (l2::GetSequencerConsensus().ProcessVote(vote)) {
+                // Relay valid vote to other L2-capable peers
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && 
+                        pnode->GetId() != pfrom->GetId() &&
+                        (pnode->nServices & NODE_L2)) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2VOTE, vote));
+                    }
+                });
+            } else {
+                LogPrint(BCLog::NET, "L2: Invalid vote from peer=%d\n", pfrom->GetId());
+            }
+        } else {
+            LogPrint(BCLog::NET, "L2: Sequencer consensus not initialized, ignoring vote\n");
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Transaction
+    else if (strCommand == NetMsgType::L2TX) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 transaction (L2 disabled)\n");
+            return true;
+        }
+
+        l2::L2Transaction tx;
+        vRecv >> tx;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 transaction from peer=%d: hash=%s, type=%d\n",
+                 pfrom->GetId(), tx.GetHash().ToString(), static_cast<int>(tx.type));
+        
+        // Validate basic transaction structure
+        if (!tx.ValidateBasic()) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 transaction from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Relay to other L2-capable peers
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode->fSuccessfullyConnected && 
+                pnode->GetId() != pfrom->GetId() &&
+                (pnode->nServices & NODE_L2)) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
+            }
+        });
+    }
+
+    // Cascoin: L2 Network - L2 Inventory
+    else if (strCommand == NetMsgType::L2INV) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 inventory (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<CInv> vInv;
+        vRecv >> vInv;
+        
+        if (vInv.size() > MAX_INV_SZ) {
+            LogPrint(BCLog::NET, "L2: Inventory too large from peer=%d (%zu items), punishing\n",
+                     pfrom->GetId(), vInv.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "L2: Received L2 inventory with %zu items from peer=%d\n",
+                 vInv.size(), pfrom->GetId());
+        
+        // Process inventory items
+        std::vector<CInv> vGetData;
+        for (const CInv& inv : vInv) {
+            // Check if we already have this item
+            // For now, request all items we don't have
+            if (inv.type == MSG_L2_BLOCK || inv.type == MSG_L2_TX ||
+                inv.type == MSG_L2_SEQANNOUNCE || inv.type == MSG_L2_VOTE) {
+                vGetData.push_back(inv);
+            }
+        }
+        
+        if (!vGetData.empty()) {
+            connman->PushMessage(pfrom,
+                CNetMsgMaker(pfrom->GetSendVersion()).Make(NetMsgType::L2GETDATA, vGetData));
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Get Data
+    else if (strCommand == NetMsgType::L2GETDATA) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getdata (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<CInv> vInv;
+        vRecv >> vInv;
+        
+        if (vInv.size() > MAX_INV_SZ) {
+            LogPrint(BCLog::NET, "L2: Getdata too large from peer=%d (%zu items), punishing\n",
+                     pfrom->GetId(), vInv.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getdata for %zu items from peer=%d\n",
+                 vInv.size(), pfrom->GetId());
+        
+        // Process getdata requests
+        // This would look up items in L2 state and send them back
+        // For now, just log the request
+        for (const CInv& inv : vInv) {
+            LogPrint(BCLog::NET, "L2: Peer=%d requested %s %s\n",
+                     pfrom->GetId(), inv.GetCommand(), inv.hash.ToString());
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Get Blocks
+    else if (strCommand == NetMsgType::L2GETBLOCKS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getblocks (L2 disabled)\n");
+            return true;
+        }
+
+        uint64_t startBlock;
+        uint64_t endBlock;
+        uint64_t chainId;
+        vRecv >> startBlock >> endBlock >> chainId;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getblocks request from peer=%d: blocks %llu-%llu, chainId=%llu\n",
+                 pfrom->GetId(), startBlock, endBlock, chainId);
+        
+        // Validate request
+        if (endBlock < startBlock || (endBlock - startBlock) > 500) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 getblocks range from peer=%d\n", pfrom->GetId());
+            return true;
+        }
+        
+        // This would look up blocks and send them back
+        // For now, just log the request
+    }
+
+    // Cascoin: L2 Network - L2 Get Headers
+    else if (strCommand == NetMsgType::L2GETHEADERS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getheaders (L2 disabled)\n");
+            return true;
+        }
+
+        uint64_t startBlock;
+        uint64_t maxHeaders;
+        uint64_t chainId;
+        vRecv >> startBlock >> maxHeaders >> chainId;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getheaders request from peer=%d: start=%llu, max=%llu, chainId=%llu\n",
+                 pfrom->GetId(), startBlock, maxHeaders, chainId);
+        
+        // Validate request
+        if (maxHeaders > 2000) {
+            maxHeaders = 2000;  // Cap at 2000 headers
+        }
+        
+        // This would look up headers and send them back
+        // For now, just log the request
+    }
+
+    // Cascoin: L2 Network - L2 Headers
+    else if (strCommand == NetMsgType::L2HEADERS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 headers (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<l2::L2BlockHeader> headers;
+        vRecv >> headers;
+        
+        LogPrint(BCLog::NET, "L2: Received %zu L2 headers from peer=%d\n",
+                 headers.size(), pfrom->GetId());
+        
+        if (headers.size() > 2000) {
+            LogPrint(BCLog::NET, "L2: Too many headers from peer=%d (%zu), punishing\n",
+                     pfrom->GetId(), headers.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Process headers for L2 sync
+        // This would integrate with L2 state manager
     }
 
     else {

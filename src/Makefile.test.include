@@ -53,10 +53,26 @@ BITCOIN_TESTS =\
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
   test/key_tests.cpp \
+  test/l2_block_tests.cpp \
+  test/l2_bridge_contract_tests.cpp \
+  test/l2_challenge_handler_tests.cpp \
+  test/l2_collusion_detector_tests.cpp \
+  test/l2_cross_layer_messaging_tests.cpp \
+  test/l2_data_availability_tests.cpp \
+  test/l2_encrypted_mempool_tests.cpp \
+  test/l2_fee_distributor_tests.cpp \
+  test/l2_forced_inclusion_tests.cpp \
+  test/l2_fraud_proof_tests.cpp \
   test/l2_leader_election_tests.cpp \
+  test/l2_rate_limiter_tests.cpp \
+  test/l2_registry_tests.cpp \
+  test/l2_reorg_monitor_tests.cpp \
+  test/l2_reputation_tests.cpp \
+  test/l2_sequencer_consensus_tests.cpp \
   test/l2_sequencer_discovery_tests.cpp \
   test/l2_sparse_merkle_tree_tests.cpp \
   test/l2_state_manager_tests.cpp \
+  test/l2_timestamp_validator_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
   test/main_tests.cpp \

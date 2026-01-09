@@ -279,6 +279,25 @@ extern const char *TRUSTGRAPHDELTA;
 extern const char *VALTASK;
 // Cascoin: Automatic Validator System: Validation response broadcast
 extern const char *VALRESP;
+
+// Cascoin: L2 Network: Sequencer announcement message
+extern const char *L2SEQANNOUNCE;
+// Cascoin: L2 Network: L2 block proposal/broadcast
+extern const char *L2BLOCK;
+// Cascoin: L2 Network: Sequencer vote on block proposal
+extern const char *L2VOTE;
+// Cascoin: L2 Network: Request L2 blocks
+extern const char *L2GETBLOCKS;
+// Cascoin: L2 Network: L2 block headers
+extern const char *L2HEADERS;
+// Cascoin: L2 Network: Request L2 block headers
+extern const char *L2GETHEADERS;
+// Cascoin: L2 Network: L2 transaction
+extern const char *L2TX;
+// Cascoin: L2 Network: L2 inventory message
+extern const char *L2INV;
+// Cascoin: L2 Network: Request L2 data
+extern const char *L2GETDATA;
 };
 
 /* Get a vector of all valid message types (see above) */
@@ -313,6 +332,14 @@ enum ServiceFlags : uint64_t {
     // serving the last 288 (2 day) blocks
     // See BIP159 for details on how this is implemented.
     NODE_NETWORK_LIMITED = (1 << 10),
+
+    // Cascoin: L2: NODE_L2 means the node supports L2 functionality
+    // This includes sequencer discovery, L2 block relay, and L2 transaction relay
+    NODE_L2 = (1 << 11),
+
+    // Cascoin: L2: NODE_L2_SEQUENCER means the node is an active L2 sequencer
+    // These nodes participate in block production and consensus
+    NODE_L2_SEQUENCER = (1 << 12),
 
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
@@ -425,6 +452,12 @@ enum GetDataMsg
     MSG_FILTERED_WITNESS_BLOCK = MSG_FILTERED_BLOCK | MSG_WITNESS_FLAG,
 
     MSG_RIALTO = 5, // Cascoin: Rialto message
+
+    // Cascoin: L2 message types
+    MSG_L2_BLOCK = 6,        // L2 block
+    MSG_L2_TX = 7,           // L2 transaction
+    MSG_L2_SEQANNOUNCE = 8,  // Sequencer announcement
+    MSG_L2_VOTE = 9,         // Sequencer vote
 };
 
 /** inv message data */
