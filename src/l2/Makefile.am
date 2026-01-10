@@ -29,6 +29,7 @@ L2_H = \
   l2/leader_election.h \
   l2/rate_limiter.h \
   l2/reorg_monitor.h \
+  l2/security_monitor.h \
   l2/sequencer_consensus.h \
   l2/sequencer_discovery.h \
   l2/sparse_merkle_tree.h \
@@ -58,6 +59,7 @@ L2_CPP = \
   l2/leader_election.cpp \
   l2/rate_limiter.cpp \
   l2/reorg_monitor.cpp \
+  l2/security_monitor.cpp \
   l2/sequencer_consensus.cpp \
   l2/sequencer_discovery.cpp \
   l2/sparse_merkle_tree.cpp \

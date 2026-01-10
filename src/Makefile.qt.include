@@ -191,6 +191,7 @@ QT_MOC_CPP = \
   qt/moc_hivedialog.cpp \
   qt/moc_beenftpage.cpp \
   qt/moc_beenfttablemodel.cpp \
+  qt/moc_l2page.cpp \
   qt/moc_utilitydialog.cpp \
   qt/moc_walletframe.cpp \
   qt/moc_walletmodel.cpp \
@@ -249,6 +250,7 @@ BITCOIN_QT_H = \
   qt/hivedialog.h \
   qt/beenftpage.h \
   qt/beenfttablemodel.h \
+  qt/l2page.h \
   qt/paymentrequestplus.h \
   qt/paymentserver.h \
   qt/peertablemodel.h \
@@ -393,6 +395,7 @@ BITCOIN_QT_WALLET_CPP = \
   qt/hivedialog.cpp \
   qt/beenftpage.cpp \
   qt/beenfttablemodel.cpp \
+  qt/l2page.cpp \
   qt/paymentrequestplus.cpp \
   qt/paymentserver.cpp \
   qt/receivecoinsdialog.cpp \

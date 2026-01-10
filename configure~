@@ -738,6 +738,7 @@ EVMONE_LIBS
 EVMONE_CFLAGS
 EVMC_LIBS
 EVMC_CFLAGS
+EVMONE_PRECOMPILES_LIBS
 ZMQ_LIBS
 ZMQ_CFLAGS
 SQLITE3_LIBS
@@ -1090,6 +1091,7 @@ SQLITE3_CFLAGS
 SQLITE3_LIBS
 ZMQ_CFLAGS
 ZMQ_LIBS
+EVMONE_PRECOMPILES_LIBS
 EVMC_CFLAGS
 EVMC_LIBS
 EVMONE_CFLAGS
@@ -1923,6 +1925,9 @@ Some influential environment variables:
               linker flags for SQLITE3, overriding pkg-config
   ZMQ_CFLAGS  C compiler flags for ZMQ, overriding pkg-config
   ZMQ_LIBS    linker flags for ZMQ, overriding pkg-config
+  EVMONE_PRECOMPILES_LIBS
+              Additional libraries for evmone precompiles (e.g.,
+              -levmone_precompiles -lblst)
   EVMC_CFLAGS C compiler flags for EVMC, overriding pkg-config
   EVMC_LIBS   linker flags for EVMC, overriding pkg-config
   EVMONE_CFLAGS
@@ -34312,6 +34317,8 @@ esac
 fi
 
 
+
+
 if test "x$use_evmc" = "xyes"; then
   if test x$use_pkgconfig = xyes; then
 
@@ -34619,6 +34626,7 @@ else
 printf "%s\n" "#define ENABLE_EVMC 0" >>confdefs.h
 
 fi
+
 
 
 

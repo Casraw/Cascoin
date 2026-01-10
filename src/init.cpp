@@ -20,6 +20,8 @@
 #include <httpserver.h>
 #include <httprpc.h>
 #include <httpserver/cvmdashboard.h>
+#include <httpserver/l2_dashboard.h>
+#include <httpserver/l2_websocket.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -781,6 +783,15 @@ bool AppInitServers()
         InitCVMDashboardHandlers();
     } else {
         LogPrintf("CVM Dashboard disabled (use -cvmdashboard=1 to enable)\n");
+    }
+    
+    // Cascoin L2: Initialize L2 Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-l2dashboard", false)) {
+        LogPrintf("L2 Dashboard enabled - handlers registered\n");
+        l2::InitL2DashboardHandlers();
+        l2::InitL2WebSocketHandlers();
+    } else {
+        LogPrintf("L2 Dashboard disabled (use -l2dashboard=1 to enable)\n");
     }
     
     return true;

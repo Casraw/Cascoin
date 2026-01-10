@@ -106,6 +106,9 @@ BITCOIN_CORE_H = \
   httpserver/cvmdashboard.h \
   httpserver/cvmdashboard_html.h \
   httpserver/cvmdashboard_evm.h \
+  httpserver/l2_dashboard.h \
+  httpserver/l2_dashboard_html.h \
+  httpserver/l2_websocket.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -260,7 +263,8 @@ BITCOIN_CORE_H = \
   l2/state_manager.h \
   l2/l2_peer_manager.h \
   l2/timestamp_validator.h \
-  l2/collusion_detector.h
+  l2/collusion_detector.h \
+  l2/security_monitor.h
 
 
 obj/build.h: FORCE
@@ -284,6 +288,8 @@ libbitcoin_server_a_SOURCES = \
   httprpc.cpp \
   httpserver.cpp \
   httpserver/cvmdashboard.cpp \
+  httpserver/l2_dashboard.cpp \
+  httpserver/l2_websocket.cpp \
   init.cpp \
   dbwrapper.cpp \
   merkleblock.cpp \
@@ -401,6 +407,7 @@ libbitcoin_server_a_SOURCES = \
   l2/l2_peer_manager.cpp \
   l2/timestamp_validator.cpp \
   l2/collusion_detector.cpp \
+  l2/security_monitor.cpp \
   rpc/cvm.cpp \
   rpc/l2.cpp \
   $(BITCOIN_CORE_H)

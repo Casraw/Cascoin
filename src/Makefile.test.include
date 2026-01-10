@@ -68,6 +68,7 @@ BITCOIN_TESTS =\
   test/l2_registry_tests.cpp \
   test/l2_reorg_monitor_tests.cpp \
   test/l2_reputation_tests.cpp \
+  test/l2_security_monitor_tests.cpp \
   test/l2_sequencer_consensus_tests.cpp \
   test/l2_sequencer_discovery_tests.cpp \
   test/l2_sparse_merkle_tree_tests.cpp \

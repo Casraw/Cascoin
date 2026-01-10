@@ -13,6 +13,7 @@
 #include <qt/overviewpage.h>
 #include <qt/hivedialog.h>      // Cascoin: Hive page
 #include <qt/beenftpage.h>      // Cascoin: Bee NFT page
+#include <qt/l2page.h>          // Cascoin: L2 page
 #include <qt/platformstyle.h>
 #include <qt/receivecoinsdialog.h>
 #include <qt/sendcoinsdialog.h>
@@ -47,6 +48,7 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
     overviewPage = new OverviewPage(platformStyle);
     hivePage = new HiveDialog(platformStyle); // Cascoin: Hive page
     beeNFTPage = new BeeNFTPage(platformStyle); // Cascoin: Bee NFT page
+    l2Page = new L2Page(platformStyle); // Cascoin: L2 page
 
     transactionsPage = new QWidget(this);
     QVBoxLayout *vbox = new QVBoxLayout();
@@ -75,6 +77,7 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
     addWidget(sendCoinsPage);
     addWidget(hivePage);   // Cascoin: Hive page
     addWidget(beeNFTPage); // Cascoin: Bee NFT page
+    addWidget(l2Page);     // Cascoin: L2 page
 
     // Clicking on a transaction on the overview pre-selects the transaction on the transaction history page
     connect(overviewPage, SIGNAL(transactionClicked(QModelIndex)), transactionView, SLOT(focusTransaction(QModelIndex)));
@@ -130,6 +133,7 @@ void WalletView::setClientModel(ClientModel *_clientModel)
     overviewPage->setClientModel(_clientModel);
     sendCoinsPage->setClientModel(_clientModel);
     hivePage->setClientModel(_clientModel); // Cascoin: Hive page
+    l2Page->setClientModel(_clientModel);   // Cascoin: L2 page
 }
 
 void WalletView::setWalletModel(WalletModel *_walletModel)
@@ -141,6 +145,7 @@ void WalletView::setWalletModel(WalletModel *_walletModel)
     overviewPage->setWalletModel(_walletModel);
     hivePage->setModel(_walletModel);         // Cascoin: Hive page
     beeNFTPage->setModel(_walletModel);       // Cascoin: Bee NFT page
+    l2Page->setWalletModel(_walletModel);     // Cascoin: L2 page
     receiveCoinsPage->setModel(_walletModel);
     sendCoinsPage->setModel(_walletModel);
     usedReceivingAddressesPage->setModel(_walletModel ? _walletModel->getAddressTableModel() : nullptr);
@@ -220,6 +225,13 @@ void WalletView::gotoHivePage()
 void WalletView::gotoBeeNFTPage()
 {
     setCurrentWidget(beeNFTPage);
+}
+
+// Cascoin: L2 page
+void WalletView::gotoL2Page()
+{
+    setCurrentWidget(l2Page);
+    l2Page->refreshAll();
 }
 
 void WalletView::gotoHistoryPage()

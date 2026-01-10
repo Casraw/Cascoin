@@ -503,34 +503,34 @@ Das Skript zeigt:
     - Implementiere Wallet Cluster Integration
     - _Requirements: 22.1, 22.2, 22.4_
 
-- [ ] 30. Security Monitoring
-  - [ ] 30.1 Implementiere Security Monitor (`src/l2/security_monitor.h/cpp`)
+- [x] 30. Security Monitoring
+  - [x] 30.1 Implementiere Security Monitor (`src/l2/security_monitor.h/cpp`)
     - Implementiere Anomaly Detection
     - Implementiere Alert System
     - Implementiere Audit Logging
     - _Requirements: 33.1, 33.2, 33.6_
 
-  - [ ] 30.2 Implementiere Circuit Breaker
+  - [x] 30.2 Implementiere Circuit Breaker
     - Implementiere TVL Monitoring
     - Implementiere Automatic Pause bei Anomalien
     - Implementiere Recovery Procedures
     - _Requirements: 36.6, 33.5_
 
-- [ ] 31. GUI und Web Dashboard Integration
-  - [ ] 31.1 Erweitere cascoin-qt für L2 (`src/qt/`)
+- [x] 31. GUI und Web Dashboard Integration
+  - [x] 31.1 Erweitere cascoin-qt für L2 (`src/qt/`)
     - Füge L2 Balance Anzeige hinzu
     - Füge L2 Transaction History hinzu
     - Füge Deposit/Withdraw UI hinzu
     - _Requirements: 40.3_
 
-  - [ ] 31.2 Implementiere L2 Web Dashboard (`src/httpserver/l2_dashboard.h/cpp`)
+  - [x] 31.2 Implementiere L2 Web Dashboard (`src/httpserver/l2_dashboard.h/cpp`)
     - Erstelle HTTP Endpoints für Dashboard Daten
     - Implementiere `/l2/status` - Chain Status und Health
     - Implementiere `/l2/sequencers` - Sequencer Liste und Performance
     - Implementiere `/l2/blocks` - Block Explorer Daten
     - _Requirements: 25.4, 39.1_
 
-  - [ ] 31.3 Erstelle Web Dashboard Frontend (`src/httpserver/l2_dashboard_html.h`)
+  - [x] 31.3 Erstelle Web Dashboard Frontend (`src/httpserver/l2_dashboard_html.h`)
     - Erstelle eingebettetes HTML/CSS/JS Dashboard
     - Zeige L2 Chain Status (Blocks, TPS, Gas)
     - Zeige Sequencer Status (Leader, Uptime, Reputation)
@@ -538,28 +538,28 @@ Das Skript zeigt:
     - Zeige Recent Transactions und Blocks
     - _Requirements: 33.8, 39.1_
 
-  - [ ] 31.4 Implementiere Dashboard API Endpoints
+  - [x] 31.4 Implementiere Dashboard API Endpoints
     - Implementiere `/l2/api/stats` - Statistiken JSON
     - Implementiere `/l2/api/sequencers` - Sequencer JSON
     - Implementiere `/l2/api/transactions` - Recent Transactions
     - Implementiere `/l2/api/withdrawals` - Pending Withdrawals
     - _Requirements: 39.2, 39.3_
 
-  - [ ] 31.5 Implementiere Dashboard WebSocket für Live Updates
+  - [x] 31.5 Implementiere Dashboard WebSocket für Live Updates
     - Implementiere WebSocket Server für Real-Time Updates
     - Pushe neue Blocks automatisch
     - Pushe Sequencer Status Changes
     - Pushe Security Alerts
     - _Requirements: 33.1, 25.4_
 
-- [ ] 32. Documentation
-  - [ ] 32.1 Erstelle L2 Operator Guide (`doc/L2_OPERATOR_GUIDE.md`)
+- [x] 32. Documentation
+  - [x] 32.1 Erstelle L2 Operator Guide (`doc/L2_OPERATOR_GUIDE.md`)
     - Dokumentiere Node Setup
     - Dokumentiere Sequencer Operation
     - Dokumentiere Troubleshooting
     - _Requirements: 11.1, 30.1_
 
-  - [ ] 32.2 Erstelle L2 Developer Guide (`doc/L2_DEVELOPER_GUIDE.md`)
+  - [x] 32.2 Erstelle L2 Developer Guide (`doc/L2_DEVELOPER_GUIDE.md`)
     - Dokumentiere RPC API
     - Dokumentiere Contract Deployment
     - Dokumentiere Cross-Layer Messaging
