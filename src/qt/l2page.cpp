@@ -15,6 +15,7 @@
 #include <qt/platformstyle.h>
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
+#include <util.h>
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -30,6 +31,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QDateTime>
+#include <QSizePolicy>
 
 L2Page::L2Page(const PlatformStyle *_platformStyle, QWidget *parent)
     : QWidget(parent)
@@ -236,12 +238,55 @@ QWidget* L2Page::createStatusSection()
     
     // Refresh button
     refreshButton = new QPushButton(tr("Refresh"));
+    refreshButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #6b7280;"
+        "  color: white;"
+        "  padding: 6px 16px;"
+        "  border: none;"
+        "  border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #4b5563;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #374151;"
+        "}"
+    );
+    refreshButton->setMinimumWidth(100);
+    refreshButton->setMinimumHeight(32);
+    refreshButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+    refreshButton->setEnabled(true);
+    refreshButton->setCursor(Qt::PointingHandCursor);
+    refreshButton->setFocusPolicy(Qt::StrongFocus);
     connect(refreshButton, &QPushButton::clicked, this, &L2Page::on_refreshButton_clicked);
     layout->addWidget(refreshButton);
     
+    layout->addSpacing(10);
+    
     // Dashboard button
     dashboardButton = new QPushButton(tr("Open Dashboard"));
-    dashboardButton->setStyleSheet("background-color: #2563eb; color: white;");
+    dashboardButton->setStyleSheet(
+        "QPushButton {"
+        "  background-color: #2563eb;"
+        "  color: white;"
+        "  padding: 6px 12px;"
+        "  border: none;"
+        "  border-radius: 4px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #1d4ed8;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #1e40af;"
+        "}"
+    );
+    dashboardButton->setMinimumWidth(130);
+    dashboardButton->setMinimumHeight(30);
+    dashboardButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    dashboardButton->setEnabled(true);
+    dashboardButton->setCursor(Qt::PointingHandCursor);
+    dashboardButton->setFocusPolicy(Qt::StrongFocus);
     connect(dashboardButton, &QPushButton::clicked, this, &L2Page::on_dashboardButton_clicked);
     layout->addWidget(dashboardButton);
     
@@ -376,10 +421,38 @@ void L2Page::on_withdrawButton_clicked()
 
 void L2Page::on_dashboardButton_clicked()
 {
-    // Open L2 dashboard in browser
-    // Default to localhost with RPC port
-    QString url = QString("http://localhost:%1/l2/").arg(8332);  // Default RPC port
-    QDesktopServices::openUrl(QUrl(url));
+    // Check if L2 dashboard is enabled
+    if (!gArgs.GetBoolArg("-l2dashboard", false)) {
+        showError(tr("L2 Dashboard Disabled"),
+            tr("The L2 Dashboard is currently disabled.\n\n"
+               "To enable it, add the following line to your cascoin.conf:\n"
+               "l2dashboard=1\n\n"
+               "Or start with: cascoin-qt -l2dashboard=1\n\n"
+               "Then restart the wallet."));
+        return;
+    }
+    
+    // Get RPC port - try to read from config, default to 8332
+    int rpcPort = gArgs.GetArg("-rpcport", 8332);
+    
+    QString url = QString("http://127.0.0.1:%1/l2/").arg(rpcPort);
+    
+    // Show info message with URL
+    QMessageBox::StandardButton reply = QMessageBox::information(this,
+        tr("Opening L2 Dashboard"),
+        tr("Opening L2 Dashboard in your browser:\n\n%1\n\n"
+           "If the browser doesn't open automatically, please copy this URL and paste it in your browser.")
+        .arg(url),
+        QMessageBox::Ok | QMessageBox::Cancel);
+    
+    if (reply == QMessageBox::Ok) {
+        bool success = QDesktopServices::openUrl(QUrl(url));
+        if (!success) {
+            showError(tr("Cannot Open Browser"), 
+                tr("Could not open the browser automatically.\n\n"
+                   "Please manually navigate to:\n%1").arg(url));
+        }
+    }
 }
 
 void L2Page::on_refreshButton_clicked()
