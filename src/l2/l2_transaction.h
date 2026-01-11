@@ -541,20 +541,50 @@ L2Transaction CreateCallTx(
 
 /**
  * @brief Create a withdrawal transaction
+ * 
+ * *** DEPRECATED - Task 12: Legacy Bridge Code ***
+ * 
+ * This function is DEPRECATED. The old withdrawal system has been replaced
+ * by the burn-and-mint model. L2 tokens cannot be converted back to L1 CAS.
+ * 
+ * Transactions created by this function will be rejected by the validation system.
+ * 
  * @param from L2 sender address
  * @param l1Recipient L1 recipient address
  * @param amount Amount to withdraw
  * @param nonce Transaction nonce
  * @param gasPrice Gas price
  * @param chainId L2 chain ID
- * @return Withdrawal transaction
+ * @return Withdrawal transaction (will be rejected)
  */
+[[deprecated("Withdrawals are no longer supported - use burn-and-mint model")]]
 L2Transaction CreateWithdrawalTx(
     const uint160& from,
     const uint160& l1Recipient,
     CAmount amount,
     uint64_t nonce,
     CAmount gasPrice,
+    uint64_t chainId);
+
+/**
+ * @brief Create a burn-and-mint transaction
+ * 
+ * NEW - Task 12: Burn-and-Mint Token Model
+ * 
+ * Creates a transaction to mint L2 tokens after a burn has been validated
+ * and consensus has been reached. This is a system transaction that does
+ * not require a sender signature.
+ * 
+ * @param l1BurnTxHash The L1 burn transaction hash (OP_RETURN)
+ * @param recipient The L2 address to receive minted tokens
+ * @param amount The amount to mint (must match burned amount)
+ * @param chainId The L2 chain ID
+ * @return L2Transaction for minting
+ */
+L2Transaction CreateBurnMintTx(
+    const uint256& l1BurnTxHash,
+    const uint160& recipient,
+    CAmount amount,
     uint64_t chainId);
 
 } // namespace l2

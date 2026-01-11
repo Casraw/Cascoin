@@ -6,6 +6,19 @@
  * @file l2_bridge_contract_tests.cpp
  * @brief Property-based tests for L2 Bridge Contract
  * 
+ * *** DEPRECATED - Task 12: Legacy Bridge Code ***
+ * 
+ * These tests are for the DEPRECATED bridge contract. The new burn-and-mint
+ * model has its own tests in:
+ * - l2_burn_parser_tests.cpp
+ * - l2_burn_validator_tests.cpp
+ * - l2_burn_registry_tests.cpp
+ * - l2_mint_consensus_tests.cpp
+ * - l2_minter_tests.cpp
+ * 
+ * These tests are kept for backward compatibility but will be removed
+ * in a future version.
+ * 
  * **Feature: cascoin-l2-solution, Property 4: Deposit-Withdrawal Balance**
  * **Validates: Requirements 4.1, 4.2, 4.5**
  * 

@@ -23,6 +23,8 @@ void RegisterRawTransactionRPCCommands(CRPCTable &tableRPC);
 void RegisterCVMRPCCommands(CRPCTable &tableRPC);
 /** Register L2 (Layer 2) RPC commands */
 void RegisterL2RPCCommands(CRPCTable &tableRPC);
+/** Register L2 Burn-and-Mint RPC commands */
+void RegisterL2BurnRPCCommands(CRPCTable &tableRPC);
 
 static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
 {
@@ -33,6 +35,7 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterRawTransactionRPCCommands(t);
     RegisterCVMRPCCommands(t);
     RegisterL2RPCCommands(t);
+    RegisterL2BurnRPCCommands(t);
 }
 
 #endif

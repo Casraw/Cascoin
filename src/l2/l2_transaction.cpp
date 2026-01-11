@@ -138,26 +138,28 @@ bool L2Transaction::ValidateStructure() const {
             break;
             
         case L2TxType::WITHDRAWAL:
-            // Withdrawal must have recipient (L1 address)
-            if (to.IsNull()) {
-                return false;
-            }
-            // Withdrawal must have positive value
-            if (value <= 0) {
-                return false;
-            }
-            break;
+            // DEPRECATED - Task 12: Old withdrawal system replaced by burn-and-mint
+            // This transaction type is no longer supported
+            // Return false to reject all withdrawal transactions
+            return false;
             
         case L2TxType::DEPOSIT:
-            // Deposit must have recipient
+            // DEPRECATED - Task 12: Old deposit system replaced by burn-and-mint
+            // This transaction type is no longer supported
+            // Return false to reject all deposit transactions
+            return false;
+            
+        case L2TxType::BURN_MINT:
+            // NEW - Task 12: Burn-and-mint token creation
+            // Must have recipient (L2 address to receive minted tokens)
             if (to.IsNull()) {
                 return false;
             }
-            // Deposit must have positive value
+            // Must have positive value (amount to mint)
             if (value <= 0) {
                 return false;
             }
-            // Deposit must have L1 reference
+            // Must have L1 reference (burn transaction hash)
             if (l1TxHash.IsNull()) {
                 return false;
             }
@@ -277,6 +279,15 @@ L2Transaction CreateCallTx(
     return tx;
 }
 
+/**
+ * DEPRECATED - Task 12: Legacy Bridge Code
+ * 
+ * This function is DEPRECATED. The old withdrawal system has been replaced
+ * by the burn-and-mint model. L2 tokens cannot be converted back to L1 CAS.
+ * 
+ * This function now returns an invalid transaction that will be rejected
+ * by the validation system.
+ */
 L2Transaction CreateWithdrawalTx(
     const uint160& from,
     const uint160& l1Recipient,
@@ -285,14 +296,49 @@ L2Transaction CreateWithdrawalTx(
     CAmount gasPrice,
     uint64_t chainId)
 {
+    // DEPRECATED - Return invalid transaction
+    // The WITHDRAWAL transaction type is no longer supported
     L2Transaction tx;
-    tx.type = L2TxType::WITHDRAWAL;
+    tx.type = L2TxType::WITHDRAWAL;  // Will be rejected by ValidateStructure()
     tx.from = from;
     tx.to = l1Recipient;
     tx.value = amount;
     tx.nonce = nonce;
-    tx.gasLimit = 100000;  // Withdrawal gas cost
+    tx.gasLimit = 100000;
     tx.gasPrice = gasPrice;
+    tx.l2ChainId = chainId;
+    return tx;
+}
+
+/**
+ * Create a burn-and-mint transaction
+ * 
+ * NEW - Task 12: Burn-and-Mint Token Model
+ * 
+ * Creates a transaction to mint L2 tokens after a burn has been validated
+ * and consensus has been reached.
+ * 
+ * @param l1BurnTxHash The L1 burn transaction hash (OP_RETURN)
+ * @param recipient The L2 address to receive minted tokens
+ * @param amount The amount to mint (must match burned amount)
+ * @param chainId The L2 chain ID
+ * @return L2Transaction for minting
+ */
+L2Transaction CreateBurnMintTx(
+    const uint256& l1BurnTxHash,
+    const uint160& recipient,
+    CAmount amount,
+    uint64_t chainId)
+{
+    L2Transaction tx;
+    tx.type = L2TxType::BURN_MINT;
+    tx.from = uint160();  // System transaction, no sender
+    tx.to = recipient;
+    tx.value = amount;
+    tx.nonce = 0;  // System transaction
+    tx.gasLimit = 21000;  // Minimal gas for mint
+    tx.gasPrice = 0;  // No gas cost for system mints
+    tx.l1TxHash = l1BurnTxHash;
     tx.l2ChainId = chainId;
     return tx;
 }

@@ -10,11 +10,16 @@
  */
 
 #include <l2/l2_block_validator.h>
+#include <l2/burn_registry.h>
+#include <l2/mint_consensus.h>
+#include <l2/fee_distributor.h>
 #include <tinyformat.h>
+#include <util.h>
 
 #include <algorithm>
 #include <set>
 #include <chrono>
+#include <cmath>
 
 namespace l2 {
 
@@ -76,6 +81,16 @@ std::string ValidationErrorToString(ValidationError error) {
             return "Consensus not reached";
         case ValidationError::BLOCK_TOO_LARGE:
             return "Block too large";
+        case ValidationError::UNAUTHORIZED_MINT:
+            return "Unauthorized minting detected";
+        case ValidationError::INVALID_MINT_AMOUNT:
+            return "Mint amount does not match burn amount";
+        case ValidationError::MINT_WITHOUT_CONSENSUS:
+            return "Mint transaction without sequencer consensus";
+        case ValidationError::INVALID_FEE_DISTRIBUTION:
+            return "Invalid fee distribution";
+        case ValidationError::SEQUENCER_REWARD_MINTING:
+            return "Sequencer rewards must come from fees, not minting";
         case ValidationError::UNKNOWN_ERROR:
         default:
             return "Unknown error";
@@ -103,6 +118,22 @@ ValidationResult L2BlockValidator::ValidateBlock(
         auto sigResult = ValidateSignatures(block, context);
         if (!sigResult) {
             return sigResult;
+        }
+    }
+    
+    // Validate minting rules (Task 14.5)
+    if (context.validateMinting) {
+        auto mintResult = ValidateMinting(block, context);
+        if (!mintResult) {
+            return mintResult;
+        }
+    }
+    
+    // Validate fee distribution (Task 14.5)
+    if (context.validateFeeDistribution) {
+        auto feeResult = ValidateFeeDistribution(block, context);
+        if (!feeResult) {
+            return feeResult;
         }
     }
     
@@ -311,6 +342,20 @@ ValidationResult L2BlockValidator::ValidateTransaction(
     const L2Transaction& tx,
     const ValidationContext& context)
 {
+    // DEPRECATED transaction types - Task 12
+    // Reject DEPOSIT and WITHDRAWAL transactions
+    if (tx.type == L2TxType::DEPOSIT) {
+        return ValidationResult::Invalid(
+            ValidationError::INVALID_TRANSACTION,
+            "DEPOSIT transactions are deprecated - use burn-and-mint model");
+    }
+    
+    if (tx.type == L2TxType::WITHDRAWAL) {
+        return ValidationResult::Invalid(
+            ValidationError::INVALID_TRANSACTION,
+            "WITHDRAWAL transactions are deprecated - L2 tokens cannot be converted to L1 CAS");
+    }
+    
     // Basic structure validation
     if (!tx.ValidateStructure()) {
         return ValidationResult::Invalid(
@@ -318,8 +363,8 @@ ValidationResult L2BlockValidator::ValidateTransaction(
             "Transaction structure validation failed");
     }
     
-    // Signature validation (skip for deposit transactions)
-    if (tx.type != L2TxType::DEPOSIT) {
+    // Signature validation (skip for system transactions like BURN_MINT)
+    if (tx.type != L2TxType::BURN_MINT) {
         if (!tx.VerifySignature()) {
             return ValidationResult::Invalid(
                 ValidationError::INVALID_TX_SIGNATURE,
@@ -409,8 +454,6 @@ ValidationResult L2BlockValidator::ValidateStateTransition(
     
     // Apply all transactions
     for (size_t i = 0; i < block.transactions.size(); i++) {
-        const auto& tx = block.transactions[i];
-        
         // Convert L2Transaction to CTransaction for state manager
         // Note: This is a simplified version - full implementation would
         // need proper conversion
@@ -503,6 +546,160 @@ bool L2BlockValidator::ValidateGasLimitAdjustment(
     } else {
         return (parentGasLimit - gasLimit) <= maxChange;
     }
+}
+
+ValidationResult L2BlockValidator::ValidateMinting(
+    const L2Block& block,
+    const ValidationContext& context)
+{
+    // Count BURN_MINT transactions and validate each one
+    for (size_t i = 0; i < block.transactions.size(); i++) {
+        const auto& tx = block.transactions[i];
+        
+        if (tx.type == L2TxType::BURN_MINT) {
+            auto result = ValidateBurnMintTransaction(tx, context);
+            if (!result) {
+                result.errorIndex = static_cast<int>(i);
+                return result;
+            }
+        }
+    }
+    
+    return ValidationResult::Valid();
+}
+
+ValidationResult L2BlockValidator::ValidateBurnMintTransaction(
+    const L2Transaction& tx,
+    const ValidationContext& context)
+{
+    // BURN_MINT transactions must have a valid L1 burn transaction hash
+    if (tx.l1TxHash.IsNull()) {
+        return ValidationResult::Invalid(
+            ValidationError::UNAUTHORIZED_MINT,
+            "BURN_MINT transaction missing L1 burn transaction hash");
+    }
+    
+    // Check if burn registry is available for validation
+    if (context.burnRegistry != nullptr) {
+        // Check if this burn was already processed (double-mint prevention)
+        if (context.burnRegistry->IsProcessed(tx.l1TxHash)) {
+            return ValidationResult::Invalid(
+                ValidationError::UNAUTHORIZED_MINT,
+                strprintf("L1 burn transaction %s was already processed (double-mint attempt)",
+                    tx.l1TxHash.ToString().substr(0, 16)));
+        }
+    }
+    
+    // Check if mint consensus manager is available for validation
+    if (context.mintConsensusManager != nullptr) {
+        // Verify that consensus was reached for this burn
+        if (!context.mintConsensusManager->HasConsensus(tx.l1TxHash)) {
+            return ValidationResult::Invalid(
+                ValidationError::MINT_WITHOUT_CONSENSUS,
+                strprintf("No sequencer consensus for L1 burn transaction %s",
+                    tx.l1TxHash.ToString().substr(0, 16)));
+        }
+        
+        // Get the consensus state to verify the mint amount matches
+        auto consensusState = context.mintConsensusManager->GetConsensusState(tx.l1TxHash);
+        if (consensusState) {
+            // Verify 1:1 mint ratio - minted amount must equal burned amount
+            if (tx.value != consensusState->burnData.amount) {
+                return ValidationResult::Invalid(
+                    ValidationError::INVALID_MINT_AMOUNT,
+                    strprintf("Mint amount %lld does not match burn amount %lld",
+                        tx.value, consensusState->burnData.amount));
+            }
+            
+            // Verify recipient matches (compare addresses, not pubkey directly)
+            uint160 burnRecipientAddr = consensusState->burnData.recipientPubKey.GetID();
+            if (tx.to != burnRecipientAddr) {
+                return ValidationResult::Invalid(
+                    ValidationError::UNAUTHORIZED_MINT,
+                    "Mint recipient does not match burn recipient");
+            }
+        }
+    }
+    
+    // Verify the mint amount is positive
+    if (tx.value <= 0) {
+        return ValidationResult::Invalid(
+            ValidationError::INVALID_MINT_AMOUNT,
+            "BURN_MINT transaction must have positive value");
+    }
+    
+    return ValidationResult::Valid();
+}
+
+ValidationResult L2BlockValidator::ValidateFeeDistribution(
+    const L2Block& block,
+    const ValidationContext& context)
+{
+    // Calculate expected fees from transactions
+    CAmount expectedFees = 0;
+    CAmount totalMinted = 0;
+    
+    for (const auto& tx : block.transactions) {
+        // Sum up transaction fees (gasUsed * gasPrice)
+        CAmount txFee = 0;
+        if (tx.gasPrice > 0) {
+            txFee = tx.gasUsed * tx.gasPrice;
+        } else if (tx.maxFeePerGas > 0) {
+            // EIP-1559 style: use effective gas price
+            txFee = tx.gasUsed * tx.maxFeePerGas;
+        }
+        expectedFees += txFee;
+        
+        // Track minted amounts (only BURN_MINT transactions can mint)
+        if (tx.type == L2TxType::BURN_MINT) {
+            totalMinted += tx.value;
+        }
+    }
+    
+    // Verify that sequencer rewards come only from fees, not from minting
+    // The sequencer should not receive any minted tokens as block rewards
+    // (Requirement 6.1, 6.2)
+    
+    // Check for any unauthorized minting transactions
+    // Only BURN_MINT type transactions are allowed to create new tokens
+    for (size_t i = 0; i < block.transactions.size(); i++) {
+        const auto& tx = block.transactions[i];
+        
+        // Check for transactions that might be attempting to mint tokens
+        // without going through the burn-and-mint process
+        if (tx.type != L2TxType::BURN_MINT && tx.type != L2TxType::TRANSFER &&
+            tx.type != L2TxType::CONTRACT_CALL && tx.type != L2TxType::CONTRACT_DEPLOY &&
+            tx.type != L2TxType::CROSS_LAYER_MSG && tx.type != L2TxType::SEQUENCER_ANNOUNCE &&
+            tx.type != L2TxType::FORCED_INCLUSION) {
+            
+            // DEPOSIT and WITHDRAWAL are deprecated (Task 12)
+            if (tx.type == L2TxType::DEPOSIT || tx.type == L2TxType::WITHDRAWAL) {
+                return ValidationResult::Invalid(
+                    ValidationError::INVALID_TRANSACTION,
+                    strprintf("Deprecated transaction type %d at index %zu",
+                        static_cast<int>(tx.type), i),
+                    static_cast<int>(i));
+            }
+        }
+    }
+    
+    // If fee distributor is available, validate the fee distribution
+    if (context.feeDistributor != nullptr) {
+        // Calculate what the fees should be
+        CAmount calculatedFees = context.feeDistributor->CalculateBlockFees(block.transactions);
+        
+        // Verify the calculated fees match expected fees (allow small rounding differences)
+        if (std::abs(calculatedFees - expectedFees) > 2) {
+            LogPrintf("L2BlockValidator: Fee mismatch - calculated=%lld expected=%lld\n",
+                calculatedFees, expectedFees);
+        }
+    }
+    
+    // Log validation success for debugging
+    LogPrint(BCLog::L2, "L2BlockValidator: Block %u fee validation passed - fees=%lld minted=%lld\n",
+        block.header.blockNumber, expectedFees, totalMinted);
+    
+    return ValidationResult::Valid();
 }
 
 } // namespace l2

@@ -26,6 +26,7 @@
  */
 
 #include <l2/l2_common.h>
+#include <l2/l2_transaction.h>
 #include <uint256.h>
 #include <amount.h>
 #include <serialize.h>
@@ -71,6 +72,9 @@ static constexpr uint64_t UPTIME_TRACKING_WINDOW = 100000;
 
 /** Minimum blocks produced to qualify for uptime bonus */
 static constexpr uint64_t MIN_BLOCKS_FOR_UPTIME_BONUS = 1000;
+
+/** Minimum transaction fee in satoshis (0.00001 L2-Token) - Requirement 6.6 */
+static constexpr CAmount MIN_TRANSACTION_FEE = 1000;
 
 // ============================================================================
 // Data Structures
@@ -317,6 +321,57 @@ struct BurnSummary {
     }
 };
 
+/**
+ * @brief Fee distribution for a single block (Burn-and-Mint model)
+ * 
+ * Tracks fee distribution for a block where sequencer rewards come
+ * exclusively from transaction fees (no minting).
+ * 
+ * Requirements: 6.1, 6.2, 6.3, 6.4
+ */
+struct BlockFeeDistribution {
+    /** Block number */
+    uint64_t blockNumber;
+    
+    /** Sequencer address (block producer) */
+    uint160 sequencerAddress;
+    
+    /** Total fees collected in this block */
+    CAmount totalFees;
+    
+    /** Number of transactions in the block */
+    uint32_t transactionCount;
+    
+    /** Timestamp when fees were distributed */
+    uint64_t timestamp;
+
+    BlockFeeDistribution()
+        : blockNumber(0)
+        , totalFees(0)
+        , transactionCount(0)
+        , timestamp(0)
+    {}
+
+    BlockFeeDistribution(uint64_t block, const uint160& sequencer, CAmount fees, uint32_t txCount, uint64_t ts)
+        : blockNumber(block)
+        , sequencerAddress(sequencer)
+        , totalFees(fees)
+        , transactionCount(txCount)
+        , timestamp(ts)
+    {}
+
+    ADD_SERIALIZE_METHODS;
+
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(blockNumber);
+        READWRITE(sequencerAddress);
+        READWRITE(totalFees);
+        READWRITE(transactionCount);
+        READWRITE(timestamp);
+    }
+};
+
 // ============================================================================
 // Fee Distributor Class
 // ============================================================================
@@ -465,6 +520,94 @@ public:
     BurnSummary GetBurnSummary() const;
 
     // =========================================================================
+    // Burn-and-Mint Fee Distribution (Requirements 6.1-6.6)
+    // =========================================================================
+
+    /**
+     * @brief Distribute block fees to the block producer
+     * 
+     * In the burn-and-mint model, sequencer rewards come ONLY from
+     * transaction fees. No new tokens are minted as block rewards.
+     * 
+     * @param blockNumber Block number
+     * @param sequencer Block producer address
+     * @param transactions Transactions in the block
+     * @return true if distribution succeeded
+     * 
+     * Requirements: 6.1, 6.2, 6.3, 6.4
+     */
+    bool DistributeBlockFees(
+        uint64_t blockNumber,
+        const uint160& sequencer,
+        const std::vector<L2Transaction>& transactions
+    );
+
+    /**
+     * @brief Calculate total fees in a block
+     * 
+     * Sums up all transaction fees (gasUsed * gasPrice) for transactions
+     * in the block.
+     * 
+     * @param transactions Transactions in the block
+     * @return Total fees in satoshis
+     * 
+     * Requirement: 6.3
+     */
+    CAmount CalculateBlockFees(const std::vector<L2Transaction>& transactions) const;
+
+    /**
+     * @brief Get fee history for a sequencer
+     * 
+     * Returns the fee distribution history for a specific sequencer
+     * within a block range.
+     * 
+     * @param sequencer Sequencer address
+     * @param fromBlock Start block (inclusive)
+     * @param toBlock End block (inclusive)
+     * @return Vector of BlockFeeDistribution records
+     * 
+     * Requirement: 6.4
+     */
+    std::vector<BlockFeeDistribution> GetFeeHistory(
+        const uint160& sequencer,
+        uint64_t fromBlock,
+        uint64_t toBlock
+    ) const;
+
+    /**
+     * @brief Get total fees earned by a sequencer
+     * 
+     * Returns the cumulative fees earned by a sequencer across all blocks.
+     * 
+     * @param sequencer Sequencer address
+     * @return Total fees earned in satoshis
+     * 
+     * Requirement: 6.4
+     */
+    CAmount GetTotalFeesEarned(const uint160& sequencer) const;
+
+    /**
+     * @brief Validate transaction fee meets minimum requirement
+     * 
+     * Checks if a transaction's fee meets the minimum fee requirement
+     * to prevent spam.
+     * 
+     * @param tx Transaction to validate
+     * @return true if fee is sufficient
+     * 
+     * Requirement: 6.6
+     */
+    static bool ValidateMinimumFee(const L2Transaction& tx);
+
+    /**
+     * @brief Get the minimum transaction fee
+     * @return Minimum fee in satoshis
+     */
+    static CAmount GetMinTransactionFee() {
+        return MIN_TRANSACTION_FEE;
+    }
+
+    // =========================================================================
     // Sequencer Management
     // =========================================================================
 
@@ -604,8 +747,17 @@ private:
     /** Burn history for time-based calculations */
     std::deque<std::pair<uint64_t, CAmount>> burnHistory_;
 
+    /** Block fee distribution history (for burn-and-mint model) */
+    std::deque<BlockFeeDistribution> blockFeeHistory_;
+
+    /** Total fees earned per sequencer (for burn-and-mint model) */
+    std::map<uint160, CAmount> totalFeesEarned_;
+
     /** Maximum distribution history to keep */
     static constexpr size_t MAX_DISTRIBUTION_HISTORY = 1000;
+
+    /** Maximum block fee history entries */
+    static constexpr size_t MAX_BLOCK_FEE_HISTORY = 10000;
 
     /** Maximum burn history entries */
     static constexpr size_t MAX_BURN_HISTORY = 10000;

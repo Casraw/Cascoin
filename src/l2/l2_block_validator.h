@@ -21,6 +21,9 @@
 #include <l2/l2_block.h>
 #include <l2/l2_transaction.h>
 #include <l2/state_manager.h>
+#include <l2/burn_registry.h>
+#include <l2/mint_consensus.h>
+#include <l2/fee_distributor.h>
 #include <uint256.h>
 #include <pubkey.h>
 
@@ -77,7 +80,14 @@ enum class ValidationError {
     
     // Other errors
     BLOCK_TOO_LARGE,
-    UNKNOWN_ERROR
+    UNKNOWN_ERROR,
+    
+    // Burn-and-Mint validation errors (Task 14.5)
+    UNAUTHORIZED_MINT,
+    INVALID_MINT_AMOUNT,
+    MINT_WITHOUT_CONSENSUS,
+    INVALID_FEE_DISTRIBUTION,
+    SEQUENCER_REWARD_MINTING
 };
 
 /**
@@ -171,6 +181,21 @@ struct ValidationContext {
     
     /** Whether to require consensus (2/3+ signatures) */
     bool requireConsensus = true;
+    
+    /** Burn registry for mint validation (Task 14.5) */
+    BurnRegistry* burnRegistry = nullptr;
+    
+    /** Mint consensus manager for mint validation (Task 14.5) */
+    MintConsensusManager* mintConsensusManager = nullptr;
+    
+    /** Fee distributor for fee validation (Task 14.5) */
+    FeeDistributor* feeDistributor = nullptr;
+    
+    /** Whether to validate minting rules (Task 14.5) */
+    bool validateMinting = true;
+    
+    /** Whether to validate fee distribution (Task 14.5) */
+    bool validateFeeDistribution = true;
 };
 
 /**
@@ -354,6 +379,54 @@ public:
     static bool ValidateGasLimitAdjustment(
         uint64_t gasLimit,
         uint64_t parentGasLimit);
+
+    /**
+     * @brief Validate minting rules in a block (Task 14.5)
+     * 
+     * Verifies that all BURN_MINT transactions in the block:
+     * - Have valid consensus (2/3 sequencer confirmations)
+     * - Match the burned amount exactly (1:1 ratio)
+     * - Reference a valid, unprocessed L1 burn transaction
+     * - Are not duplicates (no double-minting)
+     * 
+     * @param block The block to validate
+     * @param context Validation context with burn registry and consensus manager
+     * @return Validation result
+     * 
+     * Requirements: 10.4
+     */
+    static ValidationResult ValidateMinting(
+        const L2Block& block,
+        const ValidationContext& context);
+
+    /**
+     * @brief Validate fee distribution in a block (Task 14.5)
+     * 
+     * Verifies that:
+     * - Sequencer rewards come only from transaction fees
+     * - No new tokens are minted as block rewards
+     * - Fee amounts are calculated correctly
+     * 
+     * @param block The block to validate
+     * @param context Validation context with fee distributor
+     * @return Validation result
+     * 
+     * Requirements: 6.1, 6.2, 10.4
+     */
+    static ValidationResult ValidateFeeDistribution(
+        const L2Block& block,
+        const ValidationContext& context);
+
+    /**
+     * @brief Validate a single BURN_MINT transaction (Task 14.5)
+     * 
+     * @param tx The BURN_MINT transaction to validate
+     * @param context Validation context
+     * @return Validation result
+     */
+    static ValidationResult ValidateBurnMintTransaction(
+        const L2Transaction& tx,
+        const ValidationContext& context);
 
 private:
     /** Maximum gas limit change per block (1/1024 of parent) */

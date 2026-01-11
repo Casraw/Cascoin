@@ -11,9 +11,12 @@
  * - L2 chain deployment and management
  * - L2 chain registry operations
  * - Sequencer operations
- * - Bridge operations (deposit/withdraw)
+ * - Token info and supply queries (Requirements 8.1, 8.2, 8.3, 8.4)
+ * - Token transfers (Requirements 2.5, 7.3)
+ * - Faucet operations (Requirements 5.1, 5.5)
+ * - Legacy bridge deprecation (Requirements 6.1, 6.3, 9.4, 9.5)
  * 
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.5, 2.6, 4.1, 4.2, 11.7, 40.1
+ * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 2.5, 2.6, 4.1, 4.2, 5.1, 5.5, 6.1, 6.3, 7.3, 8.1, 8.2, 8.3, 8.4, 9.4, 9.5, 11.7, 40.1
  */
 
 #include <rpc/server.h>
@@ -28,6 +31,9 @@
 #include <l2/leader_election.h>
 #include <l2/bridge_contract.h>
 #include <l2/account_state.h>
+#include <l2/l2_token.h>
+#include <l2/l2_token_manager.h>
+#include <l2/l2_faucet.h>
 #include <validation.h>
 #include <chain.h>
 #include <util.h>
@@ -47,6 +53,8 @@
 namespace {
     std::unique_ptr<l2::L2StateManager> g_l2StateManager;
     std::unique_ptr<l2::BridgeContract> g_bridgeContract;
+    std::unique_ptr<l2::L2TokenManager> g_l2TokenManager;
+    std::unique_ptr<l2::L2Faucet> g_l2Faucet;
     std::map<uint64_t, std::string> g_l2ChainRegistry;  // chainId -> name
     std::vector<l2::L2Block> g_l2Blocks;  // Simple in-memory block storage for now
     CCriticalSection cs_l2;
@@ -78,6 +86,28 @@ static l2::BridgeContract& GetBridgeContract()
         g_bridgeContract = std::make_unique<l2::BridgeContract>(l2::GetL2ChainId());
     }
     return *g_bridgeContract;
+}
+
+// Helper function to get or create token manager
+static l2::L2TokenManager& GetL2TokenManager()
+{
+    LOCK(cs_l2);
+    if (!g_l2TokenManager) {
+        // Create default token config
+        l2::L2TokenConfig config("L2Token", "L2T");
+        g_l2TokenManager = std::make_unique<l2::L2TokenManager>(l2::GetL2ChainId(), config);
+    }
+    return *g_l2TokenManager;
+}
+
+// Helper function to get or create faucet
+static l2::L2Faucet& GetL2Faucet()
+{
+    LOCK(cs_l2);
+    if (!g_l2Faucet) {
+        g_l2Faucet = std::make_unique<l2::L2Faucet>(GetL2TokenManager());
+    }
+    return *g_l2Faucet;
 }
 
 // Helper to parse address from hex or base58
@@ -753,164 +783,297 @@ UniValue l2_getleader(const JSONRPCRequest& request)
 
 
 // ============================================================================
-// Task 18.4: Bridge RPC Commands
-// Requirements: 4.1, 4.2
+// Task 8.1: Token Info RPC Commands
+// Requirements: 8.1, 8.2, 8.3, 8.4
 // ============================================================================
 
-UniValue l2_deposit(const JSONRPCRequest& request)
+UniValue l2_gettokeninfo(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 3)
+    if (request.fHelp || request.params.size() > 0)
         throw std::runtime_error(
-            "l2_deposit \"l2address\" amount ( \"l1txhash\" )\n"
-            "\nProcess a deposit from L1 to L2.\n"
-            "\nIn production, this would be triggered by monitoring L1 deposit events.\n"
-            "For testing, this allows manual deposit processing.\n"
-            "\nArguments:\n"
-            "1. \"l2address\"    (string, required) L2 recipient address\n"
-            "2. amount          (numeric, required) Amount to deposit in CAS\n"
-            "3. \"l1txhash\"     (string, optional) L1 transaction hash (for tracking)\n"
+            "l2_gettokeninfo\n"
+            "\nGet information about the L2 token.\n"
             "\nResult:\n"
             "{\n"
-            "  \"success\": bool,        (boolean) Whether deposit was processed\n"
-            "  \"depositId\": \"xxx\",    (string) Unique deposit identifier\n"
-            "  \"l2Recipient\": \"xxx\",  (string) L2 recipient address\n"
-            "  \"amount\": n,            (numeric) Deposit amount\n"
-            "  \"l1TxHash\": \"xxx\",     (string) L1 transaction hash\n"
-            "  \"message\": \"xxx\"       (string) Status message\n"
+            "  \"tokenName\": \"xxx\",       (string) Token name\n"
+            "  \"tokenSymbol\": \"xxx\",     (string) Token symbol\n"
+            "  \"chainId\": n,              (numeric) L2 chain ID\n"
+            "  \"sequencerReward\": \"x.xx\",(string) Sequencer reward per block\n"
+            "  \"mintingFee\": \"x.xx\",     (string) Minting fee in CAS\n"
+            "  \"minTransferFee\": \"x.xx\", (string) Minimum transfer fee\n"
+            "  \"maxGenesisSupply\": \"x.xx\"(string) Maximum genesis supply\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("l2_deposit", "\"0xa1b2c3...\" 100")
-            + HelpExampleCli("l2_deposit", "\"0xa1b2c3...\" 100 \"abc123...\"")
-            + HelpExampleRpc("l2_deposit", "\"0xa1b2c3...\", 100")
+            + HelpExampleCli("l2_gettokeninfo", "")
+            + HelpExampleRpc("l2_gettokeninfo", "")
         );
 
     EnsureL2Enabled();
 
-    std::string l2AddressStr = request.params[0].get_str();
-    uint160 l2Recipient = ParseL2Address(l2AddressStr);
-    
-    CAmount amount = AmountFromValue(request.params[1]);
-    
-    uint256 l1TxHash;
-    if (request.params.size() > 2) {
-        l1TxHash = ParseHashV(request.params[2], "l1txhash");
-    } else {
-        // Generate a random hash for testing
-        GetRandBytes(l1TxHash.begin(), 32);
-    }
-    
-    // Validate amount
-    if (amount <= 0) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
-    }
-    
-    if (amount > l2::MAX_DEPOSIT_PER_TX) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            strprintf("Amount exceeds maximum deposit per transaction (%s CAS)", 
-                      FormatMoney(l2::MAX_DEPOSIT_PER_TX)));
-    }
-    
-    l2::BridgeContract& bridge = GetBridgeContract();
-    
-    // Check daily limit
-    uint64_t currentTime = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    
-    CAmount dailyTotal = bridge.GetDailyDepositTotal(l2Recipient, currentTime);
-    if (dailyTotal + amount > l2::MAX_DAILY_DEPOSIT) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            strprintf("Deposit would exceed daily limit (%s CAS)", 
-                      FormatMoney(l2::MAX_DAILY_DEPOSIT)));
-    }
-    
-    // Create deposit event
-    uint256 depositId;
-    CHashWriter ss(SER_GETHASH, 0);
-    ss << l2Recipient;
-    ss << amount;
-    ss << l1TxHash;
-    ss << currentTime;
-    depositId = ss.GetHash();
-    
-    uint160 depositor = l2Recipient;  // For testing, depositor = recipient
-    uint64_t l1BlockNumber = chainActive.Height();
-    
-    l2::DepositEvent deposit(depositId, depositor, l2Recipient, amount, 
-                             l1BlockNumber, l1TxHash, currentTime);
-    
-    bool success = bridge.ProcessDeposit(deposit);
-    
-    // Also credit the L2 state
-    if (success) {
-        l2::L2StateManager& stateManager = GetL2StateManager();
-        uint256 addressKey;
-        memcpy(addressKey.begin(), l2Recipient.begin(), 20);
-        
-        l2::AccountState state = stateManager.GetAccountState(addressKey);
-        state.balance += amount;
-        state.lastActivity = stateManager.GetBlockNumber();
-        stateManager.SetAccountState(addressKey, state);
-    }
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    const l2::L2TokenConfig& config = tokenManager.GetConfig();
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("success", success);
-    result.pushKV("depositId", depositId.GetHex());
-    result.pushKV("l2Recipient", "0x" + l2Recipient.GetHex());
-    result.pushKV("amount", ValueFromAmount(amount));
-    result.pushKV("l1TxHash", l1TxHash.GetHex());
-    result.pushKV("l1BlockNumber", (int64_t)l1BlockNumber);
-    
-    if (success) {
-        result.pushKV("message", "Deposit processed successfully");
-    } else {
-        result.pushKV("message", "Failed to process deposit");
-    }
+    result.pushKV("tokenName", config.tokenName);
+    result.pushKV("tokenSymbol", config.tokenSymbol);
+    result.pushKV("chainId", (int64_t)tokenManager.GetChainId());
+    result.pushKV("sequencerReward", ValueFromAmount(config.sequencerReward));
+    result.pushKV("mintingFee", ValueFromAmount(config.mintingFee));
+    result.pushKV("minTransferFee", ValueFromAmount(config.minTransferFee));
+    result.pushKV("maxGenesisSupply", ValueFromAmount(config.maxGenesisSupply));
     
     return result;
 }
 
-UniValue l2_withdraw(const JSONRPCRequest& request)
+UniValue l2_gettokensupply(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "l2_gettokensupply\n"
+            "\nGet the current L2 token supply information.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"totalSupply\": \"x.xx\",      (string) Total token supply\n"
+            "  \"genesisSupply\": \"x.xx\",    (string) Tokens from genesis distribution\n"
+            "  \"mintedSupply\": \"x.xx\",     (string) Tokens minted via sequencer rewards\n"
+            "  \"burnedSupply\": \"x.xx\",     (string) Tokens burned (fees, etc.)\n"
+            "  \"totalBlocksRewarded\": n,    (numeric) Number of blocks that received rewards\n"
+            "  \"invariantValid\": bool       (boolean) Whether supply invariant holds\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_gettokensupply", "")
+            + HelpExampleRpc("l2_gettokensupply", "")
+        );
+
+    EnsureL2Enabled();
+
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    const l2::L2TokenSupply& supply = tokenManager.GetSupply();
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("totalSupply", ValueFromAmount(supply.totalSupply));
+    result.pushKV("genesisSupply", ValueFromAmount(supply.genesisSupply));
+    result.pushKV("mintedSupply", ValueFromAmount(supply.mintedSupply));
+    result.pushKV("burnedSupply", ValueFromAmount(supply.burnedSupply));
+    result.pushKV("totalBlocksRewarded", (int64_t)supply.totalBlocksRewarded);
+    result.pushKV("invariantValid", supply.VerifyInvariant());
+    
+    // Also include token symbol for clarity
+    result.pushKV("tokenSymbol", tokenManager.GetTokenSymbol());
+    
+    return result;
+}
+
+UniValue l2_getgenesisdistribution(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "l2_getgenesisdistribution\n"
+            "\nGet the genesis token distribution for the L2 chain.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"applied\": bool,             (boolean) Whether genesis has been applied\n"
+            "  \"totalDistributed\": \"x.xx\", (string) Total tokens distributed at genesis\n"
+            "  \"recipientCount\": n,         (numeric) Number of recipients\n"
+            "  \"distribution\": [            (array) Distribution details\n"
+            "    {\n"
+            "      \"address\": \"xxx\",       (string) Recipient address\n"
+            "      \"amount\": \"x.xx\"        (string) Amount received\n"
+            "    },\n"
+            "    ...\n"
+            "  ]\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getgenesisdistribution", "")
+            + HelpExampleRpc("l2_getgenesisdistribution", "")
+        );
+
+    EnsureL2Enabled();
+
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    std::vector<std::pair<uint160, CAmount>> distribution = tokenManager.GetGenesisDistribution();
+    
+    CAmount totalDistributed = 0;
+    UniValue distArray(UniValue::VARR);
+    
+    for (const auto& entry : distribution) {
+        UniValue distObj(UniValue::VOBJ);
+        distObj.pushKV("address", "0x" + entry.first.GetHex());
+        distObj.pushKV("amount", ValueFromAmount(entry.second));
+        distArray.push_back(distObj);
+        totalDistributed += entry.second;
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("applied", tokenManager.IsGenesisApplied());
+    result.pushKV("totalDistributed", ValueFromAmount(totalDistributed));
+    result.pushKV("recipientCount", (int64_t)distribution.size());
+    result.pushKV("distribution", distArray);
+    result.pushKV("tokenSymbol", tokenManager.GetTokenSymbol());
+    
+    return result;
+}
+
+UniValue l2_getmintinghistory(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 2)
+        throw std::runtime_error(
+            "l2_getmintinghistory ( fromblock toblock )\n"
+            "\nGet the minting history (sequencer rewards) for a block range.\n"
+            "\nArguments:\n"
+            "1. fromblock    (numeric, optional, default=0) Start block (inclusive)\n"
+            "2. toblock      (numeric, optional, default=current) End block (inclusive)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"fromBlock\": n,              (numeric) Start block\n"
+            "  \"toBlock\": n,                (numeric) End block\n"
+            "  \"recordCount\": n,            (numeric) Number of minting records\n"
+            "  \"totalMinted\": \"x.xx\",      (string) Total tokens minted in range\n"
+            "  \"records\": [                 (array) Minting records\n"
+            "    {\n"
+            "      \"l2BlockNumber\": n,      (numeric) L2 block number\n"
+            "      \"l2BlockHash\": \"xxx\",   (string) L2 block hash\n"
+            "      \"sequencer\": \"xxx\",     (string) Sequencer address\n"
+            "      \"rewardAmount\": \"x.xx\", (string) Reward amount\n"
+            "      \"l1TxHash\": \"xxx\",      (string) L1 fee transaction hash\n"
+            "      \"l1BlockNumber\": n,      (numeric) L1 block number\n"
+            "      \"feePaid\": \"x.xx\",      (string) CAS fee paid on L1\n"
+            "      \"timestamp\": n           (numeric) Minting timestamp\n"
+            "    },\n"
+            "    ...\n"
+            "  ]\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getmintinghistory", "")
+            + HelpExampleCli("l2_getmintinghistory", "0 100")
+            + HelpExampleRpc("l2_getmintinghistory", "0, 100")
+        );
+
+    EnsureL2Enabled();
+
+    uint64_t fromBlock = 0;
+    uint64_t toBlock = UINT64_MAX;
+    
+    if (request.params.size() > 0) {
+        fromBlock = request.params[0].get_int64();
+    }
+    if (request.params.size() > 1) {
+        toBlock = request.params[1].get_int64();
+    }
+    
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    std::vector<l2::MintingRecord> records = tokenManager.GetMintingHistory(fromBlock, toBlock);
+    
+    CAmount totalMinted = 0;
+    UniValue recordsArray(UniValue::VARR);
+    
+    for (const auto& record : records) {
+        UniValue recordObj(UniValue::VOBJ);
+        recordObj.pushKV("l2BlockNumber", (int64_t)record.l2BlockNumber);
+        recordObj.pushKV("l2BlockHash", record.l2BlockHash.GetHex());
+        recordObj.pushKV("sequencer", "0x" + record.sequencerAddress.GetHex());
+        recordObj.pushKV("rewardAmount", ValueFromAmount(record.rewardAmount));
+        recordObj.pushKV("l1TxHash", record.l1TxHash.GetHex());
+        recordObj.pushKV("l1BlockNumber", (int64_t)record.l1BlockNumber);
+        recordObj.pushKV("feePaid", ValueFromAmount(record.feePaid));
+        recordObj.pushKV("timestamp", (int64_t)record.timestamp);
+        recordsArray.push_back(recordObj);
+        totalMinted += record.rewardAmount;
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("fromBlock", (int64_t)fromBlock);
+    result.pushKV("toBlock", (int64_t)(toBlock == UINT64_MAX ? 0 : toBlock));
+    result.pushKV("recordCount", (int64_t)records.size());
+    result.pushKV("totalMinted", ValueFromAmount(totalMinted));
+    result.pushKV("records", recordsArray);
+    result.pushKV("tokenSymbol", tokenManager.GetTokenSymbol());
+    
+    return result;
+}
+
+UniValue l2_getsequencerrewards(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 0)
+        throw std::runtime_error(
+            "l2_getsequencerrewards\n"
+            "\nGet total sequencer rewards paid out.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"totalRewards\": \"x.xx\",     (string) Total rewards paid to sequencers\n"
+            "  \"totalBlocksRewarded\": n,    (numeric) Number of blocks that received rewards\n"
+            "  \"currentRewardPerBlock\": \"x.xx\", (string) Current reward per block\n"
+            "  \"tokenSymbol\": \"xxx\"        (string) Token symbol\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getsequencerrewards", "")
+            + HelpExampleRpc("l2_getsequencerrewards", "")
+        );
+
+    EnsureL2Enabled();
+
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    const l2::L2TokenSupply& supply = tokenManager.GetSupply();
+    const l2::L2TokenConfig& config = tokenManager.GetConfig();
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("totalRewards", ValueFromAmount(tokenManager.GetTotalSequencerRewards()));
+    result.pushKV("totalBlocksRewarded", (int64_t)supply.totalBlocksRewarded);
+    result.pushKV("currentRewardPerBlock", ValueFromAmount(config.sequencerReward));
+    result.pushKV("tokenSymbol", tokenManager.GetTokenSymbol());
+    
+    return result;
+}
+
+
+// ============================================================================
+// Task 8.3: Transfer RPC Commands
+// Requirements: 2.5, 7.3
+// ============================================================================
+
+UniValue l2_transfer(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
         throw std::runtime_error(
-            "l2_withdraw \"l2address\" \"l1address\" amount ( hatscore )\n"
-            "\nInitiate a withdrawal from L2 to L1.\n"
+            "l2_transfer \"from\" \"to\" amount ( fee )\n"
+            "\nTransfer L2 tokens between addresses.\n"
             "\nArguments:\n"
-            "1. \"l2address\"    (string, required) L2 sender address\n"
-            "2. \"l1address\"    (string, required) L1 recipient address\n"
-            "3. amount          (numeric, required) Amount to withdraw in CAS\n"
-            "4. hatscore        (numeric, optional, default=0) HAT v2 score for fast withdrawal\n"
+            "1. \"from\"    (string, required) Sender L2 address\n"
+            "2. \"to\"      (string, required) Recipient L2 address\n"
+            "3. amount     (numeric, required) Amount to transfer\n"
+            "4. fee        (numeric, optional) Transfer fee (default: minimum fee)\n"
             "\nResult:\n"
             "{\n"
-            "  \"success\": bool,           (boolean) Whether withdrawal was initiated\n"
-            "  \"withdrawalId\": \"xxx\",    (string) Unique withdrawal identifier\n"
-            "  \"l2Sender\": \"xxx\",        (string) L2 sender address\n"
-            "  \"l1Recipient\": \"xxx\",     (string) L1 recipient address\n"
-            "  \"amount\": n,               (numeric) Withdrawal amount\n"
-            "  \"status\": \"xxx\",          (string) Withdrawal status\n"
-            "  \"challengeDeadline\": n,    (numeric) Challenge period end timestamp\n"
-            "  \"isFastWithdrawal\": bool,  (boolean) Whether this is a fast withdrawal\n"
-            "  \"message\": \"xxx\"          (string) Status message\n"
+            "  \"success\": bool,        (boolean) Whether transfer succeeded\n"
+            "  \"txHash\": \"xxx\",       (string) Transaction hash\n"
+            "  \"from\": \"xxx\",         (string) Sender address\n"
+            "  \"to\": \"xxx\",           (string) Recipient address\n"
+            "  \"amount\": \"x.xx\",      (string) Amount transferred\n"
+            "  \"fee\": \"x.xx\",         (string) Fee paid\n"
+            "  \"newStateRoot\": \"xxx\", (string) New state root after transfer\n"
+            "  \"message\": \"xxx\"       (string) Status message\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("l2_withdraw", "\"0xa1b2c3...\" \"DXG7Yx...\" 50")
-            + HelpExampleCli("l2_withdraw", "\"0xa1b2c3...\" \"DXG7Yx...\" 50 85")
-            + HelpExampleRpc("l2_withdraw", "\"0xa1b2c3...\", \"DXG7Yx...\", 50, 85")
+            + HelpExampleCli("l2_transfer", "\"0xa1b2c3...\" \"0xd4e5f6...\" 10")
+            + HelpExampleCli("l2_transfer", "\"0xa1b2c3...\" \"0xd4e5f6...\" 10 0.001")
+            + HelpExampleRpc("l2_transfer", "\"0xa1b2c3...\", \"0xd4e5f6...\", 10")
         );
 
     EnsureL2Enabled();
 
-    std::string l2AddressStr = request.params[0].get_str();
-    uint160 l2Sender = ParseL2Address(l2AddressStr);
-    
-    std::string l1AddressStr = request.params[1].get_str();
-    uint160 l1Recipient = ParseL2Address(l1AddressStr);
+    std::string fromStr = request.params[0].get_str();
+    std::string toStr = request.params[1].get_str();
+    uint160 from = ParseL2Address(fromStr);
+    uint160 to = ParseL2Address(toStr);
     
     CAmount amount = AmountFromValue(request.params[2]);
     
-    uint32_t hatScore = 0;
+    l2::L2TokenManager& tokenManager = GetL2TokenManager();
+    const l2::L2TokenConfig& config = tokenManager.GetConfig();
+    
+    CAmount fee = config.minTransferFee;
     if (request.params.size() > 3) {
-        hatScore = request.params[3].get_int();
+        fee = AmountFromValue(request.params[3]);
     }
     
     // Validate amount
@@ -918,71 +1081,210 @@ UniValue l2_withdraw(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
     }
     
-    if (amount > l2::MAX_WITHDRAWAL_PER_TX) {
+    // Validate fee
+    if (fee < config.minTransferFee) {
         throw JSONRPCError(RPC_INVALID_PARAMETER,
-            strprintf("Amount exceeds maximum withdrawal per transaction (%s CAS)", 
-                      FormatMoney(l2::MAX_WITHDRAWAL_PER_TX)));
+            strprintf("Fee must be at least %s %s", 
+                      FormatMoney(config.minTransferFee), config.tokenSymbol));
     }
     
-    // Check L2 balance
     l2::L2StateManager& stateManager = GetL2StateManager();
-    uint256 addressKey;
-    memcpy(addressKey.begin(), l2Sender.begin(), 20);
     
-    l2::AccountState state = stateManager.GetAccountState(addressKey);
-    if (state.balance < amount) {
-        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS,
-            strprintf("Insufficient L2 balance. Have: %s CAS, Need: %s CAS",
-                      FormatMoney(state.balance), FormatMoney(amount)));
-    }
+    l2::TransferResult result = tokenManager.ProcessTransfer(from, to, amount, fee, stateManager);
     
-    l2::BridgeContract& bridge = GetBridgeContract();
+    UniValue response(UniValue::VOBJ);
+    response.pushKV("success", result.success);
     
-    uint64_t currentTime = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
-    uint64_t l2BlockNumber = stateManager.GetBlockNumber();
-    uint256 stateRoot = stateManager.GetStateRoot();
-    
-    l2::WithdrawalRequest withdrawal;
-    
-    // Use fast withdrawal if HAT score qualifies
-    if (l2::BridgeContract::QualifiesForFastWithdrawal(hatScore)) {
-        withdrawal = bridge.FastWithdrawal(l2Sender, l1Recipient, amount,
-                                           l2BlockNumber, stateRoot, currentTime, hatScore);
+    if (result.success) {
+        response.pushKV("txHash", result.txHash.GetHex());
+        response.pushKV("from", "0x" + from.GetHex());
+        response.pushKV("to", "0x" + to.GetHex());
+        response.pushKV("amount", ValueFromAmount(amount));
+        response.pushKV("fee", ValueFromAmount(fee));
+        response.pushKV("newStateRoot", result.newStateRoot.GetHex());
+        response.pushKV("tokenSymbol", config.tokenSymbol);
+        response.pushKV("message", "Transfer completed successfully");
     } else {
-        withdrawal = bridge.InitiateWithdrawal(l2Sender, l1Recipient, amount,
-                                               l2BlockNumber, stateRoot, currentTime, hatScore);
+        response.pushKV("error", result.error);
+        response.pushKV("message", result.error);
     }
     
-    // Deduct from L2 balance
-    state.balance -= amount;
-    state.nonce++;
-    state.lastActivity = l2BlockNumber;
-    stateManager.SetAccountState(addressKey, state);
+    return response;
+}
+
+UniValue l2_gettransfer(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "l2_gettransfer \"txhash\"\n"
+            "\nGet the status of a transfer transaction.\n"
+            "\nArguments:\n"
+            "1. \"txhash\"    (string, required) Transaction hash\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"found\": bool,          (boolean) Whether transaction was found\n"
+            "  \"txHash\": \"xxx\",       (string) Transaction hash\n"
+            "  \"status\": \"xxx\",       (string) Transaction status\n"
+            "  \"message\": \"xxx\"       (string) Status message\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_gettransfer", "\"abc123...\"")
+            + HelpExampleRpc("l2_gettransfer", "\"abc123...\"")
+        );
+
+    EnsureL2Enabled();
+
+    uint256 txHash = ParseHashV(request.params[0], "txhash");
+    
+    // For now, return a simple response
+    // Full implementation would query transaction storage
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("found", false);
+    result.pushKV("txHash", txHash.GetHex());
+    result.pushKV("status", "unknown");
+    result.pushKV("message", "Transfer lookup not yet implemented - transfers are processed immediately");
+    
+    return result;
+}
+
+
+// ============================================================================
+// Task 8.4: Faucet RPC Commands
+// Requirements: 5.1, 5.5
+// ============================================================================
+
+UniValue l2_faucet(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "l2_faucet \"address\" ( amount )\n"
+            "\nRequest test tokens from the L2 faucet (testnet/regtest only).\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) L2 recipient address\n"
+            "2. amount        (numeric, optional, default=100) Amount to request (max 100)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": bool,        (boolean) Whether request succeeded\n"
+            "  \"txHash\": \"xxx\",       (string) Transaction hash\n"
+            "  \"recipient\": \"xxx\",    (string) Recipient address\n"
+            "  \"amount\": \"x.xx\",      (string) Amount distributed\n"
+            "  \"tokenSymbol\": \"xxx\",  (string) Token symbol\n"
+            "  \"message\": \"xxx\"       (string) Status message\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_faucet", "\"0xa1b2c3...\"")
+            + HelpExampleCli("l2_faucet", "\"0xa1b2c3...\" 50")
+            + HelpExampleRpc("l2_faucet", "\"0xa1b2c3...\", 50")
+        );
+
+    EnsureL2Enabled();
+
+    // Check if faucet is enabled (testnet/regtest only)
+    if (!l2::L2Faucet::IsEnabled()) {
+        throw JSONRPCError(RPC_MISC_ERROR, 
+            "Faucet is only available on testnet/regtest. "
+            "On mainnet, obtain tokens through sequencer rewards or transfers.");
+    }
+
+    std::string addressStr = request.params[0].get_str();
+    uint160 recipient = ParseL2Address(addressStr);
+    
+    CAmount requestedAmount = l2::MAX_FAUCET_AMOUNT;
+    if (request.params.size() > 1) {
+        requestedAmount = AmountFromValue(request.params[1]);
+    }
+    
+    l2::L2Faucet& faucet = GetL2Faucet();
+    l2::L2StateManager& stateManager = GetL2StateManager();
+    
+    l2::FaucetResult result = faucet.RequestTokens(recipient, requestedAmount, stateManager);
+    
+    UniValue response(UniValue::VOBJ);
+    response.pushKV("success", result.success);
+    
+    if (result.success) {
+        response.pushKV("txHash", result.txHash.GetHex());
+        response.pushKV("recipient", "0x" + recipient.GetHex());
+        response.pushKV("amount", ValueFromAmount(result.amount));
+        response.pushKV("tokenSymbol", faucet.GetTokenManager().GetTokenSymbol());
+        response.pushKV("message", "Test tokens distributed successfully");
+        response.pushKV("note", "These are test tokens with no real value");
+    } else {
+        response.pushKV("error", result.error);
+        if (result.cooldownRemaining > 0) {
+            response.pushKV("cooldownRemaining", (int64_t)result.cooldownRemaining);
+            response.pushKV("cooldownMinutes", (int64_t)(result.cooldownRemaining / 60));
+        }
+        response.pushKV("message", result.error);
+    }
+    
+    return response;
+}
+
+UniValue l2_getfaucetstatus(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "l2_getfaucetstatus ( \"address\" )\n"
+            "\nGet the status of the L2 faucet.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, optional) Check cooldown for specific address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"enabled\": bool,            (boolean) Whether faucet is enabled\n"
+            "  \"network\": \"xxx\",          (string) Current network\n"
+            "  \"maxAmount\": \"x.xx\",       (string) Maximum tokens per request\n"
+            "  \"cooldownSeconds\": n,       (numeric) Cooldown period in seconds\n"
+            "  \"totalDistributed\": \"x.xx\",(string) Total tokens distributed\n"
+            "  \"uniqueRecipients\": n,      (numeric) Number of unique recipients\n"
+            "  \"tokenSymbol\": \"xxx\",      (string) Token symbol\n"
+            "  \"canRequest\": bool,         (boolean) Whether address can request (if provided)\n"
+            "  \"cooldownRemaining\": n      (numeric) Seconds until can request (if provided)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getfaucetstatus", "")
+            + HelpExampleCli("l2_getfaucetstatus", "\"0xa1b2c3...\"")
+            + HelpExampleRpc("l2_getfaucetstatus", "\"0xa1b2c3...\"")
+        );
+
+    EnsureL2Enabled();
+
+    bool enabled = l2::L2Faucet::IsEnabled();
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("success", true);
-    result.pushKV("withdrawalId", withdrawal.withdrawalId.GetHex());
-    result.pushKV("l2Sender", "0x" + l2Sender.GetHex());
-    result.pushKV("l1Recipient", "0x" + l1Recipient.GetHex());
-    result.pushKV("amount", ValueFromAmount(amount));
-    result.pushKV("status", l2::WithdrawalStatusToString(withdrawal.status));
-    result.pushKV("challengeDeadline", (int64_t)withdrawal.challengeDeadline);
-    result.pushKV("isFastWithdrawal", withdrawal.isFastWithdrawal);
-    result.pushKV("hatScore", (int)hatScore);
+    result.pushKV("enabled", enabled);
+    result.pushKV("network", enabled ? "testnet/regtest" : "mainnet");
+    result.pushKV("maxAmount", ValueFromAmount(l2::MAX_FAUCET_AMOUNT));
+    result.pushKV("cooldownSeconds", (int64_t)l2::COOLDOWN_SECONDS);
     
-    uint64_t challengePeriod = withdrawal.challengeDeadline - currentTime;
-    result.pushKV("challengePeriodSeconds", (int64_t)challengePeriod);
-    result.pushKV("challengePeriodDays", (double)challengePeriod / 86400.0);
-    
-    if (withdrawal.isFastWithdrawal) {
-        result.pushKV("message", "Fast withdrawal initiated (reduced challenge period)");
+    if (enabled) {
+        l2::L2Faucet& faucet = GetL2Faucet();
+        result.pushKV("totalDistributed", ValueFromAmount(faucet.GetTotalDistributed()));
+        result.pushKV("uniqueRecipients", (int64_t)faucet.GetUniqueRecipientCount());
+        result.pushKV("tokenSymbol", faucet.GetTokenManager().GetTokenSymbol());
+        
+        // Check specific address if provided
+        if (request.params.size() > 0) {
+            std::string addressStr = request.params[0].get_str();
+            uint160 address = ParseL2Address(addressStr);
+            
+            result.pushKV("address", "0x" + address.GetHex());
+            result.pushKV("canRequest", faucet.CanRequest(address));
+            result.pushKV("cooldownRemaining", (int64_t)faucet.GetCooldownRemaining(address));
+        }
     } else {
-        result.pushKV("message", "Withdrawal initiated (standard challenge period)");
+        result.pushKV("message", "Faucet is disabled on mainnet");
     }
     
     return result;
 }
+
+
+// ============================================================================
+// Task 12: Legacy Bridge RPC Commands REMOVED
+// Requirements: 11.1, 11.4 - l2_deposit and l2_withdraw have been completely removed
+// The new burn-and-mint model uses l2_createburntx, l2_sendburntx, etc. from l2_burn.cpp
+// ============================================================================
 
 UniValue l2_getwithdrawalstatus(const JSONRPCRequest& request)
 {
@@ -1471,9 +1773,26 @@ static const CRPCCommand commands[] =
     { "l2",                   "l2_getsequencers",       &l2_getsequencers,       {"eligibleonly"} },
     { "l2",                   "l2_getleader",           &l2_getleader,           {} },
     
-    // Task 18.4: Bridge RPC (Requirements: 4.1, 4.2)
-    { "l2",                   "l2_deposit",             &l2_deposit,             {"l2address", "amount", "l1txhash"} },
-    { "l2",                   "l2_withdraw",            &l2_withdraw,            {"l2address", "l1address", "amount", "hatscore"} },
+    // Task 8.1: Token Info RPC (Requirements: 8.1, 8.2, 8.3, 8.4)
+    { "l2",                   "l2_gettokeninfo",        &l2_gettokeninfo,        {} },
+    { "l2",                   "l2_gettokensupply",      &l2_gettokensupply,      {} },
+    { "l2",                   "l2_getgenesisdistribution", &l2_getgenesisdistribution, {} },
+    { "l2",                   "l2_getmintinghistory",   &l2_getmintinghistory,   {"fromblock", "toblock"} },
+    { "l2",                   "l2_getsequencerrewards", &l2_getsequencerrewards, {} },
+    
+    // Task 8.3: Transfer RPC (Requirements: 2.5, 7.3)
+    { "l2",                   "l2_transfer",            &l2_transfer,            {"from", "to", "amount", "fee"} },
+    { "l2",                   "l2_gettransfer",         &l2_gettransfer,         {"txhash"} },
+    
+    // Task 8.4: Faucet RPC (Requirements: 5.1, 5.5)
+    { "l2",                   "l2_faucet",              &l2_faucet,              {"address", "amount"} },
+    { "l2",                   "l2_getfaucetstatus",     &l2_getfaucetstatus,     {"address"} },
+    
+    // Task 12: Legacy Bridge RPC REMOVED (Requirements: 11.1, 11.4)
+    // l2_deposit and l2_withdraw have been completely removed
+    // Use the new burn-and-mint model: l2_createburntx, l2_sendburntx, l2_getburnstatus
+    // See src/rpc/l2_burn.cpp for the new implementation
+    
     { "l2",                   "l2_getwithdrawalstatus", &l2_getwithdrawalstatus, {"withdrawalid"} },
     
     // Task 21.1: L2 Registry RPC (Requirements: 1.1, 1.2, 1.3, 1.4, 1.5)

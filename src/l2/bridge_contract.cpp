@@ -6,7 +6,14 @@
  * @file bridge_contract.cpp
  * @brief Implementation of Bridge Contract for L1<->L2 transfers
  * 
- * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.2, 12.1, 12.2, 12.3
+ * *** DEPRECATED - Task 12: Legacy Bridge Code ***
+ * 
+ * This bridge contract is DEPRECATED. The new burn-and-mint model replaces
+ * the old deposit/withdrawal system. See src/rpc/l2_burn.cpp and the
+ * burn_parser, burn_validator, burn_registry, mint_consensus, and l2_minter
+ * components for the new implementation.
+ * 
+ * Requirements: 11.1, 11.4 - Legacy bridge code deprecated
  */
 
 #include <l2/bridge_contract.h>

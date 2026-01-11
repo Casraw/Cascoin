@@ -15,6 +15,7 @@
  */
 
 #include <l2/fee_distributor.h>
+#include <l2/l2_transaction.h>
 #include <random.h>
 #include <uint256.h>
 
@@ -689,6 +690,280 @@ BOOST_AUTO_TEST_CASE(property_shared_pool_fairness)
                     " (expected=" << expectedShare << ", actual=" << rewards->sharedPoolRewards << ")");
             }
         }
+    }
+}
+
+// ============================================================================
+// Burn-and-Mint Model Property Tests (Requirements 6.1-6.6)
+// ============================================================================
+
+/**
+ * Helper function to create a random L2 transaction with fees
+ */
+static l2::L2Transaction CreateRandomTransaction()
+{
+    l2::L2Transaction tx;
+    tx.from = RandomAddress();
+    tx.to = RandomAddress();
+    tx.value = TestRand64() % (10 * COIN);
+    tx.nonce = TestRand64() % 1000;
+    tx.gasLimit = 21000 + (TestRand64() % 100000);
+    tx.gasPrice = 1000 + (TestRand64() % 10000);  // 1000-11000 satoshis per gas
+    tx.gasUsed = tx.gasLimit / 2 + (TestRand64() % (tx.gasLimit / 2));  // 50-100% of limit
+    tx.type = l2::L2TxType::TRANSFER;
+    return tx;
+}
+
+/**
+ * Helper function to create a list of random transactions
+ */
+static std::vector<l2::L2Transaction> CreateRandomTransactions(size_t count)
+{
+    std::vector<l2::L2Transaction> txs;
+    txs.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+        txs.push_back(CreateRandomTransaction());
+    }
+    return txs;
+}
+
+/**
+ * **Property 10: Fee-Only Sequencer Rewards**
+ * 
+ * *For any* L2 block, the sequencer reward SHALL equal exactly the sum of
+ * transaction fees in that block. No new tokens SHALL be minted as block rewards.
+ * 
+ * **Validates: Requirements 6.1, 6.2, 6.3**
+ * 
+ * This property ensures that:
+ * 1. Sequencer rewards come ONLY from transaction fees (Requirement 6.1)
+ * 2. NO new tokens are minted for block rewards (Requirement 6.2)
+ * 3. Block producer receives the transaction fees (Requirement 6.3)
+ */
+BOOST_AUTO_TEST_CASE(property_fee_only_sequencer_rewards)
+{
+    // Run 100 iterations as required for property-based tests
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        l2::FeeDistributor distributor;
+        
+        // Generate random sequencer and transactions
+        uint160 sequencer = RandomAddress();
+        uint32_t txCount = TestRand32() % 20;  // 0-19 transactions
+        std::vector<l2::L2Transaction> transactions = CreateRandomTransactions(txCount);
+        uint64_t blockNumber = 1000 + iteration;
+        
+        // Calculate expected fees (sum of gasUsed * gasPrice for all transactions)
+        CAmount expectedFees = 0;
+        for (const auto& tx : transactions) {
+            uint64_t gasUsed = tx.gasUsed > 0 ? tx.gasUsed : tx.gasLimit;
+            CAmount gasPrice = tx.gasPrice > 0 ? tx.gasPrice : tx.maxFeePerGas;
+            expectedFees += static_cast<CAmount>(gasUsed) * gasPrice;
+        }
+        
+        // Get initial state
+        CAmount initialFeesEarned = distributor.GetTotalFeesEarned(sequencer);
+        
+        // Distribute block fees
+        bool success = distributor.DistributeBlockFees(blockNumber, sequencer, transactions);
+        BOOST_CHECK_MESSAGE(success, 
+            "DistributeBlockFees failed for iteration " << iteration);
+        
+        // Verify: Sequencer reward equals exactly the sum of transaction fees
+        CAmount feesEarned = distributor.GetTotalFeesEarned(sequencer);
+        CAmount actualReward = feesEarned - initialFeesEarned;
+        
+        BOOST_CHECK_MESSAGE(actualReward == expectedFees,
+            "Fee-only reward violated for iteration " << iteration <<
+            " (expected=" << expectedFees << ", actual=" << actualReward << 
+            ", txCount=" << txCount << ")");
+        
+        // Verify: CalculateBlockFees returns the same value
+        CAmount calculatedFees = distributor.CalculateBlockFees(transactions);
+        BOOST_CHECK_MESSAGE(calculatedFees == expectedFees,
+            "CalculateBlockFees mismatch for iteration " << iteration <<
+            " (expected=" << expectedFees << ", calculated=" << calculatedFees << ")");
+        
+        // Verify: Empty block means zero reward (Requirement 6.5)
+        if (txCount == 0) {
+            BOOST_CHECK_MESSAGE(actualReward == 0,
+                "Non-zero reward for empty block in iteration " << iteration <<
+                " (reward=" << actualReward << ")");
+        }
+    }
+}
+
+/**
+ * **Property: Fee Accumulation Across Blocks**
+ * 
+ * *For any* sequence of blocks produced by a sequencer, the total fees earned
+ * SHALL equal the sum of fees from all blocks.
+ * 
+ * **Validates: Requirements 6.3, 6.4**
+ */
+BOOST_AUTO_TEST_CASE(property_fee_accumulation_across_blocks)
+{
+    // Run 50 iterations
+    for (int iteration = 0; iteration < 50; ++iteration) {
+        l2::FeeDistributor distributor;
+        
+        uint160 sequencer = RandomAddress();
+        uint32_t numBlocks = 5 + (TestRand32() % 10);  // 5-14 blocks
+        
+        CAmount expectedTotalFees = 0;
+        
+        for (uint32_t block = 0; block < numBlocks; ++block) {
+            uint32_t txCount = 1 + (TestRand32() % 10);  // 1-10 transactions
+            std::vector<l2::L2Transaction> transactions = CreateRandomTransactions(txCount);
+            
+            // Calculate expected fees for this block
+            CAmount blockFees = distributor.CalculateBlockFees(transactions);
+            expectedTotalFees += blockFees;
+            
+            // Distribute fees
+            distributor.DistributeBlockFees(1000 + block, sequencer, transactions);
+        }
+        
+        // Verify total fees earned
+        CAmount actualTotalFees = distributor.GetTotalFeesEarned(sequencer);
+        BOOST_CHECK_MESSAGE(actualTotalFees == expectedTotalFees,
+            "Fee accumulation mismatch for iteration " << iteration <<
+            " (expected=" << expectedTotalFees << ", actual=" << actualTotalFees << ")");
+    }
+}
+
+/**
+ * **Property: Minimum Fee Validation**
+ * 
+ * *For any* transaction, the system SHALL reject it if the fee is below
+ * the minimum transaction fee.
+ * 
+ * **Validates: Requirement 6.6**
+ */
+BOOST_AUTO_TEST_CASE(property_minimum_fee_validation)
+{
+    // Run 100 iterations
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        l2::L2Transaction tx;
+        tx.from = RandomAddress();
+        tx.to = RandomAddress();
+        tx.gasLimit = 21000;  // Standard transfer gas limit
+        
+        // Generate random gas price
+        CAmount gasPrice = TestRand64() % 200;  // 0-199 satoshis per gas
+        tx.gasPrice = gasPrice;
+        
+        CAmount maxFee = static_cast<CAmount>(tx.gasLimit) * gasPrice;
+        bool shouldBeValid = maxFee >= l2::MIN_TRANSACTION_FEE;
+        
+        bool isValid = l2::FeeDistributor::ValidateMinimumFee(tx);
+        
+        BOOST_CHECK_MESSAGE(isValid == shouldBeValid,
+            "Minimum fee validation mismatch for iteration " << iteration <<
+            " (gasPrice=" << gasPrice << ", maxFee=" << maxFee << 
+            ", minFee=" << l2::MIN_TRANSACTION_FEE <<
+            ", expected=" << shouldBeValid << ", actual=" << isValid << ")");
+    }
+}
+
+/**
+ * **Property: Fee History Consistency**
+ * 
+ * *For any* sequence of fee distributions, the fee history SHALL accurately
+ * reflect all distributions within the queried block range.
+ * 
+ * **Validates: Requirement 6.4**
+ */
+BOOST_AUTO_TEST_CASE(property_fee_history_consistency)
+{
+    // Run 50 iterations
+    for (int iteration = 0; iteration < 50; ++iteration) {
+        l2::FeeDistributor distributor;
+        
+        uint160 sequencer = RandomAddress();
+        uint32_t numBlocks = 10 + (TestRand32() % 20);  // 10-29 blocks
+        uint64_t startBlock = 1000;
+        
+        std::vector<CAmount> expectedFees;
+        
+        for (uint32_t block = 0; block < numBlocks; ++block) {
+            uint32_t txCount = 1 + (TestRand32() % 5);
+            std::vector<l2::L2Transaction> transactions = CreateRandomTransactions(txCount);
+            
+            CAmount blockFees = distributor.CalculateBlockFees(transactions);
+            expectedFees.push_back(blockFees);
+            
+            distributor.DistributeBlockFees(startBlock + block, sequencer, transactions);
+        }
+        
+        // Query fee history
+        auto history = distributor.GetFeeHistory(sequencer, startBlock, startBlock + numBlocks - 1);
+        
+        BOOST_CHECK_MESSAGE(history.size() == numBlocks,
+            "Fee history size mismatch for iteration " << iteration <<
+            " (expected=" << numBlocks << ", actual=" << history.size() << ")");
+        
+        // Verify each entry
+        for (size_t i = 0; i < history.size() && i < expectedFees.size(); ++i) {
+            BOOST_CHECK_MESSAGE(history[i].totalFees == expectedFees[i],
+                "Fee history entry mismatch for iteration " << iteration <<
+                ", block " << i <<
+                " (expected=" << expectedFees[i] << ", actual=" << history[i].totalFees << ")");
+            
+            BOOST_CHECK_MESSAGE(history[i].blockNumber == startBlock + i,
+                "Block number mismatch in fee history for iteration " << iteration);
+            
+            BOOST_CHECK_MESSAGE(history[i].sequencerAddress == sequencer,
+                "Sequencer address mismatch in fee history for iteration " << iteration);
+        }
+    }
+}
+
+/**
+ * **Property: No Minting in Fee Distribution**
+ * 
+ * *For any* fee distribution, the total L2 token supply SHALL NOT increase.
+ * Sequencer rewards come from existing fees, not new token creation.
+ * 
+ * **Validates: Requirements 6.1, 6.2**
+ * 
+ * Note: This test verifies that DistributeBlockFees only credits existing fees
+ * and does not create new tokens. The actual supply tracking is done by L2TokenMinter.
+ */
+BOOST_AUTO_TEST_CASE(property_no_minting_in_fee_distribution)
+{
+    // Run 100 iterations
+    for (int iteration = 0; iteration < 100; ++iteration) {
+        l2::FeeDistributor distributor;
+        
+        // Create multiple sequencers
+        std::vector<uint160> sequencers = RandomSequencerList(5);
+        uint32_t numBlocks = 10;
+        
+        CAmount totalFeesDistributed = 0;
+        CAmount totalFeesEarnedBySequencers = 0;
+        
+        for (uint32_t block = 0; block < numBlocks; ++block) {
+            uint160 producer = sequencers[TestRand32() % sequencers.size()];
+            uint32_t txCount = 1 + (TestRand32() % 10);
+            std::vector<l2::L2Transaction> transactions = CreateRandomTransactions(txCount);
+            
+            CAmount blockFees = distributor.CalculateBlockFees(transactions);
+            totalFeesDistributed += blockFees;
+            
+            distributor.DistributeBlockFees(1000 + block, producer, transactions);
+        }
+        
+        // Sum up all fees earned by all sequencers
+        for (const auto& seq : sequencers) {
+            totalFeesEarnedBySequencers += distributor.GetTotalFeesEarned(seq);
+        }
+        
+        // Verify: Total fees earned equals total fees distributed
+        // This ensures no new tokens were created
+        BOOST_CHECK_MESSAGE(totalFeesEarnedBySequencers == totalFeesDistributed,
+            "Fee conservation violated for iteration " << iteration <<
+            " (distributed=" << totalFeesDistributed << 
+            ", earned=" << totalFeesEarnedBySequencers << ")");
     }
 }
 

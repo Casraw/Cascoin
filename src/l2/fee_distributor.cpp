@@ -10,6 +10,7 @@
  */
 
 #include <l2/fee_distributor.h>
+#include <l2/l2_transaction.h>
 #include <util.h>
 
 #include <algorithm>
@@ -280,6 +281,113 @@ BurnSummary FeeDistributor::GetBurnSummary() const
 }
 
 // ============================================================================
+// Burn-and-Mint Fee Distribution (Requirements 6.1-6.6)
+// ============================================================================
+
+bool FeeDistributor::DistributeBlockFees(
+    uint64_t blockNumber,
+    const uint160& sequencer,
+    const std::vector<L2Transaction>& transactions)
+{
+    LOCK(cs_distributor_);
+
+    // Calculate total fees from transactions
+    CAmount totalFees = CalculateBlockFees(transactions);
+
+    // If no fees, still record the block but with zero fees
+    // Requirement 6.5: If a block has no transactions, sequencer gets no rewards
+    
+    // Create distribution record
+    BlockFeeDistribution distribution(
+        blockNumber,
+        sequencer,
+        totalFees,
+        static_cast<uint32_t>(transactions.size()),
+        GetTime()
+    );
+
+    // Credit fees to sequencer (Requirement 6.3: sequencer receives transaction fees)
+    if (totalFees > 0) {
+        totalFeesEarned_[sequencer] += totalFees;
+        
+        // Also update the sequencer reward info for compatibility
+        SequencerRewardInfo& info = EnsureSequencerInfo(sequencer);
+        info.totalRewards += totalFees;
+        info.blockProductionRewards += totalFees;
+    }
+
+    // Store in history
+    blockFeeHistory_.push_back(distribution);
+    
+    // Cleanup old entries
+    while (blockFeeHistory_.size() > MAX_BLOCK_FEE_HISTORY) {
+        blockFeeHistory_.pop_front();
+    }
+
+    return true;
+}
+
+CAmount FeeDistributor::CalculateBlockFees(const std::vector<L2Transaction>& transactions) const
+{
+    CAmount totalFees = 0;
+
+    for (const auto& tx : transactions) {
+        // Fee = gasUsed * effectiveGasPrice
+        // If gasUsed is 0 (not yet executed), use gasLimit as estimate
+        uint64_t gasUsed = tx.gasUsed > 0 ? tx.gasUsed : tx.gasLimit;
+        
+        // Use gasPrice or maxFeePerGas depending on transaction type
+        CAmount gasPrice = tx.gasPrice > 0 ? tx.gasPrice : tx.maxFeePerGas;
+        
+        CAmount txFee = static_cast<CAmount>(gasUsed) * gasPrice;
+        totalFees += txFee;
+    }
+
+    return totalFees;
+}
+
+std::vector<BlockFeeDistribution> FeeDistributor::GetFeeHistory(
+    const uint160& sequencer,
+    uint64_t fromBlock,
+    uint64_t toBlock) const
+{
+    LOCK(cs_distributor_);
+
+    std::vector<BlockFeeDistribution> result;
+
+    for (const auto& dist : blockFeeHistory_) {
+        if (dist.sequencerAddress == sequencer &&
+            dist.blockNumber >= fromBlock &&
+            dist.blockNumber <= toBlock) {
+            result.push_back(dist);
+        }
+    }
+
+    return result;
+}
+
+CAmount FeeDistributor::GetTotalFeesEarned(const uint160& sequencer) const
+{
+    LOCK(cs_distributor_);
+
+    auto it = totalFeesEarned_.find(sequencer);
+    if (it != totalFeesEarned_.end()) {
+        return it->second;
+    }
+    return 0;
+}
+
+bool FeeDistributor::ValidateMinimumFee(const L2Transaction& tx)
+{
+    // Calculate the transaction fee
+    CAmount gasPrice = tx.gasPrice > 0 ? tx.gasPrice : tx.maxFeePerGas;
+    CAmount maxFee = static_cast<CAmount>(tx.gasLimit) * gasPrice;
+    
+    // Check against minimum fee requirement (Requirement 6.6)
+    return maxFee >= MIN_TRANSACTION_FEE;
+}
+
+// ============================================================================
 // Sequencer Management
 // ============================================================================
 
@@ -410,6 +518,8 @@ void FeeDistributor::Clear()
     distributionHistory_.clear();
     burnSummary_ = BurnSummary();
     burnHistory_.clear();
+    blockFeeHistory_.clear();
+    totalFeesEarned_.clear();
 }
 
 void FeeDistributor::CalculateSplit(

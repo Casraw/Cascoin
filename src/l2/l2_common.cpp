@@ -33,11 +33,12 @@ std::string L2TxTypeToString(L2TxType type)
         case L2TxType::TRANSFER:           return "TRANSFER";
         case L2TxType::CONTRACT_DEPLOY:    return "CONTRACT_DEPLOY";
         case L2TxType::CONTRACT_CALL:      return "CONTRACT_CALL";
-        case L2TxType::DEPOSIT:            return "DEPOSIT";
-        case L2TxType::WITHDRAWAL:         return "WITHDRAWAL";
+        case L2TxType::DEPOSIT:            return "DEPOSIT";  // DEPRECATED
+        case L2TxType::WITHDRAWAL:         return "WITHDRAWAL";  // DEPRECATED
         case L2TxType::CROSS_LAYER_MSG:    return "CROSS_LAYER_MSG";
         case L2TxType::SEQUENCER_ANNOUNCE: return "SEQUENCER_ANNOUNCE";
         case L2TxType::FORCED_INCLUSION:   return "FORCED_INCLUSION";
+        case L2TxType::BURN_MINT:          return "BURN_MINT";  // NEW: Task 12
         default:                           return "UNKNOWN";
     }
 }

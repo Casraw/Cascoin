@@ -9,17 +9,24 @@
  * @file bridge_contract.h
  * @brief Bridge Contract for L1<->L2 deposits and withdrawals
  * 
- * This file implements the Bridge Contract that manages the transfer of
- * CAS between L1 (Cascoin mainchain) and L2 (Layer 2 scaling solution).
+ * *** DEPRECATED - Task 12: Legacy Bridge Code ***
  * 
- * Key features:
- * - Deposit processing (L1 -> L2)
- * - Withdrawal initiation and finalization (L2 -> L1)
- * - Challenge period enforcement
- * - Fast withdrawals for high-reputation users
- * - Emergency withdrawals when L2 is unavailable
+ * This bridge contract is DEPRECATED and will be removed in a future version.
+ * The new burn-and-mint model replaces the old deposit/withdrawal system:
  * 
- * Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6, 6.2, 12.1, 12.2, 12.3
+ * - Use l2_createburntx to burn CAS on L1 via OP_RETURN
+ * - Use l2_sendburntx to broadcast the burn transaction
+ * - Use l2_getburnstatus to check burn/mint status
+ * - See src/rpc/l2_burn.cpp for the new implementation
+ * 
+ * Requirements: 11.1, 11.4 - Legacy bridge code deprecated
+ * 
+ * Old features (DEPRECATED):
+ * - Deposit processing (L1 -> L2) - Use burn-and-mint instead
+ * - Withdrawal initiation and finalization (L2 -> L1) - No longer supported
+ * - Challenge period enforcement - Replaced by sequencer consensus
+ * - Fast withdrawals for high-reputation users - No longer applicable
+ * - Emergency withdrawals when L2 is unavailable - Handled differently
  */
 
 #include <l2/l2_common.h>

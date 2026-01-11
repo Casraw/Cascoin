@@ -43,14 +43,27 @@ enum class L2TxType : uint8_t {
     TRANSFER = 0,           // Standard value transfer
     CONTRACT_DEPLOY = 1,    // Deploy new contract
     CONTRACT_CALL = 2,      // Call existing contract
-    DEPOSIT = 3,            // L1 -> L2 deposit
-    WITHDRAWAL = 4,         // L2 -> L1 withdrawal
+    DEPOSIT = 3,            // DEPRECATED: Old L1 -> L2 deposit (use burn-and-mint instead)
+    WITHDRAWAL = 4,         // DEPRECATED: Old L2 -> L1 withdrawal (no longer supported)
     CROSS_LAYER_MSG = 5,    // Cross-layer message
     SEQUENCER_ANNOUNCE = 6, // Sequencer announcement
-    FORCED_INCLUSION = 7    // Forced transaction from L1
+    FORCED_INCLUSION = 7,   // Forced transaction from L1
+    BURN_MINT = 8           // NEW: Burn-and-mint token creation (Task 12)
 };
 
-/** Withdrawal status */
+/** 
+ * Withdrawal status 
+ * 
+ * DEPRECATED - Task 12: Legacy Bridge Code
+ * 
+ * This enum is kept for backward compatibility but the old withdrawal
+ * system has been replaced by the burn-and-mint model. See:
+ * - src/l2/burn_parser.h
+ * - src/l2/burn_validator.h
+ * - src/l2/burn_registry.h
+ * - src/l2/mint_consensus.h
+ * - src/l2/l2_minter.h
+ */
 enum class WithdrawalStatus : uint8_t {
     PENDING = 0,        // Waiting for challenge period
     CHALLENGED = 1,     // Under dispute

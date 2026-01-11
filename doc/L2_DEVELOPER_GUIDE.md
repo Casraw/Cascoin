@@ -9,7 +9,7 @@ This guide provides comprehensive documentation for developers building applicat
 3. [RPC API Reference](#rpc-api-reference)
 4. [Contract Deployment](#contract-deployment)
 5. [Cross-Layer Messaging](#cross-layer-messaging)
-6. [Bridge Operations](#bridge-operations)
+6. [Burn-and-Mint Token Model](#burn-and-mint-token-model)
 7. [Transaction Types](#transaction-types)
 8. [MEV Protection](#mev-protection)
 9. [Reputation Integration](#reputation-integration)
@@ -35,17 +35,29 @@ Cascoin L2 is a native Layer 2 scaling solution that provides:
 │                     Your Application                        │
 ├─────────────────────────────────────────────────────────────┤
 │                      L2 RPC Interface                       │
-│  l2_getbalance | l2_deposit | l2_withdraw | l2_deploy ...   │
+│  l2_getbalance | l2_createburntx | l2_getburnstatus | ...   │
 ├─────────────────────────────────────────────────────────────┤
 │                    Cascoin L2 Layer                         │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐ │
-│  │   Bridge    │  │  Sequencer  │  │  Cross-Layer Msg    │ │
-│  │  Contract   │  │  Consensus  │  │     System          │ │
+│  │ Burn-Mint   │  │  Sequencer  │  │  Cross-Layer Msg    │ │
+│  │   System    │  │  Consensus  │  │     System          │ │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘ │
 ├─────────────────────────────────────────────────────────────┤
 │                    Cascoin L1 (Mainchain)                   │
+│              OP_RETURN Burn Transactions                    │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+### Token Model: Burn-and-Mint
+
+Cascoin L2 uses a **Burn-and-Mint** token model for secure cross-layer value transfer:
+
+- **Burn on L1**: CAS is permanently destroyed via OP_RETURN transactions
+- **Mint on L2**: Equivalent L2 tokens are minted after 2/3 sequencer consensus
+- **1:1 Backing**: L2 token supply always equals total burned CAS
+- **Cryptographically Secure**: OP_RETURN outputs are provably unspendable
+
+This model eliminates the security risks of traditional bridge contracts.
 
 ---
 
@@ -72,11 +84,20 @@ cascoin-cli l2_getchaininfo 1001
 # Get L2 balance
 cascoin-cli l2_getbalance "0xYourAddress"
 
-# Deposit CAS to L2
-cascoin-cli l2_deposit "0xYourL2Address" 100
+# Create a burn transaction to get L2 tokens
+cascoin-cli l2_createburntx 100 "0xYourL2Address"
 
-# Withdraw CAS from L2
-cascoin-cli l2_withdraw "0xYourL2Address" "YourL1Address" 50
+# Send the burn transaction to L1
+cascoin-cli l2_sendburntx "<signed_tx_hex>"
+
+# Check burn status and consensus progress
+cascoin-cli l2_getburnstatus "<l1_tx_hash>"
+
+# Get total L2 token supply
+cascoin-cli l2_gettotalsupply
+
+# Verify supply invariant
+cascoin-cli l2_verifysupply
 ```
 
 **Important:** When running a node, you connect to a specific L2 chain via the `-l2chainid` parameter. All operations without explicit chain ID use this configured chain.
@@ -416,122 +437,207 @@ cascoin-cli l2_getleader
 }
 ```
 
-### Bridge Operations
+### Burn-and-Mint Operations
 
-#### l2_deposit
+#### l2_createburntx
 
-Process a deposit from L1 to L2.
+Create a burn transaction to convert CAS to L2 tokens.
 
 ```bash
-cascoin-cli l2_deposit "l2address" amount ["l1txhash"]
+cascoin-cli l2_createburntx <amount> <l2_recipient_address>
 ```
 
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| l2address | string | Yes | L2 recipient address |
-| amount | numeric | Yes | Amount to deposit in CAS |
-| l1txhash | string | No | L1 transaction hash (for tracking) |
+| amount | numeric | Yes | Amount of CAS to burn |
+| l2_recipient_address | string | Yes | L2 address to receive minted tokens |
 
 **Response:**
 ```json
 {
-  "success": true,
-  "depositId": "0xdep123...",
+  "hex": "0100000001...",
+  "burnAmount": "100.00000000",
   "l2Recipient": "0xa1b2c3...",
-  "amount": "100.00000000",
-  "l1TxHash": "0x...",
-  "l1BlockNumber": 500000,
-  "message": "Deposit processed successfully"
+  "chainId": 1,
+  "opReturnData": "4c324255524e..."
 }
 ```
 
-**Limits:**
-- Maximum per transaction: 10,000 CAS
-- Maximum daily per address: 100,000 CAS
+#### l2_sendburntx
 
-#### l2_withdraw
-
-Initiate a withdrawal from L2 to L1.
+Broadcast a signed burn transaction to the L1 network.
 
 ```bash
-cascoin-cli l2_withdraw "l2address" "l1address" amount [hatscore]
+cascoin-cli l2_sendburntx <hex_tx>
 ```
 
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| l2address | string | Yes | L2 sender address |
-| l1address | string | Yes | L1 recipient address |
-| amount | numeric | Yes | Amount to withdraw in CAS |
-| hatscore | numeric | No | HAT v2 score for fast withdrawal (default: 0) |
+| hex_tx | string | Yes | Signed transaction hex from l2_createburntx |
 
 **Response:**
 ```json
 {
+  "txid": "abc123...",
   "success": true,
-  "withdrawalId": "0xwith123...",
-  "l2Sender": "0xa1b2c3...",
-  "l1Recipient": "0xdef456...",
-  "amount": "50.00000000",
-  "status": "PENDING",
-  "challengeDeadline": 1704672000,
-  "isFastWithdrawal": false,
-  "hatScore": 0,
-  "challengePeriodSeconds": 604800,
-  "challengePeriodDays": 7.0,
-  "message": "Withdrawal initiated (standard challenge period)"
+  "message": "Burn transaction broadcast successfully"
 }
 ```
 
-**Fast Withdrawal:**
-Users with HAT score ≥ 80 qualify for fast withdrawal with reduced challenge period (1 day instead of 7 days).
+#### l2_getburnstatus
+
+Get the status of a burn transaction and its consensus progress.
 
 ```bash
-cascoin-cli l2_withdraw "0xsender..." "L1Address..." 50 85
-```
-
-#### l2_getwithdrawalstatus
-
-Get the status of a withdrawal request.
-
-```bash
-cascoin-cli l2_getwithdrawalstatus "withdrawalid"
+cascoin-cli l2_getburnstatus <l1_tx_hash>
 ```
 
 **Parameters:**
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| withdrawalid | string | Yes | Withdrawal identifier |
+| l1_tx_hash | string | Yes | L1 burn transaction hash |
 
 **Response:**
 ```json
 {
   "found": true,
-  "withdrawalId": "0xwith123...",
-  "l2Sender": "0xa1b2c3...",
-  "l1Recipient": "0xdef456...",
-  "amount": "50.00000000",
-  "status": "PENDING",
-  "l2BlockNumber": 12345,
-  "stateRoot": "0x...",
-  "initiatedAt": 1704067200,
-  "challengeDeadline": 1704672000,
-  "isFastWithdrawal": false,
-  "hatScore": 0,
-  "canFinalize": false,
-  "timeRemaining": 604800
+  "l1TxHash": "abc123...",
+  "l1Confirmations": 8,
+  "requiredConfirmations": 6,
+  "burnAmount": "100.00000000",
+  "l2Recipient": "0xa1b2c3...",
+  "consensusStatus": "REACHED",
+  "confirmationCount": 4,
+  "totalSequencers": 5,
+  "confirmationRatio": 0.8,
+  "mintStatus": "MINTED",
+  "l2MintBlock": 12345,
+  "l2MintTxHash": "def456..."
 }
 ```
 
-**Withdrawal Statuses:**
+**Consensus Statuses:**
 | Status | Description |
 |--------|-------------|
-| PENDING | Waiting for challenge period to end |
-| CHALLENGED | Under dispute |
-| READY | Challenge period passed, ready to claim |
-| COMPLETED | Successfully withdrawn |
-| CANCELLED | Cancelled due to valid challenge |
+| PENDING | Waiting for sequencer confirmations |
+| REACHED | 2/3 consensus reached, minting in progress |
+| MINTED | L2 tokens successfully minted |
+| FAILED | Consensus failed (timeout or invalid) |
+| REJECTED | Burn transaction rejected as invalid |
+
+#### l2_getpendingburns
+
+Get list of burns waiting for consensus.
+
+```bash
+cascoin-cli l2_getpendingburns
+```
+
+**Response:**
+```json
+[
+  {
+    "l1TxHash": "abc123...",
+    "burnAmount": "100.00000000",
+    "l2Recipient": "0xa1b2c3...",
+    "confirmationCount": 2,
+    "totalSequencers": 5,
+    "firstSeenTime": 1704067200,
+    "status": "PENDING"
+  }
+]
+```
+
+#### l2_getminthistory
+
+Get history of minted L2 tokens.
+
+```bash
+cascoin-cli l2_getminthistory [from_block] [to_block]
+```
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| from_block | numeric | No | Start block (default: 0) |
+| to_block | numeric | No | End block (default: current) |
+
+**Response:**
+```json
+[
+  {
+    "l1TxHash": "abc123...",
+    "l2Recipient": "0xa1b2c3...",
+    "amount": "100.00000000",
+    "l2MintBlock": 12345,
+    "l2MintTxHash": "def456...",
+    "timestamp": 1704067200
+  }
+]
+```
+
+#### l2_gettotalsupply
+
+Get the current total L2 token supply.
+
+```bash
+cascoin-cli l2_gettotalsupply
+```
+
+**Response:**
+```json
+{
+  "totalSupply": "1000000.00000000",
+  "totalBurnedL1": "1000000.00000000",
+  "burnCount": 5000
+}
+```
+
+#### l2_verifysupply
+
+Verify the supply invariant (total_supply == sum(balances) == total_burned_l1).
+
+```bash
+cascoin-cli l2_verifysupply
+```
+
+**Response:**
+```json
+{
+  "valid": true,
+  "totalSupply": "1000000.00000000",
+  "sumOfBalances": "1000000.00000000",
+  "totalBurnedL1": "1000000.00000000",
+  "discrepancy": "0.00000000"
+}
+```
+
+#### l2_getburnsforaddress
+
+Get all burns for a specific L2 address.
+
+```bash
+cascoin-cli l2_getburnsforaddress <address>
+```
+
+**Parameters:**
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| address | string | Yes | L2 address |
+
+**Response:**
+```json
+[
+  {
+    "l1TxHash": "abc123...",
+    "amount": "100.00000000",
+    "l2MintBlock": 12345,
+    "timestamp": 1704067200
+  }
+]
+```
 
 ---
 
@@ -647,6 +753,176 @@ Cross-layer calls are protected against reentrancy:
 1. Messages are queued for next block (no same-block execution)
 2. Mutex prevents recursive cross-layer calls
 3. Checks-effects-interactions pattern enforced
+
+---
+
+## Burn-and-Mint Token Model
+
+### Overview
+
+Cascoin L2 uses a **Burn-and-Mint** model for secure cross-layer value transfer. This model provides cryptographic guarantees that traditional bridge contracts cannot offer.
+
+### How It Works
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    BURN-AND-MINT FLOW                            │
+│                                                                  │
+│  1. User creates Burn TX on L1                                   │
+│     ┌─────────────────────────────────────────────────────────┐  │
+│     │  Input: 100.001 CAS (100 to burn + 0.001 TX Fee)        │  │
+│     │  Output 0: OP_RETURN "L2BURN" <chain_id> <pubkey> <amt> │  │
+│     │                                                          │  │
+│     │  Effect: 100 CAS are PERMANENTLY DESTROYED               │  │
+│     └─────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  2. L1 TX is included in block                                   │
+│     └─► Wait for 6 confirmations                                 │
+│                                                                  │
+│  3. Sequencers detect the Burn TX                                │
+│     ├─► Sequencer 1: "I see valid burn, signing"                 │
+│     ├─► Sequencer 2: "I see valid burn, signing"                 │
+│     └─► Sequencer 3: "I see valid burn, signing"                 │
+│                                                                  │
+│  4. 2/3 Consensus reached                                        │
+│     └─► L2 State Manager mints 100 L2-Tokens                     │
+│                                                                  │
+│  5. User has 100 L2-Tokens                                       │
+│     └─► Can transfer on L2, use smart contracts, etc.            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### OP_RETURN Burn Format
+
+The burn transaction uses a specific OP_RETURN format:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    OP_RETURN BURN FORMAT                        │
+│                                                                 │
+│  Byte 0:      OP_RETURN (0x6a)                                  │
+│  Byte 1:      OP_PUSHDATA (length of data)                      │
+│  Bytes 2-7:   "L2BURN" (6 bytes, ASCII marker)                  │
+│  Bytes 8-11:  chain_id (4 bytes, little-endian uint32)          │
+│  Bytes 12-44: recipient_pubkey (33 bytes, compressed)           │
+│  Bytes 45-52: amount (8 bytes, little-endian int64, satoshis)   │
+│                                                                 │
+│  Total: 53 bytes (1 + 1 + 6 + 4 + 33 + 8)                       │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why OP_RETURN is Secure
+
+OP_RETURN outputs are **provably unspendable** because:
+
+1. **Bitcoin Script Semantics**: OP_RETURN immediately terminates script execution. Any script starting with OP_RETURN always fails.
+
+2. **No Private Key Attack**: Unlike burn addresses, there's no "key" to find. Even quantum computers can't spend OP_RETURN outputs.
+
+3. **Node Consensus**: All nodes agree OP_RETURN outputs are unspendable. This is part of consensus rules, not configurable.
+
+| Burn Address | OP_RETURN |
+|--------------|-----------|
+| Configurable | Hardcoded in consensus |
+| Could be hacked | Mathematically impossible |
+| Trust required | Trustless verification |
+| Key might exist | No key concept |
+
+### Sequencer Consensus
+
+Before L2 tokens are minted, 2/3 of active sequencers must confirm the burn:
+
+1. Each sequencer independently validates the L1 burn transaction
+2. Sequencers broadcast signed confirmations to the network
+3. When 2/3 threshold is reached, minting is triggered
+4. The burn is recorded in the registry to prevent double-minting
+
+**Consensus Requirements:**
+- Minimum 6 L1 confirmations before consensus starts
+- 2/3 (67%) of active sequencers must confirm
+- 10-minute timeout for consensus
+- Each sequencer can only confirm once per burn
+
+### Supply Invariant
+
+The system maintains a strict supply invariant:
+
+```
+L2_Total_Supply == Total_Burned_CAS_on_L1 == Sum_of_All_L2_Balances
+```
+
+This invariant is verified:
+- At every L2 block
+- Via the `l2_verifysupply` RPC command
+- Any violation triggers a critical error
+
+### Example: Burning CAS for L2 Tokens
+
+```python
+import requests
+import json
+import time
+
+def rpc_call(method, params=[]):
+    payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    response = requests.post(
+        "http://localhost:8332",
+        auth=("rpcuser", "rpcpassword"),
+        json=payload
+    )
+    return response.json()
+
+# Step 1: Create burn transaction
+burn_tx = rpc_call("l2_createburntx", [100, "0xa1b2c3d4e5f6..."])
+print(f"Burn TX created: {burn_tx['result']['hex'][:50]}...")
+
+# Step 2: Sign the transaction (using wallet)
+signed = rpc_call("signrawtransactionwithwallet", [burn_tx['result']['hex']])
+print(f"Transaction signed")
+
+# Step 3: Broadcast to L1
+sent = rpc_call("l2_sendburntx", [signed['result']['hex']])
+l1_txid = sent['result']['txid']
+print(f"Burn TX broadcast: {l1_txid}")
+
+# Step 4: Wait for confirmations and consensus
+while True:
+    status = rpc_call("l2_getburnstatus", [l1_txid])
+    result = status['result']
+    
+    print(f"L1 Confirmations: {result['l1Confirmations']}/6")
+    print(f"Consensus: {result['confirmationCount']}/{result['totalSequencers']}")
+    print(f"Status: {result['consensusStatus']}")
+    
+    if result['mintStatus'] == 'MINTED':
+        print(f"✓ L2 tokens minted at block {result['l2MintBlock']}")
+        break
+    
+    time.sleep(10)
+
+# Step 5: Check L2 balance
+balance = rpc_call("l2_getbalance", ["0xa1b2c3d4e5f6..."])
+print(f"L2 Balance: {balance['result']['balance_cas']} CAS")
+```
+
+### Deprecated: Old Bridge RPCs
+
+The following RPCs have been removed and will return an error:
+
+| Deprecated RPC | Replacement |
+|----------------|-------------|
+| `l2_deposit` | `l2_createburntx` + `l2_sendburntx` |
+| `l2_withdraw` | Not yet implemented in burn-and-mint model |
+
+If you call these deprecated RPCs, you will receive:
+```json
+{
+  "error": {
+    "code": -32601,
+    "message": "l2_deposit is deprecated. Use l2_createburntx and l2_sendburntx for the new burn-and-mint model."
+  }
+}
+```
 
 ---
 
@@ -796,13 +1072,30 @@ L2 inherits reputation from L1:
 |-------|-------|----------|
 | `L2 is not enabled` | L2 disabled | Start with `-l2=1` |
 | `Invalid address format` | Bad address | Use 0x prefix or base58 |
-| `Insufficient L2 balance` | Not enough funds | Deposit more CAS |
+| `Insufficient L2 balance` | Not enough funds | Burn more CAS to get L2 tokens |
 | `Amount exceeds maximum` | Over limit | Reduce amount |
-| `Daily limit exceeded` | Too many deposits | Wait 24 hours |
 | `HAT score too low` | Low reputation | Build L1 reputation |
 | `Stake too low` | Insufficient stake | Increase stake |
 | `Block not found` | Invalid block | Check current height |
-| `Withdrawal not found` | Invalid ID | Verify withdrawal ID |
+
+### Burn-and-Mint Errors
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `L2_BURN_INVALID_FORMAT` | OP_RETURN format wrong | Check burn script format |
+| `L2_BURN_WRONG_MARKER` | Missing "L2BURN" marker | Use l2_createburntx RPC |
+| `L2_BURN_WRONG_CHAIN` | chain_id mismatch | Verify L2 chain ID |
+| `L2_BURN_INVALID_PUBKEY` | Invalid recipient pubkey | Check recipient address |
+| `L2_BURN_ZERO_AMOUNT` | Amount is zero | Specify amount > 0 |
+| `L2_BURN_AMOUNT_MISMATCH` | Encoded != actual burned | Verify transaction inputs |
+| `L2_CONSENSUS_NOT_SEQUENCER` | Signer not a sequencer | Only sequencers can confirm |
+| `L2_CONSENSUS_INVALID_SIG` | Bad signature | Verify sequencer key |
+| `L2_CONSENSUS_DUPLICATE` | Already confirmed | Each sequencer confirms once |
+| `L2_CONSENSUS_TIMEOUT` | 10 min without 2/3 | Wait for more sequencers |
+| `L2_MINT_ALREADY_PROCESSED` | Burn already minted | Cannot mint twice |
+| `L2_MINT_NO_CONSENSUS` | Consensus not reached | Wait for 2/3 confirmations |
+| `L2_MINT_INSUFFICIENT_CONF` | < 6 L1 confirmations | Wait for more L1 blocks |
+| `L2_SUPPLY_INVARIANT_VIOLATED` | Supply != sum(balances) | Critical error - report bug |
 
 ### Error Response Format
 
@@ -823,9 +1116,9 @@ L2 inherits reputation from L1:
 
 1. **Validate addresses**: Always verify address format before transactions
 2. **Check balances**: Verify sufficient balance before operations
-3. **Monitor withdrawals**: Track withdrawal status through challenge period
-4. **Use fast withdrawal**: If HAT score qualifies, use fast withdrawal
-5. **Handle reorgs**: Be prepared for L1 reorgs affecting L2 state
+3. **Monitor burn status**: Track burn transactions through consensus
+4. **Verify supply**: Periodically check supply invariant with `l2_verifysupply`
+5. **Handle reorgs**: Be prepared for L1 reorgs affecting burn confirmations
 
 ### Performance
 
@@ -837,7 +1130,7 @@ L2 inherits reputation from L1:
 ### Integration
 
 1. **Use WebSocket**: Subscribe to real-time updates via WebSocket
-2. **Handle async**: All bridge operations are asynchronous
+2. **Handle async**: All burn-and-mint operations are asynchronous
 3. **Implement retries**: Network issues may require retries
 4. **Log everything**: Maintain detailed logs for debugging
 
@@ -866,20 +1159,41 @@ class CascoinL2Client:
     def get_balance(self, address):
         return self.rpc("l2_getbalance", [address])
     
-    def deposit(self, l2_address, amount):
-        return self.rpc("l2_deposit", [l2_address, amount])
+    def create_burn_tx(self, amount, l2_recipient):
+        """Create a burn transaction to convert CAS to L2 tokens."""
+        return self.rpc("l2_createburntx", [amount, l2_recipient])
     
-    def withdraw(self, l2_address, l1_address, amount, hat_score=0):
-        return self.rpc("l2_withdraw", [l2_address, l1_address, amount, hat_score])
+    def send_burn_tx(self, signed_tx_hex):
+        """Broadcast a signed burn transaction to L1."""
+        return self.rpc("l2_sendburntx", [signed_tx_hex])
     
-    def wait_for_withdrawal(self, withdrawal_id, timeout=604800):
+    def get_burn_status(self, l1_tx_hash):
+        """Get the status of a burn transaction."""
+        return self.rpc("l2_getburnstatus", [l1_tx_hash])
+    
+    def get_pending_burns(self):
+        """Get list of burns waiting for consensus."""
+        return self.rpc("l2_getpendingburns", [])
+    
+    def get_total_supply(self):
+        """Get current L2 token supply."""
+        return self.rpc("l2_gettotalsupply", [])
+    
+    def verify_supply(self):
+        """Verify the supply invariant."""
+        return self.rpc("l2_verifysupply", [])
+    
+    def wait_for_mint(self, l1_tx_hash, timeout=600):
+        """Wait for burn to be minted (with timeout)."""
         start = time.time()
         while time.time() - start < timeout:
-            status = self.rpc("l2_getwithdrawalstatus", [withdrawal_id])
-            if status["canFinalize"]:
+            status = self.get_burn_status(l1_tx_hash)
+            if status.get("mintStatus") == "MINTED":
                 return status
-            time.sleep(60)
-        raise TimeoutError("Withdrawal challenge period not complete")
+            if status.get("consensusStatus") in ["FAILED", "REJECTED"]:
+                raise Exception(f"Burn failed: {status.get('consensusStatus')}")
+            time.sleep(10)
+        raise TimeoutError("Mint timeout - consensus not reached")
 
 # Usage
 client = CascoinL2Client("http://localhost:8332", "user", "pass")
@@ -888,14 +1202,31 @@ client = CascoinL2Client("http://localhost:8332", "user", "pass")
 balance = client.get_balance("0xa1b2c3...")
 print(f"Balance: {balance['balance_cas']} CAS")
 
-# Deposit
-deposit = client.deposit("0xa1b2c3...", 100)
-print(f"Deposit ID: {deposit['depositId']}")
+# Create and send burn transaction
+burn_tx = client.create_burn_tx(100, "0xa1b2c3...")
+print(f"Burn TX created")
 
-# Withdraw with fast withdrawal (HAT score 85)
-withdrawal = client.withdraw("0xa1b2c3...", "L1Address...", 50, 85)
-print(f"Withdrawal ID: {withdrawal['withdrawalId']}")
-print(f"Challenge period: {withdrawal['challengePeriodDays']} days")
+# Sign transaction (requires wallet RPC)
+signed = client.rpc("signrawtransactionwithwallet", [burn_tx['hex']])
+
+# Send burn transaction
+result = client.send_burn_tx(signed['hex'])
+l1_txid = result['txid']
+print(f"Burn TX sent: {l1_txid}")
+
+# Wait for mint
+try:
+    mint_result = client.wait_for_mint(l1_txid)
+    print(f"Minted at L2 block {mint_result['l2MintBlock']}")
+except TimeoutError:
+    print("Mint timed out - check pending burns")
+    pending = client.get_pending_burns()
+    print(f"Pending burns: {len(pending)}")
+
+# Verify supply invariant
+supply = client.verify_supply()
+print(f"Supply valid: {supply['valid']}")
+print(f"Total supply: {supply['totalSupply']} CAS")
 ```
 
 ---
@@ -916,9 +1247,10 @@ L2 supports two address formats:
 
 | Constant | Value | Description |
 |----------|-------|-------------|
-| MAX_DEPOSIT_PER_TX | 10,000 CAS | Maximum single deposit |
-| MAX_DAILY_DEPOSIT | 100,000 CAS | Maximum daily deposit per address |
-| MAX_WITHDRAWAL_PER_TX | 10,000 CAS | Maximum single withdrawal |
+| REQUIRED_L1_CONFIRMATIONS | 6 | L1 confirmations before consensus |
+| CONSENSUS_THRESHOLD | 67% | Required sequencer confirmations |
+| CONSENSUS_TIMEOUT | 10 min | Timeout for consensus |
+| MIN_SEQUENCERS | 3 | Minimum sequencers for consensus |
 | STANDARD_CHALLENGE_PERIOD | 7 days | Normal withdrawal wait time |
 | FAST_CHALLENGE_PERIOD | 1 day | Fast withdrawal wait time |
 | FAST_WITHDRAWAL_MIN_HAT | 80 | Minimum HAT for fast withdrawal |
@@ -926,6 +1258,7 @@ L2 supports two address formats:
 | MAX_MESSAGE_DATA_SIZE | 64 KB | Maximum cross-layer message size |
 | MAX_MESSAGES_PER_BLOCK | 100 | Maximum messages per L2 block |
 | MESSAGE_GAS_LIMIT | 1,000,000 | Gas limit for message execution |
+| MIN_TRANSACTION_FEE | 0.00001 L2 | Minimum L2 transaction fee |
 
 ### RPC Command Summary
 
@@ -944,6 +1277,11 @@ L2 supports two address formats:
 | Sequencer | `l2_announcesequencer` | Announce as sequencer |
 | Sequencer | `l2_getsequencers` | List sequencers |
 | Sequencer | `l2_getleader` | Get current leader |
-| Bridge | `l2_deposit` | Deposit to L2 |
-| Bridge | `l2_withdraw` | Withdraw from L2 |
-| Bridge | `l2_getwithdrawalstatus` | Get withdrawal status |
+| Burn-Mint | `l2_createburntx` | Create burn transaction |
+| Burn-Mint | `l2_sendburntx` | Broadcast burn transaction |
+| Burn-Mint | `l2_getburnstatus` | Get burn/consensus status |
+| Burn-Mint | `l2_getpendingburns` | List pending burns |
+| Burn-Mint | `l2_getminthistory` | Get mint history |
+| Burn-Mint | `l2_gettotalsupply` | Get total L2 supply |
+| Burn-Mint | `l2_verifysupply` | Verify supply invariant |
+| Burn-Mint | `l2_getburnsforaddress` | Get burns for address |
