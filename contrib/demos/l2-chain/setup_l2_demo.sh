@@ -70,6 +70,10 @@ print_success() {
     echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
 # Fehlerbehandlung
 cleanup_on_error() {
     print_error "Ein Fehler ist aufgetreten auf Zeile $1"
@@ -84,14 +88,6 @@ cleanup_on_error() {
 }
 
 trap 'cleanup_on_error $LINENO' ERR
-
-# Prüfe ob Befehl existiert
-check_command() {
-    if ! command -v "$1" &> /dev/null; then
-        print_error "Befehl '$1' nicht gefunden. Bitte installieren Sie Cascoin Core."
-        exit 1
-    fi
-}
 
 # Finde die Cascoin Binaries (lokal gebaut oder im PATH)
 find_binaries() {
@@ -136,372 +132,6 @@ wait_for_node() {
     print_error "Node konnte nicht gestartet werden (Timeout nach ${max_attempts}s)"
     return 1
 }
-
-# Generiere Blöcke mit Wiederholung bei Fehlschlag
-# generatetoaddress gibt ein Array zurück:
-#   - Leeres Array [] wenn kein Block gefunden wurde
-#   - Array mit Block-Hashes ["hash1", "hash2", ...] bei Erfolg
-generate_blocks() {
-    local target_count=$1
-    local address=$2
-    local max_attempts_per_block=10
-    
-    local start_height
-    start_height=$(cli getblockcount)
-    local target_height=$((start_height + target_count))
-    
-    print_info "Aktuelle Höhe: ${start_height}, Ziel: ${target_height}"
-    
-    local blocks_generated=0
-    local total_attempts=0
-    local max_total_attempts=$((target_count * max_attempts_per_block))
-    
-    while [ "$blocks_generated" -lt "$target_count" ] && [ "$total_attempts" -lt "$max_total_attempts" ]; do
-        local remaining=$((target_count - blocks_generated))
-        
-        # Versuche mehrere Blöcke auf einmal zu generieren
-        local batch_size=$remaining
-        if [ "$batch_size" -gt 10 ]; then
-            batch_size=10
-        fi
-        
-        # Führe generatetoaddress aus und zähle die zurückgegebenen Block-Hashes
-        local result
-        result=$(cli generatetoaddress "$batch_size" "$address" 2>/dev/null) || true
-        
-        # Zähle die Anzahl der generierten Blöcke anhand der zurückgegebenen Hashes
-        # Ein leeres Array "[]" oder "[\n]" bedeutet keine Blöcke
-        # Jeder 64-Zeichen Hex-Hash ist ein generierter Block
-        local generated_this_round=0
-        if [ -n "$result" ] && [ "$result" != "[]" ]; then
-            # Zähle die Anzahl der 64-Zeichen Hex-Strings (Block-Hashes)
-            generated_this_round=$(echo "$result" | grep -oE '[a-f0-9]{64}' | wc -l)
-        fi
-        
-        if [ "$generated_this_round" -gt 0 ]; then
-            blocks_generated=$((blocks_generated + generated_this_round))
-            
-            # Fortschrittsanzeige alle 10 Blöcke oder am Ende
-            if [ $((blocks_generated % 10)) -eq 0 ] || [ "$blocks_generated" -ge "$target_count" ]; then
-                local current_height
-                current_height=$(cli getblockcount)
-                print_info "Fortschritt: ${blocks_generated}/${target_count} Blöcke generiert (Höhe: ${current_height})"
-            fi
-        else
-            # Kein Block generiert (leeres Array), kurz warten und erneut versuchen
-            sleep 0.1
-        fi
-        
-        total_attempts=$((total_attempts + 1))
-    done
-    
-    if [ "$blocks_generated" -ge "$target_count" ]; then
-        print_success "${blocks_generated} Blöcke erfolgreich generiert"
-        return 0
-    else
-        print_error "Konnte nicht alle Blöcke generieren. Generiert: ${blocks_generated}/${target_count}"
-        return 1
-    fi
-}
-
-# Generiere einen einzelnen Block mit Wiederholung
-# Prüft das zurückgegebene Array auf Block-Hashes
-generate_single_block() {
-    local address=$1
-    local max_attempts=20
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        local result
-        result=$(cli generatetoaddress 1 "$address" 2>/dev/null) || true
-        
-        # Prüfe ob ein Block-Hash zurückgegeben wurde (64 Hex-Zeichen)
-        if [ -n "$result" ] && echo "$result" | grep -qE '[a-f0-9]{64}'; then
-            return 0
-        fi
-        
-        # Leeres Array, erneut versuchen
-        sleep 0.1
-        attempt=$((attempt + 1))
-    done
-    
-    print_warning "Block-Generierung nach ${max_attempts} Versuchen fehlgeschlagen"
-    return 1
-}
-
-# Prüfe ob L2 aktiviert ist (mit Wartezeit für L2-Initialisierung)
-check_l2_enabled() {
-    local max_attempts=30
-    local attempt=0
-    
-    print_info "Warte auf L2-Initialisierung..."
-    
-    while [ $attempt -lt $max_attempts ]; do
-        local result
-        result=$(cli l2_getchaininfo 2>&1)
-        if [ $? -eq 0 ]; then
-            # Prüfe ob L2 tatsächlich aktiviert ist
-            if echo "$result" | grep -q '"enabled": 1' || echo "$result" | grep -q '"enabled":1'; then
-                return 0
-            fi
-        fi
-        sleep 1
-        attempt=$((attempt + 1))
-    done
-    
-    print_error "L2 ist nicht aktiviert. Stellen Sie sicher, dass der Node mit -l2=1 gestartet wurde."
-    print_error "Debug: $(cli l2_getchaininfo 2>&1 || echo 'RPC nicht verfügbar')"
-    return 1
-}
-
-# =============================================================================
-# Argument-Parsing
-# =============================================================================
-
-DATADIR="${DEFAULT_DATADIR}"
-STAKE="${DEFAULT_STAKE}"
-HATSCORE="${DEFAULT_HATSCORE}"
-DEPOSIT="${DEFAULT_DEPOSIT}"
-INITIAL_BLOCKS="${DEFAULT_INITIAL_BLOCKS}"
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --datadir)
-            DATADIR="$2"
-            shift 2
-            ;;
-        --stake)
-            STAKE="$2"
-            shift 2
-            ;;
-        --hatscore)
-            HATSCORE="$2"
-            shift 2
-            ;;
-        --deposit)
-            DEPOSIT="$2"
-            shift 2
-            ;;
-        --blocks)
-            INITIAL_BLOCKS="$2"
-            shift 2
-            ;;
-        --help|-h)
-            echo "Verwendung: $0 [OPTIONEN]"
-            echo ""
-            echo "Optionen:"
-            echo "  --datadir <path>    Datenverzeichnis (Standard: ${DEFAULT_DATADIR})"
-            echo "  --stake <amount>    Sequencer-Stake in CAS (Standard: ${DEFAULT_STAKE})"
-            echo "  --hatscore <score>  HAT v2 Score 0-100 (Standard: ${DEFAULT_HATSCORE})"
-            echo "  --deposit <amount>  L2-Deposit in CAS (Standard: ${DEFAULT_DEPOSIT})"
-            echo "  --blocks <count>    Initiale Blöcke (Standard: ${DEFAULT_INITIAL_BLOCKS})"
-            echo "  --help, -h          Diese Hilfe anzeigen"
-            exit 0
-            ;;
-        *)
-            print_error "Unbekannte Option: $1"
-            exit 1
-            ;;
-    esac
-done
-
-# =============================================================================
-# Hauptprogramm
-# =============================================================================
-
-print_header "Cascoin L2 Demo Chain Setup"
-
-echo ""
-print_info "Konfiguration:"
-print_info "  Datenverzeichnis: ${DATADIR}"
-print_info "  Sequencer-Stake:  ${STAKE} CAS"
-print_info "  HAT Score:        ${HATSCORE}"
-print_info "  L2-Deposit:       ${DEPOSIT} CAS"
-print_info "  Initiale Blöcke:  ${INITIAL_BLOCKS}"
-echo ""
-
-# -----------------------------------------------------------------------------
-# Schritt 0: Voraussetzungen prüfen
-# -----------------------------------------------------------------------------
-
-print_step "Prüfe Voraussetzungen..."
-
-find_binaries
-
-print_success "Alle Voraussetzungen erfüllt"
-
-# -----------------------------------------------------------------------------
-# Schritt 1: Datenverzeichnis vorbereiten
-# -----------------------------------------------------------------------------
-
-print_step "Bereite Datenverzeichnis vor..."
-
-if [ -d "${DATADIR}/regtest" ]; then
-    print_info "Existierendes Regtest-Verzeichnis gefunden"
-    read -p "Möchten Sie es löschen und neu beginnen? (j/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Jj]$ ]]; then
-        rm -rf "${DATADIR}/regtest"
-        print_info "Regtest-Daten gelöscht"
-    fi
-fi
-
-mkdir -p "${DATADIR}"
-
-# Kopiere Konfiguration falls vorhanden
-if [ -f "${CONFIG_DIR}/regtest.conf" ]; then
-    cp "${CONFIG_DIR}/regtest.conf" "${DATADIR}/cascoin.conf"
-    print_info "Konfiguration kopiert"
-fi
-
-print_success "Datenverzeichnis bereit: ${DATADIR}"
-
-# -----------------------------------------------------------------------------
-# Schritt 2: Node starten
-# -----------------------------------------------------------------------------
-
-print_step "Starte Cascoin-Node mit L2-Unterstützung..."
-
-# Prüfe ob Node bereits läuft
-if cli getblockchaininfo &>/dev/null; then
-    print_info "Node läuft bereits"
-else
-    # Starte Node im Daemon-Modus mit L2
-    $CASCOIND -regtest \
-        -daemon \
-        -datadir="${DATADIR}" \
-        -l2=1 \
-        -l2mode=2 \
-        -server=1 \
-        -rpcuser="${RPC_USER}" \
-        -rpcpassword="${RPC_PASSWORD}" \
-        -rpcallowip=127.0.0.1 \
-        -fallbackfee=0.0001
-    
-    wait_for_node
-fi
-
-print_success "Node gestartet"
-
-# Prüfe L2-Aktivierung
-check_l2_enabled
-print_success "L2 ist aktiviert"
-
-# -----------------------------------------------------------------------------
-# Schritt 3: Initiale Blöcke generieren
-# -----------------------------------------------------------------------------
-
-print_step "Generiere ${INITIAL_BLOCKS} initiale Blöcke..."
-
-# Erstelle Mining-Adresse
-MINING_ADDR=$(cli getnewaddress "mining")
-print_info "Mining-Adresse: ${MINING_ADDR}"
-
-# Generiere Blöcke mit Wiederholung bei Fehlschlag
-generate_blocks ${INITIAL_BLOCKS} "${MINING_ADDR}"
-
-# Zeige Balance
-BALANCE=$(cli getbalance)
-print_success "Block-Generierung abgeschlossen"
-print_info "Wallet-Balance: ${BALANCE} CAS"
-
-# -----------------------------------------------------------------------------
-# Schritt 4: Sequencer registrieren
-# -----------------------------------------------------------------------------
-
-print_step "Registriere Sequencer..."
-
-# Registriere als Sequencer
-SEQUENCER_RESULT=$(cli l2_announcesequencer ${STAKE} ${HATSCORE})
-
-# Parse Ergebnis
-SEQUENCER_ADDR=$(echo "${SEQUENCER_RESULT}" | grep -o '"address": "[^"]*"' | cut -d'"' -f4)
-SEQUENCER_ELIGIBLE=$(echo "${SEQUENCER_RESULT}" | grep -o '"eligible": [^,}]*' | cut -d' ' -f2)
-
-print_info "Sequencer-Adresse: ${SEQUENCER_ADDR}"
-print_info "Sequencer eligible: ${SEQUENCER_ELIGIBLE}"
-
-# Generiere Blöcke um die Registrierung zu bestätigen (6 Confirmations)
-print_info "Generiere 6 Bestätigungsblöcke für Sequencer-Registrierung..."
-generate_blocks 6 "${MINING_ADDR}"
-
-print_success "Sequencer registriert und verankert"
-
-# -----------------------------------------------------------------------------
-# Schritt 5: L2-Deposit durchführen
-# -----------------------------------------------------------------------------
-
-print_step "Führe L2-Deposit durch (${DEPOSIT} CAS)..."
-
-# Erstelle L2-Adresse
-L2_ADDR=$(cli getnewaddress "l2")
-print_info "L2-Adresse: ${L2_ADDR}"
-
-# Führe Deposit durch
-DEPOSIT_RESULT=$(cli l2_deposit "${L2_ADDR}" ${DEPOSIT})
-
-# Parse Deposit-ID
-DEPOSIT_ID=$(echo "${DEPOSIT_RESULT}" | grep -o '"depositId": [0-9]*' | cut -d' ' -f2)
-print_info "Deposit-ID: ${DEPOSIT_ID}"
-
-# Generiere Blöcke für Bestätigung (6 Confirmations)
-print_info "Generiere 6 Bestätigungsblöcke..."
-generate_blocks 6 "${MINING_ADDR}"
-
-print_success "L2-Deposit durchgeführt"
-
-# -----------------------------------------------------------------------------
-# Schritt 6: Status anzeigen
-# -----------------------------------------------------------------------------
-
-print_header "L2 Demo Chain Status"
-
-echo ""
-print_step "L2 Chain Info:"
-cli l2_getchaininfo
-
-echo ""
-print_step "L2 Balance:"
-cli l2_getbalance "${L2_ADDR}"
-
-echo ""
-print_step "Sequencer-Liste:"
-cli l2_getsequencers
-
-# -----------------------------------------------------------------------------
-# Zusammenfassung
-# -----------------------------------------------------------------------------
-
-print_header "Setup abgeschlossen!"
-
-echo ""
-echo "Die L2 Demo Chain ist jetzt bereit."
-echo ""
-echo "Wichtige Adressen:"
-echo "  Mining-Adresse:    ${MINING_ADDR}"
-echo "  Sequencer-Adresse: ${SEQUENCER_ADDR}"
-echo "  L2-Adresse:        ${L2_ADDR}"
-echo ""
-echo "Nützliche Befehle:"
-echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getchaininfo"
-echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getbalance <address>"
-echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getsequencers"
-echo ""
-echo "Zum Beenden:"
-echo "  ./cleanup.sh --datadir ${DATADIR}"
-echo ""
-
-# Speichere Konfiguration für andere Skripte
-cat > "${DATADIR}/demo_config.sh" << EOF
-# L2 Demo Konfiguration - generiert von setup_l2_demo.sh
-export DEMO_DATADIR="${DATADIR}"
-export DEMO_MINING_ADDR="${MINING_ADDR}"
-export DEMO_SEQUENCER_ADDR="${SEQUENCER_ADDR}"
-export DEMO_L2_ADDR="${L2_ADDR}"
-EOF
-
-print_success "Konfiguration gespeichert in ${DATADIR}/demo_config.sh"
-
 
 # Generiere Blöcke mit Wiederholung bei Fehlschlag
 generate_blocks() {
@@ -570,7 +200,7 @@ check_l2_enabled() {
         local result
         result=$(cli l2_getchaininfo 2>&1)
         if [ $? -eq 0 ]; then
-            if echo "$result" | grep -q '"enabled": 1' || echo "$result" | grep -q '"enabled":1'; then
+            if echo "$result" | grep -q '"enabled": 1' || echo "$result" | grep -q '"enabled":1' || echo "$result" | grep -q '"enabled": true'; then
                 return 0
             fi
         fi
@@ -652,12 +282,18 @@ print_info "  L2-Burn:          ${BURN_AMOUNT} CAS"
 print_info "  Initiale Blöcke:  ${INITIAL_BLOCKS}"
 echo ""
 
+# -----------------------------------------------------------------------------
 # Schritt 0: Voraussetzungen prüfen
+# -----------------------------------------------------------------------------
+
 print_step "Prüfe Voraussetzungen..."
 find_binaries
 print_success "Alle Voraussetzungen erfüllt"
 
+# -----------------------------------------------------------------------------
 # Schritt 1: Datenverzeichnis vorbereiten
+# -----------------------------------------------------------------------------
+
 print_step "Bereite Datenverzeichnis vor..."
 
 if [ -d "${DATADIR}/regtest" ]; then
@@ -679,7 +315,10 @@ fi
 
 print_success "Datenverzeichnis bereit: ${DATADIR}"
 
+# -----------------------------------------------------------------------------
 # Schritt 2: Node starten
+# -----------------------------------------------------------------------------
+
 print_step "Starte Cascoin-Node mit L2-Unterstützung..."
 
 if cli getblockchaininfo &>/dev/null; then
@@ -703,7 +342,10 @@ print_success "Node gestartet"
 check_l2_enabled
 print_success "L2 ist aktiviert"
 
+# -----------------------------------------------------------------------------
 # Schritt 3: Initiale Blöcke generieren
+# -----------------------------------------------------------------------------
+
 print_step "Generiere ${INITIAL_BLOCKS} initiale Blöcke..."
 
 MINING_ADDR=$(cli getnewaddress "mining")
@@ -715,7 +357,10 @@ BALANCE=$(cli getbalance)
 print_success "Block-Generierung abgeschlossen"
 print_info "Wallet-Balance: ${BALANCE} CAS"
 
+# -----------------------------------------------------------------------------
 # Schritt 4: Sequencer registrieren
+# -----------------------------------------------------------------------------
+
 print_step "Registriere Sequencer..."
 
 SEQUENCER_RESULT=$(cli l2_announcesequencer ${STAKE} ${HATSCORE})
@@ -728,7 +373,10 @@ generate_blocks 6 "${MINING_ADDR}"
 
 print_success "Sequencer registriert"
 
+# -----------------------------------------------------------------------------
 # Schritt 5: L2-Burn durchführen (Burn-and-Mint Model)
+# -----------------------------------------------------------------------------
+
 print_step "Führe L2-Burn durch (${BURN_AMOUNT} CAS)..."
 
 print_info "Burn-and-Mint Model:"
@@ -739,62 +387,96 @@ print_info "  3. Nach 2/3 Konsens werden L2-Tokens gemintet"
 L2_ADDR=$(cli getnewaddress "l2")
 print_info "L2-Empfänger-Adresse: ${L2_ADDR}"
 
-# Erstelle Burn-Transaktion
-print_info "Erstelle Burn-Transaktion..."
-BURN_TX_RESULT=$(cli l2_createburntx ${BURN_AMOUNT} "${L2_ADDR}")
-BURN_TX_HEX=$(echo "${BURN_TX_RESULT}" | grep -o '"hex": "[^"]*"' | cut -d'"' -f4)
+# Extrahiere den Public Key für die Adresse (benötigt für l2_createburntx)
+ADDR_INFO=$(cli validateaddress "${L2_ADDR}")
+L2_PUBKEY=$(echo "${ADDR_INFO}" | grep -o '"pubkey": "[^"]*"' | head -1 | cut -d'"' -f4)
 
-# Signiere die Transaktion
-print_info "Signiere Burn-Transaktion..."
-SIGNED_TX=$(cli signrawtransactionwithwallet "${BURN_TX_HEX}")
-SIGNED_TX_HEX=$(echo "${SIGNED_TX}" | grep -o '"hex": "[^"]*"' | cut -d'"' -f4)
-
-# Sende Burn-Transaktion
-print_info "Sende Burn-Transaktion an L1..."
-SEND_RESULT=$(cli l2_sendburntx "${SIGNED_TX_HEX}")
-L1_TXID=$(echo "${SEND_RESULT}" | grep -o '"txid": "[^"]*"' | cut -d'"' -f4)
-print_info "L1 Burn TX: ${L1_TXID}"
-
-# WICHTIG: Generiere Blöcke für L1-Bestätigungen (min 6 für Konsens-Start)
-print_info "Generiere 6 Blöcke für L1-Bestätigungen..."
-generate_blocks 6 "${MINING_ADDR}"
-
-# Schritt 6: Warte auf Konsens und mine weitere Blöcke
-print_step "Warte auf Sequencer-Konsens..."
-
-# In einer Single-Node Demo müssen wir weitere Blöcke minen,
-# damit der Konsens-Prozess voranschreitet
-MAX_CONSENSUS_ATTEMPTS=10
-CONSENSUS_REACHED=false
-
-for i in $(seq 1 $MAX_CONSENSUS_ATTEMPTS); do
-    print_info "Konsens-Versuch ${i}/${MAX_CONSENSUS_ATTEMPTS}..."
-    
-    # Prüfe Burn-Status
-    BURN_STATUS=$(cli l2_getburnstatus "${L1_TXID}" 2>/dev/null || echo "{}")
-    MINT_STATUS=$(echo "${BURN_STATUS}" | grep -o '"mintStatus": "[^"]*"' | cut -d'"' -f4)
-    CONSENSUS_STATUS=$(echo "${BURN_STATUS}" | grep -o '"consensusStatus": "[^"]*"' | cut -d'"' -f4)
-    
-    print_info "  Konsens: ${CONSENSUS_STATUS}, Mint: ${MINT_STATUS}"
-    
-    if [ "${MINT_STATUS}" = "MINTED" ]; then
-        CONSENSUS_REACHED=true
-        print_success "L2-Tokens wurden gemintet!"
-        break
-    fi
-    
-    # Mine weitere Blöcke um den Prozess voranzutreiben
-    print_info "  Generiere 2 weitere Blöcke..."
-    generate_blocks 2 "${MINING_ADDR}"
-    
-    sleep 1
-done
-
-if [ "${CONSENSUS_REACHED}" = false ]; then
-    print_info "Konsens noch nicht erreicht - prüfe Status manuell"
+if [ -z "$L2_PUBKEY" ]; then
+    # Versuche embedded pubkey
+    L2_PUBKEY=$(echo "${ADDR_INFO}" | grep -A20 '"embedded"' | grep -o '"pubkey": "[^"]*"' | head -1 | cut -d'"' -f4)
 fi
 
-# Schritt 7: Status anzeigen
+if [ -z "$L2_PUBKEY" ]; then
+    print_warning "Konnte Public Key nicht extrahieren - überspringe Burn-Schritt"
+    BURN_TX_RESULT=""
+else
+    print_info "L2-Empfänger-PubKey: ${L2_PUBKEY}"
+
+    # Erstelle Burn-Transaktion mit Public Key
+    print_info "Erstelle Burn-Transaktion..."
+    BURN_TX_RESULT=$(cli l2_createburntx ${BURN_AMOUNT} "${L2_PUBKEY}" 2>&1) || {
+        print_warning "l2_createburntx fehlgeschlagen: ${BURN_TX_RESULT}"
+        print_info "Die Burn-RPC-Befehle sind möglicherweise noch nicht implementiert."
+        BURN_TX_RESULT=""
+    }
+fi
+
+if [ -n "$BURN_TX_RESULT" ] && echo "$BURN_TX_RESULT" | grep -q '"hex"'; then
+    BURN_TX_HEX=$(echo "${BURN_TX_RESULT}" | grep -o '"hex": "[^"]*"' | cut -d'"' -f4)
+
+    # Signiere die Transaktion
+    print_info "Signiere Burn-Transaktion..."
+    SIGNED_TX=$(cli signrawtransactionwithwallet "${BURN_TX_HEX}")
+    SIGNED_TX_HEX=$(echo "${SIGNED_TX}" | grep -o '"hex": "[^"]*"' | cut -d'"' -f4)
+
+    # Sende Burn-Transaktion
+    print_info "Sende Burn-Transaktion an L1..."
+    SEND_RESULT=$(cli l2_sendburntx "${SIGNED_TX_HEX}" 2>&1) || {
+        print_warning "l2_sendburntx fehlgeschlagen"
+        SEND_RESULT=""
+    }
+    
+    if [ -n "$SEND_RESULT" ] && echo "$SEND_RESULT" | grep -q '"txid"'; then
+        L1_TXID=$(echo "${SEND_RESULT}" | grep -o '"txid": "[^"]*"' | cut -d'"' -f4)
+        print_info "L1 Burn TX: ${L1_TXID}"
+
+        # Generiere Blöcke für L1-Bestätigungen
+        print_info "Generiere 6 Blöcke für L1-Bestätigungen..."
+        generate_blocks 6 "${MINING_ADDR}"
+
+        # Warte auf Konsens
+        print_step "Warte auf Sequencer-Konsens..."
+
+        MAX_CONSENSUS_ATTEMPTS=10
+        CONSENSUS_REACHED=false
+
+        for i in $(seq 1 $MAX_CONSENSUS_ATTEMPTS); do
+            print_info "Konsens-Versuch ${i}/${MAX_CONSENSUS_ATTEMPTS}..."
+            
+            BURN_STATUS=$(cli l2_getburnstatus "${L1_TXID}" 2>/dev/null || echo "{}")
+            MINT_STATUS=$(echo "${BURN_STATUS}" | grep -o '"mintStatus": "[^"]*"' | cut -d'"' -f4)
+            CONSENSUS_STATUS=$(echo "${BURN_STATUS}" | grep -o '"consensusStatus": "[^"]*"' | cut -d'"' -f4)
+            
+            print_info "  Konsens: ${CONSENSUS_STATUS:-pending}, Mint: ${MINT_STATUS:-pending}"
+            
+            if [ "${MINT_STATUS}" = "MINTED" ]; then
+                CONSENSUS_REACHED=true
+                print_success "L2-Tokens wurden gemintet!"
+                break
+            fi
+            
+            print_info "  Generiere 2 weitere Blöcke..."
+            generate_blocks 2 "${MINING_ADDR}"
+            
+            sleep 1
+        done
+
+        if [ "${CONSENSUS_REACHED}" = false ]; then
+            print_info "Konsens noch nicht erreicht - prüfe Status manuell"
+        fi
+    else
+        print_warning "Burn-Transaktion konnte nicht gesendet werden"
+        L1_TXID="N/A"
+    fi
+else
+    print_warning "Burn-Transaktion konnte nicht erstellt werden"
+    L1_TXID="N/A"
+fi
+
+# -----------------------------------------------------------------------------
+# Schritt 6: Status anzeigen
+# -----------------------------------------------------------------------------
+
 print_header "L2 Demo Chain Status"
 
 echo ""
@@ -803,21 +485,26 @@ cli l2_getchaininfo
 
 echo ""
 print_step "L2 Balance:"
-cli l2_getbalance "${L2_ADDR}"
+cli l2_getbalance "${L2_ADDR}" 2>/dev/null || print_info "Balance-Abfrage nicht verfügbar"
 
 echo ""
 print_step "L2 Total Supply:"
-cli l2_gettotalsupply
+cli l2_gettotalsupply 2>/dev/null || print_info "Total Supply nicht verfügbar"
 
 echo ""
-print_step "Supply Invariante:"
-cli l2_verifysupply
+print_step "Sequencer-Liste:"
+cli l2_getsequencers 2>/dev/null || print_info "Sequencer-Liste nicht verfügbar"
 
-echo ""
-print_step "Burn-Status:"
-cli l2_getburnstatus "${L1_TXID}"
+if [ "${L1_TXID}" != "N/A" ]; then
+    echo ""
+    print_step "Burn-Status:"
+    cli l2_getburnstatus "${L1_TXID}" 2>/dev/null || print_info "Burn-Status nicht verfügbar"
+fi
 
+# -----------------------------------------------------------------------------
 # Zusammenfassung
+# -----------------------------------------------------------------------------
+
 print_header "Setup abgeschlossen!"
 
 echo ""
@@ -827,10 +514,16 @@ echo "Wichtige Adressen:"
 echo "  Mining-Adresse:    ${MINING_ADDR}"
 echo "  Sequencer-Adresse: ${SEQUENCER_ADDR}"
 echo "  L2-Adresse:        ${L2_ADDR}"
-echo "  Burn TX (L1):      ${L1_TXID}"
+if [ "${L1_TXID}" != "N/A" ]; then
+    echo "  Burn TX (L1):      ${L1_TXID}"
+fi
+echo ""
+echo "Nützliche Befehle:"
+echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getchaininfo"
+echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getbalance <address>"
+echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getsequencers"
 echo ""
 echo "Burn-and-Mint Befehle:"
-echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getburnstatus ${L1_TXID}"
 echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_createburntx <amount> <l2_address>"
 echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_getpendingburns"
 echo "  cascoin-cli -regtest -datadir=${DATADIR} l2_gettotalsupply"
