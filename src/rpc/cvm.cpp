@@ -12,6 +12,9 @@
 #include <cvm/txbuilder.h>
 #include <cvm/blockprocessor.h>
 #include <cvm/trustgraph.h>
+#include <cvm/reward_types.h>
+#include <cvm/reward_distributor.h>
+#include <cvm/commit_reveal.h>
 #include <cvm/behaviormetrics.h>
 #include <cvm/graphanalysis.h>
 #include <cvm/securehat.h>
@@ -2664,6 +2667,551 @@ UniValue getdispute(const JSONRPCRequest& request)
     result.pushKV("total_stake_support", ValueFromAmount(totalStakeSupport));
     result.pushKV("total_stake_oppose", ValueFromAmount(totalStakeOppose));
     
+    // Add reward distribution if dispute is resolved (Requirement 7.4)
+    if (dispute.resolved && dispute.rewardsDistributed) {
+        CVM::TrustGraph tg(*CVM::g_cvmdb);
+        CVM::RewardDistributor* distributor = tg.GetRewardDistributor();
+        if (distributor) {
+            CVM::RewardDistribution dist = distributor->GetRewardDistribution(disputeId);
+            if (dist.IsValid()) {
+                UniValue rewardObj(UniValue::VOBJ);
+                rewardObj.pushKV("slash_decision", dist.slashDecision);
+                rewardObj.pushKV("total_slashed_bond", ValueFromAmount(dist.totalSlashedBond));
+                rewardObj.pushKV("challenger_bond_return", ValueFromAmount(dist.challengerBondReturn));
+                rewardObj.pushKV("challenger_bounty", ValueFromAmount(dist.challengerBounty));
+                rewardObj.pushKV("total_dao_voter_rewards", ValueFromAmount(dist.totalDaoVoterRewards));
+                rewardObj.pushKV("burned_amount", ValueFromAmount(dist.burnedAmount));
+                rewardObj.pushKV("distributed_time", (int64_t)dist.distributedTime);
+                
+                // Add voter rewards breakdown
+                UniValue voterRewardsObj(UniValue::VOBJ);
+                for (const auto& [voter, amount] : dist.voterRewards) {
+                    voterRewardsObj.pushKV(EncodeDestination(CKeyID(voter)), ValueFromAmount(amount));
+                }
+                rewardObj.pushKV("voter_rewards", voterRewardsObj);
+                
+                result.pushKV("reward_distribution", rewardObj);
+            }
+        }
+    }
+    
+    return result;
+}
+
+/**
+ * getpendingrewards - Get all pending rewards for an address
+ * 
+ * Requirements: 7.1
+ */
+UniValue getpendingrewards(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getpendingrewards \"address\"\n"
+            "\nGet all pending (unclaimed) rewards for an address.\n"
+            "\nArguments:\n"
+            "1. \"address\"    (string, required) The address to query\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"reward_id\": \"hash\",           (string) Unique reward identifier\n"
+            "    \"dispute_id\": \"hash\",          (string) Source dispute ID\n"
+            "    \"amount\": n,                    (numeric) Reward amount in CAS\n"
+            "    \"type\": \"xxx\",                 (string) Reward type\n"
+            "    \"created_time\": n               (numeric) When reward was created\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getpendingrewards", "\"CYourAddress...\"")
+            + HelpExampleRpc("getpendingrewards", "\"CYourAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    std::string addressStr = request.params[0].get_str();
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    // Get address hash
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get pending rewards
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    CVM::RewardDistributor* distributor = tg.GetRewardDistributor();
+    if (!distributor) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Reward distributor not initialized");
+    }
+    
+    std::vector<CVM::PendingReward> rewards = distributor->GetPendingRewards(address);
+    
+    UniValue result(UniValue::VARR);
+    for (const auto& reward : rewards) {
+        UniValue rewardObj(UniValue::VOBJ);
+        rewardObj.pushKV("reward_id", reward.rewardId.GetHex());
+        rewardObj.pushKV("dispute_id", reward.disputeId.GetHex());
+        rewardObj.pushKV("amount", ValueFromAmount(reward.amount));
+        rewardObj.pushKV("type", CVM::RewardTypeToString(reward.type));
+        rewardObj.pushKV("created_time", (int64_t)reward.createdTime);
+        result.push_back(rewardObj);
+    }
+    
+    return result;
+}
+
+/**
+ * claimreward - Claim a specific pending reward
+ * 
+ * Requirements: 7.2, 3.6
+ */
+UniValue claimreward(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() != 2)
+        throw std::runtime_error(
+            "claimreward \"reward_id\" \"from_address\"\n"
+            "\nClaim a specific pending reward.\n"
+            "\nArguments:\n"
+            "1. \"reward_id\"      (string, required) The reward ID to claim\n"
+            "2. \"from_address\"   (string, required) The address claiming the reward\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false,           (boolean) Whether claim succeeded\n"
+            "  \"amount\": n,                     (numeric) Amount claimed\n"
+            "  \"reward_id\": \"hash\",            (string) Reward ID\n"
+            "  \"message\": \"xxx\"                (string) Status message\n"
+            "}\n"
+            "\nNote: The user pays the transaction fee for the claim.\n"
+            "\nExamples:\n"
+            + HelpExampleCli("claimreward", "\"abc123...\" \"CYourAddress...\"")
+            + HelpExampleRpc("claimreward", "\"abc123...\", \"CYourAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse reward ID
+    uint256 rewardId = ParseHashV(request.params[0], "reward_id");
+    
+    // Parse address
+    std::string addressStr = request.params[1].get_str();
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Claim the reward
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    CVM::RewardDistributor* distributor = tg.GetRewardDistributor();
+    if (!distributor) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Reward distributor not initialized");
+    }
+    
+    CAmount claimedAmount = distributor->ClaimReward(rewardId, address);
+    
+    UniValue result(UniValue::VOBJ);
+    if (claimedAmount > 0) {
+        result.pushKV("success", true);
+        result.pushKV("amount", ValueFromAmount(claimedAmount));
+        result.pushKV("reward_id", rewardId.GetHex());
+        result.pushKV("message", "Reward claimed successfully");
+    } else {
+        result.pushKV("success", false);
+        result.pushKV("amount", 0);
+        result.pushKV("reward_id", rewardId.GetHex());
+        result.pushKV("message", "Failed to claim reward - not found, already claimed, or not authorized");
+    }
+    
+    return result;
+}
+
+/**
+ * claimallrewards - Batch-claim all pending rewards for an address
+ * 
+ * Requirements: 7.2, 3.7
+ */
+UniValue claimallrewards(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "claimallrewards \"from_address\"\n"
+            "\nBatch-claim all pending rewards for an address in a single transaction.\n"
+            "\nArguments:\n"
+            "1. \"from_address\"   (string, required) The address claiming the rewards\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false,           (boolean) Whether any claims succeeded\n"
+            "  \"total_amount\": n,               (numeric) Total amount claimed\n"
+            "  \"claimed_count\": n,              (numeric) Number of rewards claimed\n"
+            "  \"claimed_rewards\": [             (array) List of claimed reward IDs\n"
+            "    \"reward_id\",\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"message\": \"xxx\"                (string) Status message\n"
+            "}\n"
+            "\nNote: The user pays a single transaction fee for all claims.\n"
+            "\nExamples:\n"
+            + HelpExampleCli("claimallrewards", "\"CYourAddress...\"")
+            + HelpExampleRpc("claimallrewards", "\"CYourAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse address
+    std::string addressStr = request.params[0].get_str();
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get all pending rewards
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    CVM::RewardDistributor* distributor = tg.GetRewardDistributor();
+    if (!distributor) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Reward distributor not initialized");
+    }
+    
+    std::vector<CVM::PendingReward> pendingRewards = distributor->GetPendingRewards(address);
+    
+    // Claim all rewards
+    CAmount totalClaimed = 0;
+    int claimedCount = 0;
+    UniValue claimedIds(UniValue::VARR);
+    
+    for (const auto& reward : pendingRewards) {
+        CAmount amount = distributor->ClaimReward(reward.rewardId, address);
+        if (amount > 0) {
+            totalClaimed += amount;
+            claimedCount++;
+            claimedIds.push_back(reward.rewardId.GetHex());
+        }
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", claimedCount > 0);
+    result.pushKV("total_amount", ValueFromAmount(totalClaimed));
+    result.pushKV("claimed_count", claimedCount);
+    result.pushKV("claimed_rewards", claimedIds);
+    
+    if (claimedCount > 0) {
+        result.pushKV("message", strprintf("Successfully claimed %d rewards", claimedCount));
+    } else if (pendingRewards.empty()) {
+        result.pushKV("message", "No pending rewards found for this address");
+    } else {
+        result.pushKV("message", "Failed to claim any rewards");
+    }
+    
+    return result;
+}
+
+/**
+ * getrewarddistribution - Get reward distribution details for a resolved dispute
+ * 
+ * Requirements: 7.3
+ */
+UniValue getrewarddistribution(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getrewarddistribution \"dispute_id\"\n"
+            "\nGet the full reward distribution breakdown for a resolved dispute.\n"
+            "\nArguments:\n"
+            "1. \"dispute_id\"    (string, required) The dispute ID\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"dispute_id\": \"hash\",                (string) Dispute ID\n"
+            "  \"slash_decision\": true|false,         (boolean) Was it a slash decision?\n"
+            "  \"total_slashed_bond\": n,              (numeric) Total bond slashed/forfeited\n"
+            "  \"challenger_bond_return\": n,          (numeric) Bond returned to challenger\n"
+            "  \"challenger_bounty\": n,               (numeric) Bounty paid to challenger\n"
+            "  \"total_dao_voter_rewards\": n,         (numeric) Total paid to DAO voters\n"
+            "  \"burned_amount\": n,                   (numeric) Amount burned\n"
+            "  \"voter_rewards\": {                    (object) Individual voter rewards\n"
+            "    \"address\": amount,\n"
+            "    ...\n"
+            "  },\n"
+            "  \"distributed_time\": n                 (numeric) When distribution occurred\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getrewarddistribution", "\"abc123...\"")
+            + HelpExampleRpc("getrewarddistribution", "\"abc123...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
+    
+    // Get reward distribution
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    CVM::RewardDistributor* distributor = tg.GetRewardDistributor();
+    if (!distributor) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Reward distributor not initialized");
+    }
+    
+    CVM::RewardDistribution dist = distributor->GetRewardDistribution(disputeId);
+    
+    if (!dist.IsValid()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Reward distribution not found for this dispute");
+    }
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("dispute_id", dist.disputeId.GetHex());
+    result.pushKV("slash_decision", dist.slashDecision);
+    result.pushKV("total_slashed_bond", ValueFromAmount(dist.totalSlashedBond));
+    result.pushKV("challenger_bond_return", ValueFromAmount(dist.challengerBondReturn));
+    result.pushKV("challenger_bounty", ValueFromAmount(dist.challengerBounty));
+    result.pushKV("total_dao_voter_rewards", ValueFromAmount(dist.totalDaoVoterRewards));
+    result.pushKV("burned_amount", ValueFromAmount(dist.burnedAmount));
+    
+    // Add voter rewards breakdown
+    UniValue voterRewardsObj(UniValue::VOBJ);
+    for (const auto& [voter, amount] : dist.voterRewards) {
+        voterRewardsObj.pushKV(EncodeDestination(CKeyID(voter)), ValueFromAmount(amount));
+    }
+    result.pushKV("voter_rewards", voterRewardsObj);
+    
+    result.pushKV("distributed_time", (int64_t)dist.distributedTime);
+    
+    return result;
+}
+
+/**
+ * commitdisputevote - Submit a vote commitment during commit phase
+ * 
+ * Requirements: 8.1, 8.7
+ */
+UniValue commitdisputevote(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() != 4)
+        throw std::runtime_error(
+            "commitdisputevote \"dispute_id\" \"commitment_hash\" stake \"from_address\"\n"
+            "\nSubmit a vote commitment during the commit phase of a dispute.\n"
+            "\nThe commitment_hash should be SHA256(vote_byte || nonce) where:\n"
+            "  - vote_byte is 0x01 for slash or 0x00 for keep\n"
+            "  - nonce is a random 32-byte value you must remember for reveal\n"
+            "\nArguments:\n"
+            "1. \"dispute_id\"        (string, required) The dispute ID\n"
+            "2. \"commitment_hash\"   (string, required) Hash of (vote || nonce)\n"
+            "3. stake                (numeric, required) Amount to stake on this vote\n"
+            "4. \"from_address\"      (string, required) DAO member address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false,           (boolean) Whether commitment succeeded\n"
+            "  \"dispute_id\": \"hash\",           (string) Dispute ID\n"
+            "  \"commitment_hash\": \"hash\",      (string) Commitment hash\n"
+            "  \"stake\": n,                      (numeric) Stake amount\n"
+            "  \"message\": \"xxx\"                (string) Status message\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("commitdisputevote", "\"abc123...\" \"def456...\" 1.0 \"CYourAddress...\"")
+            + HelpExampleRpc("commitdisputevote", "\"abc123...\", \"def456...\", 1.0, \"CYourAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse parameters
+    uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
+    uint256 commitmentHash = ParseHashV(request.params[1], "commitment_hash");
+    CAmount stake = AmountFromValue(request.params[2]);
+    
+    std::string addressStr = request.params[3].get_str();
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 voter;
+    if (boost::get<CKeyID>(&dest)) {
+        voter = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        voter = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Verify DAO membership
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    if (!tg.IsDAOMember(voter)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Address is not a DAO member");
+    }
+    
+    // Get commit-reveal manager
+    CVM::CommitRevealManager* crManager = tg.GetCommitRevealManager();
+    if (!crManager) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Commit-reveal manager not initialized");
+    }
+    
+    // Check if in commit phase
+    if (!crManager->IsCommitPhase(disputeId)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Dispute is not in commit phase");
+    }
+    
+    // Submit commitment
+    bool success = crManager->SubmitCommitment(disputeId, voter, commitmentHash, stake);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", success);
+    result.pushKV("dispute_id", disputeId.GetHex());
+    result.pushKV("commitment_hash", commitmentHash.GetHex());
+    result.pushKV("stake", ValueFromAmount(stake));
+    
+    if (success) {
+        result.pushKV("message", "Commitment submitted successfully");
+    } else {
+        result.pushKV("message", "Failed to submit commitment - may have already committed");
+    }
+    
+    return result;
+}
+
+/**
+ * revealdisputevote - Reveal a vote during reveal phase
+ * 
+ * Requirements: 8.4
+ */
+UniValue revealdisputevote(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+    
+    if (request.fHelp || request.params.size() != 4)
+        throw std::runtime_error(
+            "revealdisputevote \"dispute_id\" vote \"nonce\" \"from_address\"\n"
+            "\nReveal a vote during the reveal phase of a dispute.\n"
+            "\nThe vote and nonce must match the commitment hash submitted earlier.\n"
+            "\nArguments:\n"
+            "1. \"dispute_id\"    (string, required) The dispute ID\n"
+            "2. vote             (boolean, required) true=slash, false=keep\n"
+            "3. \"nonce\"         (string, required) The nonce used in commitment (32-byte hex)\n"
+            "4. \"from_address\"  (string, required) DAO member address\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"success\": true|false,           (boolean) Whether reveal succeeded\n"
+            "  \"dispute_id\": \"hash\",           (string) Dispute ID\n"
+            "  \"vote\": true|false,              (boolean) The revealed vote\n"
+            "  \"message\": \"xxx\"                (string) Status message\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("revealdisputevote", "\"abc123...\" true \"def456...\" \"CYourAddress...\"")
+            + HelpExampleRpc("revealdisputevote", "\"abc123...\", true, \"def456...\", \"CYourAddress...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    LOCK2(cs_main, pwallet->cs_wallet);
+    EnsureWalletIsUnlocked(pwallet);
+    
+    // Parse parameters
+    uint256 disputeId = ParseHashV(request.params[0], "dispute_id");
+    bool vote = request.params[1].get_bool();
+    uint256 nonce = ParseHashV(request.params[2], "nonce");
+    
+    std::string addressStr = request.params[3].get_str();
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 voter;
+    if (boost::get<CKeyID>(&dest)) {
+        voter = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        voter = uint160(boost::get<CScriptID>(dest));
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get commit-reveal manager
+    CVM::TrustGraph tg(*CVM::g_cvmdb);
+    CVM::CommitRevealManager* crManager = tg.GetCommitRevealManager();
+    if (!crManager) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Commit-reveal manager not initialized");
+    }
+    
+    // Check if in reveal phase
+    if (!crManager->IsRevealPhase(disputeId)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Dispute is not in reveal phase");
+    }
+    
+    // Reveal vote
+    bool success = crManager->RevealVote(disputeId, voter, vote, nonce);
+    
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("success", success);
+    result.pushKV("dispute_id", disputeId.GetHex());
+    result.pushKV("vote", vote);
+    
+    if (success) {
+        result.pushKV("message", "Vote revealed successfully");
+    } else {
+        result.pushKV("message", "Failed to reveal vote - hash mismatch, no commitment, or already revealed");
+    }
+    
     return result;
 }
 
@@ -4528,6 +5076,12 @@ static const CRPCCommand commands[] =
     { "dao",                "listdisputes",          &listdisputes,           {"status"} },
     { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
     { "dao",                "votedispute",           &votedispute,            {"dispute_id","support_slash","from_address","stake"} },
+    { "dao",                "getpendingrewards",     &getpendingrewards,      {"address"} },
+    { "dao",                "claimreward",           &claimreward,            {"reward_id","from_address"} },
+    { "dao",                "claimallrewards",       &claimallrewards,        {"from_address"} },
+    { "dao",                "getrewarddistribution", &getrewarddistribution,  {"dispute_id"} },
+    { "dao",                "commitdisputevote",     &commitdisputevote,      {"dispute_id","commitment_hash","stake","from_address"} },
+    { "dao",                "revealdisputevote",     &revealdisputevote,      {"dispute_id","vote","nonce","from_address"} },
     { "resource",           "getresourcestats",      &getresourcestats,       {"address"} },
     { "resource",           "getglobalresourcestats",&getglobalresourcestats, {} },
     { "cleanup",            "rungarbagecollection",  &rungarbagecollection,   {} },

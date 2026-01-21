@@ -5,6 +5,8 @@
 #include <cvm/trustgraph.h>
 #include <cvm/cvmdb.h>
 #include <cvm/reputation.h>
+#include <cvm/reward_distributor.h>
+#include <cvm/commit_reveal.h>
 #include <util.h>
 #include <tinyformat.h>
 #include <streams.h>
@@ -20,7 +22,14 @@ namespace CVM {
 // Global configuration
 WoTConfig g_wotConfig;
 
-TrustGraph::TrustGraph(CVMDatabase& db) : database(db) {}
+TrustGraph::TrustGraph(CVMDatabase& db) 
+    : database(db)
+    , rewardDistributor(std::make_unique<RewardDistributor>(db, g_wotConfig))
+    , commitRevealManager(std::make_unique<CommitRevealManager>(db, g_wotConfig))
+{
+}
+
+TrustGraph::~TrustGraph() = default;
 
 bool TrustGraph::AddTrustEdge(
     const uint160& from,
@@ -535,6 +544,14 @@ bool TrustGraph::ResolveDispute(const uint256& disputeId) {
         return false;
     }
     
+    // For commit-reveal disputes, forfeit unrevealed stakes first (Requirement 8.5, 8.6)
+    if (dispute.useCommitReveal && commitRevealManager) {
+        CAmount forfeited = commitRevealManager->ForfeitUnrevealedStakes(disputeId);
+        if (forfeited > 0) {
+            LogPrint(BCLog::CVM, "TrustGraph: Forfeited %lld from unrevealed votes\n", forfeited);
+        }
+    }
+    
     // Calculate weighted vote
     CAmount totalStakeSupport = 0;
     CAmount totalStakeOppose = 0;
@@ -562,11 +579,7 @@ bool TrustGraph::ResolveDispute(const uint256& disputeId) {
     dispute.resolvedTime = GetTime();
     
     // Store updated dispute
-    CDataStream ss2(SER_DISK, CLIENT_VERSION);
-    ss2 << dispute;
-    std::vector<uint8_t> bytes2(ss2.begin(), ss2.end());
-    std::string key = std::string("dispute_") + disputeId.ToString();
-    if (!database.WriteGeneric(key, bytes2)) {
+    if (!UpdateDispute(dispute)) {
         LogPrintf("TrustGraph: Failed to store resolved dispute %s\n", disputeId.ToString());
         return false;
     }
@@ -579,6 +592,103 @@ bool TrustGraph::ResolveDispute(const uint256& disputeId) {
     LogPrintf("TrustGraph: Resolved dispute %s: %s (support: %d, oppose: %d)\n",
               disputeId.ToString(), slashDecision ? "SLASH" : "KEEP",
               totalStakeSupport, totalStakeOppose);
+    
+    // Distribute rewards (Requirements: 9.1, 9.3)
+    if (rewardDistributor && !dispute.rewardsDistributed) {
+        bool rewardSuccess = false;
+        
+        if (slashDecision) {
+            // Get the slashed bond amount from the original vote
+            BondedVote originalVote;
+            CAmount slashedBond = 0;
+            
+            if (GetDisputedVote(disputeId, originalVote)) {
+                slashedBond = originalVote.bondAmount;
+            }
+            
+            // Distribute slash rewards (Requirement 9.1)
+            rewardSuccess = rewardDistributor->DistributeSlashRewards(dispute, slashedBond);
+            
+            if (rewardSuccess) {
+                LogPrint(BCLog::CVM, "TrustGraph: Distributed slash rewards for dispute %s\n",
+                         disputeId.ToString());
+            } else {
+                LogPrintf("TrustGraph: Failed to distribute slash rewards for dispute %s\n",
+                          disputeId.ToString());
+            }
+        } else {
+            // Get the original voter who was wrongly accused
+            BondedVote originalVote;
+            uint160 originalVoter;
+            
+            if (GetDisputedVote(disputeId, originalVote)) {
+                originalVoter = originalVote.voter;
+            }
+            
+            // Distribute failed challenge rewards (Requirement 9.1)
+            rewardSuccess = rewardDistributor->DistributeFailedChallengeRewards(dispute, originalVoter);
+            
+            if (rewardSuccess) {
+                LogPrint(BCLog::CVM, "TrustGraph: Distributed failed challenge rewards for dispute %s\n",
+                         disputeId.ToString());
+            } else {
+                LogPrintf("TrustGraph: Failed to distribute failed challenge rewards for dispute %s\n",
+                          disputeId.ToString());
+            }
+        }
+        
+        // Mark rewards as distributed
+        if (rewardSuccess) {
+            dispute.rewardsDistributed = true;
+            dispute.rewardDistributionId = disputeId;  // Use dispute ID as distribution ID
+            UpdateDispute(dispute);
+        }
+    }
+    
+    return true;
+}
+
+bool TrustGraph::GetDisputedVote(const uint256& disputeId, BondedVote& vote) const {
+    // Get the dispute first
+    DAODispute dispute;
+    if (!GetDispute(disputeId, dispute)) {
+        return false;
+    }
+    
+    // Get the original vote using the vote transaction hash
+    std::string key = "vote_" + dispute.originalVoteTx.ToString();
+    std::vector<uint8_t> data;
+    
+    if (!database.ReadGeneric(key, data)) {
+        LogPrintf("TrustGraph: Original vote not found for dispute %s\n", disputeId.ToString());
+        return false;
+    }
+    
+    // Deserialize vote
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> vote;
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraph: Failed to deserialize original vote: %s\n", e.what());
+        return false;
+    }
+}
+
+bool TrustGraph::UpdateDispute(const DAODispute& dispute) {
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << dispute;
+    std::vector<uint8_t> bytes(ss.begin(), ss.end());
+    std::string key = std::string("dispute_") + dispute.disputeId.ToString();
+    
+    if (!database.WriteGeneric(key, bytes)) {
+        LogPrintf("TrustGraph: Failed to update dispute %s\n", dispute.disputeId.ToString());
+        return false;
+    }
+    
+    // Also update the index by vote tx
+    std::string idx = std::string("dispute_by_vote_") + dispute.originalVoteTx.ToString();
+    database.WriteGeneric(idx, bytes);
     
     return true;
 }

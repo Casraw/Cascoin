@@ -2,6 +2,8 @@
 
 Dieses Verzeichnis enthält Skripte und Konfiguration für das L2 Demo Chain Setup mit dem **Burn-and-Mint Token Model**.
 
+Unterstützt **Regtest** (Standard, isoliertes lokales Netzwerk) und **Testnet** (öffentliches Testnetzwerk).
+
 ## Burn-and-Mint Model
 
 Das Burn-and-Mint Model ist ein kryptographisch sicheres System für Cross-Layer Value Transfer:
@@ -33,33 +35,82 @@ Das Burn-and-Mint Model ist ein kryptographisch sicheres System für Cross-Layer
 ## Dateien
 
 - `setup_l2_demo.sh` - Startet eine vollständige L2-Demo-Umgebung
-- `cleanup.sh` - Bereinigt Regtest-Daten
+- `mine_l2_blocks.sh` - Generiert Blöcke und zeigt L2-Status
+- `cleanup.sh` - Bereinigt Regtest/Testnet-Daten
 - `config/regtest.conf` - Regtest-Konfiguration mit L2-Optionen
+- `config/testnet.conf` - Testnet-Konfiguration mit L2-Optionen
 
 ## Schnellstart
 
+### Regtest (Standard - für schnelle lokale Tests)
+
 ```bash
-# L2 Demo starten
+# L2 Demo starten (Regtest)
 ./setup_l2_demo.sh
 
 # Mit benutzerdefinierten Optionen
 ./setup_l2_demo.sh --burn 50 --stake 20
 
+# Weitere Blöcke generieren
+./mine_l2_blocks.sh --blocks 20
+
 # Aufräumen
 ./cleanup.sh
 ```
+
+### Testnet (öffentliches Testnetzwerk)
+
+```bash
+# L2 Demo im Testnet starten
+./setup_l2_demo.sh --testnet
+
+# Mit benutzerdefinierten Optionen
+./setup_l2_demo.sh --testnet --stake 50
+
+# Status prüfen (keine Block-Generierung im Testnet)
+./mine_l2_blocks.sh --testnet
+
+# Aufräumen (Daten behalten für schnellen Neustart)
+./cleanup.sh --testnet --keep-data
+
+# Vollständiges Aufräumen
+./cleanup.sh --testnet
+```
+
+## Regtest vs Testnet
+
+| Feature | Regtest | Testnet |
+|---------|---------|---------|
+| Netzwerk | Isoliert, lokal | Öffentlich |
+| Block-Generierung | Sofort via RPC | ~2.5 Min Blockzeit |
+| CAS-Quelle | Mining-Rewards | Faucet |
+| Peers | Keine | Echte Testnet-Nodes |
+| Blockchain-Sync | Nicht nötig | Initial mehrere Stunden |
+| Ideal für | Schnelle Tests, Entwicklung | Integration, Realistische Tests |
+
+### Testnet-CAS bekommen
+
+Testnet-CAS können vom Faucet bezogen werden:
+- **Faucet**: https://faucet.cascoin.org/testnet
+- **Explorer**: https://testnet.cascoin.org
 
 ## Demo Workflow
 
 ### 1. Demo starten
 
+**Regtest (schnelle lokale Tests):**
 ```bash
 ./setup_l2_demo.sh
 ```
 
+**Testnet (öffentliches Netzwerk):**
+```bash
+./setup_l2_demo.sh --testnet
+```
+
 Das Skript führt automatisch folgende Schritte aus:
 1. Startet Cascoin-Node mit L2-Unterstützung
-2. Generiert initiale Blöcke für Mining-Rewards
+2. Generiert initiale Blöcke für Mining-Rewards (nur Regtest)
 3. Registriert einen Sequencer
 4. Führt einen Burn durch (CAS → L2-Tokens)
 5. Wartet auf Konsens und zeigt Status
@@ -69,8 +120,11 @@ Das Skript führt automatisch folgende Schritte aus:
 Nach dem Setup können Sie den Burn-Status prüfen:
 
 ```bash
-# Burn-Status abfragen
+# Regtest
 cascoin-cli -regtest l2_getburnstatus "<l1_tx_hash>"
+
+# Testnet
+cascoin-cli -testnet l2_getburnstatus "<l1_tx_hash>"
 ```
 
 Beispiel-Ausgabe:
@@ -243,9 +297,58 @@ cascoin-cli -regtest l2_getpendingburns
 ## Aufräumen
 
 ```bash
-# Demo beenden und Daten löschen
+# Regtest: Demo beenden und Daten löschen
 ./cleanup.sh
 
-# Oder mit benutzerdefiniertem Datenverzeichnis
+# Testnet: Node stoppen (Daten werden automatisch behalten)
+./cleanup.sh --testnet
+
+# Testnet: Daten wirklich löschen (nur mit --force!)
+./cleanup.sh --testnet --force
+
+# Mit benutzerdefiniertem Datenverzeichnis
 ./cleanup.sh --datadir /pfad/zum/verzeichnis
+```
+
+## Kommandozeilen-Optionen
+
+### setup_l2_demo.sh
+
+```
+Netzwerk-Modi:
+  (ohne Flag)         Regtest-Modus (Standard, isoliertes Testnetzwerk)
+  --testnet           Testnet-Modus (öffentliches Testnetzwerk)
+
+Optionen:
+  --datadir <path>    Datenverzeichnis
+  --stake <amount>    Sequencer-Stake in CAS (Standard: 10)
+  --hatscore <score>  HAT v2 Score 0-100 (Standard: 50)
+  --burn <amount>     CAS zu verbrennen für L2-Tokens (Standard: 10)
+  --blocks <count>    Initiale Blöcke - nur Regtest (Standard: 101)
+```
+
+### mine_l2_blocks.sh
+
+```
+Netzwerk-Modi:
+  (ohne Flag)         Regtest-Modus (Standard)
+  --testnet           Testnet-Modus
+
+Optionen:
+  --datadir <path>    Datenverzeichnis
+  --blocks <count>    Anzahl Blöcke zu generieren - nur Regtest (Standard: 18)
+```
+
+### cleanup.sh
+
+```
+Netzwerk-Modi:
+  (ohne Flag)         Regtest-Modus (Standard)
+  --testnet           Testnet-Modus (Daten werden NICHT gelöscht!)
+
+Optionen:
+  --datadir <path>    Datenverzeichnis
+  --keep-data         Netzwerk-Daten behalten (nur Node stoppen)
+                      Im Testnet ist dies der Standard!
+  --force, -f         Daten wirklich löschen (auch im Testnet)
 ```

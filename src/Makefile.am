@@ -109,6 +109,8 @@ BITCOIN_CORE_H = \
   httpserver/l2_dashboard.h \
   httpserver/l2_dashboard_html.h \
   httpserver/l2_websocket.h \
+  httpserver/reward_dashboard.h \
+  httpserver/reward_dashboard_html.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -237,6 +239,9 @@ BITCOIN_CORE_H = \
   cvm/dos_protection.h \
   cvm/metrics.h \
   cvm/graceful_degradation.h \
+  cvm/reward_types.h \
+  cvm/commit_reveal.h \
+  cvm/reward_distributor.h \
   l2/l2_common.h \
   l2/l2_chainparams.h \
   l2/l2_config.h \
@@ -297,6 +302,7 @@ libbitcoin_server_a_SOURCES = \
   httpserver/cvmdashboard.cpp \
   httpserver/l2_dashboard.cpp \
   httpserver/l2_websocket.cpp \
+  httpserver/reward_dashboard.cpp \
   init.cpp \
   dbwrapper.cpp \
   merkleblock.cpp \
@@ -388,6 +394,9 @@ libbitcoin_server_a_SOURCES = \
   cvm/dos_protection.cpp \
   cvm/metrics.cpp \
   cvm/graceful_degradation.cpp \
+  cvm/reward_types.cpp \
+  cvm/commit_reveal.cpp \
+  cvm/reward_distributor.cpp \
   l2/l2_common.cpp \
   l2/l2_chainparams.cpp \
   l2/l2_config.cpp \

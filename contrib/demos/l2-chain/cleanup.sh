@@ -5,9 +5,13 @@
 # 
 # Dieses Skript bereinigt die L2-Demo-Umgebung:
 #   1. Stoppt den laufenden Cascoin-Node
-#   2. Löscht die Regtest-Daten (optional)
+#   2. Löscht die Regtest/Testnet-Daten (optional)
 #
-# Verwendung: ./cleanup.sh [--datadir <path>] [--keep-data] [--force]
+# Unterstützt Regtest (Standard) und Testnet (mit --testnet Flag).
+#
+# Verwendung: 
+#   ./cleanup.sh [--datadir <path>] [--keep-data] [--force]
+#   ./cleanup.sh --testnet [--datadir <path>] [--keep-data] [--force]
 #
 # Requirements: 3.5
 # =============================================================================
@@ -19,7 +23,11 @@ set -e
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEFAULT_DATADIR="${HOME}/.cascoin-l2-demo"
+DEFAULT_DATADIR_REGTEST="${HOME}/.cascoin-l2-demo"
+DEFAULT_DATADIR_TESTNET="${HOME}/.cascoin-l2-testnet"
+
+# Netzwerk-Modus (regtest oder testnet)
+NETWORK_MODE="regtest"
 
 # Farben für Ausgabe
 RED='\033[0;31m'
@@ -79,7 +87,11 @@ find_binaries() {
 
 # Wrapper für cascoin-cli mit RPC-Credentials
 cli() {
-    $CASCOIN_CLI -regtest -datadir="${DATADIR}" -rpcuser=demo -rpcpassword=demo "$@"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        $CASCOIN_CLI -testnet -datadir="${DATADIR}" -rpcuser=demo -rpcpassword=demo "$@"
+    else
+        $CASCOIN_CLI -regtest -datadir="${DATADIR}" -rpcuser=demo -rpcpassword=demo "$@"
+    fi
 }
 
 # Warte auf Node-Stop
@@ -105,12 +117,34 @@ wait_for_node_stop() {
 # Argument-Parsing
 # =============================================================================
 
-DATADIR="${DEFAULT_DATADIR}"
+# Erst prüfen ob --testnet gesetzt ist, um Default-Datadir zu bestimmen
+for arg in "$@"; do
+    if [ "$arg" = "--testnet" ]; then
+        NETWORK_MODE="testnet"
+        break
+    fi
+done
+
+# Standard-Datadir basierend auf Netzwerk
+if [ "$NETWORK_MODE" = "testnet" ]; then
+    DATADIR="${DEFAULT_DATADIR_TESTNET}"
+else
+    DATADIR="${DEFAULT_DATADIR_REGTEST}"
+fi
+
 KEEP_DATA=false
 FORCE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --testnet)
+            NETWORK_MODE="testnet"
+            # Aktualisiere Datadir falls nicht explizit gesetzt
+            if [ "$DATADIR" = "${DEFAULT_DATADIR_REGTEST}" ]; then
+                DATADIR="${DEFAULT_DATADIR_TESTNET}"
+            fi
+            shift
+            ;;
         --datadir)
             DATADIR="$2"
             shift 2
@@ -126,11 +160,23 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             echo "Verwendung: $0 [OPTIONEN]"
             echo ""
+            echo "Netzwerk-Modi:"
+            echo "  (ohne Flag)         Regtest-Modus (Standard)"
+            echo "  --testnet           Testnet-Modus"
+            echo ""
             echo "Optionen:"
-            echo "  --datadir <path>  Datenverzeichnis (Standard: ${DEFAULT_DATADIR})"
-            echo "  --keep-data       Regtest-Daten behalten (nur Node stoppen)"
-            echo "  --force, -f       Keine Bestätigung vor Löschung"
-            echo "  --help, -h        Diese Hilfe anzeigen"
+            echo "  --datadir <path>    Datenverzeichnis"
+            echo "                      Regtest: ${DEFAULT_DATADIR_REGTEST}"
+            echo "                      Testnet: ${DEFAULT_DATADIR_TESTNET}"
+            echo "  --keep-data         Netzwerk-Daten behalten (nur Node stoppen)"
+            echo "                      Im Testnet ist dies der Standard!"
+            echo "  --force, -f         Daten wirklich löschen (auch im Testnet)"
+            echo "  --help, -h          Diese Hilfe anzeigen"
+            echo ""
+            echo "Beispiele:"
+            echo "  $0                          # Regtest cleanup"
+            echo "  $0 --testnet                # Testnet cleanup"
+            echo "  $0 --testnet --keep-data    # Testnet Node stoppen, Daten behalten"
             exit 0
             ;;
         *)
@@ -144,14 +190,24 @@ done
 # Hauptprogramm
 # =============================================================================
 
-print_header "Cascoin L2 Demo Chain Cleanup"
+print_header "Cascoin L2 Demo Chain Cleanup (${NETWORK_MODE})"
 
 echo ""
 print_info "Konfiguration:"
+print_info "  Netzwerk-Modus:   ${NETWORK_MODE}"
 print_info "  Datenverzeichnis: ${DATADIR}"
 print_info "  Daten behalten:   ${KEEP_DATA}"
 print_info "  Force-Modus:      ${FORCE}"
 echo ""
+
+# Lade Netzwerk-Modus aus Config falls vorhanden
+if [ -f "${DATADIR}/demo_config.sh" ]; then
+    source "${DATADIR}/demo_config.sh"
+    if [ -n "$DEMO_NETWORK_MODE" ]; then
+        NETWORK_MODE="${DEMO_NETWORK_MODE}"
+        print_info "Netzwerk-Modus aus Config: ${NETWORK_MODE}"
+    fi
+fi
 
 # Finde Binaries
 find_binaries
@@ -202,22 +258,42 @@ fi
 # -----------------------------------------------------------------------------
 
 if [ "$KEEP_DATA" = false ]; then
-    print_step "Lösche Regtest-Daten..."
+    # Im Testnet: Niemals Daten löschen (nur mit --force)
+    if [ "$NETWORK_MODE" = "testnet" ] && [ "$FORCE" = false ]; then
+        print_info "Testnet-Modus: Daten werden automatisch behalten"
+        print_info "(Blockchain-Sync kann Stunden dauern)"
+        print_info "Verwenden Sie --force um Testnet-Daten zu löschen"
+        KEEP_DATA=true
+    fi
+fi
+
+if [ "$KEEP_DATA" = false ]; then
+    print_step "Lösche ${NETWORK_MODE}-Daten..."
     
-    REGTEST_DIR="${DATADIR}/regtest"
+    NETWORK_SUBDIR="${NETWORK_MODE}"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        NETWORK_SUBDIR="testnet3"
+    fi
     
-    if [ -d "$REGTEST_DIR" ]; then
+    NETWORK_DIR="${DATADIR}/${NETWORK_SUBDIR}"
+    
+    if [ -d "$NETWORK_DIR" ]; then
         # Bestätigung anfordern (außer im Force-Modus)
         if [ "$FORCE" = false ]; then
             echo ""
             print_warning "ACHTUNG: Folgende Daten werden gelöscht:"
-            echo "  ${REGTEST_DIR}"
+            echo "  ${NETWORK_DIR}"
             echo ""
             
             # Zeige Größe
             if command -v du &> /dev/null; then
-                SIZE=$(du -sh "$REGTEST_DIR" 2>/dev/null | cut -f1)
+                SIZE=$(du -sh "$NETWORK_DIR" 2>/dev/null | cut -f1)
                 print_info "Größe: ${SIZE}"
+            fi
+            
+            if [ "$NETWORK_MODE" = "testnet" ]; then
+                print_warning "WARNUNG: Testnet-Daten enthalten die synchronisierte Blockchain!"
+                print_warning "Eine Neusynchronisation kann mehrere Stunden dauern."
             fi
             
             echo ""
@@ -230,9 +306,9 @@ if [ "$KEEP_DATA" = false ]; then
             fi
         fi
         
-        # Lösche Regtest-Verzeichnis
-        rm -rf "$REGTEST_DIR"
-        print_success "Regtest-Daten gelöscht: ${REGTEST_DIR}"
+        # Lösche Netzwerk-Verzeichnis
+        rm -rf "$NETWORK_DIR"
+        print_success "${NETWORK_MODE}-Daten gelöscht: ${NETWORK_DIR}"
         
         # Lösche auch die Demo-Konfiguration
         if [ -f "${DATADIR}/demo_config.sh" ]; then
@@ -256,7 +332,7 @@ if [ "$KEEP_DATA" = false ]; then
         fi
         
     else
-        print_info "Keine Regtest-Daten gefunden in: ${REGTEST_DIR}"
+        print_info "Keine ${NETWORK_MODE}-Daten gefunden in: ${NETWORK_DIR}"
     fi
 else
     print_info "Daten werden behalten (--keep-data)"
@@ -269,14 +345,19 @@ fi
 print_step "Räume temporäre Dateien auf..."
 
 # Lösche Lock-Dateien falls vorhanden
-LOCK_FILE="${DATADIR}/regtest/.lock"
+NETWORK_SUBDIR="${NETWORK_MODE}"
+if [ "$NETWORK_MODE" = "testnet" ]; then
+    NETWORK_SUBDIR="testnet3"
+fi
+
+LOCK_FILE="${DATADIR}/${NETWORK_SUBDIR}/.lock"
 if [ -f "$LOCK_FILE" ]; then
     rm -f "$LOCK_FILE"
     print_info "Lock-Datei entfernt"
 fi
 
 # Lösche Debug-Log falls sehr groß
-DEBUG_LOG="${DATADIR}/regtest/debug.log"
+DEBUG_LOG="${DATADIR}/${NETWORK_SUBDIR}/debug.log"
 if [ -f "$DEBUG_LOG" ]; then
     SIZE=$(stat -f%z "$DEBUG_LOG" 2>/dev/null || stat -c%s "$DEBUG_LOG" 2>/dev/null || echo "0")
     if [ "$SIZE" -gt 104857600 ]; then  # > 100MB
@@ -301,12 +382,20 @@ if [ "$KEEP_DATA" = true ]; then
     echo "Der Node wurde gestoppt, aber die Daten wurden behalten."
     echo ""
     echo "Zum Neustart:"
-    echo "  ./setup_l2_demo.sh --datadir ${DATADIR}"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        echo "  ./setup_l2_demo.sh --testnet"
+    else
+        echo "  ./setup_l2_demo.sh --datadir ${DATADIR}"
+    fi
 else
     echo "Der Node wurde gestoppt und alle Demo-Daten wurden gelöscht."
     echo ""
     echo "Für einen Neustart:"
-    echo "  ./setup_l2_demo.sh"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        echo "  ./setup_l2_demo.sh --testnet"
+    else
+        echo "  ./setup_l2_demo.sh"
+    fi
 fi
 echo ""
 

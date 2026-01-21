@@ -11,6 +11,8 @@
 #include <map>
 #include <vector>
 #include <string>
+#include <memory>
+#include <set>
 
 namespace CVM {
 
@@ -118,6 +120,9 @@ struct BondedVote {
  * 
  * When a vote is challenged, a DAO panel can arbitrate.
  * DAO members stake their own CAS to vote on the dispute.
+ * 
+ * Extended with commit-reveal voting support and reward tracking.
+ * Requirements: 8.2, 8.3, 9.3
  */
 struct DAODispute {
     uint256 disputeId;           // Unique dispute ID
@@ -136,7 +141,65 @@ struct DAODispute {
     bool slashDecision;          // Final decision: slash or not?
     uint32_t resolvedTime;       // When resolved
     
-    DAODispute() : challengeBond(0), createdTime(0), resolved(false), slashDecision(false), resolvedTime(0) {}
+    // Commit-reveal phase tracking (Requirements: 8.2, 8.3)
+    uint32_t commitPhaseStart;   // Block height when commit phase started
+    uint32_t revealPhaseStart;   // Block height when reveal phase started (0 if not started)
+    bool useCommitReveal;        // Whether this dispute uses commit-reveal voting
+    
+    // Reward tracking (Requirement: 9.3)
+    bool rewardsDistributed;     // Have rewards been distributed?
+    uint256 rewardDistributionId; // ID of reward distribution record
+    
+    DAODispute() 
+        : challengeBond(0)
+        , createdTime(0)
+        , resolved(false)
+        , slashDecision(false)
+        , resolvedTime(0)
+        , commitPhaseStart(0)
+        , revealPhaseStart(0)
+        , useCommitReveal(false)
+        , rewardsDistributed(false)
+    {}
+    
+    /**
+     * Check if this dispute is in commit phase
+     * @param currentHeight Current block height
+     * @param commitDuration Duration of commit phase in blocks
+     * @return true if in commit phase
+     */
+    bool IsInCommitPhase(uint32_t currentHeight, uint32_t commitDuration) const {
+        if (!useCommitReveal) return false;
+        uint32_t commitEnd = commitPhaseStart + commitDuration;
+        return currentHeight >= commitPhaseStart && currentHeight < commitEnd;
+    }
+    
+    /**
+     * Check if this dispute is in reveal phase
+     * @param currentHeight Current block height
+     * @param commitDuration Duration of commit phase in blocks
+     * @param revealDuration Duration of reveal phase in blocks
+     * @return true if in reveal phase
+     */
+    bool IsInRevealPhase(uint32_t currentHeight, uint32_t commitDuration, uint32_t revealDuration) const {
+        if (!useCommitReveal) return false;
+        uint32_t commitEnd = commitPhaseStart + commitDuration;
+        uint32_t revealEnd = commitEnd + revealDuration;
+        return currentHeight >= commitEnd && currentHeight < revealEnd;
+    }
+    
+    /**
+     * Check if both phases have completed
+     * @param currentHeight Current block height
+     * @param commitDuration Duration of commit phase in blocks
+     * @param revealDuration Duration of reveal phase in blocks
+     * @return true if both phases are complete
+     */
+    bool ArePhasesComplete(uint32_t currentHeight, uint32_t commitDuration, uint32_t revealDuration) const {
+        if (!useCommitReveal) return true;  // Legacy disputes don't have phases
+        uint32_t revealEnd = commitPhaseStart + commitDuration + revealDuration;
+        return currentHeight >= revealEnd;
+    }
     
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>
@@ -152,8 +215,18 @@ struct DAODispute {
         READWRITE(resolved);
         READWRITE(slashDecision);
         READWRITE(resolvedTime);
+        // Extended fields for commit-reveal and rewards
+        READWRITE(commitPhaseStart);
+        READWRITE(revealPhaseStart);
+        READWRITE(useCommitReveal);
+        READWRITE(rewardsDistributed);
+        READWRITE(rewardDistributionId);
     }
 };
+
+// Forward declarations for reward system integration
+class RewardDistributor;
+class CommitRevealManager;
 
 /**
  * Web-of-Trust Reputation System
@@ -161,10 +234,14 @@ struct DAODispute {
  * Unlike the simple global score system, this implements a personalized
  * Web-of-Trust where each user's view of reputation is based on their
  * own trust graph and connections.
+ * 
+ * Extended with reward distribution and commit-reveal voting support.
+ * Requirements: 9.1, 9.3, 9.4, 9.5
  */
 class TrustGraph {
 public:
     explicit TrustGraph(CVMDatabase& db);
+    ~TrustGraph();
     
     /**
      * Add or update a trust edge
@@ -309,10 +386,26 @@ public:
     /**
      * Resolve a dispute
      * 
+     * Extended to integrate with RewardDistributor for automatic reward distribution.
+     * Calls DistributeSlashRewards() or DistributeFailedChallengeRewards() based on outcome.
+     * 
      * @param disputeId Dispute ID
      * @return true if successful
+     * 
+     * Requirements: 9.1, 9.3, 9.4, 9.5
      */
     bool ResolveDispute(const uint256& disputeId);
+    
+    /**
+     * Get the original vote being disputed
+     * 
+     * @param disputeId Dispute ID
+     * @param vote Output bonded vote
+     * @return true if found
+     * 
+     * Requirement: 9.1
+     */
+    bool GetDisputedVote(const uint256& disputeId, BondedVote& vote) const;
     
     /**
      * Get statistics about the trust graph
@@ -333,9 +426,27 @@ public:
      * @return true if address is a DAO member
      */
     bool IsDAOMember(const uint160& address) const;
+    
+    /**
+     * Get the RewardDistributor instance
+     * 
+     * @return Pointer to RewardDistributor (may be null if not initialized)
+     */
+    RewardDistributor* GetRewardDistributor() const { return rewardDistributor.get(); }
+    
+    /**
+     * Get the CommitRevealManager instance
+     * 
+     * @return Pointer to CommitRevealManager (may be null if not initialized)
+     */
+    CommitRevealManager* GetCommitRevealManager() const { return commitRevealManager.get(); }
 
 private:
     CVMDatabase& database;
+    
+    // Reward system integration (Requirements: 9.1, 9.3)
+    std::unique_ptr<RewardDistributor> rewardDistributor;
+    std::unique_ptr<CommitRevealManager> commitRevealManager;
     
     /**
      * Recursive helper for finding trust paths
@@ -355,6 +466,14 @@ private:
      * Larger absolute vote values require larger bonds to prevent spam.
      */
     CAmount CalculateRequiredBond(int16_t voteValue) const;
+    
+    /**
+     * Update dispute in database
+     * 
+     * @param dispute Dispute to update
+     * @return true if successful
+     */
+    bool UpdateDispute(const DAODispute& dispute);
 };
 
 /**
@@ -368,14 +487,50 @@ struct WoTConfig {
     double daoQuorumPercentage;     // Percentage of DAO stake needed for quorum
     uint32_t disputeTimeoutBlocks;  // Blocks before dispute auto-resolves
     
+    // Reward distribution percentages for successful challenge (must sum to 100)
+    uint8_t challengerRewardPercent;        // Percentage of slashed bond to challenger (default: 50)
+    uint8_t daoVoterRewardPercent;          // Percentage of slashed bond to DAO voters (default: 30)
+    uint8_t burnPercent;                    // Percentage of slashed bond to burn (default: 20)
+    
+    // Failed challenge distribution percentages (must sum to 100)
+    uint8_t wronglyAccusedRewardPercent;    // Percentage of forfeited bond to wrongly accused (default: 70)
+    uint8_t failedChallengeBurnPercent;     // Percentage of forfeited bond to burn (default: 30)
+    
+    // Commit-reveal voting timing (in blocks)
+    uint32_t commitPhaseDuration;           // Duration of commit phase (default: 720 blocks ~12 hours)
+    uint32_t revealPhaseDuration;           // Duration of reveal phase (default: 720 blocks ~12 hours)
+    
+    // Feature flags
+    bool enableCommitReveal;                // Enable commit-reveal voting for new disputes (default: true)
+    
     WoTConfig() :
         minBondAmount(COIN),              // 1 CAS minimum (COIN = 10000000 in Cascoin!)
         bondPerVotePoint(COIN / 100),     // 0.01 CAS per point (= 100000 in Cascoin)
         maxTrustPathDepth(3),
         minDAOVotesForResolution(5),
         daoQuorumPercentage(0.51),
-        disputeTimeoutBlocks(1440)        // ~1 day
+        disputeTimeoutBlocks(1440),       // ~1 day
+        challengerRewardPercent(50),
+        daoVoterRewardPercent(30),
+        burnPercent(20),
+        wronglyAccusedRewardPercent(70),
+        failedChallengeBurnPercent(30),
+        commitPhaseDuration(720),         // ~12 hours at 1 block/minute
+        revealPhaseDuration(720),         // ~12 hours at 1 block/minute
+        enableCommitReveal(true)
     {}
+    
+    /**
+     * Validate that reward percentages sum to 100
+     * 
+     * @return true if both percentage sets are valid:
+     *         - challengerRewardPercent + daoVoterRewardPercent + burnPercent == 100
+     *         - wronglyAccusedRewardPercent + failedChallengeBurnPercent == 100
+     */
+    bool ValidateRewardPercentages() const {
+        return (challengerRewardPercent + daoVoterRewardPercent + burnPercent) == 100 &&
+               (wronglyAccusedRewardPercent + failedChallengeBurnPercent) == 100;
+    }
 };
 
 // Global Web-of-Trust configuration

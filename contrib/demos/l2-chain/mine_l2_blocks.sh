@@ -6,7 +6,11 @@
 # Dieses Skript generiert Blöcke und stellt sicher, dass L2-Burns gemintet werden.
 # Es wartet auf Sequencer-Konsens und zeigt den Fortschritt an.
 #
-# Verwendung: ./mine_l2_blocks.sh [--blocks <count>] [--datadir <path>]
+# Unterstützt Regtest (Standard) und Testnet (mit --testnet Flag).
+#
+# Verwendung: 
+#   ./mine_l2_blocks.sh [--blocks <count>] [--datadir <path>]
+#   ./mine_l2_blocks.sh --testnet [--datadir <path>]
 #
 # =============================================================================
 
@@ -16,10 +20,14 @@ set -e
 # Konfiguration
 # =============================================================================
 
-DEFAULT_DATADIR="${HOME}/.cascoin-l2-demo"
+DEFAULT_DATADIR_REGTEST="${HOME}/.cascoin-l2-demo"
+DEFAULT_DATADIR_TESTNET="${HOME}/.cascoin-l2-testnet"
 DEFAULT_BLOCKS=18
 RPC_USER="demo"
 RPC_PASSWORD="demo"
+
+# Netzwerk-Modus (regtest oder testnet)
+NETWORK_MODE="regtest"
 
 # Farben
 RED='\033[0;31m'
@@ -71,7 +79,11 @@ find_binaries() {
 
 # CLI Wrapper
 cli() {
-    $CASCOIN_CLI -regtest -datadir="${DATADIR}" -rpcuser="${RPC_USER}" -rpcpassword="${RPC_PASSWORD}" "$@"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        $CASCOIN_CLI -testnet -datadir="${DATADIR}" -rpcuser="${RPC_USER}" -rpcpassword="${RPC_PASSWORD}" "$@"
+    else
+        $CASCOIN_CLI -regtest -datadir="${DATADIR}" -rpcuser="${RPC_USER}" -rpcpassword="${RPC_PASSWORD}" "$@"
+    fi
 }
 
 # Generiere Blöcke
@@ -108,11 +120,33 @@ generate_blocks() {
 # Argument-Parsing
 # =============================================================================
 
-DATADIR="${DEFAULT_DATADIR}"
+# Erst prüfen ob --testnet gesetzt ist, um Default-Datadir zu bestimmen
+for arg in "$@"; do
+    if [ "$arg" = "--testnet" ]; then
+        NETWORK_MODE="testnet"
+        break
+    fi
+done
+
+# Standard-Datadir basierend auf Netzwerk
+if [ "$NETWORK_MODE" = "testnet" ]; then
+    DATADIR="${DEFAULT_DATADIR_TESTNET}"
+else
+    DATADIR="${DEFAULT_DATADIR_REGTEST}"
+fi
+
 BLOCKS="${DEFAULT_BLOCKS}"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --testnet)
+            NETWORK_MODE="testnet"
+            # Aktualisiere Datadir falls nicht explizit gesetzt
+            if [ "$DATADIR" = "${DEFAULT_DATADIR_REGTEST}" ]; then
+                DATADIR="${DEFAULT_DATADIR_TESTNET}"
+            fi
+            shift
+            ;;
         --datadir)
             DATADIR="$2"
             shift 2
@@ -124,10 +158,18 @@ while [[ $# -gt 0 ]]; do
         --help|-h)
             echo "Verwendung: $0 [OPTIONEN]"
             echo ""
+            echo "Netzwerk-Modi:"
+            echo "  (ohne Flag)         Regtest-Modus (Standard)"
+            echo "  --testnet           Testnet-Modus"
+            echo ""
             echo "Optionen:"
-            echo "  --datadir <path>    Datenverzeichnis (Standard: ${DEFAULT_DATADIR})"
-            echo "  --blocks <count>    Anzahl Blöcke zu generieren (Standard: ${DEFAULT_BLOCKS})"
+            echo "  --datadir <path>    Datenverzeichnis"
+            echo "                      Regtest: ${DEFAULT_DATADIR_REGTEST}"
+            echo "                      Testnet: ${DEFAULT_DATADIR_TESTNET}"
+            echo "  --blocks <count>    Anzahl Blöcke zu generieren - nur Regtest (Standard: ${DEFAULT_BLOCKS})"
             echo "  --help, -h          Diese Hilfe anzeigen"
+            echo ""
+            echo "Hinweis: Im Testnet werden keine Blöcke generiert, sondern nur der Status angezeigt."
             exit 0
             ;;
         *)
@@ -141,13 +183,24 @@ done
 # Hauptprogramm
 # =============================================================================
 
-print_header "Cascoin L2 Mining Script"
+print_header "Cascoin L2 Mining Script (${NETWORK_MODE})"
 
 find_binaries
+
+# Lade Netzwerk-Modus aus Config falls vorhanden
+if [ -f "${DATADIR}/demo_config.sh" ]; then
+    source "${DATADIR}/demo_config.sh"
+    if [ -n "$DEMO_NETWORK_MODE" ]; then
+        NETWORK_MODE="${DEMO_NETWORK_MODE}"
+    fi
+fi
 
 # Prüfe ob Node läuft
 if ! cli getblockchaininfo &>/dev/null; then
     print_error "Node läuft nicht. Starte zuerst ./setup_l2_demo.sh"
+    if [ "$NETWORK_MODE" = "testnet" ]; then
+        print_info "Für Testnet: ./setup_l2_demo.sh --testnet"
+    fi
     exit 1
 fi
 
@@ -173,16 +226,35 @@ print_info "Pending Burns: ${PENDING_COUNT}"
 SUPPLY_BEFORE=$(cli l2_gettotalsupply 2>/dev/null | grep -o '"totalMintedL2": [^,]*' | cut -d' ' -f2 || echo "0")
 print_info "L2 Total Supply: ${SUPPLY_BEFORE}"
 
-# Generiere Blöcke
-echo ""
-print_step "Generiere ${BLOCKS} Blöcke..."
-START_HEIGHT=$(cli getblockcount)
+# Generiere Blöcke (nur Regtest)
+if [ "$NETWORK_MODE" = "regtest" ]; then
+    echo ""
+    print_step "Generiere ${BLOCKS} Blöcke..."
+    START_HEIGHT=$(cli getblockcount)
 
-generate_blocks ${BLOCKS} "${MINING_ADDR}"
+    generate_blocks ${BLOCKS} "${MINING_ADDR}"
 
-END_HEIGHT=$(cli getblockcount)
-GENERATED=$((END_HEIGHT - START_HEIGHT))
-print_success "${GENERATED} Blöcke generiert (Höhe: ${START_HEIGHT} -> ${END_HEIGHT})"
+    END_HEIGHT=$(cli getblockcount)
+    GENERATED=$((END_HEIGHT - START_HEIGHT))
+    print_success "${GENERATED} Blöcke generiert (Höhe: ${START_HEIGHT} -> ${END_HEIGHT})"
+else
+    echo ""
+    print_info "Testnet-Modus: Keine Block-Generierung möglich"
+    print_info "Warte auf neue Blöcke vom Netzwerk..."
+    
+    START_HEIGHT=$(cli getblockcount)
+    print_info "Aktuelle Block-Höhe: ${START_HEIGHT}"
+    
+    # Warte kurz auf neue Blöcke
+    sleep 10
+    
+    END_HEIGHT=$(cli getblockcount)
+    if [ "$END_HEIGHT" -gt "$START_HEIGHT" ]; then
+        print_success "$((END_HEIGHT - START_HEIGHT)) neue Blöcke empfangen"
+    else
+        print_info "Keine neuen Blöcke in den letzten 10 Sekunden"
+    fi
+fi
 
 # Zeige Status nach dem Mining
 echo ""
@@ -229,7 +301,7 @@ if [ -n "$DEMO_BURN_TXID" ] && [ "$DEMO_BURN_TXID" != "N/A" ]; then
     print_info "Mint Status: ${MINT_STATUS}"
     
     # In Regtest: Force mint wenn genug Confirmations aber noch nicht gemintet
-    if [ "$MINT_STATUS" = "NOT_MINTED" ] && [ "$CONFIRMATIONS" -ge 6 ] 2>/dev/null; then
+    if [ "$NETWORK_MODE" = "regtest" ] && [ "$MINT_STATUS" = "NOT_MINTED" ] && [ "$CONFIRMATIONS" -ge 6 ] 2>/dev/null; then
         print_info "Versuche Force-Mint (Regtest)..."
         FORCE_RESULT=$(cli l2_forcemint "$DEMO_BURN_TXID" 2>&1) || true
         

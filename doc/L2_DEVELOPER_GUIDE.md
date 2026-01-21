@@ -1231,6 +1231,60 @@ print(f"Total supply: {supply['totalSupply']} CAS")
 
 ---
 
+## Demo Code and Tutorials
+
+For hands-on learning, Cascoin provides ready-to-run demo code and step-by-step tutorials:
+
+### Quick Start Demo
+
+The fastest way to get started with L2 development is the demo setup script:
+
+```bash
+cd contrib/demos/l2-chain
+./setup_l2_demo.sh
+```
+
+This script automatically:
+- Starts a Cascoin node with L2 enabled
+- Generates initial blocks (regtest mode)
+- Registers a sequencer
+- Performs an initial burn-and-mint operation
+
+### Available Tutorials
+
+| Tutorial | Description |
+|----------|-------------|
+| [L2 Quick Start](../contrib/demos/tutorials/01_l2_quickstart.md) | Complete L2 setup walkthrough with configuration options and troubleshooting |
+| [Token Creation](../contrib/demos/tutorials/02_token_creation.md) | Create ERC-20 tokens with trust-aware features |
+
+### Demo Files Location
+
+All demo code is located in `contrib/demos/`:
+
+```
+contrib/demos/
+├── README.md                    # Overview and quick start
+├── l2-chain/
+│   ├── setup_l2_demo.sh        # L2 chain setup script
+│   ├── cleanup.sh              # Cleanup script
+│   └── config/regtest.conf     # Regtest configuration
+├── contracts/
+│   ├── CascoinToken.sol        # ERC-20 token with trust features
+│   ├── CascoinToken.cvm        # CVM bytecode version
+│   ├── deploy_token.sh         # Token deployment script
+│   └── demo_transfer.sh        # Token transfer demo
+└── tutorials/
+    ├── 01_l2_quickstart.md     # L2 setup tutorial
+    └── 02_token_creation.md    # Token creation tutorial
+```
+
+### Related Documentation
+
+- [CVM Developer Guide](CVM_DEVELOPER_GUIDE.md) - Smart contract development
+- [L2 Operator Guide](L2_OPERATOR_GUIDE.md) - Running L2 infrastructure
+
+---
+
 ## Appendix
 
 ### Address Formats

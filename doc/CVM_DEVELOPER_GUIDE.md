@@ -561,6 +561,65 @@ contract TrustMarketplace {
 
 ---
 
+## Demo Code and Tutorials
+
+For hands-on learning with CVM smart contracts, Cascoin provides ready-to-run demo code:
+
+### Token Contract Demo
+
+A complete ERC-20 token implementation with trust-aware features is available:
+
+```bash
+cd contrib/demos/contracts
+./deploy_token.sh
+```
+
+This deploys the **CascoinToken** contract which demonstrates:
+- Standard ERC-20 functionality (transfer, approve, transferFrom)
+- Reputation-based transfer limits
+- Integration with Cascoin's Web-of-Trust system
+- Minimum reputation requirements for transfers
+
+### Available Tutorials
+
+| Tutorial | Description |
+|----------|-------------|
+| [Token Creation](../contrib/demos/tutorials/02_token_creation.md) | Step-by-step guide to creating trust-aware tokens |
+| [L2 Quick Start](../contrib/demos/tutorials/01_l2_quickstart.md) | L2 chain setup for contract deployment |
+
+### Demo Files Location
+
+Contract demos are located in `contrib/demos/contracts/`:
+
+```
+contrib/demos/contracts/
+├── README.md               # Contract documentation
+├── CascoinToken.sol        # ERC-20 token with trust features
+├── CascoinToken.cvm        # CVM bytecode version (no solc required)
+├── deploy_token.sh         # Deployment script
+└── demo_transfer.sh        # Token transfer demo
+```
+
+### CascoinToken Features
+
+The demo token showcases Cascoin's unique trust integration:
+
+```solidity
+// Reputation-based transfer limits
+function maxTransferAmount(address account) public view returns (uint256) {
+    uint8 rep = _getReputation(account);
+    if (rep >= 90) return type(uint256).max;  // Unlimited
+    if (rep >= 70) return 100000 * 10**decimals;
+    if (rep >= 50) return 10000 * 10**decimals;
+    if (rep >= 30) return 1000 * 10**decimals;
+    return 0;  // No transfers allowed
+}
+```
+
+See the [Token Creation Tutorial](../contrib/demos/tutorials/02_token_creation.md) for a complete code walkthrough.
+
+---
+
 ## Next Steps
 
 - [Blockchain Integration Guide](CVM_BLOCKCHAIN_INTEGRATION.md) - Transaction format and mempool details

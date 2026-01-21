@@ -22,6 +22,7 @@
 #include <httpserver/cvmdashboard.h>
 #include <httpserver/l2_dashboard.h>
 #include <httpserver/l2_websocket.h>
+#include <httpserver/reward_dashboard.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -792,6 +793,14 @@ bool AppInitServers()
         l2::InitL2WebSocketHandlers();
     } else {
         LogPrintf("L2 Dashboard disabled (use -l2dashboard=1 to enable)\n");
+    }
+    
+    // Cascoin: Initialize Reward Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-rewarddashboard", false)) {
+        LogPrintf("Reward Dashboard enabled - handlers registered\n");
+        reward::InitRewardDashboardHandlers();
+    } else {
+        LogPrintf("Reward Dashboard disabled (use -rewarddashboard=1 to enable)\n");
     }
     
     return true;
