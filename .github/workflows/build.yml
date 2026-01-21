@@ -563,6 +563,7 @@ jobs:
   build-windows:
     runs-on: default
     timeout-minutes: 120
+    needs: build-linux
     env:
       HOST: x86_64-w64-mingw32
     steps:
