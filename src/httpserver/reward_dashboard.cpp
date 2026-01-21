@@ -335,7 +335,7 @@ std::string GetDisputesJSON(const std::string& status, size_t limit) {
                 }
                 
                 std::vector<uint8_t> data;
-                if (CVM::g_cvmdb->Read(key, data)) {
+                if (CVM::g_cvmdb->ReadGeneric(key, data)) {
                     CVM::DAODispute dispute;
                     CDataStream ss(data, SER_DISK, CLIENT_VERSION);
                     ss >> dispute;
@@ -358,7 +358,7 @@ std::string GetDisputesJSON(const std::string& status, size_t limit) {
                 json << "    {\n";
                 json << "      \"dispute_id\": \"" << dispute.disputeId.GetHex() << "\",\n";
                 json << "      \"challenger\": \"" << EncodeDestination(CKeyID(dispute.challenger)) << "\",\n";
-                json << "      \"target_vote\": \"" << dispute.targetVote.GetHex() << "\",\n";
+                json << "      \"target_vote\": \"" << dispute.originalVoteTx.GetHex() << "\",\n";
                 json << "      \"challenge_bond\": " << dispute.challengeBond << ",\n";
                 json << "      \"challenge_bond_formatted\": \"" << FormatCAS(dispute.challengeBond) << "\",\n";
                 json << "      \"created_time\": " << dispute.createdTime << ",\n";
@@ -367,8 +367,13 @@ std::string GetDisputesJSON(const std::string& status, size_t limit) {
                 json << "      \"slash_decision\": " << (dispute.slashDecision ? "true" : "false") << ",\n";
                 json << "      \"rewards_distributed\": " << (dispute.rewardsDistributed ? "true" : "false") << ",\n";
                 json << "      \"use_commit_reveal\": " << (dispute.useCommitReveal ? "true" : "false") << ",\n";
-                json << "      \"slash_votes\": " << dispute.slashVotes << ",\n";
-                json << "      \"keep_votes\": " << dispute.keepVotes << "\n";
+                // Count slash and keep votes from daoVotes map
+                size_t slashVotes = 0, keepVotes = 0;
+                for (const auto& vote : dispute.daoVotes) {
+                    if (vote.second) slashVotes++; else keepVotes++;
+                }
+                json << "      \"slash_votes\": " << slashVotes << ",\n";
+                json << "      \"keep_votes\": " << keepVotes << "\n";
                 json << "    }";
                 if (i < filtered.size() - 1) json << ",";
                 json << "\n";
@@ -406,14 +411,14 @@ std::string GetDisputeDetailJSON(const std::string& disputeIdStr) {
             std::string key = "dispute_" + disputeId.ToString();
             std::vector<uint8_t> data;
             
-            if (CVM::g_cvmdb->Read(key, data)) {
+            if (CVM::g_cvmdb->ReadGeneric(key, data)) {
                 CVM::DAODispute dispute;
                 CDataStream ss(data, SER_DISK, CLIENT_VERSION);
                 ss >> dispute;
                 
                 json << "  \"dispute_id\": \"" << dispute.disputeId.GetHex() << "\",\n";
                 json << "  \"challenger\": \"" << EncodeDestination(CKeyID(dispute.challenger)) << "\",\n";
-                json << "  \"target_vote\": \"" << dispute.targetVote.GetHex() << "\",\n";
+                json << "  \"target_vote\": \"" << dispute.originalVoteTx.GetHex() << "\",\n";
                 json << "  \"challenge_bond\": " << dispute.challengeBond << ",\n";
                 json << "  \"challenge_bond_formatted\": \"" << FormatCAS(dispute.challengeBond) << "\",\n";
                 json << "  \"created_time\": " << dispute.createdTime << ",\n";
@@ -426,8 +431,13 @@ std::string GetDisputeDetailJSON(const std::string& disputeIdStr) {
                 json << "  \"use_commit_reveal\": " << (dispute.useCommitReveal ? "true" : "false") << ",\n";
                 json << "  \"commit_phase_start\": " << dispute.commitPhaseStart << ",\n";
                 json << "  \"reveal_phase_start\": " << dispute.revealPhaseStart << ",\n";
-                json << "  \"slash_votes\": " << dispute.slashVotes << ",\n";
-                json << "  \"keep_votes\": " << dispute.keepVotes << ",\n";
+                // Count slash and keep votes from daoVotes map
+                size_t slashVotesCount = 0, keepVotesCount = 0;
+                for (const auto& vote : dispute.daoVotes) {
+                    if (vote.second) slashVotesCount++; else keepVotesCount++;
+                }
+                json << "  \"slash_votes\": " << slashVotesCount << ",\n";
+                json << "  \"keep_votes\": " << keepVotesCount << ",\n";
                 
                 // Add reward distribution if available
                 if (dispute.resolved && dispute.rewardsDistributed) {
@@ -514,18 +524,19 @@ bool RewardApiDistributionHandler(HTTPRequest* req, const std::string& strReq) {
 }
 
 bool RewardApiClaimHandler(HTTPRequest* req, const std::string& strReq) {
-    // Handle CORS preflight
-    if (req->GetRequestMethod() == HTTPRequest::OPTIONS) {
+    // Handle CORS preflight - check for OPTIONS via header or method string
+    // Note: HTTPRequest doesn't have OPTIONS enum, so we handle POST only
+    if (req->GetRequestMethod() != HTTPRequest::POST) {
+        // For non-POST requests (including OPTIONS), return CORS headers
         req->WriteHeader("Access-Control-Allow-Origin", "*");
         req->WriteHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
         req->WriteHeader("Access-Control-Allow-Headers", "Content-Type");
+        if (req->GetRequestMethod() == HTTPRequest::GET) {
+            req->WriteReply(HTTP_BAD_METHOD, "Only POST requests allowed");
+            return false;
+        }
         req->WriteReply(HTTP_OK, "");
         return true;
-    }
-    
-    if (req->GetRequestMethod() != HTTPRequest::POST) {
-        req->WriteReply(HTTP_BAD_METHOD, "Only POST requests allowed");
-        return false;
     }
     
     std::ostringstream json;
@@ -545,11 +556,17 @@ bool RewardApiClaimHandler(HTTPRequest* req, const std::string& strReq) {
 }
 
 bool RewardApiClaimAllHandler(HTTPRequest* req, const std::string& strReq) {
-    // Handle CORS preflight
-    if (req->GetRequestMethod() == HTTPRequest::OPTIONS) {
+    // Handle CORS preflight - check for OPTIONS via header or method string
+    // Note: HTTPRequest doesn't have OPTIONS enum, so we handle POST only
+    if (req->GetRequestMethod() != HTTPRequest::POST) {
+        // For non-POST requests (including OPTIONS), return CORS headers
         req->WriteHeader("Access-Control-Allow-Origin", "*");
         req->WriteHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
         req->WriteHeader("Access-Control-Allow-Headers", "Content-Type");
+        if (req->GetRequestMethod() == HTTPRequest::GET) {
+            req->WriteReply(HTTP_BAD_METHOD, "Only POST requests allowed");
+            return false;
+        }
         req->WriteReply(HTTP_OK, "");
         return true;
     }
