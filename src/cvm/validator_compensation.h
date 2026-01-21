@@ -99,16 +99,16 @@ bool CreateCoinbaseWithValidatorPayments(
 /**
  * Validate coinbase validator payments
  * 
- * Verifies that the coinbase transaction pays the correct amounts to:
- * - Miner (block reward + transaction fees + 70% of gas fees)
- * - Each validator (their share of 30% of gas fees)
+ * Verifies that the coinbase transaction total output equals the expected
+ * block reward plus transaction fees.
  * 
- * This is a consensus rule - blocks with incorrect payments are invalid.
+ * Note: The 70/30 split validation is currently relaxed because validator
+ * participation data may not be available during block validation.
  * 
  * @param block The block to validate
- * @param blockReward The expected block reward (subsidy) + transaction fees
+ * @param blockRewardWithFees The expected block reward (subsidy) + transaction fees
  * @return true if payments are correct, false otherwise
  */
-bool CheckCoinbaseValidatorPayments(const CBlock& block, CAmount blockReward);
+bool CheckCoinbaseValidatorPayments(const CBlock& block, CAmount blockRewardWithFees);
 
 #endif // CASCOIN_CVM_VALIDATOR_COMPENSATION_H

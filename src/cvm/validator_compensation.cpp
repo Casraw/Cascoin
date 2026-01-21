@@ -256,7 +256,3 @@ bool CheckCoinbaseValidatorPayments(const CBlock& block, CAmount blockRewardWith
     
     return true;
 }
-        FormatMoney(expectedMinerTotal), expectedValidatorPayments.size());
-    
-    return true;
-}
