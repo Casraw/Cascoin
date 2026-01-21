@@ -4,6 +4,7 @@
 
 #include <cvm/block_validator.h>
 #include <cvm/cvm.h>
+#include <cvm/softfork.h>
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
 #include <cvm/access_control_audit.h>
@@ -85,12 +86,34 @@ BlockValidationResult BlockValidator::ValidateBlock(
             continue;
         }
         
-        // Extract gas limit
+        // Extract gas limit - only required for contract transactions
+        // Trust, reputation, and other CVM transactions don't use gas
         uint64_t txGasLimit = ExtractGasLimit(tx);
         if (txGasLimit == 0) {
-            m_lastResult.success = false;
-            m_lastResult.error = "Invalid gas limit";
-            return m_lastResult;
+            // Check if this is a contract transaction that requires gas
+            int opReturnIndex = FindCVMOpReturn(tx);
+            if (opReturnIndex >= 0) {
+                CVMOpType opType;
+                std::vector<uint8_t> data;
+                if (ParseCVMOpReturn(tx.vout[opReturnIndex], opType, data)) {
+                    // Only contract deploy/call transactions require gas
+                    if (opType == CVMOpType::CONTRACT_DEPLOY || 
+                        opType == CVMOpType::CONTRACT_CALL ||
+                        opType == CVMOpType::EVM_DEPLOY ||
+                        opType == CVMOpType::EVM_CALL) {
+                        m_lastResult.success = false;
+                        m_lastResult.error = "Invalid gas limit";
+                        return m_lastResult;
+                    }
+                    // For non-contract CVM transactions (trust, reputation, etc.),
+                    // skip gas validation and continue to next transaction
+                    LogPrint(BCLog::CVM, "BlockValidator: Non-contract CVM tx %s (type %d), skipping gas validation\n",
+                             tx.GetHash().ToString(), static_cast<int>(opType));
+                    continue;
+                }
+            }
+            // If we can't parse the OP_RETURN, skip this transaction
+            continue;
         }
         
         // Check block gas limit
