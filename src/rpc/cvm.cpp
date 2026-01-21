@@ -47,6 +47,7 @@
 #include <policy/policy.h>
 #include <net.h>
 #include <chain.h>
+#include <script/standard.h>
 
 // Global connection manager
 extern std::unique_ptr<CConnman> g_connman;
@@ -1146,6 +1147,10 @@ UniValue sendcvmvote(const JSONRPCRequest& request)
         targetAddress = uint160(boost::get<CKeyID>(dest));
     } else if (boost::get<CScriptID>(&dest)) {
         targetAddress = uint160(boost::get<CScriptID>(dest));
+    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
+        // Support bech32 addresses (tcas1q... / cas1q...)
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        targetAddress = uint160(wkh);
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
     }
@@ -1364,6 +1369,10 @@ UniValue addtrust(const JSONRPCRequest& request)
         toAddress = uint160(boost::get<CKeyID>(dest));
     } else if (boost::get<CScriptID>(&dest)) {
         toAddress = uint160(boost::get<CScriptID>(dest));
+    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
+        // Support bech32 addresses (tcas1q... / cas1q...)
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        toAddress = uint160(wkh);
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
     }
@@ -1457,6 +1466,10 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         targetAddress = uint160(boost::get<CKeyID>(targetDest));
     } else if (boost::get<CScriptID>(&targetDest)) {
         targetAddress = uint160(boost::get<CScriptID>(targetDest));
+    } else if (boost::get<WitnessV0KeyHash>(&targetDest)) {
+        // Support bech32 addresses (tcas1q... / cas1q...)
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(targetDest);
+        targetAddress = uint160(wkh);
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
     }
@@ -1474,6 +1487,10 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
             viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
         } else if (boost::get<CScriptID>(&viewerDest)) {
             viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
+        } else if (boost::get<WitnessV0KeyHash>(&viewerDest)) {
+            // Support bech32 addresses (tcas1q... / cas1q...)
+            const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(viewerDest);
+            viewerAddress = uint160(wkh);
         }
     }
     
@@ -1734,6 +1751,10 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
         toAddress = uint160(boost::get<CKeyID>(dest));
     } else if (dest.type() == typeid(CScriptID)) {
         toAddress = uint160(boost::get<CScriptID>(dest));
+    } else if (dest.type() == typeid(WitnessV0KeyHash)) {
+        // Support bech32 addresses (tcas1q... / cas1q...)
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        toAddress = uint160(wkh);
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
     }
@@ -1848,6 +1869,10 @@ UniValue sendbondedvote(const JSONRPCRequest& request)
         targetAddress = uint160(boost::get<CKeyID>(dest));
     } else if (dest.type() == typeid(CScriptID)) {
         targetAddress = uint160(boost::get<CScriptID>(dest));
+    } else if (dest.type() == typeid(WitnessV0KeyHash)) {
+        // Support bech32 addresses (tcas1q... / cas1q...)
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        targetAddress = uint160(wkh);
     } else {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
     }
