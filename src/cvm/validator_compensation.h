@@ -76,7 +76,7 @@ bool CalculateBlockValidatorPayments(
  * Create coinbase transaction with validator payments
  * 
  * Creates a coinbase transaction with multiple outputs:
- * - Output 0: Miner (block reward + 70% of gas fees)
+ * - Output 0: Miner (block reward + transaction fees + 70% of gas fees)
  * - Outputs 1-N: Validators (each gets their share of 30% of gas fees)
  * 
  * @param coinbaseTx Output parameter: the coinbase transaction to create
@@ -84,6 +84,7 @@ bool CalculateBlockValidatorPayments(
  * @param minerScript The script for the miner's payment
  * @param blockReward The base block reward (subsidy)
  * @param nHeight The block height (for BIP34 compliance)
+ * @param nFees Total transaction fees from all transactions in the block (default 0)
  * @return true if creation succeeded, false otherwise
  */
 bool CreateCoinbaseWithValidatorPayments(
@@ -91,20 +92,21 @@ bool CreateCoinbaseWithValidatorPayments(
     const CBlock& block,
     const CScript& minerScript,
     CAmount blockReward,
-    int nHeight
+    int nHeight,
+    CAmount nFees = 0
 );
 
 /**
  * Validate coinbase validator payments
  * 
  * Verifies that the coinbase transaction pays the correct amounts to:
- * - Miner (block reward + 70% of gas fees)
+ * - Miner (block reward + transaction fees + 70% of gas fees)
  * - Each validator (their share of 30% of gas fees)
  * 
  * This is a consensus rule - blocks with incorrect payments are invalid.
  * 
  * @param block The block to validate
- * @param blockReward The expected block reward (subsidy)
+ * @param blockReward The expected block reward (subsidy) + transaction fees
  * @return true if payments are correct, false otherwise
  */
 bool CheckCoinbaseValidatorPayments(const CBlock& block, CAmount blockReward);

@@ -540,12 +540,11 @@ bool ConsensusValidator::ExtractGasInfo(const CTransaction& tx, uint64_t& gasUse
             case CVMOpType::BONDED_VOTE:
             case CVMOpType::DAO_DISPUTE:
             case CVMOpType::DAO_VOTE: {
-                // These operations have minimal gas costs
-                gasUsed = 21000;  // Base transaction gas
-                gasCost = static_cast<CAmount>(gasUsed);
-                
-                LogPrint(BCLog::CVM, "ConsensusValidator: Using base gas for WoT operation\n");
-                return true;
+                // These are Web-of-Trust operations, NOT contract executions
+                // They do NOT have gas fees that should be split 70/30
+                // Their transaction fees go 100% to the miner like regular transactions
+                LogPrint(BCLog::CVM, "ConsensusValidator: WoT operation - no gas fee split\n");
+                return false;  // Return false so these are not treated as contract transactions
             }
             
             default:

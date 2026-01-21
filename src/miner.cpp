@@ -250,7 +250,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
 
         // Cascoin: HAT v2: Create coinbase with validator payments (70/30 split)
         CMutableTransaction coinbaseTx;
-        if (!CreateCoinbaseWithValidatorPayments(coinbaseTx, *pblock, scriptPubKeyIn, blockReward, nHeight)) {
+        if (!CreateCoinbaseWithValidatorPayments(coinbaseTx, *pblock, scriptPubKeyIn, blockReward, nHeight, nFees)) {
             // Fallback to traditional coinbase if validator payment creation fails
             LogPrintf("CreateNewBlock: Failed to create coinbase with validator payments, using traditional coinbase\n");
             
