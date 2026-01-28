@@ -165,13 +165,21 @@ make -j$(nproc)
 
 ## liboqs Installation (for Post-Quantum Cryptography)
 
-liboqs (Open Quantum Safe) must be compiled manually for post-quantum cryptography support (FALCON-512):
+[liboqs](https://openquantumsafe.org/liboqs/) (Open Quantum Safe) provides post-quantum cryptographic algorithms. It must be compiled from source as there is no pre-built Ubuntu package available.
+
+Cascoin uses liboqs for FALCON-512 signatures in quantum-resistant addresses.
+
+### Prerequisites
 
 ```bash
-# Additional dependencies for liboqs
 sudo apt-get install -y cmake ninja-build astyle
+```
 
-# Install liboqs 0.12.0
+Note: OpenSSL 3.x is recommended for optimal performance (liboqs uses it for symmetric crypto like AES, SHA-2).
+
+### Build and Install liboqs 0.12.0
+
+```bash
 cd /tmp
 rm -rf liboqs
 git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
@@ -187,9 +195,46 @@ sudo ninja install
 
 # Update library cache
 sudo ldconfig
+```
 
-# Verify installation
+### Create pkg-config File (Optional but Recommended)
+
+```bash
+sudo mkdir -p /usr/local/lib/pkgconfig
+sudo tee /usr/local/lib/pkgconfig/liboqs.pc << 'EOF'
+prefix=/usr/local
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: liboqs
+Description: Open Quantum Safe library
+Version: 0.12.0
+Libs: -L${libdir} -loqs
+Cflags: -I${includedir}
+EOF
+```
+
+### Verify Installation
+
+```bash
+# Check library
+ls -la /usr/local/lib/liboqs*
+
+# Check headers
+ls -la /usr/local/include/oqs/
+
+# Check pkg-config (if created)
 pkg-config --modversion liboqs
+```
+
+### Uninstall liboqs
+
+If you need to remove liboqs:
+
+```bash
+cd /tmp/liboqs/build
+sudo ninja uninstall
 ```
 
 ### Build with Post-Quantum Support (System Libraries)

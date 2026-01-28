@@ -53,6 +53,51 @@ jobs:
           # Try specific BDB package name if the generic one isn't available
           sudo apt-get install -y libdb5.3++-dev || true
 
+      - name: Build and install liboqs (Open Quantum Safe)
+        shell: bash
+        run: |
+          # Install dependencies for liboqs
+          sudo apt-get install -y cmake ninja-build astyle || true
+          
+          # Build liboqs 0.12.0
+          echo "Building liboqs..."
+          cd /tmp
+          rm -rf liboqs
+          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
+          cd liboqs
+          mkdir -p build && cd build
+          cmake -GNinja .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_SHARED_LIBS=ON \
+            -DOQS_BUILD_ONLY_LIB=ON
+          ninja
+          sudo ninja install
+          
+          # Update library cache
+          sudo ldconfig
+          
+          # Create pkg-config file for liboqs
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          sudo tee /usr/local/lib/pkgconfig/liboqs.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: liboqs
+          Description: Open Quantum Safe library
+          Version: 0.12.0
+          Libs: -L${libdir} -loqs
+          Cflags: -I${includedir}
+          EOF
+          
+          # Verify installation
+          echo "Verifying liboqs installation..."
+          ls -la /usr/local/lib/liboqs* || echo "liboqs libraries not found"
+          ls -la /usr/local/include/oqs/ || echo "liboqs headers not found"
+          pkg-config --modversion liboqs || echo "liboqs pkg-config not available"
+
       - name: Build and install EVMC and evmone
         shell: bash
         run: |
