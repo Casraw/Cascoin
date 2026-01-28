@@ -8,11 +8,15 @@
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <uint256.h>
+#include <memory>
 
 namespace CVM {
 
 class CVMDatabase;
 class TrustGraph;
+class WalletClusterer;
+class TrustPropagator;
+class ClusterUpdateHandler;
 struct CVMReputationData;
 struct CVMDeployData;
 struct CVMCallData;
@@ -184,7 +188,57 @@ private:
         const CTransaction& tx,
         CAmount expectedBond
     );
+    
+    /**
+     * Process cluster updates after CVM transactions
+     * 
+     * Detects new cluster members and triggers trust inheritance.
+     * Called after ProcessBlock() to handle wallet trust propagation.
+     * 
+     * @param block Block that was processed
+     * @param height Block height
+     * @param db CVM database
+     * @return Number of cluster updates processed
+     * 
+     * Requirements: 2.3, 2.4
+     */
+    static uint32_t ProcessClusterUpdates(
+        const CBlock& block,
+        int height,
+        CVMDatabase& db
+    );
 };
+
+/**
+ * Global trust propagation components
+ * 
+ * These are initialized when the CVM database is initialized and
+ * used during block processing for wallet trust propagation.
+ * 
+ * Requirements: 2.4, 16.1
+ */
+extern std::unique_ptr<TrustGraph> g_trustGraph;
+extern std::unique_ptr<WalletClusterer> g_walletClusterer;
+extern std::unique_ptr<TrustPropagator> g_trustPropagator;
+extern std::unique_ptr<ClusterUpdateHandler> g_clusterUpdateHandler;
+
+/**
+ * Initialize trust propagation components
+ * 
+ * Called after CVM database is initialized to set up the
+ * wallet trust propagation system.
+ * 
+ * @param db Reference to CVM database
+ * @return true if initialization successful
+ */
+bool InitTrustPropagation(CVMDatabase& db);
+
+/**
+ * Shutdown trust propagation components
+ * 
+ * Called during shutdown to clean up resources.
+ */
+void ShutdownTrustPropagation();
 
 } // namespace CVM
 

@@ -19,6 +19,8 @@
 #include <cvm/graphanalysis.h>
 #include <cvm/securehat.h>
 #include <cvm/walletcluster.h>
+#include <cvm/trustpropagator.h>
+#include <cvm/clustertrustquery.h>
 #include <cvm/gas_allowance.h>
 #include <cvm/sustainable_gas.h>
 #include <cvm/trust_context.h>
@@ -1315,6 +1317,15 @@ UniValue sendcvmcontract(const JSONRPCRequest& request)
  * 
  * Creates a trust edge from caller to target address.
  * Requires bonding CAS to prevent spam.
+ * 
+ * CLUSTER-AWARE: Trust is automatically propagated to all addresses
+ * in the target's wallet cluster. This prevents reputation gaming where
+ * scammers create new addresses to escape negative trust.
+ * 
+ * New addresses added to the wallet will automatically inherit this trust
+ * via the ClusterUpdateHandler during block processing.
+ * 
+ * Requirement: 4.1
  */
 UniValue addtrust(const JSONRPCRequest& request)
 {
@@ -1322,6 +1333,7 @@ UniValue addtrust(const JSONRPCRequest& request)
         throw std::runtime_error(
             "addtrust \"address\" weight ( bond \"reason\" )\n"
             "\nAdd trust relationship in Web-of-Trust graph.\n"
+            "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
             "\nArguments:\n"
             "1. \"address\"     (string, required) Address to trust\n"
             "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
@@ -1329,11 +1341,14 @@ UniValue addtrust(const JSONRPCRequest& request)
             "4. \"reason\"      (string, optional) Reason for trust\n"
             "\nResult:\n"
             "{\n"
-            "  \"from\": \"xxx\",         (string) Your address\n"
-            "  \"to\": \"xxx\",           (string) Trusted address\n"
-            "  \"weight\": n,           (numeric) Trust weight\n"
-            "  \"bond\": n,             (numeric) Bonded amount\n"
-            "  \"required_bond\": n     (numeric) Required bond\n"
+            "  \"from\": \"xxx\",           (string) Your address\n"
+            "  \"to\": \"xxx\",             (string) Trusted address\n"
+            "  \"weight\": n,             (numeric) Trust weight\n"
+            "  \"bond\": n,               (numeric) Bonded amount\n"
+            "  \"required_bond\": n,      (numeric) Required bond\n"
+            "  \"cluster_id\": \"xxx\",     (string) Wallet cluster ID\n"
+            "  \"cluster_size\": n,       (numeric) Number of addresses in cluster\n"
+            "  \"edges_propagated\": n    (numeric) Number of propagated trust edges\n"
             "}\n"
             "\nExamples:\n"
             + HelpExampleCli("addtrust", "\"Qi9hi...\" 80 1.5 \"Trusted user\"")
@@ -1380,8 +1395,12 @@ UniValue addtrust(const JSONRPCRequest& request)
     // Get caller's address (would need wallet integration)
     uint160 fromAddress; // Placeholder
     
-    // Calculate required bond
+    // Create trust graph, clusterer, and propagator
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    
+    // Calculate required bond
     CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
                           (CVM::g_wotConfig.bondPerVotePoint * std::abs(weight));
     
@@ -1403,13 +1422,44 @@ UniValue addtrust(const JSONRPCRequest& request)
         reason = request.params[3].get_str();
     }
     
+    // Get wallet cluster for target address (Requirement 4.1)
+    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
+    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(toAddress);
+    
+    // If no cluster found, treat as single-address cluster
+    if (clusterMembers.empty()) {
+        clusterMembers.insert(toAddress);
+        clusterId = toAddress;
+        LogPrintf("CVM: addtrust - No cluster found for %s, treating as single-address cluster\n", 
+                  addressStr);
+    }
+    
     // Placeholder bond transaction (in production, would create real TX)
     uint256 bondTx;
+    GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
     
-    // Add trust edge
+    // Add trust edge to canonical cluster address (the original target)
     if (!trustGraph.AddTrustEdge(fromAddress, toAddress, weight, bondAmount, bondTx, reason)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
     }
+    
+    // Create TrustEdge for propagation to all cluster members
+    CVM::TrustEdge edge;
+    edge.fromAddress = fromAddress;
+    edge.toAddress = toAddress;
+    edge.trustWeight = static_cast<int16_t>(weight);
+    edge.timestamp = static_cast<uint32_t>(GetTime());
+    edge.bondAmount = bondAmount;
+    edge.bondTxHash = bondTx;
+    edge.slashed = false;
+    edge.reason = reason;
+    
+    // Propagate trust to all cluster members (Requirement 4.1)
+    // All future addresses in wallet will inherit via ClusterUpdateHandler
+    uint32_t edgesPropagated = propagator.PropagateTrustEdge(edge);
+    
+    LogPrintf("CVM: addtrust - Trust propagated to %u addresses in cluster %s\n",
+              edgesPropagated, clusterId.ToString());
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("from", fromAddress.ToString());
@@ -1418,6 +1468,10 @@ UniValue addtrust(const JSONRPCRequest& request)
     result.pushKV("bond", ValueFromAmount(bondAmount));
     result.pushKV("required_bond", ValueFromAmount(requiredBond));
     result.pushKV("reason", reason);
+    // Cluster-aware fields (Requirement 4.1)
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
+    result.pushKV("edges_propagated", (uint64_t)edgesPropagated);
     
     return result;
 }
@@ -1426,6 +1480,12 @@ UniValue addtrust(const JSONRPCRequest& request)
  * getweightedreputation - Get reputation from viewer's perspective (Web-of-Trust)
  * 
  * Returns personalized reputation based on viewer's trust graph.
+ * 
+ * CLUSTER-AWARE: Uses ClusterTrustQuery to aggregate reputation across the
+ * entire wallet cluster. New addresses in the wallet are automatically included.
+ * Returns the minimum reputation score across all cluster members.
+ * 
+ * Requirement: 4.4
  */
 UniValue getweightedreputation(const JSONRPCRequest& request)
 {
@@ -1433,17 +1493,24 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         throw std::runtime_error(
             "getweightedreputation \"target\" ( \"viewer\" maxdepth )\n"
             "\nGet weighted reputation from viewer's perspective.\n"
+            "Reputation is aggregated across the entire wallet cluster.\n"
             "\nArguments:\n"
             "1. \"target\"      (string, required) Target address\n"
             "2. \"viewer\"      (string, optional) Viewer address (default: caller)\n"
             "3. maxdepth      (numeric, optional) Max trust path depth (default: 3)\n"
             "\nResult:\n"
             "{\n"
-            "  \"target\": \"xxx\",       (string) Target address\n"
-            "  \"viewer\": \"xxx\",       (string) Viewer address\n"
-            "  \"reputation\": n,       (numeric) Weighted reputation score\n"
-            "  \"paths_found\": n,      (numeric) Number of trust paths found\n"
-            "  \"max_depth\": n         (numeric) Maximum depth searched\n"
+            "  \"target\": \"xxx\",             (string) Target address\n"
+            "  \"viewer\": \"xxx\",             (string) Viewer address\n"
+            "  \"reputation\": n,             (numeric) Weighted reputation score (minimum across cluster)\n"
+            "  \"individual_reputation\": n,  (numeric) Reputation for target address only\n"
+            "  \"paths_found\": n,            (numeric) Number of trust paths found\n"
+            "  \"max_depth\": n,              (numeric) Maximum depth searched\n"
+            "  \"cluster_id\": \"xxx\",         (string) Wallet cluster ID\n"
+            "  \"cluster_size\": n,           (numeric) Number of addresses in cluster\n"
+            "  \"worst_member\": \"xxx\",       (string) Address with lowest reputation\n"
+            "  \"worst_reputation\": n,       (numeric) Lowest reputation in cluster\n"
+            "  \"has_negative_trust\": bool   (boolean) Whether any cluster member has negative trust\n"
             "}\n"
             "\nExamples:\n"
             + HelpExampleCli("getweightedreputation", "\"Qi9hi...\"")
@@ -1503,19 +1570,67 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         }
     }
     
-    // Calculate weighted reputation
+    // Create cluster-aware components (Requirement 4.4)
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
-    double reputation = trustGraph.GetWeightedReputation(viewerAddress, targetAddress, maxDepth);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    CVM::ClusterTrustQuery clusterQuery(*CVM::g_cvmdb, clusterer, trustGraph, propagator);
     
-    // Find trust paths
+    // Get cluster info
+    uint160 clusterId = clusterer.GetClusterForAddress(targetAddress);
+    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(targetAddress);
+    
+    // If no cluster found, treat as single-address cluster
+    if (clusterMembers.empty()) {
+        clusterMembers.insert(targetAddress);
+        clusterId = targetAddress;
+    }
+    
+    // Calculate individual weighted reputation for the target address
+    double individualReputation = trustGraph.GetWeightedReputation(viewerAddress, targetAddress, maxDepth);
+    
+    // Use ClusterTrustQuery for cluster-aware reputation (Requirement 4.4)
+    // This aggregates reputation across the entire wallet cluster
+    // New addresses in wallet are automatically included
+    double clusterReputation = clusterQuery.GetEffectiveTrust(targetAddress, viewerAddress);
+    
+    // Find worst member in cluster
+    double worstReputation = individualReputation;
+    uint160 worstMember = targetAddress;
+    
+    for (const uint160& member : clusterMembers) {
+        double memberRep = trustGraph.GetWeightedReputation(viewerAddress, member, maxDepth);
+        if (memberRep < worstReputation) {
+            worstReputation = memberRep;
+            worstMember = member;
+        }
+    }
+    
+    // Check for negative trust in cluster
+    bool hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetAddress);
+    
+    // Find trust paths (for the target address specifically)
     std::vector<CVM::TrustPath> paths = trustGraph.FindTrustPaths(viewerAddress, targetAddress, maxDepth);
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("target", targetStr);
     result.pushKV("viewer", viewerAddress.ToString());
-    result.pushKV("reputation", reputation);
+    // Use cluster-aggregated reputation as the main score (Requirement 4.4)
+    result.pushKV("reputation", std::min(clusterReputation, worstReputation));
+    result.pushKV("individual_reputation", individualReputation);
     result.pushKV("paths_found", (int64_t)paths.size());
     result.pushKV("max_depth", maxDepth);
+    
+    // Cluster-aware fields (Requirement 4.4)
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
+    
+    if (clusterMembers.size() > 1 || worstReputation < individualReputation) {
+        result.pushKV("worst_member", EncodeDestination(CKeyID(worstMember)));
+        result.pushKV("worst_reputation", worstReputation);
+    }
+    
+    result.pushKV("has_negative_trust", hasNegativeTrust);
     
     // Add path details
     UniValue pathsArray(UniValue::VARR);
@@ -1706,6 +1821,12 @@ UniValue gettrustgraphstats(const JSONRPCRequest& request)
 
 /**
  * sendtrustrelation - Broadcast trust relationship to network (Phase 3: On-Chain)
+ * 
+ * CLUSTER-AWARE: After broadcasting the trust transaction, trust is automatically
+ * propagated to all addresses in the target's wallet cluster. This prevents
+ * reputation gaming where scammers create new addresses to escape negative trust.
+ * 
+ * Requirement: 4.3
  */
 UniValue sendtrustrelation(const JSONRPCRequest& request)
 {
@@ -1718,6 +1839,7 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
         throw std::runtime_error(
             "sendtrustrelation \"address\" weight ( bond \"reason\" )\n"
             "\nBroadcast a trust relationship to the network (on-chain).\n"
+            "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
             "\nArguments:\n"
             "1. \"address\"       (string, required) Address to trust\n"
             "2. weight           (numeric, required) Trust weight (-100 to +100)\n"
@@ -1725,9 +1847,14 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
             "4. \"reason\"        (string, optional) Reason for trust\n"
             "\nResult:\n"
             "{\n"
-            "  \"txid\": \"xxx\",       (string) Transaction ID\n"
-            "  \"fee\": n.nnnnn,       (numeric) Transaction fee\n"
-            "  \"bond\": n.nnnnn       (numeric) Bonded amount\n"
+            "  \"txid\": \"xxx\",           (string) Transaction ID\n"
+            "  \"fee\": n.nnnnn,           (numeric) Transaction fee\n"
+            "  \"bond\": n.nnnnn,          (numeric) Bonded amount\n"
+            "  \"weight\": n,              (numeric) Trust weight\n"
+            "  \"to_address\": \"xxx\",     (string) Target address\n"
+            "  \"cluster_id\": \"xxx\",     (string) Wallet cluster ID\n"
+            "  \"cluster_size\": n,        (numeric) Number of addresses in cluster\n"
+            "  \"edges_propagated\": n     (numeric) Number of propagated trust edges\n"
             "}\n"
             "\nExamples:\n"
             + HelpExampleCli("sendtrustrelation", "\"QAddress...\" 80 1.5 \"Friend\"")
@@ -1811,6 +1938,45 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_WALLET_ERROR, "Failed to broadcast transaction: " + error);
     }
     
+    // After broadcasting, propagate trust to entire wallet cluster (Requirement 4.3)
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    
+    // Get cluster info
+    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
+    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(toAddress);
+    
+    // If no cluster found, treat as single-address cluster
+    if (clusterMembers.empty()) {
+        clusterMembers.insert(toAddress);
+        clusterId = toAddress;
+    }
+    
+    // Get sender address from wallet (first key)
+    uint160 fromAddress;
+    const std::map<CKeyID, int64_t>& reserveKeys = pwallet->GetAllReserveKeys();
+    if (!reserveKeys.empty()) {
+        fromAddress = uint160(reserveKeys.begin()->first);
+    }
+    
+    // Create TrustEdge for propagation
+    CVM::TrustEdge edge;
+    edge.fromAddress = fromAddress;
+    edge.toAddress = toAddress;
+    edge.trustWeight = weight;
+    edge.timestamp = static_cast<uint32_t>(GetTime());
+    edge.bondAmount = bondAmount;
+    edge.bondTxHash = txid;
+    edge.slashed = false;
+    edge.reason = reason;
+    
+    // Propagate trust to all cluster members
+    uint32_t edgesPropagated = propagator.PropagateTrustEdge(edge);
+    
+    LogPrintf("CVM: sendtrustrelation - Trust propagated to %u addresses in cluster %s (txid: %s)\n",
+              edgesPropagated, clusterId.ToString(), txid.ToString());
+    
     // Build result
     UniValue result(UniValue::VOBJ);
     result.pushKV("txid", txid.ToString());
@@ -1818,6 +1984,10 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     result.pushKV("bond", ValueFromAmount(bondAmount));
     result.pushKV("weight", weight);
     result.pushKV("to_address", request.params[0].get_str());
+    // Cluster-aware fields (Requirement 4.3)
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
+    result.pushKV("edges_propagated", (uint64_t)edgesPropagated);
     
     return result;
 }
@@ -2371,8 +2541,9 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
         throw std::runtime_error(
             "geteffectivetrust \"target\" ( \"viewer\" )\n"
-            "\nGet effective HAT v2 trust score considering wallet clustering.\n"
-            "This returns the MINIMUM score across all addresses in the wallet cluster.\n"
+            "\nGet effective trust score considering wallet clustering.\n"
+            "This returns the MINIMUM score across ALL addresses in the wallet cluster,\n"
+            "using ClusterTrustQuery for cluster-aware trust calculation.\n"
             "\nArguments:\n"
             "1. \"target\"     (string, required) The address to evaluate\n"
             "2. \"viewer\"     (string, optional) Viewer address for personalized trust\n"
@@ -2382,8 +2553,13 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
             "  \"cluster_id\": \"address\",          (string) Wallet cluster ID\n"
             "  \"cluster_size\": n,                  (numeric) Number of addresses in cluster\n"
             "  \"individual_score\": n.n,            (numeric) Score for this address alone\n"
-            "  \"effective_score\": n.n,             (numeric) Minimum score across cluster\n"
-            "  \"penalty_applied\": true|false       (boolean) Whether cluster penalty was applied\n"
+            "  \"effective_score\": n.n,             (numeric) Minimum score across cluster (via ClusterTrustQuery)\n"
+            "  \"penalty_applied\": true|false,      (boolean) Whether cluster penalty was applied\n"
+            "  \"worst_address_in_cluster\": \"xxx\", (string) Address with lowest score\n"
+            "  \"worst_score\": n.n,                 (numeric) Lowest score in cluster\n"
+            "  \"has_negative_trust\": true|false,   (boolean) Whether any cluster member has negative trust\n"
+            "  \"direct_edges\": n,                  (numeric) Number of direct trust edges\n"
+            "  \"propagated_edges\": n               (numeric) Number of propagated trust edges\n"
             "}\n"
             "\nExamples:\n"
             + HelpExampleCli("geteffectivetrust", "\"QAddress...\"")
@@ -2420,14 +2596,44 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
         viewer = uint160(*viewer_keyID);
     }
     
+    // Create cluster-aware components (Requirement 4.2)
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    CVM::ClusterTrustQuery clusterQuery(*CVM::g_cvmdb, clusterer, trustGraph, propagator);
     CVM::SecureHAT hat(*CVM::g_cvmdb);
     
+    // Get cluster info
     uint160 cluster_id = clusterer.GetClusterForAddress(target);
     std::set<uint160> members = clusterer.GetClusterMembers(target);
     
-    double individual_score = hat.CalculateFinalTrust(target, viewer);
-    double effective_score = clusterer.GetEffectiveHATScore(target);
+    // Calculate individual score for this specific address
+    double individual_score = clusterQuery.GetAddressTrustScore(target, viewer);
+    
+    // Use ClusterTrustQuery.GetEffectiveTrust() for cluster-aware minimum scoring (Requirement 4.2)
+    // This returns the minimum score across ALL addresses in the wallet cluster
+    double effective_score = clusterQuery.GetEffectiveTrust(target, viewer);
+    
+    // Get worst member info
+    double worst_score;
+    uint160 worst_address = clusterQuery.GetWorstClusterMember(target, worst_score);
+    
+    // Check for negative trust in cluster
+    bool has_negative_trust = clusterQuery.HasNegativeClusterTrust(target);
+    
+    // Get all cluster trust edges for edge counts
+    std::vector<CVM::TrustEdge> allEdges = clusterQuery.GetAllClusterTrustEdges(target);
+    std::vector<CVM::PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(target);
+    
+    // Count direct vs propagated edges
+    uint32_t directEdgeCount = 0;
+    uint32_t propagatedEdgeCount = 0;
+    for (const auto& member : members) {
+        std::vector<CVM::TrustEdge> directEdges = trustGraph.GetIncomingTrust(member);
+        directEdgeCount += directEdges.size();
+        std::vector<CVM::PropagatedTrustEdge> propEdges = propagator.GetPropagatedEdgesForAddress(member);
+        propagatedEdgeCount += propEdges.size();
+    }
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("target", EncodeDestination(CKeyID(target)));
@@ -2437,22 +2643,434 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
     result.pushKV("effective_score", effective_score);
     result.pushKV("penalty_applied", effective_score < individual_score);
     
-    // Show which address in cluster has lowest score
-    if (members.size() > 1) {
-        uint160 worst_address = target;
-        double worst_score = individual_score;
-        
-        for (const uint160& member : members) {
-            double member_score = hat.CalculateFinalTrust(member, viewer);
-            if (member_score < worst_score) {
-                worst_score = member_score;
-                worst_address = member;
-            }
-        }
-        
+    // Add cluster information (Requirement 4.2)
+    if (members.size() > 1 || worst_score < individual_score) {
         result.pushKV("worst_address_in_cluster", EncodeDestination(CKeyID(worst_address)));
         result.pushKV("worst_score", worst_score);
     }
+    
+    result.pushKV("has_negative_trust", has_negative_trust);
+    result.pushKV("direct_edges", (uint64_t)directEdgeCount);
+    result.pushKV("propagated_edges", (uint64_t)propagatedEdgeCount);
+    
+    return result;
+}
+
+/**
+ * addclustertrust - Add trust to entire wallet cluster
+ * 
+ * Creates a trust edge that is automatically propagated to all addresses
+ * in the target's wallet cluster. This prevents reputation gaming where
+ * scammers create new addresses to escape negative trust.
+ * 
+ * Requirements: 3.1, 3.4
+ */
+UniValue addclustertrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
+        throw std::runtime_error(
+            "addclustertrust \"address\" weight ( bond \"reason\" )\n"
+            "\nAdd trust to entire wallet cluster.\n"
+            "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) Any address in target cluster\n"
+            "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
+            "3. bond          (numeric, optional) Amount to bond (default: calculated)\n"
+            "4. \"reason\"      (string, optional) Reason for trust\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"cluster_id\": \"xxx\",       (string) Cluster ID (canonical address)\n"
+            "  \"members_affected\": n,      (numeric) Number of cluster members\n"
+            "  \"edges_created\": n,         (numeric) Number of propagated edges created\n"
+            "  \"source_txid\": \"xxx\",      (string) Transaction ID of original trust edge\n"
+            "  \"weight\": n,                (numeric) Trust weight applied\n"
+            "  \"bond\": n                   (numeric) Bond amount\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("addclustertrust", "\"QAddress...\" -50 1.0 \"Scammer wallet\"")
+            + HelpExampleRpc("addclustertrust", "\"QAddress...\", -50, 1.0, \"Scammer wallet\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse parameters
+    std::string addressStr = request.params[0].get_str();
+    int64_t weight;
+    if (request.params[1].isNum()) {
+        weight = request.params[1].get_int64();
+    } else {
+        weight = atoi64(request.params[1].get_str());
+    }
+    
+    // Validate weight
+    if (weight < -100 || weight > 100) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(addressStr);
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 toAddress;
+    if (boost::get<CKeyID>(&dest)) {
+        toAddress = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        toAddress = uint160(boost::get<CScriptID>(dest));
+    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        toAddress = uint160(wkh);
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get caller's address (placeholder - would need wallet integration)
+    uint160 fromAddress;
+    
+    // Calculate required bond
+    CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
+                          (CVM::g_wotConfig.bondPerVotePoint * std::abs(weight));
+    
+    // Get bond amount
+    CAmount bondAmount = requiredBond;
+    if (request.params.size() > 2) {
+        bondAmount = AmountFromValue(request.params[2]);
+    }
+    
+    if (bondAmount < requiredBond) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, 
+            strprintf("Insufficient bond: have %d, need %d", 
+                     bondAmount, requiredBond));
+    }
+    
+    // Get reason
+    std::string reason = "";
+    if (request.params.size() > 3) {
+        reason = request.params[3].get_str();
+    }
+    
+    // Create trust graph and propagator
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    
+    // Get cluster info
+    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
+    std::set<uint160> members = clusterer.GetClusterMembers(toAddress);
+    
+    // If no cluster found, treat as single-address cluster
+    if (members.empty()) {
+        members.insert(toAddress);
+        clusterId = toAddress;
+    }
+    
+    // Placeholder bond transaction (in production, would create real TX)
+    uint256 bondTx;
+    GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
+    
+    // Add trust edge to original target
+    if (!trustGraph.AddTrustEdge(fromAddress, toAddress, weight, bondAmount, bondTx, reason)) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
+    }
+    
+    // Create TrustEdge for propagation
+    CVM::TrustEdge edge;
+    edge.fromAddress = fromAddress;
+    edge.toAddress = toAddress;
+    edge.trustWeight = static_cast<int16_t>(weight);
+    edge.timestamp = static_cast<uint32_t>(GetTime());
+    edge.bondAmount = bondAmount;
+    edge.bondTxHash = bondTx;
+    edge.slashed = false;
+    edge.reason = reason;
+    
+    // Propagate trust to all cluster members
+    uint32_t edgesCreated = propagator.PropagateTrustEdge(edge);
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("members_affected", (uint64_t)members.size());
+    result.pushKV("edges_created", (uint64_t)edgesCreated);
+    result.pushKV("source_txid", bondTx.GetHex());
+    result.pushKV("weight", weight);
+    result.pushKV("bond", ValueFromAmount(bondAmount));
+    
+    return result;
+}
+
+/**
+ * getclustertrust - Get trust summary for wallet cluster
+ * 
+ * Returns aggregated trust information for the entire wallet cluster,
+ * including effective score (minimum across all members) and member details.
+ * 
+ * Requirements: 3.2, 3.4
+ */
+UniValue getclustertrust(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getclustertrust \"address\" ( \"viewer\" )\n"
+            "\nGet trust summary for wallet cluster.\n"
+            "Returns aggregated trust information including effective score.\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) Any address in cluster\n"
+            "2. \"viewer\"      (string, optional) Viewer for personalized trust\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"cluster_id\": \"xxx\",       (string) Cluster ID (canonical address)\n"
+            "  \"member_count\": n,          (numeric) Number of addresses in cluster\n"
+            "  \"members\": [\"addr\",...],   (array) All addresses in cluster\n"
+            "  \"effective_score\": n.n,     (numeric) Minimum score across cluster\n"
+            "  \"worst_member\": \"xxx\",     (string) Address with lowest score\n"
+            "  \"worst_score\": n.n,         (numeric) Lowest score in cluster\n"
+            "  \"total_incoming_edges\": n,  (numeric) Total direct trust edges\n"
+            "  \"total_propagated_edges\": n (numeric) Total propagated trust edges\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getclustertrust", "\"QAddress...\"")
+            + HelpExampleRpc("getclustertrust", "\"QAddress...\", \"QViewer...\"")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        address = uint160(wkh);
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Parse optional viewer
+    uint160 viewer;
+    if (request.params.size() > 1) {
+        CTxDestination viewer_dest = DecodeDestination(request.params[1].get_str());
+        if (!IsValidDestination(viewer_dest)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
+        }
+        if (boost::get<CKeyID>(&viewer_dest)) {
+            viewer = uint160(boost::get<CKeyID>(viewer_dest));
+        } else if (boost::get<CScriptID>(&viewer_dest)) {
+            viewer = uint160(boost::get<CScriptID>(viewer_dest));
+        } else if (boost::get<WitnessV0KeyHash>(&viewer_dest)) {
+            const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(viewer_dest);
+            viewer = uint160(wkh);
+        }
+    }
+    
+    // Create components
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    CVM::ClusterTrustQuery query(*CVM::g_cvmdb, clusterer, trustGraph, propagator);
+    
+    // Get cluster summary
+    CVM::ClusterTrustSummary summary = propagator.GetClusterTrustSummary(address);
+    
+    // Get effective trust score
+    double effectiveScore = query.GetEffectiveTrust(address, viewer);
+    
+    // Get worst member
+    double worstScore;
+    uint160 worstMember = query.GetWorstClusterMember(address, worstScore);
+    
+    // Count edges
+    uint32_t directEdges = 0;
+    uint32_t propagatedEdges = 0;
+    
+    for (const auto& member : summary.memberAddresses) {
+        std::vector<CVM::TrustEdge> direct = trustGraph.GetIncomingTrust(member);
+        directEdges += direct.size();
+        
+        std::vector<CVM::PropagatedTrustEdge> propagated = propagator.GetPropagatedEdgesForAddress(member);
+        propagatedEdges += propagated.size();
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(summary.clusterId)));
+    result.pushKV("member_count", (uint64_t)summary.memberAddresses.size());
+    
+    UniValue members_arr(UniValue::VARR);
+    for (const auto& member : summary.memberAddresses) {
+        members_arr.push_back(EncodeDestination(CKeyID(member)));
+    }
+    result.pushKV("members", members_arr);
+    
+    result.pushKV("effective_score", effectiveScore);
+    result.pushKV("worst_member", EncodeDestination(CKeyID(worstMember)));
+    result.pushKV("worst_score", worstScore);
+    result.pushKV("total_incoming_edges", (uint64_t)directEdges);
+    result.pushKV("total_propagated_edges", (uint64_t)propagatedEdges);
+    
+    return result;
+}
+
+/**
+ * listclustertrustrelations - List all trust relations for cluster
+ * 
+ * Returns all trust edges (both direct and propagated) affecting any
+ * address in the wallet cluster.
+ * 
+ * Requirements: 3.3, 3.4
+ */
+UniValue listclustertrustrelations(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "listclustertrustrelations \"address\" ( max_count )\n"
+            "\nList all trust relations for wallet cluster.\n"
+            "Returns both direct and propagated trust edges.\n"
+            "\nArguments:\n"
+            "1. \"address\"     (string, required) Any address in cluster\n"
+            "2. max_count     (numeric, optional, default=100) Maximum relations to return\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"cluster_id\": \"xxx\",       (string) Cluster ID (canonical address)\n"
+            "  \"direct_edges\": [           (array) Direct trust edges\n"
+            "    {\n"
+            "      \"from\": \"xxx\",         (string) Truster address\n"
+            "      \"to\": \"xxx\",           (string) Trusted address\n"
+            "      \"weight\": n,            (numeric) Trust weight\n"
+            "      \"bond\": n,              (numeric) Bond amount\n"
+            "      \"timestamp\": n          (numeric) When established\n"
+            "    },\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"propagated_edges\": [       (array) Propagated trust edges\n"
+            "    {\n"
+            "      \"from\": \"xxx\",         (string) Original truster\n"
+            "      \"to\": \"xxx\",           (string) Propagated target\n"
+            "      \"original_target\": \"xxx\", (string) Original target\n"
+            "      \"weight\": n,            (numeric) Trust weight\n"
+            "      \"bond\": n,              (numeric) Bond amount\n"
+            "      \"propagated_at\": n      (numeric) When propagated\n"
+            "    },\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"total_count\": n            (numeric) Total number of edges\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listclustertrustrelations", "\"QAddress...\"")
+            + HelpExampleRpc("listclustertrustrelations", "\"QAddress...\", 50")
+        );
+    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    
+    // Parse address
+    CTxDestination dest = DecodeDestination(request.params[0].get_str());
+    if (!IsValidDestination(dest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
+    }
+    
+    uint160 address;
+    if (boost::get<CKeyID>(&dest)) {
+        address = uint160(boost::get<CKeyID>(dest));
+    } else if (boost::get<CScriptID>(&dest)) {
+        address = uint160(boost::get<CScriptID>(dest));
+    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
+        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
+        address = uint160(wkh);
+    } else {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+    }
+    
+    // Get max count
+    uint32_t maxCount = 100;
+    if (request.params.size() > 1) {
+        maxCount = request.params[1].get_int();
+    }
+    
+    // Create components
+    CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
+    CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
+    CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
+    
+    // Get cluster info
+    uint160 clusterId = clusterer.GetClusterForAddress(address);
+    std::set<uint160> members = clusterer.GetClusterMembers(address);
+    
+    // If no cluster found, treat as single-address cluster
+    if (members.empty()) {
+        members.insert(address);
+        clusterId = address;
+    }
+    
+    // Collect direct edges
+    std::vector<CVM::TrustEdge> directEdges;
+    for (const auto& member : members) {
+        std::vector<CVM::TrustEdge> memberEdges = trustGraph.GetIncomingTrust(member);
+        for (const auto& edge : memberEdges) {
+            if (directEdges.size() < maxCount) {
+                directEdges.push_back(edge);
+            }
+        }
+    }
+    
+    // Collect propagated edges
+    std::vector<CVM::PropagatedTrustEdge> propagatedEdges;
+    for (const auto& member : members) {
+        std::vector<CVM::PropagatedTrustEdge> memberEdges = propagator.GetPropagatedEdgesForAddress(member);
+        for (const auto& edge : memberEdges) {
+            if (propagatedEdges.size() < maxCount) {
+                propagatedEdges.push_back(edge);
+            }
+        }
+    }
+    
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    
+    // Direct edges array
+    UniValue direct_arr(UniValue::VARR);
+    for (const auto& edge : directEdges) {
+        UniValue edgeObj(UniValue::VOBJ);
+        edgeObj.pushKV("from", EncodeDestination(CKeyID(edge.fromAddress)));
+        edgeObj.pushKV("to", EncodeDestination(CKeyID(edge.toAddress)));
+        edgeObj.pushKV("weight", (int)edge.trustWeight);
+        edgeObj.pushKV("bond", ValueFromAmount(edge.bondAmount));
+        edgeObj.pushKV("timestamp", (uint64_t)edge.timestamp);
+        edgeObj.pushKV("reason", edge.reason);
+        direct_arr.push_back(edgeObj);
+    }
+    result.pushKV("direct_edges", direct_arr);
+    
+    // Propagated edges array
+    UniValue propagated_arr(UniValue::VARR);
+    for (const auto& edge : propagatedEdges) {
+        UniValue edgeObj(UniValue::VOBJ);
+        edgeObj.pushKV("from", EncodeDestination(CKeyID(edge.fromAddress)));
+        edgeObj.pushKV("to", EncodeDestination(CKeyID(edge.toAddress)));
+        edgeObj.pushKV("original_target", EncodeDestination(CKeyID(edge.originalTarget)));
+        edgeObj.pushKV("weight", (int)edge.trustWeight);
+        edgeObj.pushKV("bond", ValueFromAmount(edge.bondAmount));
+        edgeObj.pushKV("propagated_at", (uint64_t)edge.propagatedAt);
+        edgeObj.pushKV("source_txid", edge.sourceEdgeTx.GetHex());
+        propagated_arr.push_back(edgeObj);
+    }
+    result.pushKV("propagated_edges", propagated_arr);
+    
+    result.pushKV("total_count", (uint64_t)(directEdges.size() + propagatedEdges.size()));
     
     return result;
 }
@@ -5097,6 +5715,9 @@ static const CRPCCommand commands[] =
     { "wallet_cluster",     "buildwalletclusters",   &buildwalletclusters,    {} },
     { "wallet_cluster",     "getwalletcluster",      &getwalletcluster,       {"address"} },
     { "wallet_cluster",     "geteffectivetrust",     &geteffectivetrust,      {"target","viewer"} },
+    { "wallet_cluster",     "addclustertrust",       &addclustertrust,        {"address","weight","bond","reason"} },
+    { "wallet_cluster",     "getclustertrust",       &getclustertrust,        {"address","viewer"} },
+    { "wallet_cluster",     "listclustertrustrelations", &listclustertrustrelations, {"address","max_count"} },
     { "dao",                "createdispute",         &createdispute,          {"vote_txid","bond","reason"} },
     { "dao",                "listdisputes",          &listdisputes,           {"status"} },
     { "dao",                "getdispute",            &getdispute,             {"dispute_id"} },
