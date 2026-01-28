@@ -26,6 +26,7 @@ enum DeploymentPos
     DEPLOYMENT_MINOTAURX,   // Cascoin: MinotaurX+Hive1.2: Deployment
     DEPLOYMENT_RIALTO,      // Cascoin: Rialto: Deployment
     DEPLOYMENT_CVM_EVM,     // Cascoin: CVM-EVM: Deployment of enhanced CVM with EVM compatibility and trust-aware features
+    DEPLOYMENT_QUANTUM,     // Cascoin: Quantum: Deployment of FALCON-512 post-quantum cryptography (witness version 2)
 
     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in versionbits.cpp
     MAX_VERSION_BITS_DEPLOYMENTS
@@ -142,6 +143,13 @@ struct Params {
     int asrsActivationHeight;           // Block height at which ASRS activates
     int64_t asrsMinVotingPower;         // Minimum voting power required to vote
     int64_t asrsMaxScoreChange;         // Maximum reputation score change per vote
+    
+    // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+    // Requirements: 6.1, 6.2, 6.3, 6.6 (soft fork activation heights)
+    int quantumActivationHeight;        // Block height at which quantum features activate (mainnet: 350000)
+    size_t maxQuantumSignatureSize;     // Maximum FALCON-512 signature size (700 bytes)
+    size_t maxQuantumPubKeySize;        // Maximum FALCON-512 public key size (897 bytes)
+    uint64_t cvmQuantumVerifyGas;       // Gas cost for VERIFY_SIG_QUANTUM in CVM (3000)
 };
 } // namespace Consensus
 

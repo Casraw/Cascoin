@@ -18,6 +18,8 @@
 #include <sync.h>               // Cascoin: Hive
 #include <validation.h>         // Cascoin: Hive
 #include <utilstrencodings.h>   // Cascoin: Hive
+#include <crypto/quantum/falcon.h>  // Cascoin: Quantum Hive support
+#include <address_quantum.h>        // Cascoin: Quantum address support
 
 BeePopGraphPoint beePopGraph[1024*40];       // Cascoin: Hive
 
@@ -782,9 +784,30 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
     }
     
     // Grab the message sig (bytes 79-end; byte 78 is size)
-    std::vector<unsigned char> messageSig(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
+    // Cascoin: Quantum Hive: Support both ECDSA (65 bytes) and FALCON-512 (up to 700 bytes) signatures
+    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
+    uint8_t sigSize = txCoinbase->vout[0].scriptPubKey[78];
+    bool isQuantumSig = (sigSize > 100);  // FALCON-512 signatures are ~666 bytes, ECDSA compact is 65 bytes
+    
+    std::vector<unsigned char> messageSig;
+    if (isQuantumSig) {
+        // Quantum signature: variable size up to 700 bytes
+        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + sigSize) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum signature\n");
+            return false;
+        }
+        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + sigSize]);
+    } else {
+        // ECDSA compact signature: 65 bytes
+        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + 65) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for ECDSA signature\n");
+            return false;
+        }
+        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
+    }
     if (verbose)
-        LogPrintf("CheckHiveProof: messageSig          = %s\n", HexStr(&messageSig[0], &messageSig[messageSig.size()]));
+        LogPrintf("CheckHiveProof: messageSig          = %s (size=%d, quantum=%s)\n", 
+                  HexStr(&messageSig[0], &messageSig[messageSig.size()]), (int)messageSig.size(), isQuantumSig ? "yes" : "no");
     
     // Grab the honey address from the honey vout
     CTxDestination honeyDestination;
@@ -800,22 +823,97 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         LogPrintf("CheckHiveProof: honeyAddress        = %s\n", EncodeDestination(honeyDestination));
 
     // Verify the message sig
-    const CKeyID *keyID = boost::get<CKeyID>(&honeyDestination);
-    if (!keyID) {
-        LogPrintf("CheckHiveProof: Can't get pubkey for honey address\n");
-        return false;
-    }
+    // Cascoin: Quantum Hive: Support both ECDSA and quantum signature verification
+    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
     CHashWriter ss(SER_GETHASH, 0);
     ss << deterministicRandString;
     uint256 mhash = ss.GetHash();
-    CPubKey pubkey;
-    if (!pubkey.RecoverCompact(mhash, messageSig)) {
-        LogPrintf("CheckHiveProof: Couldn't recover pubkey from hash\n");
-        return false;
-    }
-    if (pubkey.GetID() != *keyID) {
-        LogPrintf("CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
-        return false;
+    
+    if (isQuantumSig) {
+        // Quantum signature verification using FALCON-512
+        // For quantum addresses, the witness program contains the pubkey hash
+        const WitnessV2Quantum* quantumDest = boost::get<WitnessV2Quantum>(&honeyDestination);
+        if (!quantumDest) {
+            LogPrintf("CheckHiveProof: Quantum signature requires quantum address destination\n");
+            return false;
+        }
+        
+        // The quantum public key should be provided in the coinbase after the signature
+        // Format: [sig_size][signature][pubkey_size][pubkey]
+        size_t pubkeyOffset = 79 + sigSize;
+        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 1) {
+            LogPrintf("CheckHiveProof: Missing quantum pubkey size\n");
+            return false;
+        }
+        
+        // Read pubkey size (could be 2 bytes for sizes > 255)
+        size_t pubkeySize = 0;
+        size_t pubkeySizeBytes = 1;
+        if (txCoinbase->vout[0].scriptPubKey[pubkeyOffset] == 0xFD) {
+            // 2-byte size follows
+            if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 3) {
+                LogPrintf("CheckHiveProof: Missing quantum pubkey size bytes\n");
+                return false;
+            }
+            pubkeySize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[pubkeyOffset + 1]);
+            pubkeySizeBytes = 3;
+        } else {
+            pubkeySize = txCoinbase->vout[0].scriptPubKey[pubkeyOffset];
+        }
+        
+        if (pubkeySize != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+            LogPrintf("CheckHiveProof: Invalid quantum pubkey size %d (expected %d)\n", 
+                      (int)pubkeySize, CPubKey::QUANTUM_PUBLIC_KEY_SIZE);
+            return false;
+        }
+        
+        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + pubkeySizeBytes + pubkeySize) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum pubkey\n");
+            return false;
+        }
+        
+        std::vector<unsigned char> quantumPubkey(
+            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes],
+            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes + pubkeySize]);
+        
+        // Verify the pubkey matches the address (SHA256 hash)
+        uint256 pubkeyHash = Hash(quantumPubkey.begin(), quantumPubkey.end());
+        if (pubkeyHash != *quantumDest) {
+            LogPrintf("CheckHiveProof: Quantum pubkey hash mismatch\n");
+            return false;
+        }
+        
+        // Verify the FALCON-512 signature
+        if (!quantum::Verify(quantumPubkey, mhash.begin(), 32, messageSig)) {
+            LogPrintf("CheckHiveProof: Quantum signature verification failed\n");
+            return false;
+        }
+        
+        if (verbose)
+            LogPrintf("CheckHiveProof: Quantum signature verified successfully\n");
+    } else {
+        // ECDSA signature verification (original code)
+        // Requirements: 4.5, 4.6 (verify signature matches agent's registered key type)
+        const CKeyID *keyID = boost::get<CKeyID>(&honeyDestination);
+        if (!keyID) {
+            // Check if this is a quantum address - ECDSA signatures are not valid for quantum addresses
+            const WitnessV2Quantum* quantumDest = boost::get<WitnessV2Quantum>(&honeyDestination);
+            if (quantumDest) {
+                LogPrintf("CheckHiveProof: ECDSA signature not valid for quantum address - use quantum signature\n");
+                return false;
+            }
+            LogPrintf("CheckHiveProof: Can't get pubkey for honey address\n");
+            return false;
+        }
+        CPubKey pubkey;
+        if (!pubkey.RecoverCompact(mhash, messageSig)) {
+            LogPrintf("CheckHiveProof: Couldn't recover pubkey from hash\n");
+            return false;
+        }
+        if (pubkey.GetID() != *keyID) {
+            LogPrintf("CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
+            return false;
+        }
     }
 
     // Grab the BCT utxo

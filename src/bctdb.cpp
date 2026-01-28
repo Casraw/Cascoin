@@ -34,7 +34,7 @@ const int BCTDatabaseSQLite::SCHEMA_VERSION;
 static const char* BCT_SELECT_COLUMNS = 
     "txid, honey_address, status, bee_count, creation_height, "
     "maturity_height, expiration_height, timestamp, cost, blocks_found, "
-    "rewards_paid, profit, checksum, updated_at";
+    "rewards_paid, profit, checksum, updated_at, key_type";
 
 // BCTRecord implementation
 
@@ -88,7 +88,8 @@ bool BCTRecord::operator==(const BCTRecord& other) const {
            cost == other.cost &&
            blocksFound == other.blocksFound &&
            rewardsPaid == other.rewardsPaid &&
-           profit == other.profit;
+           profit == other.profit &&
+           keyType == other.keyType;
 }
 
 // BCTDatabaseSQLite implementation
@@ -187,7 +188,8 @@ bool BCTDatabaseSQLite::createSchema() {
             rewards_paid INTEGER DEFAULT 0,
             profit INTEGER DEFAULT 0,
             checksum TEXT,
-            updated_at INTEGER NOT NULL
+            updated_at INTEGER NOT NULL,
+            key_type INTEGER DEFAULT 0
         );
 
         -- Indexes for fast queries
@@ -237,13 +239,17 @@ bool BCTDatabaseSQLite::upgradeSchema(int fromVersion, int toVersion) {
                 success = true;
                 break;
                 
-            // Future migrations go here:
-            // case 2:
-            //     success = migrateToVersion2();
-            //     break;
-            // case 3:
-            //     success = migrateToVersion3();
-            //     break;
+            case 2:
+                // Version 2: Add key_type column for quantum signature support
+                // Requirements: 4.1 (store agent key type in agent record)
+                {
+                    const char* migration = "ALTER TABLE bcts ADD COLUMN key_type INTEGER DEFAULT 0;";
+                    success = executeSQL(migration);
+                    if (success) {
+                        LogPrintf("BCTDatabase: Added key_type column for quantum support\n");
+                    }
+                }
+                break;
             
             default:
                 LogPrintf("BCTDatabase: Unknown migration version %d\n", version);
@@ -332,8 +338,8 @@ bool BCTDatabaseSQLite::insertBCT(const BCTRecord& bct) {
     const char* sql = R"(
         INSERT INTO bcts (txid, honey_address, status, bee_count, creation_height,
                          maturity_height, expiration_height, timestamp, cost,
-                         blocks_found, rewards_paid, profit, checksum, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                         blocks_found, rewards_paid, profit, checksum, updated_at, key_type)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )";
 
     sqlite3_stmt* stmt;
@@ -360,6 +366,8 @@ bool BCTDatabaseSQLite::insertBCT(const BCTRecord& bct) {
     sqlite3_bind_int64(stmt, 12, record.profit);
     sqlite3_bind_text(stmt, 13, record.checksum.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 14, record.updatedAt);
+    // Requirements: 4.1 (store agent key type in agent record)
+    sqlite3_bind_int(stmt, 15, static_cast<int>(record.keyType));
 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -382,7 +390,8 @@ bool BCTDatabaseSQLite::updateBCT(const std::string& txid, const BCTRecord& bct)
         UPDATE bcts SET 
             honey_address = ?, status = ?, bee_count = ?, creation_height = ?,
             maturity_height = ?, expiration_height = ?, timestamp = ?, cost = ?,
-            blocks_found = ?, rewards_paid = ?, profit = ?, checksum = ?, updated_at = ?
+            blocks_found = ?, rewards_paid = ?, profit = ?, checksum = ?, updated_at = ?,
+            key_type = ?
         WHERE txid = ?;
     )";
 
@@ -409,7 +418,9 @@ bool BCTDatabaseSQLite::updateBCT(const std::string& txid, const BCTRecord& bct)
     sqlite3_bind_int64(stmt, 11, record.profit);
     sqlite3_bind_text(stmt, 12, record.checksum.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_int64(stmt, 13, record.updatedAt);
-    sqlite3_bind_text(stmt, 14, txid.c_str(), -1, SQLITE_TRANSIENT);
+    // Requirements: 4.1 (store agent key type in agent record)
+    sqlite3_bind_int(stmt, 14, static_cast<int>(record.keyType));
+    sqlite3_bind_text(stmt, 15, txid.c_str(), -1, SQLITE_TRANSIENT);
 
     int rc = sqlite3_step(stmt);
     sqlite3_finalize(stmt);
@@ -470,6 +481,10 @@ BCTRecord BCTDatabaseSQLite::recordFromStatement(sqlite3_stmt* stmt) {
     if (checksum) record.checksum = checksum;
     
     record.updatedAt = sqlite3_column_int64(stmt, 13);
+    
+    // Read key_type column (column 14)
+    // Requirements: 4.1 (store agent key type in agent record)
+    record.keyType = static_cast<BCTKeyType>(sqlite3_column_int(stmt, 14));
     
     return record;
 }

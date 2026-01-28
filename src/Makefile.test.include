@@ -30,6 +30,7 @@ BITCOIN_TESTS =\
   test/cvm_consensus_safety_tests.cpp \
   test/cvm_enhanced_storage_tests.cpp \
   test/cvm_integration_tests.cpp \
+  test/cvm_quantum_tests.cpp \
   test/cvm_sustainable_gas_tests.cpp \
   test/cvm_trust_context_tests.cpp \
   test/arith_uint256_tests.cpp \
@@ -50,6 +51,7 @@ BITCOIN_TESTS =\
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/cuckoocache_tests.cpp \
+  test/quantum_tests.cpp \
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
@@ -141,11 +143,11 @@ test_test_cascoin_LDADD =
 if ENABLE_WALLET
 test_test_cascoin_LDADD += $(LIBBITCOIN_WALLET)
 endif
-test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) \
+test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBBITCOIN_QUANTUM) $(LIBUNIVALUE) \
   $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(BOOST_UNIT_TEST_FRAMEWORK_LIB) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
 test_test_cascoin_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
-test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS)
+test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
 test_test_cascoin_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ
@@ -166,9 +168,10 @@ test_test_cascoin_fuzzy_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBSECP256K1)
 
-test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS)
+test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS)
 #
 
 nodist_test_test_cascoin_SOURCES = $(GENERATED_TEST_FILES)

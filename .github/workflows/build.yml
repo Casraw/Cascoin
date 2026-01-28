@@ -204,6 +204,7 @@ jobs:
             --enable-evmc \
             --with-evmc=/usr/local \
             --with-evmone=/usr/local \
+            --enable-quantum \
             --with-incompatible-bdb
           
           # Check if EVMC was properly detected

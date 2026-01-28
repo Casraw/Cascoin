@@ -69,6 +69,10 @@ public:
      */
     static bool VerifyBytecode(const std::vector<uint8_t>& code);
     
+    // Signature type detection (Req 7.2, 7.3)
+    // Returns true if signature is quantum (>100 bytes), false if ECDSA (<=72 bytes)
+    static bool IsQuantumSignature(const std::vector<uint8_t>& signature);
+    
 private:
     /**
      * Execute a single instruction
@@ -97,6 +101,12 @@ private:
     arith_uint256 ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes);
     bool VerifySignature(const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature, 
                         const std::vector<uint8_t>& pubkey);
+    
+    // Quantum signature verification helpers (Req 7.1, 7.2, 7.3)
+    bool VerifySignatureECDSA(const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature,
+                              const std::vector<uint8_t>& pubkey);
+    bool VerifySignatureQuantum(const std::vector<uint8_t>& message, const std::vector<uint8_t>& signature,
+                                const std::vector<uint8_t>& pubkey);
     
     // Testing and validation
     bool TestTrustEnhancedIntegration();

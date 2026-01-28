@@ -27,6 +27,15 @@ namespace Consensus {
 }
 
 /**
+ * Key type for BCT agent signatures.
+ * Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
+ */
+enum class BCTKeyType : uint8_t {
+    BCT_KEY_TYPE_ECDSA = 0,     //!< Classical ECDSA secp256k1 signature
+    BCT_KEY_TYPE_QUANTUM = 1    //!< Post-quantum FALCON-512 signature
+};
+
+/**
  * BCTRecord - Data structure representing a Bee Creation Transaction record
  */
 struct BCTRecord {
@@ -44,10 +53,12 @@ struct BCTRecord {
     int64_t profit;
     std::string checksum;        // For integrity validation
     int64_t updatedAt;
+    BCTKeyType keyType;          // Key type for agent signature (ECDSA or quantum)
+                                 // Requirements: 4.1 (store agent key type in agent record)
 
     BCTRecord() : beeCount(0), creationHeight(0), maturityHeight(0),
                   expirationHeight(0), timestamp(0), cost(0), blocksFound(0),
-                  rewardsPaid(0), profit(0), updatedAt(0) {}
+                  rewardsPaid(0), profit(0), updatedAt(0), keyType(BCTKeyType::BCT_KEY_TYPE_ECDSA) {}
 
     // Calculate blocks remaining until expiration
     int getBlocksLeft(int currentHeight) const;
@@ -93,7 +104,8 @@ struct BCTSummary {
 class BCTDatabaseSQLite {
 public:
     // Schema version for migrations
-    static const int SCHEMA_VERSION = 1;
+    // Version 2: Added key_type column for quantum signature support
+    static const int SCHEMA_VERSION = 2;
 
     // Get singleton instance
     static BCTDatabaseSQLite* instance();

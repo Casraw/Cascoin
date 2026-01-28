@@ -106,6 +106,10 @@ make -j$(nproc)
 make check
 test/functional/test_runner.py
 
+# Run specific unit test suite (faster than make check)
+src/test/test_cascoin --run_test=quantum_tests
+src/test/test_cascoin --run_test=crypto_tests
+
 # Clean build
 make clean
 ```
@@ -215,3 +219,17 @@ Key configure flags:
 
 **Additional Commands**:
 - `detectclusters` - Detect suspicious clusters in trust graph
+
+
+## Testing
+
+**Unit Test Binary**: `src/test/test_cascoin` (NOT test_bitcoin)
+- Run all tests: `src/test/test_cascoin`
+- Run specific suite: `src/test/test_cascoin --run_test=quantum_tests`
+- Run with verbose output: `src/test/test_cascoin --log_level=all`
+
+**Functional Tests**: `test/functional/test_runner.py`
+- Run all: `test/functional/test_runner.py`
+- Run specific: `test/functional/test_runner.py feature_cvm.py`
+
+**IMPORTANT**: The test binary is named `test_cascoin`, not `test_bitcoin`. This is a common mistake due to the Bitcoin codebase heritage.

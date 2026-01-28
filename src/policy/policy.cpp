@@ -278,6 +278,25 @@ bool IsWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
                     return false;
             }
         }
+        
+        // Cascoin: Check witness version 2 (quantum) standard limits
+        // Requirements: 9.7 (enforce maximum 1024 bytes per signature)
+        if (witnessversion == 2 && witnessprogram.size() == 32) {
+            // Quantum witness should have exactly 2 stack items: [signature, pubkey]
+            if (tx.vin[i].scriptWitness.stack.size() != 2)
+                return false;
+            
+            const std::vector<unsigned char>& signature = tx.vin[i].scriptWitness.stack[0];
+            const std::vector<unsigned char>& pubkey = tx.vin[i].scriptWitness.stack[1];
+            
+            // Enforce signature size limit (Requirements 9.7)
+            if (signature.size() > MAX_QUANTUM_SIGNATURE_SIZE)
+                return false;
+            
+            // Enforce pubkey size (must be exactly 897 bytes for FALCON-512)
+            if (pubkey.size() != QUANTUM_PUBLIC_KEY_SIZE)
+                return false;
+        }
     }
     return true;
 }
@@ -294,4 +313,126 @@ int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost)
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost)
 {
     return GetVirtualTransactionSize(GetTransactionWeight(tx), nSigOpCost);
+}
+
+/**
+ * Cascoin: Check if a transaction contains quantum (witness version 2) signatures.
+ * This is used for fee estimation and relay filtering.
+ * Requirements: 9.6 (include quantum signature size in vsize calculation)
+ */
+bool HasQuantumSignatures(const CTransaction& tx)
+{
+    for (const CTxIn& txin : tx.vin) {
+        if (txin.scriptWitness.IsNull())
+            continue;
+        
+        // Check if this is a witness version 2 (quantum) input
+        // Quantum witness has exactly 2 stack items: [signature, pubkey]
+        // where pubkey is 897 bytes (FALCON-512)
+        if (txin.scriptWitness.stack.size() == 2) {
+            const std::vector<unsigned char>& pubkey = txin.scriptWitness.stack[1];
+            if (pubkey.size() == QUANTUM_PUBLIC_KEY_SIZE) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/**
+ * Cascoin: Calculate the quantum signature overhead for fee estimation.
+ * Quantum signatures are larger than ECDSA signatures, so we need to account
+ * for this in fee estimation.
+ * Requirements: 9.6 (include quantum signature size in vsize calculation)
+ * 
+ * @param[in] tx The transaction to analyze
+ * @return The additional virtual size overhead from quantum signatures
+ */
+int64_t GetQuantumSignatureOverhead(const CTransaction& tx)
+{
+    int64_t overhead = 0;
+    
+    for (const CTxIn& txin : tx.vin) {
+        if (txin.scriptWitness.IsNull())
+            continue;
+        
+        // Check if this is a quantum witness (2 stack items with 897-byte pubkey)
+        if (txin.scriptWitness.stack.size() == 2) {
+            const std::vector<unsigned char>& pubkey = txin.scriptWitness.stack[1];
+            if (pubkey.size() == QUANTUM_PUBLIC_KEY_SIZE) {
+                // Quantum signature overhead compared to typical ECDSA:
+                // ECDSA: ~72 byte signature + 33 byte pubkey = ~105 bytes
+                // Quantum: ~666 byte signature + 897 byte pubkey = ~1563 bytes
+                // Overhead: ~1458 bytes per quantum input
+                // 
+                // However, witness data already has 4x discount in weight calculation,
+                // so we don't need additional overhead here - the weight calculation
+                // already accounts for the larger signature size.
+                // 
+                // This function returns 0 because GetTransactionWeight() already
+                // includes the full witness data size in its calculation.
+                overhead += 0;
+            }
+        }
+    }
+    
+    return overhead;
+}
+
+/**
+ * Cascoin: Check if quantum witness data is within standard limits.
+ * Requirements: 9.7 (enforce maximum 1024 bytes per signature)
+ * 
+ * @param[in] tx The transaction to check
+ * @param[in] mapInputs Map of previous transaction outputs
+ * @return true if all quantum witnesses are within standard limits
+ */
+bool IsQuantumWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs)
+{
+    if (tx.IsCoinBase())
+        return true;
+    
+    for (unsigned int i = 0; i < tx.vin.size(); i++) {
+        if (tx.vin[i].scriptWitness.IsNull())
+            continue;
+        
+        const CTxOut& prev = mapInputs.AccessCoin(tx.vin[i].prevout).out;
+        CScript prevScript = prev.scriptPubKey;
+        
+        // Handle P2SH-wrapped witness
+        if (prevScript.IsPayToScriptHash()) {
+            std::vector<std::vector<unsigned char>> stack;
+            if (!EvalScript(stack, tx.vin[i].scriptSig, SCRIPT_VERIFY_NONE, BaseSignatureChecker(), SIGVERSION_BASE))
+                return false;
+            if (stack.empty())
+                return false;
+            prevScript = CScript(stack.back().begin(), stack.back().end());
+        }
+        
+        int witnessversion = 0;
+        std::vector<unsigned char> witnessprogram;
+        
+        if (!prevScript.IsWitnessProgram(witnessversion, witnessprogram))
+            continue;
+        
+        // Check witness version 2 (quantum) standard limits
+        if (witnessversion == 2 && witnessprogram.size() == 32) {
+            // Quantum witness should have exactly 2 stack items: [signature, pubkey]
+            if (tx.vin[i].scriptWitness.stack.size() != 2)
+                return false;
+            
+            const std::vector<unsigned char>& signature = tx.vin[i].scriptWitness.stack[0];
+            const std::vector<unsigned char>& pubkey = tx.vin[i].scriptWitness.stack[1];
+            
+            // Enforce signature size limit (Requirements 9.7)
+            if (signature.size() > MAX_QUANTUM_SIGNATURE_SIZE)
+                return false;
+            
+            // Enforce pubkey size (must be exactly 897 bytes for FALCON-512)
+            if (pubkey.size() != QUANTUM_PUBLIC_KEY_SIZE)
+                return false;
+        }
+    }
+    
+    return true;
 }

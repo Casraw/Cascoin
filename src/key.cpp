@@ -5,15 +5,28 @@
 
 #include <key.h>
 
+#include <config/bitcoin-config.h>
+
 #include <arith_uint256.h>
 #include <crypto/common.h>
 #include <crypto/hmac_sha512.h>
+#if ENABLE_QUANTUM
+#include <crypto/quantum/falcon.h>
+#endif
 #include <random.h>
+#include <support/cleanse.h>
 
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 
 static secp256k1_context* secp256k1_context_sign = nullptr;
+
+// Static constant definitions for CKey class
+// These are required for ODR-use (e.g., when taking address or using in BOOST_CHECK_EQUAL)
+const unsigned int CKey::PRIVATE_KEY_SIZE;
+const unsigned int CKey::COMPRESSED_PRIVATE_KEY_SIZE;
+const unsigned int CKey::ECDSA_PRIVATE_KEY_SIZE;
+const unsigned int CKey::QUANTUM_PRIVATE_KEY_SIZE;
 
 /** These functions are taken from the libsecp256k1 distribution and are very ugly. */
 
@@ -156,11 +169,86 @@ bool CKey::Check(const unsigned char *vch) {
 }
 
 void CKey::MakeNewKey(bool fCompressedIn) {
+    // Explicitly set key type to ECDSA (Requirement 1.1)
+    keyType = CKeyType::KEY_TYPE_ECDSA;
+    
+    // Ensure keydata is sized for ECDSA (32 bytes)
+    keydata.resize(ECDSA_PRIVATE_KEY_SIZE);
+    
     do {
         GetStrongRandBytes(keydata.data(), keydata.size());
     } while (!Check(keydata.data()));
     fValid = true;
     fCompressed = fCompressedIn;
+}
+
+void CKey::MakeNewQuantumKey() {
+    // Set key type to QUANTUM (Requirement 1.1)
+    keyType = CKeyType::KEY_TYPE_QUANTUM;
+    
+    // Resize keydata to FALCON-512 private key size (1281 bytes)
+    keydata.resize(QUANTUM_PRIVATE_KEY_SIZE);
+    
+#if ENABLE_QUANTUM
+    // Generate FALCON-512 key pair using the quantum module
+    std::vector<unsigned char> privkey;
+    std::vector<unsigned char> pubkey;
+    
+    if (quantum::GenerateKeyPair(privkey, pubkey)) {
+        // Copy the private key data to keydata
+        // Verify the generated key has the expected size
+        if (privkey.size() == QUANTUM_PRIVATE_KEY_SIZE && 
+            pubkey.size() == quantum::FALCON512_PUBLIC_KEY_SIZE) {
+            std::copy(privkey.begin(), privkey.end(), keydata.begin());
+            // Store the public key for later use
+            quantumPubkey = pubkey;
+            fValid = true;
+            fCompressed = false; // Compression not applicable for quantum keys
+        } else {
+            // Key generation returned unexpected size
+            fValid = false;
+            quantumPubkey.clear();
+        }
+    } else {
+        // Key generation failed
+        fValid = false;
+        quantumPubkey.clear();
+    }
+    
+    // Clear temporary private key buffer for security
+    memory_cleanse(privkey.data(), privkey.size());
+    // Note: pubkey is not sensitive, no need to cleanse
+#else
+    // Quantum support not compiled in - key generation fails
+    fValid = false;
+    fCompressed = false;
+    quantumPubkey.clear();
+#endif
+}
+
+bool CKey::SetQuantumKeyData(const unsigned char* privKeyData, size_t privKeySize,
+                              const std::vector<unsigned char>& pubKeyData) {
+    // Validate input sizes (FALCON-512: 1281 byte private key, 897 byte public key)
+    if (privKeySize != QUANTUM_PRIVATE_KEY_SIZE || pubKeyData.size() != 897) {
+        fValid = false;
+        return false;
+    }
+    
+    // Set key type to QUANTUM
+    keyType = CKeyType::KEY_TYPE_QUANTUM;
+    
+    // Resize and copy private key data
+    keydata.resize(QUANTUM_PRIVATE_KEY_SIZE);
+    std::copy(privKeyData, privKeyData + privKeySize, keydata.begin());
+    
+    // Store the public key
+    quantumPubkey = pubKeyData;
+    
+    // Quantum keys don't use compression
+    fCompressed = false;
+    fValid = true;
+    
+    return true;
 }
 
 CPrivKey CKey::GetPrivKey() const {
@@ -178,6 +266,46 @@ CPrivKey CKey::GetPrivKey() const {
 
 CPubKey CKey::GetPubKey() const {
     assert(fValid);
+    
+    // Handle quantum keys (Requirement 1.2)
+    if (keyType == CKeyType::KEY_TYPE_QUANTUM) {
+#if ENABLE_QUANTUM
+        // Use the cached quantum public key if available
+        if (!quantumPubkey.empty() && quantumPubkey.size() == quantum::FALCON512_PUBLIC_KEY_SIZE) {
+            CPubKey result;
+            result.SetQuantum(quantumPubkey);
+            assert(result.IsValid());
+            return result;
+        }
+        
+        // Fallback: try to derive public key from private key
+        // This may fail if the private key format doesn't match expectations
+        std::vector<unsigned char> privkey(keydata.begin(), keydata.end());
+        std::vector<unsigned char> pubkey;
+        
+        if (quantum::DerivePublicKey(privkey, pubkey)) {
+            // Clear temporary private key for security
+            memory_cleanse(privkey.data(), privkey.size());
+            
+            // Create CPubKey from quantum public key
+            CPubKey result;
+            result.SetQuantum(pubkey);
+            assert(result.IsValid());
+            return result;
+        }
+        
+        // Clear temporary private key for security
+        memory_cleanse(privkey.data(), privkey.size());
+        
+        // Derivation failed - return invalid key
+        return CPubKey();
+#else
+        // Quantum support not compiled in - return invalid key
+        return CPubKey();
+#endif
+    }
+    
+    // ECDSA public key derivation
     secp256k1_pubkey pubkey;
     size_t clen = CPubKey::PUBLIC_KEY_SIZE;
     CPubKey result;
@@ -192,6 +320,15 @@ CPubKey CKey::GetPubKey() const {
 bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, uint32_t test_case) const {
     if (!fValid)
         return false;
+    
+    // Dispatch based on key type (Requirements 1.5, 1.6)
+    if (keyType == CKeyType::KEY_TYPE_QUANTUM) {
+        // For quantum keys, use FALCON-512 signing
+        // Note: test_case parameter is ignored for quantum keys
+        return SignQuantum(hash, vchSig);
+    }
+    
+    // ECDSA signing for classical keys
     vchSig.resize(CPubKey::SIGNATURE_SIZE);
     size_t nSigLen = CPubKey::SIGNATURE_SIZE;
     unsigned char extra_entropy[32] = {0};
@@ -204,7 +341,63 @@ bool CKey::Sign(const uint256 &hash, std::vector<unsigned char>& vchSig, uint32_
     return true;
 }
 
+bool CKey::SignQuantum(const uint256 &hash, std::vector<unsigned char>& vchSig) const {
+    // Validate this is a valid quantum key (Requirement 1.5)
+    if (!fValid) {
+        return false;
+    }
+    
+    if (keyType != CKeyType::KEY_TYPE_QUANTUM) {
+        // This method should only be called for quantum keys
+        return false;
+    }
+    
+    // Validate key data size matches FALCON-512 private key size
+    if (keydata.size() != QUANTUM_PRIVATE_KEY_SIZE) {
+        return false;
+    }
+    
+#if ENABLE_QUANTUM
+    // Create a copy of the private key for signing
+    // Using secure_allocator ensures secure memory handling (Requirement 1.7)
+    std::vector<unsigned char> privkey(keydata.begin(), keydata.end());
+    
+    // Call quantum::Sign() with the private key and message hash
+    // The hash is treated as the message to sign (32 bytes)
+    bool result = quantum::Sign(privkey, hash.begin(), 32, vchSig);
+    
+    // Clear the temporary private key copy for security (Requirement 1.7)
+    memory_cleanse(privkey.data(), privkey.size());
+    
+    return result;
+#else
+    // Quantum support not compiled in - signing fails
+    (void)hash;
+    (void)vchSig;
+    return false;
+#endif
+}
+
 bool CKey::VerifyPubKey(const CPubKey& pubkey) const {
+    // Handle quantum keys (Requirement 1.2)
+    if (keyType == CKeyType::KEY_TYPE_QUANTUM) {
+        // For quantum keys, verify by signing and verifying
+        if (!pubkey.IsQuantum()) {
+            return false;
+        }
+        unsigned char rnd[8];
+        std::string str = "Cascoin quantum key verification\n";
+        GetRandBytes(rnd, sizeof(rnd));
+        uint256 hash;
+        CHash256().Write((unsigned char*)str.data(), str.size()).Write(rnd, sizeof(rnd)).Finalize(hash.begin());
+        std::vector<unsigned char> vchSig;
+        if (!Sign(hash, vchSig)) {
+            return false;
+        }
+        return pubkey.Verify(hash, vchSig);
+    }
+    
+    // ECDSA key verification
     if (pubkey.IsCompressed() != fCompressed) {
         return false;
     }

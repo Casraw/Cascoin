@@ -32,6 +32,8 @@
 #include <net_processing.h>     // LitcoinCash: Rialto
 #include <beenft.h>             // Cascoin: Bee NFT System
 #include <bctdb.h>              // Cascoin: BCT persistent database
+#include <address_quantum.h>    // Cascoin: Quantum address encoding
+#include <chainparams.h>        // Cascoin: Quantum: For consensus params
 
 #include <init.h>  // For StartShutdown
 
@@ -157,14 +159,123 @@ UniValue getnewaddress(const JSONRPCRequest& request)
             "\nReturns a new Cascoin address for receiving payments.\n"
             "If 'account' is specified (DEPRECATED), it is added to the address book \n"
             "so payments received with the address will be credited to 'account'.\n"
+            "\nAfter quantum activation, returns a quantum (FALCON-512) address by default.\n"
+            "Use getlegacyaddress for ECDSA addresses post-activation.\n"
             "\nArguments:\n"
             "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to. If not provided, the default account \"\" is used. It can also be set to the empty string \"\" to represent the default account. The account does not need to exist, it will be created if there is no account by the given name.\n"
-            "2. \"address_type\"   (string, optional) The address type to use. Options are \"legacy\", \"p2sh-segwit\", and \"bech32\". Default is set by -addresstype.\n"
+            "2. \"address_type\"   (string, optional) The address type to use. Options are \"legacy\", \"p2sh-segwit\", \"bech32\", and \"quantum\". Default is \"quantum\" after activation, otherwise set by -addresstype.\n"
             "\nResult:\n"
             "\"address\"    (string) The new cascoin address\n"
             "\nExamples:\n"
             + HelpExampleCli("getnewaddress", "")
             + HelpExampleRpc("getnewaddress", "")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Parse the account first so we don't generate a key if there's an error
+    std::string strAccount;
+    if (!request.params[0].isNull())
+        strAccount = AccountFromValue(request.params[0]);
+
+    // Cascoin: Quantum: Check if quantum is activated
+    // Requirements: 5.1 (return quantum address by default post-activation)
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    bool quantumActive = (chainActive.Height() >= consensusParams.quantumActivationHeight);
+    
+    // Check if user explicitly requested quantum address type
+    bool requestedQuantum = false;
+    OutputType output_type = g_address_type;
+    if (!request.params[1].isNull()) {
+        std::string typeStr = request.params[1].get_str();
+        if (typeStr == "quantum") {
+            requestedQuantum = true;
+        } else {
+            output_type = ParseOutputType(typeStr, g_address_type);
+            if (output_type == OUTPUT_TYPE_NONE) {
+                throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, strprintf("Unknown address type '%s'", typeStr));
+            }
+        }
+    }
+    
+    // Cascoin: Quantum: Default to quantum address post-activation
+    // Requirements: 5.1 (GetNewAddress returns quantum address by default post-activation)
+    if (quantumActive && !request.params[1].isNull() == false) {
+        // No address type specified and quantum is active - use quantum
+        requestedQuantum = true;
+    }
+    
+    if (requestedQuantum) {
+        // Quantum address requested or defaulted
+        if (!quantumActive) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Quantum addresses are not yet active on the network");
+        }
+        
+        if (!pwallet->IsLocked()) {
+            pwallet->TopUpQuantumKeyPool();
+        }
+        
+        // Get a quantum key from the quantum key pool
+        CPubKey quantumKey;
+        if (!pwallet->GetQuantumKeyFromPool(quantumKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Quantum keypool ran out, please call keypoolrefill first");
+        }
+        
+        // Encode as quantum address
+        std::string quantumAddress = address::EncodeQuantumAddress(quantumKey, Params());
+        if (quantumAddress.empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Error: Failed to encode quantum address");
+        }
+        
+        // Add to address book
+        CTxDestination dest = DecodeDestination(quantumAddress);
+        pwallet->SetAddressBook(dest, strAccount, "receive");
+        
+        return quantumAddress;
+    }
+
+    // Standard ECDSA address generation
+    if (!pwallet->IsLocked()) {
+        pwallet->TopUpKeyPool();
+    }
+
+    // Generate a new key that is added to wallet
+    CPubKey newKey;
+    if (!pwallet->GetKeyFromPool(newKey)) {
+        throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
+    }
+    pwallet->LearnRelatedScripts(newKey, output_type);
+    CTxDestination dest = GetDestinationForKey(newKey, output_type);
+
+    pwallet->SetAddressBook(dest, strAccount, "receive");
+
+    return EncodeDestination(dest);
+}
+
+/**
+ * Cascoin: Quantum: Get a legacy (ECDSA) address for backward compatibility.
+ * Requirements: 5.2 (provide GetLegacyAddress for backward compatibility)
+ */
+UniValue getlegacyaddress(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() > 2)
+        throw std::runtime_error(
+            "getlegacyaddress ( \"account\" \"address_type\" )\n"
+            "\nReturns a new legacy (ECDSA) Cascoin address for receiving payments.\n"
+            "Use this for backward compatibility when quantum addresses are the default.\n"
+            "\nArguments:\n"
+            "1. \"account\"        (string, optional) DEPRECATED. The account name for the address to be linked to.\n"
+            "2. \"address_type\"   (string, optional) The address type to use. Options are \"legacy\", \"p2sh-segwit\", and \"bech32\". Default is set by -addresstype.\n"
+            "\nResult:\n"
+            "\"address\"    (string) The new legacy cascoin address\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getlegacyaddress", "")
+            + HelpExampleRpc("getlegacyaddress", "")
         );
 
     LOCK2(cs_main, pwallet->cs_wallet);
@@ -186,7 +297,7 @@ UniValue getnewaddress(const JSONRPCRequest& request)
         pwallet->TopUpKeyPool();
     }
 
-    // Generate a new key that is added to wallet
+    // Generate a new ECDSA key that is added to wallet
     CPubKey newKey;
     if (!pwallet->GetKeyFromPool(newKey)) {
         throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Keypool ran out, please call keypoolrefill first");
@@ -541,6 +652,173 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
     SendMoney(pwallet, dest, nAmount, fSubtractFeeFromAmount, wtx, coin_control);
 
     return wtx.GetHash().GetHex();
+}
+
+/**
+ * Cascoin: Quantum: Migrate funds from legacy UTXOs to a quantum address.
+ * Requirements: 5.3, 5.4, 5.6, 5.7 (migrate_to_quantum RPC command)
+ */
+UniValue migrate_to_quantum(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() > 2)
+        throw std::runtime_error(
+            "migrate_to_quantum ( \"destination\" include_all )\n"
+            "\nMigrate funds from legacy (ECDSA) UTXOs to a quantum-safe address.\n"
+            "This creates a transaction that sweeps all or specified legacy UTXOs to a new quantum address.\n"
+            + HelpRequiringPassphrase(pwallet) +
+            "\nArguments:\n"
+            "1. \"destination\"     (string, optional) The quantum destination address. If not provided, a new quantum address is generated.\n"
+            "2. include_all        (boolean, optional, default=true) If true, migrate all legacy UTXOs. If false, only migrate confirmed UTXOs.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txid\": \"xxx\",           (string) The transaction id\n"
+            "  \"destination\": \"xxx\",    (string) The quantum destination address\n"
+            "  \"amount\": xxx,           (numeric) The total amount migrated\n"
+            "  \"fee\": xxx,              (numeric) The transaction fee\n"
+            "  \"utxos_migrated\": xxx    (numeric) Number of UTXOs migrated\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("migrate_to_quantum", "")
+            + HelpExampleCli("migrate_to_quantum", "\"casq1...\"")
+            + HelpExampleRpc("migrate_to_quantum", "")
+        );
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Check if quantum is activated
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    if (chainActive.Height() < consensusParams.quantumActivationHeight) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Quantum features are not yet active on the network");
+    }
+
+    EnsureWalletIsUnlocked(pwallet);
+
+    // Get or generate destination quantum address
+    std::string quantumAddress;
+    if (!request.params[0].isNull() && !request.params[0].get_str().empty()) {
+        quantumAddress = request.params[0].get_str();
+        // Validate it's a quantum address
+        if (!address::IsQuantumAddress(quantumAddress, Params())) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Destination must be a quantum address (casq/tcasq/rcasq)");
+        }
+    } else {
+        // Generate a new quantum address
+        if (!pwallet->IsLocked()) {
+            pwallet->TopUpQuantumKeyPool();
+        }
+        
+        CPubKey quantumKey;
+        if (!pwallet->GetQuantumKeyFromPool(quantumKey)) {
+            throw JSONRPCError(RPC_WALLET_KEYPOOL_RAN_OUT, "Error: Quantum keypool ran out");
+        }
+        
+        quantumAddress = address::EncodeQuantumAddress(quantumKey, Params());
+        if (quantumAddress.empty()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Error: Failed to encode quantum address");
+        }
+        
+        // Add to address book
+        CTxDestination dest = DecodeDestination(quantumAddress);
+        pwallet->SetAddressBook(dest, "", "receive");
+    }
+
+    bool includeAll = true;
+    if (!request.params[1].isNull()) {
+        includeAll = request.params[1].get_bool();
+    }
+
+    // Get available legacy (non-quantum) UTXOs
+    std::vector<COutput> vAvailableCoins;
+    pwallet->AvailableCoins(vAvailableCoins, !includeAll);
+
+    // Filter to only legacy UTXOs (non-quantum)
+    std::vector<COutput> legacyCoins;
+    CAmount totalAmount = 0;
+    for (const COutput& coin : vAvailableCoins) {
+        // Check if this is a legacy UTXO (not a quantum address)
+        CTxDestination dest;
+        if (ExtractDestination(coin.tx->tx->vout[coin.i].scriptPubKey, dest)) {
+            std::string addr = EncodeDestination(dest);
+            if (!address::IsQuantumAddress(addr, Params())) {
+                legacyCoins.push_back(coin);
+                totalAmount += coin.tx->tx->vout[coin.i].nValue;
+            }
+        }
+    }
+
+    if (legacyCoins.empty()) {
+        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "No legacy UTXOs available to migrate");
+    }
+
+    // Create the migration transaction
+    CTxDestination quantumDest = DecodeDestination(quantumAddress);
+    if (!IsValidDestination(quantumDest)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid quantum destination address");
+    }
+
+    CScript scriptPubKey = GetScriptForDestination(quantumDest);
+    
+    // Build the transaction
+    CMutableTransaction mtx;
+    
+    // Add all legacy UTXOs as inputs
+    for (const COutput& coin : legacyCoins) {
+        mtx.vin.push_back(CTxIn(coin.tx->GetHash(), coin.i));
+    }
+
+    // Estimate fee
+    CCoinControl coin_control;
+    CAmount nFeeRequired = 0;
+    std::string strError;
+    int nChangePosRet = -1;
+    
+    // Create recipient for the quantum address (subtract fee from amount)
+    std::vector<CRecipient> vecSend;
+    CRecipient recipient = {scriptPubKey, totalAmount, true /* subtract fee */};
+    vecSend.push_back(recipient);
+
+    CWalletTx wtx;
+    CReserveKey reservekey(pwallet);
+    
+    // Use coin control to select only our legacy coins
+    for (const COutput& coin : legacyCoins) {
+        coin_control.Select(COutPoint(coin.tx->GetHash(), coin.i));
+    }
+    coin_control.fAllowOtherInputs = false;
+
+    if (!pwallet->CreateTransaction(vecSend, wtx, reservekey, nFeeRequired, nChangePosRet, strError, coin_control)) {
+        if (totalAmount + nFeeRequired > pwallet->GetBalance()) {
+            throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, 
+                strprintf("Insufficient funds. Need %s but only have %s available", 
+                    FormatMoney(totalAmount + nFeeRequired), FormatMoney(pwallet->GetBalance())));
+        }
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+
+    // Commit the transaction
+    CValidationState state;
+    if (!pwallet->CommitTransaction(wtx, reservekey, g_connman.get(), state)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Error: The transaction was rejected! Reason: " + state.GetRejectReason());
+    }
+
+    // Log the migration
+    LogPrintf("migrate_to_quantum: Migrated %d UTXOs (%s) to %s, txid=%s\n",
+              legacyCoins.size(), FormatMoney(totalAmount - nFeeRequired), quantumAddress, wtx.GetHash().GetHex());
+
+    // Return result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", wtx.GetHash().GetHex());
+    result.pushKV("destination", quantumAddress);
+    result.pushKV("amount", ValueFromAmount(totalAmount - nFeeRequired));
+    result.pushKV("fee", ValueFromAmount(nFeeRequired));
+    result.pushKV("utxos_migrated", (int)legacyCoins.size());
+
+    return result;
 }
 
 // Cascoin: Hive: Get current bee cost
@@ -5741,6 +6019,7 @@ UniValue rescanbctdatabase(const JSONRPCRequest& request)
 extern UniValue abortrescan(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue dumpprivkey(const JSONRPCRequest& request); // in rpcdump.cpp
 extern UniValue importprivkey(const JSONRPCRequest& request);
+extern UniValue importquantumkey(const JSONRPCRequest& request); // Cascoin: Quantum
 extern UniValue importaddress(const JSONRPCRequest& request);
 extern UniValue importpubkey(const JSONRPCRequest& request);
 extern UniValue dumpwallet(const JSONRPCRequest& request);
@@ -5798,6 +6077,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "getaddressesbyaccount",    &getaddressesbyaccount,    {"account"} },
     { "wallet",             "getbalance",               &getbalance,               {"account","minconf","include_watchonly"} },
     { "wallet",             "getnewaddress",            &getnewaddress,            {"account","address_type"} },
+    { "wallet",             "getlegacyaddress",         &getlegacyaddress,         {"account","address_type"} },  // Cascoin: Quantum
     { "wallet",             "getrawchangeaddress",      &getrawchangeaddress,      {"address_type"} },
     { "wallet",             "getreceivedbyaccount",     &getreceivedbyaccount,     {"account","minconf"} },
     { "wallet",             "getreceivedbyaddress",     &getreceivedbyaddress,     {"address","minconf"} },
@@ -5806,6 +6086,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "getwalletinfo",            &getwalletinfo,            {} },
     { "wallet",             "importmulti",              &importmulti,              {"requests","options"} },
     { "wallet",             "importprivkey",            &importprivkey,            {"privkey","label","rescan"} },
+    { "wallet",             "importquantumkey",         &importquantumkey,         {"quantumkey","label","rescan"} },  // Cascoin: Quantum
     { "wallet",             "importwallet",             &importwallet,             {"filename"} },
     { "wallet",             "importaddress",            &importaddress,            {"address","label","rescan","p2sh"} },
     { "wallet",             "importprunedfunds",        &importprunedfunds,        {"rawtransaction","txoutproof"} },
@@ -5821,6 +6102,7 @@ static const CRPCCommand commands[] =
     { "wallet",             "listunspent",              &listunspent,              {"minconf","maxconf","addresses","include_unsafe","query_options"} },
     { "wallet",             "listwallets",              &listwallets,              {} },
     { "wallet",             "lockunspent",              &lockunspent,              {"unlock","transactions"} },
+    { "wallet",             "migrate_to_quantum",       &migrate_to_quantum,       {"destination","include_all"} },  // Cascoin: Quantum
     { "wallet",             "move",                     &movecmd,                  {"fromaccount","toaccount","amount","minconf","comment"} },
     { "wallet",             "sendfrom",                 &sendfrom,                 {"fromaccount","toaddress","amount","minconf","comment","comment_to"} },
     { "wallet",             "sendmany",                 &sendmany,                 {"fromaccount","amounts","minconf","comment","subtractfeefrom","replaceable","conf_target","estimate_mode"} },

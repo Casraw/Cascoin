@@ -8,6 +8,7 @@
 #include <crypto/ripemd160.h>
 #include <crypto/sha1.h>
 #include <crypto/sha256.h>
+#include <crypto/quantum/falcon.h>  // Cascoin: Post-quantum FALCON-512 support
 #include <pubkey.h>
 #include <script/script.h>
 #include <uint256.h>
@@ -1208,7 +1209,9 @@ uint256 SignatureHash(const CScript& scriptCode, const CTransaction& txTo, unsig
 {
     assert(nIn < txTo.vin.size());
 
-    if (sigversion == SIGVERSION_WITNESS_V0) {
+    // Cascoin: Witness version 2 (quantum) uses the same BIP143-style sighash as witness v0
+    // Requirements: 2.8 (same BIP143-style algorithm as witness version 0)
+    if (sigversion == SIGVERSION_WITNESS_V0 || sigversion == SIGVERSION_WITNESS_V2_QUANTUM) {
         uint256 hashPrevouts;
         uint256 hashSequence;
         uint256 hashOutputs;
@@ -1280,6 +1283,40 @@ bool TransactionSignatureChecker::VerifySignature(const std::vector<unsigned cha
 
 bool TransactionSignatureChecker::CheckSig(const std::vector<unsigned char>& vchSigIn, const std::vector<unsigned char>& vchPubKey, const CScript& scriptCode, SigVersion sigversion) const
 {
+    // Cascoin: Handle quantum signatures for witness version 2
+    // Requirements: 2.2 (FALCON-512 verification via quantum module)
+    if (sigversion == SIGVERSION_WITNESS_V2_QUANTUM) {
+        // For quantum signatures, the public key must be exactly 897 bytes
+        if (vchPubKey.size() != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+            return false;
+        }
+        
+        // Create a quantum public key
+        CPubKey pubkey;
+        pubkey.SetQuantum(vchPubKey);
+        if (!pubkey.IsValid())
+            return false;
+        
+        // Quantum signatures include the hash type as the last byte
+        std::vector<unsigned char> vchSig(vchSigIn);
+        if (vchSig.empty())
+            return false;
+        int nHashType = vchSig.back();
+        vchSig.pop_back();
+        
+        // Compute the signature hash using BIP143-style algorithm
+        // Requirements: 2.8 (same BIP143-style sighash as witness v0)
+        uint256 sighash = SignatureHash(scriptCode, *txTo, nIn, nHashType, amount, sigversion, this->txdata);
+        
+        // Verify the FALCON-512 signature
+        // The CPubKey::Verify method dispatches to VerifyQuantum for quantum keys
+        if (!pubkey.Verify(sighash, vchSig))
+            return false;
+        
+        return true;
+    }
+    
+    // Standard ECDSA signature verification
     CPubKey pubkey(vchPubKey);
     if (!pubkey.IsValid())
         return false;
@@ -1381,6 +1418,94 @@ bool TransactionSignatureChecker::CheckSequence(const CScriptNum& nSequence) con
     return true;
 }
 
+/**
+ * Verify a witness version 2 quantum (FALCON-512) program.
+ * 
+ * Witness version 2 is used for post-quantum FALCON-512 signatures.
+ * The witness stack must contain exactly 2 elements:
+ *   - witness[0]: FALCON-512 signature (up to 700 bytes)
+ *   - witness[1]: FALCON-512 public key (exactly 897 bytes)
+ * 
+ * The program (32 bytes) must equal SHA256(pubkey).
+ * 
+ * Requirements: 2.2, 2.3, 2.6 (FALCON-512 verification, signature size, pubkey size)
+ * 
+ * @param[in] witness The witness stack containing signature and public key
+ * @param[in] program The 32-byte witness program (SHA256 hash of pubkey)
+ * @param[in] flags Script verification flags
+ * @param[in] checker Signature checker for computing sighash
+ * @param[out] serror Script error code on failure
+ * @return true if verification succeeds, false otherwise
+ */
+static bool VerifyWitnessV2Quantum(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
+{
+    // Witness version 2 quantum program requires exactly 2 stack items: [signature, pubkey]
+    if (witness.stack.size() != 2) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    
+    const std::vector<unsigned char>& vchSig = witness.stack[0];
+    const std::vector<unsigned char>& vchPubKey = witness.stack[1];
+    
+    // Validate public key size: must be exactly 897 bytes for FALCON-512
+    // Requirements: 2.6, 2.7 (pubkey size validation)
+    if (vchPubKey.size() != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+        return set_error(serror, SCRIPT_ERR_QUANTUM_PUBKEY_SIZE);
+    }
+    
+    // Validate signature size: must not exceed 700 bytes
+    // Requirements: 2.3 (signature size validation)
+    if (vchSig.size() > CPubKey::MAX_QUANTUM_SIGNATURE_SIZE) {
+        return set_error(serror, SCRIPT_ERR_QUANTUM_SIG_SIZE);
+    }
+    
+    // Verify the witness program matches SHA256(pubkey)
+    // The program should be the SHA256 hash of the public key
+    if (program.size() != 32) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
+    }
+    
+    uint256 pubkeyHash;
+    CSHA256().Write(vchPubKey.data(), vchPubKey.size()).Finalize(pubkeyHash.begin());
+    if (memcmp(pubkeyHash.begin(), program.data(), 32) != 0) {
+        return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+    }
+    
+    // Empty signature is allowed for CHECK(MULTI)SIG failure path
+    if (vchSig.empty()) {
+        return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+    }
+    
+    // Check signature canonicality to prevent malleability
+    // Requirements: 9.8, 9.9 (signature canonicality)
+    if (!quantum::IsCanonicalSignature(vchSig)) {
+        return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+    }
+    
+    // Create a CPubKey from the quantum public key data
+    CPubKey pubkey;
+    pubkey.SetQuantum(vchPubKey);
+    
+    if (!pubkey.IsFullyValid()) {
+        return set_error(serror, SCRIPT_ERR_QUANTUM_PUBKEY_SIZE);
+    }
+    
+    // Extract sighash type from the last byte of signature (same as ECDSA)
+    // The signature format is: [FALCON-512 signature bytes][sighash_type]
+    // For quantum signatures, we use the same BIP143-style sighash algorithm
+    // Requirements: 2.8 (BIP143-style sighash)
+    
+    // Verify the FALCON-512 signature
+    // The message being signed is the transaction sighash
+    // We use the checker to get the sighash and verify
+    // Requirements: 2.2 (FALCON-512 verification via quantum module)
+    if (!checker.CheckSig(vchSig, vchPubKey, CScript(), SIGVERSION_WITNESS_V2_QUANTUM)) {
+        return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+    }
+    
+    return set_success(serror);
+}
+
 static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
     std::vector<std::vector<unsigned char> > stack;
@@ -1409,10 +1534,25 @@ static bool VerifyWitnessProgram(const CScriptWitness& witness, int witversion, 
         } else {
             return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
         }
+    } else if (witversion == 2) {
+        // Cascoin: Witness version 2 - Post-quantum FALCON-512 signatures
+        // Requirements: 2.1, 2.2 (witness version 2 uses FALCON-512 verification)
+        // 
+        // Note: Activation height checking is done at a higher level (in validation.cpp)
+        // before calling VerifyScript. If we reach here, quantum features are active.
+        // 
+        // The program must be exactly 32 bytes (SHA256 hash of the quantum public key)
+        if (program.size() != 32) {
+            return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
+        }
+        
+        // Delegate to the quantum-specific verification function
+        return VerifyWitnessV2Quantum(witness, program, flags, checker, serror);
     } else if (flags & SCRIPT_VERIFY_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM) {
         return set_error(serror, SCRIPT_ERR_DISCOURAGE_UPGRADABLE_WITNESS_PROGRAM);
     } else {
         // Higher version witness scripts return true for future softfork compatibility
+        // Requirements: 6.4 (treat witness version 2 as anyone-can-spend before activation)
         return set_success(serror);
     }
 

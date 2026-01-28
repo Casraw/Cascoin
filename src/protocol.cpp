@@ -233,6 +233,7 @@ std::string CInv::GetCommand() const
     case MSG_L2_TX:          return cmd.append(NetMsgType::L2TX);          // Cascoin: L2
     case MSG_L2_SEQANNOUNCE: return cmd.append(NetMsgType::L2SEQANNOUNCE); // Cascoin: L2
     case MSG_L2_VOTE:        return cmd.append(NetMsgType::L2VOTE);        // Cascoin: L2
+    case MSG_QUANTUM_TX:     return cmd.append(NetMsgType::TX);            // Cascoin: Quantum (uses TX message type)
     default:
         throw std::out_of_range(strprintf("CInv::GetCommand(): type=%d unknown type", type));
     }

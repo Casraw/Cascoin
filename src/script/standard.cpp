@@ -307,6 +307,14 @@ public:
         return true;
     }
 
+    bool operator()(const WitnessV2Quantum& id) const
+    {
+        script->clear();
+        // Witness version 2 for quantum addresses
+        *script << CScript::EncodeOP_N(2) << ToByteVector(id);
+        return true;
+    }
+
     bool operator()(const WitnessUnknown& id) const
     {
         script->clear();

@@ -163,6 +163,60 @@ make -j$(nproc)
 
 ---
 
+## liboqs Installation (for Post-Quantum Cryptography)
+
+liboqs (Open Quantum Safe) must be compiled manually for post-quantum cryptography support (FALCON-512):
+
+```bash
+# Additional dependencies for liboqs
+sudo apt-get install -y cmake ninja-build astyle
+
+# Install liboqs 0.12.0
+cd /tmp
+rm -rf liboqs
+git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
+cd liboqs
+mkdir -p build && cd build
+cmake -GNinja .. \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_INSTALL_PREFIX=/usr/local \
+  -DBUILD_SHARED_LIBS=ON \
+  -DOQS_BUILD_ONLY_LIB=ON
+ninja
+sudo ninja install
+
+# Update library cache
+sudo ldconfig
+
+# Verify installation
+pkg-config --modversion liboqs
+```
+
+### Build with Post-Quantum Support (System Libraries)
+
+After installing liboqs, configure with quantum support:
+
+```bash
+export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+./configure \
+  --with-gui=qt6 \
+  --enable-wallet \
+  --with-qrencode \
+  --enable-zmq \
+  --enable-quantum \
+  --with-incompatible-bdb \
+  MOC=/usr/lib/qt6/libexec/moc \
+  UIC=/usr/lib/qt6/libexec/uic \
+  RCC=/usr/lib/qt6/libexec/rcc \
+  LRELEASE=$(command -v lrelease || command -v lrelease-qt6 || echo /usr/lib/qt6/libexec/lrelease) \
+  LUPDATE=$(command -v lupdate || command -v lupdate-qt6 || echo /usr/lib/qt6/libexec/lupdate)
+
+make -j$(nproc)
+```
+
+---
+
 ## EVMC and evmone Installation (for EVM Compatibility)
 
 EVMC and evmone must be compiled manually for EVM compatibility features:
@@ -232,6 +286,7 @@ export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
   --with-evmc=/usr/local \
   --with-evmone=/usr/local \
   --with-incompatible-bdb \
+  --enable-quantum \
   MOC=/usr/lib/qt6/libexec/moc \
   UIC=/usr/lib/qt6/libexec/uic \
   RCC=/usr/lib/qt6/libexec/rcc \
@@ -261,6 +316,8 @@ make -j$(nproc)
 | ZMQ notifications | `--enable-zmq` |
 | EVMC (EVM compat) | `--enable-evmc` |
 | Disable EVMC | `--disable-evmc` |
+| Post-Quantum Crypto | `--enable-quantum` |
+| Disable Quantum | `--disable-quantum` |
 
 ## Troubleshooting
 
@@ -295,6 +352,9 @@ Use `--with-incompatible-bdb` (wallets won't be portable to official releases).
 
 ### EVMC libraries not found
 Either compile EVMC/evmone manually (see above) or use `--disable-evmc`.
+
+### liboqs not found (quantum support)
+Either compile liboqs manually (see "liboqs Installation" section above) or use `--disable-quantum`.
 
 ### Missing libraries
 Install the corresponding `-dev` packages and re-run configure.
