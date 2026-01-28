@@ -38,7 +38,7 @@ steps:
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && git submodule update --init --recursive
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -la src/secp256k1/include/ || echo "secp256k1 missing"
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ./autogen.sh
-      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" && CFLAGS="-g" CXXFLAGS="-g" MOC=/usr/lib/qt6/libexec/moc UIC=/usr/lib/qt6/libexec/uic RCC=/usr/lib/qt6/libexec/rcc LRELEASE=/usr/lib/qt6/bin/lrelease LUPDATE=/usr/lib/qt6/bin/lupdate ./configure --with-gui=qt6 --with-boost=/usr --with-boost-libdir=/usr/lib/x86_64-linux-gnu --enable-wallet --enable-evmc --with-evmc=/usr/local --with-evmone=/usr/local --with-incompatible-bdb
+      - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig" && CFLAGS="-g" CXXFLAGS="-g" MOC=/usr/lib/qt6/libexec/moc UIC=/usr/lib/qt6/libexec/uic RCC=/usr/lib/qt6/libexec/rcc LRELEASE=/usr/lib/qt6/bin/lrelease LUPDATE=/usr/lib/qt6/bin/lupdate ./configure --with-gui=qt6 --with-boost=/usr --with-boost-libdir=/usr/lib/x86_64-linux-gnu --enable-wallet --enable-evmc --with-evmc=/usr/local --with-evmone=/usr/local --with-incompatible-bdb --enable-quantum
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 make -j$(nproc)
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/ || true
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && ls -lah src/qt/ || true
