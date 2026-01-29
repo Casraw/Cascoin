@@ -378,7 +378,7 @@ public:
 
         // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
         // Requirements: 6.2 (testnet activation at block 50000)
-        consensus.quantumActivationHeight   = 5500;                                    // Activate quantum at block 50000 (current: ~5377)
+        consensus.quantumActivationHeight   = 5680;                                    // Activate quantum at block 50000 (current: ~5377)
         consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
         consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
         consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
