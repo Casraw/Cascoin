@@ -42,25 +42,34 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
     // Reading this code because you're porting CAS features? Considering doing this on your mainnet?
     // ***** THIS IS NOT SAFE TO DO ON YOUR MAINNET! *****
     // 
-    // IMPORTANT: This stall detection should ONLY apply when VALIDATING blocks from peers that were
-    // mined with minimum difficulty during a stall period. It should NOT affect getblocktemplate
-    // or mining operations - those should always use the calculated LWMA difficulty.
+    // IMPORTANT: This stall detection should only trigger for blocks being MINED (where the block
+    // timestamp would be current time), not for blocks being VALIDATED from peers (where the block
+    // timestamp reflects when it was actually mined). We detect this by checking if the block's
+    // timestamp is close to current time - if so, it's likely a mining template.
+    // If the block timestamp is in the past, it's being validated from the network.
     //
-    // The stall detection works as follows:
-    // - If a block comes in with nBits == powLimit AND the time gap is large, accept it
-    // - But for mining (nBits == 0), always calculate proper difficulty via LWMA
+    // Additionally, if the block already has a difficulty set (nBits != 0) that's harder than
+    // powLimit, it was mined with real difficulty and we should validate it properly.
     if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + T * 10) {
-        // Only allow minimum difficulty for blocks being VALIDATED (not mined)
-        // A block being validated will have nBits already set to powLimit
-        // A mining template will have nBits == 0
-        if (pblock->nBits != 0 && pblock->nBits == powLimit.GetCompact()) {
-            // This is a block from the network that was mined with minimum difficulty during a stall
-            // Accept it as valid
-            if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Accepting %s block with powLimit (testnet stall recovery block)\n", POW_TYPE_NAMES[powType]);
+        // Only apply stall logic if:
+        // 1. The block doesn't already have a difficulty set (nBits == 0, meaning it's a template), OR
+        // 2. The block timestamp is very recent (within 10 minutes of current time), suggesting active mining
+        int64_t currentTime = GetTime();
+        bool isLikelyMiningTemplate = (pblock->nBits == 0) || (pblock->GetBlockTime() > currentTime - 600);
+        
+        // Also check: if the block has nBits set and it's harder than powLimit, 
+        // it was definitely mined with real difficulty - don't override
+        bool hasRealDifficulty = (pblock->nBits != 0) && (pblock->nBits < powLimit.GetCompact());
+        
+        if (isLikelyMiningTemplate && !hasRealDifficulty) {
+            if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (apparent testnet stall)\\n", POW_TYPE_NAMES[powType]);
+            if (powType == POW_TYPE_SHA256) {
+                LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Testnet stall (mining template). Returning powLimit 0x%08x\\n", powLimit.GetCompact());
+            }
             return powLimit.GetCompact();
         }
-        // For mining templates (nBits == 0) or blocks with real difficulty, proceed with normal LWMA
-        if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Stall detected but using LWMA for %s (nBits=0x%08x, mining or real difficulty)\n", POW_TYPE_NAMES[powType], pblock->nBits);
+        // Block is being validated from network with existing difficulty - proceed with normal LWMA calculation
+        if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Skipping testnet stall for %s (validating existing block with nBits=0x%08x, hasRealDifficulty=%d)\\n", POW_TYPE_NAMES[powType], pblock->nBits, hasRealDifficulty);
     }
 
     // Not enough blocks on chain? Return limit
@@ -202,14 +211,14 @@ unsigned int DarkGravityWave(const CBlockIndex* pindexLast, const CBlockHeader *
     int64_t nPastBlocks = 24;
 
     // Cascoin: Allow minimum difficulty blocks if we haven't seen a block for ostensibly 10 blocks worth of time
-    // IMPORTANT: Only accept min-diff blocks from the network, don't generate them for mining
+    // IMPORTANT: Only apply this for mining templates, not for validating existing blocks from peers
     if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing * 10) {
-        // Only allow minimum difficulty for blocks being VALIDATED (not mined)
-        // A block being validated will have nBits already set to powLimit
-        if (pblock->nBits != 0 && pblock->nBits == bnPowLimit.GetCompact()) {
+        int64_t currentTime = GetTime();
+        bool isLikelyMiningTemplate = (pblock->nBits == 0) || (pblock->GetBlockTime() > currentTime - 600);
+        bool hasRealDifficulty = (pblock->nBits != 0) && (pblock->nBits < bnPowLimit.GetCompact());
+        if (isLikelyMiningTemplate && !hasRealDifficulty)
             return bnPowLimit.GetCompact();
-        }
-        // For mining templates (nBits == 0) or blocks with real difficulty, proceed with normal DGW
+        // Otherwise, proceed with normal DGW calculation for block validation
     }
 
     // Cascoin: Hive 1.1: Skip over Hivemined blocks at tip
@@ -298,13 +307,14 @@ unsigned int GetNextWorkRequiredLTC(const CBlockIndex* pindexLast, const CBlockH
             // Special difficulty rule for testnet:
             // If the new block's timestamp is more than 2* 10 minutes
             // then allow mining of a min-difficulty block.
-            // IMPORTANT: Only accept min-diff blocks from the network, don't generate them for mining
+            // IMPORTANT: Only apply this for mining templates, not for validating existing blocks
             if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2) {
-                // Only allow minimum difficulty for blocks being VALIDATED (not mined)
-                if (pblock->nBits != 0 && pblock->nBits == nProofOfWorkLimit) {
+                int64_t currentTime = GetTime();
+                bool isLikelyMiningTemplate = (pblock->nBits == 0) || (pblock->GetBlockTime() > currentTime - 600);
+                bool hasRealDifficulty = (pblock->nBits != 0) && (pblock->nBits < nProofOfWorkLimit);
+                if (isLikelyMiningTemplate && !hasRealDifficulty)
                     return nProofOfWorkLimit;
-                }
-                // For mining templates (nBits == 0), fall through to normal logic
+                // Otherwise fall through to return last non-min-diff block's bits
             }
             // Return the last non-special-min-difficulty-rules-block
             const CBlockIndex* pindex = pindexLast;
