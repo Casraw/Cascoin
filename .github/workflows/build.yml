@@ -451,6 +451,28 @@ jobs:
             echo "    Copying symlink: libevmone.so.0.18"
           fi
           
+          # Copy liboqs (Open Quantum Safe) library for FALCON-512 post-quantum signatures
+          echo "  Collecting liboqs libraries..."
+          find /usr/local/lib -name "liboqs.so*" 2>/dev/null | while read lib; do
+            if [[ -f "$lib" ]]; then
+              lib_name=$(basename "$lib")
+              if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                echo "    Copying: $lib_name"
+                cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+              fi
+            fi
+          done
+          
+          # Also copy symlinks for liboqs
+          if [[ -L /usr/local/lib/liboqs.so ]]; then
+            cp -P /usr/local/lib/liboqs.so "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: liboqs.so"
+          fi
+          if [[ -L /usr/local/lib/liboqs.so.7 ]]; then
+            cp -P /usr/local/lib/liboqs.so.7 "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: liboqs.so.7"
+          fi
+          
           # Create wrapper scripts
           cat > "$DIST_DIR"/bin/cascoin-qt-wrapper << 'EOF'
           #!/bin/bash
@@ -538,6 +560,7 @@ jobs:
           - libqrencode (QR code generation)
           - libzmq (ZeroMQ messaging)
           - libevmone + libevmc (EVM compatibility for CVM)
+          - liboqs (Open Quantum Safe - FALCON-512 post-quantum signatures)
           
           Note: OpenSSL libraries are not included - use system libraries.
           
@@ -552,6 +575,8 @@ jobs:
           ls -la "$LIB_DIR"/libdb*.so* 2>/dev/null || echo "    No Berkeley DB libraries found"
           echo "  EVMC/evmone libraries:"
           ls -la "$LIB_DIR"/libevmone*.so* "$LIB_DIR"/libevmc*.a 2>/dev/null || echo "    No EVMC/evmone libraries found"
+          echo "  liboqs libraries (post-quantum):"
+          ls -la "$LIB_DIR"/liboqs*.so* 2>/dev/null || echo "    No liboqs libraries found"
           echo "  OpenSSL libraries: (not included - use system libraries)"
           echo "  Qt6 libraries: (not included - installed via package manager)"
           echo "  Other required libraries:"
