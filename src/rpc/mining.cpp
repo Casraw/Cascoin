@@ -804,7 +804,14 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     result.push_back(Pair("previousblockhash", pblock->hashPrevBlock.GetHex()));
     result.push_back(Pair("transactions", transactions));
     result.push_back(Pair("coinbaseaux", aux));
-    result.push_back(Pair("coinbasevalue", (int64_t)pblock->vtx[0]->vout[0].nValue));
+    
+    // Cascoin: Calculate total coinbasevalue from all outputs (for HAT v2 validator payments compatibility)
+    // Pools expect the full block reward + fees, not just the miner's share
+    CAmount totalCoinbaseValue = 0;
+    for (const auto& out : pblock->vtx[0]->vout) {
+        totalCoinbaseValue += out.nValue;
+    }
+    result.push_back(Pair("coinbasevalue", (int64_t)totalCoinbaseValue));
     result.push_back(Pair("longpollid", chainActive.Tip()->GetBlockHash().GetHex() + i64tostr(nTransactionsUpdatedLast)));
     result.push_back(Pair("target", hashTarget.GetHex()));
     result.push_back(Pair("mintime", (int64_t)pindexPrev->GetMedianTimePast()+1));
