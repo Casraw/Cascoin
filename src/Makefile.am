@@ -48,10 +48,6 @@ endif
 $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
 
-# Ensure secp256k1 is built before any source files are compiled
-# BUILT_SOURCES is processed before regular targets in parallel builds
-BUILT_SOURCES = $(LIBSECP256K1)
-
 # Make is not made aware of per-object dependencies to avoid limiting building parallelization
 # But to build the less dependent modules first, we manually select their order here:
 EXTRA_LIBRARIES += \
@@ -286,7 +282,9 @@ BITCOIN_CORE_H = \
   l2/timestamp_validator.h \
   l2/collusion_detector.h \
   l2/security_monitor.h \
-  crypto/quantum/falcon.h
+  crypto/quantum/falcon.h \
+  quantum_registry.h \
+  quantum_registry_fwd.h
 
 
 obj/build.h: FORCE
@@ -444,6 +442,8 @@ libbitcoin_server_a_SOURCES = \
   rpc/cvm.cpp \
   rpc/l2.cpp \
   rpc/l2_burn.cpp \
+  rpc/quantum.cpp \
+  quantum_registry.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_ZMQ
@@ -595,6 +595,7 @@ libbitcoin_consensus_a_SOURCES = \
   script/bitcoinconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/quantum_consensus.cpp \
   script/script.cpp \
   script/script.h \
   script/script_error.cpp \

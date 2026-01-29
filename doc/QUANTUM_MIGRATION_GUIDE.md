@@ -203,6 +203,54 @@ Signature type is detected by size:
 
 ## Technical Specifications
 
+### FALCON-512 Public Key Registry
+
+The Public Key Registry provides storage optimization for quantum transactions by storing 897-byte FALCON-512 public keys once on-chain and referencing them by 32-byte SHA256 hash in subsequent transactions.
+
+#### Transaction Types
+
+| Type | Marker | Witness Format | Size |
+|------|--------|----------------|------|
+| Registration | 0x51 | `[0x51][897-byte PubKey][Signature]` | ~1598 bytes |
+| Reference | 0x52 | `[0x52][32-byte Hash][Signature]` | ~733 bytes |
+
+**Storage Savings:** ~55% reduction (from ~1563 to ~698 bytes after initial registration)
+
+#### How It Works
+
+1. **First Transaction**: When you send from a quantum address for the first time, the full 897-byte public key is included in the witness (0x51 marker). The node automatically registers this key in the registry.
+
+2. **Subsequent Transactions**: All following transactions from the same address use only the 32-byte hash reference (0x52 marker). Validators look up the full public key from the registry.
+
+3. **Automatic Process**: This optimization is completely automatic. Wallets handle the registration and reference logic transparently.
+
+#### Registry RPC Commands
+
+```bash
+# Look up a registered public key by hash
+cascoin-cli getquantumpubkey "hash"
+
+# Check registry statistics
+cascoin-cli getquantumregistrystats
+
+# Check if a public key is registered
+cascoin-cli isquantumpubkeyregistered "hash"
+```
+
+#### Performance
+
+- LRU Cache: 1000 entries for frequently accessed keys
+- Cache lookup: <1ms
+- Database lookup: <10ms
+- Database location: `{datadir}/quantum_pubkeys`
+
+#### Recovery
+
+If the registry database becomes corrupted, rebuild it from blockchain data:
+```bash
+cascoind -rebuildquantumregistry
+```
+
 ### Key Sizes
 | Type | Private Key | Public Key | Signature |
 |------|-------------|------------|-----------|
@@ -246,7 +294,12 @@ Look for `NODE_QUANTUM` in the service flags.
 
 ### Q: Are quantum transactions larger?
 
-Yes. FALCON-512 signatures are approximately 666 bytes compared to 64-72 bytes for ECDSA. Transaction fees are calculated based on virtual size including the signature.
+Yes, but only for the first transaction. FALCON-512 signatures are approximately 666 bytes compared to 64-72 bytes for ECDSA. However, the Public Key Registry optimizes subsequent transactions:
+
+- **First transaction**: ~1598 bytes (includes full 897-byte public key)
+- **Subsequent transactions**: ~733 bytes (uses 32-byte hash reference)
+
+This represents a ~55% size reduction after the initial registration. Transaction fees are calculated based on virtual size including the signature.
 
 ### Q: Can I use quantum keys with hardware wallets?
 
@@ -257,6 +310,22 @@ Hardware wallet support depends on the manufacturer. Check with your hardware wa
 ### "Quantum features are not yet active"
 
 The network hasn't reached the activation height. Wait for the activation block.
+
+### "Quantum public key not registered"
+
+This error occurs when a reference transaction (0x52) tries to use a public key hash that isn't in the registry. This can happen if:
+- The registry database is corrupted (use `-rebuildquantumregistry` to fix)
+- The transaction was created incorrectly (should use 0x51 for first transaction)
+
+### "Invalid quantum witness marker"
+
+The witness contains an invalid marker byte (not 0x51 or 0x52). This indicates a malformed transaction.
+
+### "Public key does not match quantum address"
+
+The SHA256 hash of the public key doesn't match the quantum address program. This could indicate:
+- A corrupted public key in the registry
+- An incorrectly constructed transaction
 
 ### "Quantum keypool ran out"
 

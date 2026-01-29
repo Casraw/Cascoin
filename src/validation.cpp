@@ -50,6 +50,7 @@ using namespace boost::placeholders;
 #include <cvm/softfork.h>        // Cascoin: CVM soft fork support
 #include <cvm/block_validator.h> // Cascoin: CVM/EVM block validation
 #include <cvm/validator_compensation.h> // Cascoin: HAT v2 validator compensation
+#include <quantum_registry.h>    // Cascoin: FALCON-512 Public Key Registry
 
 #include <future>
 #include <sstream>
@@ -1867,6 +1868,13 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
         flags |= SCRIPT_VERIFY_STRICTENC;
         flags |= SCRIPT_ENABLE_SIGHASH_FORKID;
     }
+
+    // Cascoin: Quantum - Enable post-quantum FALCON-512 signatures at activation height
+    // Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+    if (pindex->nHeight >= consensusparams.quantumActivationHeight) {
+        flags |= SCRIPT_VERIFY_QUANTUM;
+    }
+
     return flags;
 }
 
@@ -2200,6 +2208,42 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
             CVM::CVMBlockProcessor::ProcessBlock(block, pindex->nHeight, *CVM::g_cvmdb);
         } else {
             LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
+        }
+    }
+
+    // Cascoin: Quantum Registry - Register public keys from registration transactions
+    // Requirements: 2.1-2.4 (Public key registration on successful validation)
+    if (pindex->nHeight >= chainparams.GetConsensus().quantumActivationHeight && g_quantumRegistry) {
+        for (const auto& tx : block.vtx) {
+            if (tx->IsCoinBase()) continue;
+            
+            for (const auto& txin : tx->vin) {
+                // Check if this input has a quantum witness
+                if (!txin.scriptWitness.IsNull() && !txin.scriptWitness.stack.empty()) {
+                    const auto& witnessStack = txin.scriptWitness.stack;
+                    
+                    // Check for registry format (single stack item with marker byte 0x51)
+                    if (witnessStack.size() == 1 && !witnessStack[0].empty()) {
+                        uint8_t marker = witnessStack[0][0];
+                        
+                        // Only process registration transactions (0x51)
+                        if (marker == QUANTUM_WITNESS_MARKER_REGISTRATION) {
+                            QuantumWitnessData witnessData = ParseQuantumWitness(witnessStack);
+                            
+                            if (witnessData.isValid && witnessData.isRegistration) {
+                                // Register the public key
+                                if (g_quantumRegistry->RegisterPubKey(witnessData.pubkey)) {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Registered quantum pubkey from tx %s at height %d\n",
+                                             tx->GetHash().ToString(), pindex->nHeight);
+                                } else {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Failed to register quantum pubkey from tx %s: %s\n",
+                                             tx->GetHash().ToString(), g_quantumRegistry->GetLastError());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -3344,6 +3388,16 @@ bool IsMinotaurXEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& 
 bool IsRialtoEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params) {
     LOCK(cs_main);
     return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_RIALTO, versionbitscache) == THRESHOLD_ACTIVE);
+}
+
+// Cascoin: Quantum: Check if quantum features are activated at given point
+// Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+bool IsQuantumEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+    // Quantum activation is based on block height, not version bits
+    return (pindexPrev->nHeight + 1) >= params.quantumActivationHeight;
 }
 
 // Cascoin: Rialto: Check if a nick is already registered (helper to provide access to White Pages DB)

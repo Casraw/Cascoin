@@ -115,7 +115,12 @@ enum
 
     // Cascoin: Support SIGHASH_FORKID
     //
-    SCRIPT_ENABLE_SIGHASH_FORKID = (1U << 16),    
+    SCRIPT_ENABLE_SIGHASH_FORKID = (1U << 16),
+
+    // Cascoin: Support post-quantum FALCON-512 signatures (witness version 2)
+    // Requirements: 9.1, 9.2, 9.3 (Activation height enforcement)
+    //
+    SCRIPT_VERIFY_QUANTUM = (1U << 17),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError* serror);

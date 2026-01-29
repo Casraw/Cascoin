@@ -59,6 +59,7 @@
 #include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
 #include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
 #include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
+#include <quantum_registry.h>  // Cascoin: Quantum public key registry
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -275,6 +276,10 @@ void Shutdown()
     // Shutdown CVM database
     CVM::ShutdownCVMDatabase();
     
+    // Shutdown quantum public key registry
+    // Requirements: 1.5 - Flush pending writes before closing
+    ShutdownQuantumRegistry();
+    
     // Cascoin: L2 Layer 2 shutdown
     l2::StopL2();
     
@@ -403,6 +408,7 @@ std::string HelpMessage(HelpMessageMode mode)
             "(default: 0 = disable pruning blocks, 1 = allow manual pruning via RPC, >%u = automatically prune block files to stay under the specified target size in MiB)"), MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
     strUsage += HelpMessageOpt("-reindex-chainstate", _("Rebuild chain state from the currently indexed blocks"));
     strUsage += HelpMessageOpt("-reindex", _("Rebuild chain state and block index from the blk*.dat files on disk"));
+    strUsage += HelpMessageOpt("-rebuildquantumregistry", _("Rebuild the quantum public key registry by scanning the blockchain from the quantum activation height. Use this to recover from database corruption."));
     strUsage += HelpMessageOpt("-rescanbct", _("Force a full rescan of BCT (Bee Creation Transaction) data. This will delete the existing bct_database.sqlite and rebuild it"));
 #ifndef WIN32
     strUsage += HelpMessageOpt("-sysperms", _("Create new files with system default permissions, instead of umask 077 (only effective with disabled wallet functionality)"));
@@ -1726,6 +1732,40 @@ bool AppInitMain()
         LogPrintf("Contract state sync manager initialized successfully\n");
     }
 
+    // ********************************************************* Step 8b: initialize Quantum Public Key Registry
+    // Requirements: 1.4, 1.6 - Initialize registry, handle failure gracefully
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        // If rebuild or reindex is requested, delete existing database first
+        if (fRebuildQuantumRegistry || fReindexTriggered) {
+            fs::path dbPath = GetDataDir() / "quantum_pubkeys";
+            if (fRebuildQuantumRegistry) {
+                LogPrintf("Quantum: -rebuildquantumregistry specified, deleting existing quantum registry at %s\n", dbPath.string());
+            } else {
+                LogPrintf("Quantum: -reindex specified, deleting existing quantum registry at %s\n", dbPath.string());
+            }
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove_all(dbPath);
+                    LogPrintf("Quantum: Deleted existing quantum registry database\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("Quantum: Warning - could not delete quantum registry database: %s\n", e.what());
+                }
+            }
+        }
+        
+        LogPrintf("Initializing quantum public key registry...\n");
+        if (!InitQuantumRegistry(GetDataDir())) {
+            // Requirements: 1.6 - Log error and continue with compact mode disabled
+            LogPrintf("Warning: Quantum public key registry failed to initialize, compact mode disabled\n");
+            // Non-fatal - node can still operate without compact quantum transactions
+        } else {
+            LogPrintf("Quantum public key registry initialized successfully\n");
+        }
+    }
+
     // ********************************************************* Step 9: data directory maintenance
 
     // if pruning, unset the service bit and perform the initial blockstore prune
@@ -1925,6 +1965,39 @@ bool AppInitMain()
             LogPrintf("BCT database initialized at %s\n", bctDb->getDatabasePath());
         } else {
             LogPrintf("Warning: Failed to initialize BCT database\n");
+        }
+    }
+
+    // Cascoin: Quantum Registry rebuild scan (if requested)
+    // Requirements: 8.5 - Rebuild from blockchain data
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if ((fRebuildQuantumRegistry || fReindexTriggered) && g_quantumRegistry && g_quantumRegistry->IsInitialized()) {
+            int activationHeight = chainparams.GetConsensus().quantumActivationHeight;
+            int chainTip = 0;
+            {
+                LOCK(cs_main);
+                chainTip = chainActive.Height();
+            }
+            
+            // Only scan if we're past the activation height
+            if (chainTip >= activationHeight) {
+                LogPrintf("Quantum: Scanning blockchain for quantum public keys from height %d to %d...\n", 
+                          activationHeight, chainTip);
+                uiInterface.InitMessage(_("Rebuilding quantum registry..."));
+                
+                if (!RebuildQuantumRegistry(GetDataDir(), activationHeight, chainTip)) {
+                    LogPrintf("Warning: Quantum registry rebuild failed\n");
+                } else {
+                    QuantumRegistryStats stats = g_quantumRegistry->GetStats();
+                    LogPrintf("Quantum: Registry rebuild complete, %d keys registered\n", stats.totalKeys);
+                }
+            } else {
+                LogPrintf("Quantum: Chain tip (%d) is below activation height (%d), skipping rebuild scan\n",
+                          chainTip, activationHeight);
+            }
         }
     }
 

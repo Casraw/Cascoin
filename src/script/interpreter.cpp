@@ -12,6 +12,7 @@
 #include <pubkey.h>
 #include <script/script.h>
 #include <uint256.h>
+#include <quantum_registry_fwd.h>  // Cascoin: FALCON-512 Public Key Registry (forward declarations only)
 
 typedef std::vector<unsigned char> valtype;
 
@@ -1422,13 +1423,22 @@ bool TransactionSignatureChecker::CheckSequence(const CScriptNum& nSequence) con
  * Verify a witness version 2 quantum (FALCON-512) program.
  * 
  * Witness version 2 is used for post-quantum FALCON-512 signatures.
- * The witness stack must contain exactly 2 elements:
- *   - witness[0]: FALCON-512 signature (up to 700 bytes)
- *   - witness[1]: FALCON-512 public key (exactly 897 bytes)
+ * 
+ * Two witness formats are supported:
+ * 
+ * 1. Standard format (2 stack items):
+ *    - witness[0]: FALCON-512 signature (up to 700 bytes)
+ *    - witness[1]: FALCON-512 public key (exactly 897 bytes)
+ * 
+ * 2. Registry format (1 stack item with marker byte):
+ *    - Registration (0x51): [marker][897-byte pubkey][signature]
+ *    - Reference (0x52): [marker][32-byte hash][signature]
  * 
  * The program (32 bytes) must equal SHA256(pubkey).
  * 
  * Requirements: 2.2, 2.3, 2.6 (FALCON-512 verification, signature size, pubkey size)
+ * Requirements: 4.1-4.6, 5.1-5.5 (Registry format support)
+ * Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
  * 
  * @param[in] witness The witness stack containing signature and public key
  * @param[in] program The 32-byte witness program (SHA256 hash of pubkey)
@@ -1439,7 +1449,87 @@ bool TransactionSignatureChecker::CheckSequence(const CScriptNum& nSequence) con
  */
 static bool VerifyWitnessV2Quantum(const CScriptWitness& witness, const std::vector<unsigned char>& program, unsigned int flags, const BaseSignatureChecker& checker, ScriptError* serror)
 {
-    // Witness version 2 quantum program requires exactly 2 stack items: [signature, pubkey]
+    // Requirements: 9.1, 9.2, 9.3 - Check if quantum features are active
+    // Reject 0x51/0x52 markers before activation with "Quantum features not yet active" error
+    if (!(flags & SCRIPT_VERIFY_QUANTUM)) {
+        return set_error(serror, SCRIPT_ERR_QUANTUM_NOT_ACTIVE);
+    }
+
+    // Check for registry format (single stack item with marker byte 0x51 or 0x52)
+    // Requirements: 4.1-4.6 (Registry witness format)
+    if (witness.stack.size() == 1 && !witness.stack[0].empty()) {
+        uint8_t marker = witness.stack[0][0];
+        if (marker == QUANTUM_WITNESS_MARKER_REGISTRATION || 
+            marker == QUANTUM_WITNESS_MARKER_REFERENCE) {
+            // Parse the quantum witness using registry format
+            QuantumWitnessData witnessData = ParseQuantumWitness(witness.stack);
+            
+            if (!witnessData.isValid) {
+                return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+            }
+            
+            // Get the public key (from witness for registration, from registry for reference)
+            std::vector<unsigned char> vchPubKey;
+            
+            if (witnessData.isRegistration) {
+                // Requirements: 5.1 - For registration, use the included public key directly
+                vchPubKey = witnessData.pubkey;
+            } else {
+                // Requirements: 5.2 - For reference, lookup public key from registry
+                // Use convenience function to avoid direct dependency on registry class
+                if (!LookupQuantumPubKey(witnessData.pubkeyHash, vchPubKey)) {
+                    // Requirements: 3.2 - Public key not registered
+                    return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+                }
+            }
+            
+            // Validate public key size
+            if (vchPubKey.size() != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+                return set_error(serror, SCRIPT_ERR_QUANTUM_PUBKEY_SIZE);
+            }
+            
+            // Requirements: 5.4 - Verify SHA256(pubkey) matches quantum address program
+            if (program.size() != 32) {
+                return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_WRONG_LENGTH);
+            }
+            
+            uint256 pubkeyHash;
+            CSHA256().Write(vchPubKey.data(), vchPubKey.size()).Finalize(pubkeyHash.begin());
+            if (memcmp(pubkeyHash.begin(), program.data(), 32) != 0) {
+                // Requirements: 5.5 - Address derivation mismatch
+                return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
+            }
+            
+            // Validate signature size
+            if (witnessData.signature.size() > CPubKey::MAX_QUANTUM_SIGNATURE_SIZE) {
+                return set_error(serror, SCRIPT_ERR_QUANTUM_SIG_SIZE);
+            }
+            
+            // Empty signature is not allowed
+            if (witnessData.signature.empty()) {
+                return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+            }
+            
+            // Check signature canonicality to prevent malleability
+            if (!quantum::IsCanonicalSignature(witnessData.signature)) {
+                return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+            }
+            
+            // Requirements: 5.3 - Verify the FALCON-512 signature using the checker
+            if (!checker.CheckSig(witnessData.signature, vchPubKey, CScript(), SIGVERSION_WITNESS_V2_QUANTUM)) {
+                return set_error(serror, SCRIPT_ERR_SIG_QUANTUM_VERIFY);
+            }
+            
+            // For registration transactions, the public key will be registered
+            // during block connection in validation.cpp (not during script verification)
+            
+            return set_success(serror);
+        }
+    }
+    
+    // Standard format: witness stack must contain exactly 2 elements
+    // witness[0]: FALCON-512 signature (up to 700 bytes)
+    // witness[1]: FALCON-512 public key (exactly 897 bytes)
     if (witness.stack.size() != 2) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
