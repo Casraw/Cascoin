@@ -385,8 +385,8 @@ public:
 
         // Cascoin: Quantum: Deployment
         consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
-        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = 1780000000;  // Earlier activation for testnet
-        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = 1780000000 + 31536000;  // Start + 1 year
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;  // Always active for testnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;  // No timeout
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Block 412
