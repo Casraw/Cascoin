@@ -324,13 +324,17 @@ public:
      * Get the full SHA256 hash of this public key.
      * For quantum keys, this is used for witness program derivation.
      * Requirements: 2.2 (SHA256-based key ID for quantum)
+     * Note: Uses single SHA256, not double SHA256 (Hash())
      */
     uint256 GetQuantumID() const
     {
+        uint256 result;
         if (keyType == CPubKeyType::PUBKEY_TYPE_QUANTUM) {
-            return Hash(vchQuantum.data(), vchQuantum.data() + vchQuantum.size());
+            CSHA256().Write(vchQuantum.data(), vchQuantum.size()).Finalize(result.begin());
+        } else {
+            CSHA256().Write(vch, size()).Finalize(result.begin());
         }
-        return Hash(vch, vch + size());
+        return result;
     }
 
     //! Get the 256-bit hash of this public key.

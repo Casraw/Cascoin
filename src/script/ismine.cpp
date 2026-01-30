@@ -130,6 +130,19 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
         }
         break;
     }
+    case TX_WITNESS_V2_QUANTUM:
+    {
+        // Cascoin: Quantum address (witness version 2)
+        // vSolutions[0] contains the 32-byte witness program (SHA256 of pubkey)
+        if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
+            uint256 witnessProgram(vSolutions[0]);
+            
+            if (HaveQuantumKey(keystore, witnessProgram)) {
+                return ISMINE_SPENDABLE;
+            }
+        }
+        break;
+    }
     case TX_PUBKEY:
         keyID = CPubKey(vSolutions[0]).GetID();
         if (sigversion != SIGVERSION_BASE && vSolutions[0].size() != 33) {

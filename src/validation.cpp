@@ -953,6 +953,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             scriptVerifyFlags = gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
         }
 
+        // Cascoin: Add SCRIPT_VERIFY_QUANTUM flag if quantum features are active
+        // This allows quantum transactions to be accepted into the mempool after activation
+        if (chainActive.Height() >= chainparams.GetConsensus().quantumActivationHeight) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_QUANTUM;
+        }
+
         // Check against previous transactions
         // This is done last to help prevent CPU exhaustion denial-of-service attacks.
         PrecomputedTransactionData txdata(tx);

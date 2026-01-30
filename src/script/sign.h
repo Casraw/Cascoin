@@ -28,20 +28,27 @@ public:
 
     /** Create a singular (non-script) signature. */
     virtual bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const =0;
+    
+    /** Create a quantum witness for FALCON-512 signatures. */
+    virtual bool CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const { return false; }
 };
 
 /** A signature creator for transactions. */
 class TransactionSignatureCreator : public BaseSignatureCreator {
+public:
+    // Cascoin: Made public for quantum signing access
     const CTransaction* txTo;
     unsigned int nIn;
     int nHashType;
     CAmount amount;
+private:
     const TransactionSignatureChecker checker;
 
 public:
     TransactionSignatureCreator(const CKeyStore* keystoreIn, const CTransaction* txToIn, unsigned int nInIn, const CAmount& amountIn, int nHashTypeIn=SIGHASH_ALL | SIGHASH_FORKID);	// Cascoin: Replay attack protection
     const BaseSignatureChecker& Checker() const override { return checker; }
     bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const override;
+    bool CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const override;
 };
 
 class MutableTransactionSignatureCreator : public TransactionSignatureCreator {
@@ -57,6 +64,7 @@ public:
     explicit DummySignatureCreator(const CKeyStore* keystoreIn) : BaseSignatureCreator(keystoreIn) {}
     const BaseSignatureChecker& Checker() const override;
     bool CreateSig(std::vector<unsigned char>& vchSig, const CKeyID& keyid, const CScript& scriptCode, SigVersion sigversion) const override;
+    bool CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const override;
 };
 
 struct SignatureData {

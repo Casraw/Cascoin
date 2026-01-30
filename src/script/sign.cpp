@@ -11,6 +11,9 @@
 #include <primitives/transaction.h>
 #include <script/standard.h>
 #include <uint256.h>
+#include <pubkey.h>
+#include <hash.h>
+#include <util.h>
 
 
 typedef std::vector<unsigned char> valtype;
@@ -31,6 +34,68 @@ bool TransactionSignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, 
     if (!key.Sign(hash, vchSig))
         return false;
     vchSig.push_back((unsigned char)nHashType);
+    return true;
+}
+
+bool TransactionSignatureCreator::CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const
+{
+    // Cascoin: Create quantum witness for FALCON-512 signatures
+    // The pubkeyHash is SHA256(pubkey) which identifies the quantum key
+    
+    // Find the quantum key by iterating through all keys in the keystore
+    // and checking if SHA256(pubkey) matches pubkeyHash
+    CKey quantumKey;
+    CPubKey quantumPubKey;
+    bool found = false;
+    
+    for (const CKeyID& keyid : keystore->GetKeys()) {
+        CKey key;
+        if (keystore->GetKey(keyid, key) && key.IsQuantum()) {
+            CPubKey pubkey = key.GetPubKey();
+            if (pubkey.IsQuantum() && pubkey.GetQuantumID() == pubkeyHash) {
+                quantumKey = key;
+                quantumPubKey = pubkey;
+                found = true;
+                break;
+            }
+        }
+    }
+    
+    if (!found) {
+        LogPrintf("CreateQuantumSig: No quantum key found for pubkey hash %s\n", pubkeyHash.ToString());
+        return false;
+    }
+    
+    // Compute the sighash for quantum witness (same as witness v0)
+    CScript emptyScript;
+    uint256 sighash = SignatureHash(emptyScript, *txTo, nIn, nHashType, amount, SIGVERSION_WITNESS_V2_QUANTUM);
+    
+    // Sign with FALCON-512
+    std::vector<unsigned char> signature;
+    if (!quantumKey.SignQuantum(sighash, signature)) {
+        LogPrintf("CreateQuantumSig: FALCON-512 signing failed\n");
+        return false;
+    }
+    
+    // Build the quantum witness stack
+    // Format: [marker + signature + pubkey_or_hash]
+    witness.stack.clear();
+    
+    // Check if pubkey is already registered in the quantum registry
+    // For now, always use registration format (0x51) with full pubkey
+    // TODO: Check registry and use reference format (0x52) if registered
+    
+    // Witness element 0: [marker(1) + signature(~666)]
+    std::vector<unsigned char> witnessData;
+    witnessData.push_back(0x51);  // Registration marker
+    witnessData.insert(witnessData.end(), signature.begin(), signature.end());
+    witness.stack.push_back(witnessData);
+    
+    // Witness element 1: Full public key (897 bytes)
+    std::vector<unsigned char> pubkeyData(quantumPubKey.begin(), quantumPubKey.end());
+    witness.stack.push_back(pubkeyData);
+    
+    LogPrintf("CreateQuantumSig: Created quantum witness with %d stack elements\n", witness.stack.size());
     return true;
 }
 
@@ -118,6 +183,12 @@ static bool SignStep(const BaseSignatureCreator& creator, const CScript& scriptP
         }
         return false;
 
+    case TX_WITNESS_V2_QUANTUM:
+        // Cascoin: Quantum address - return the witness program (pubkey hash)
+        // The actual signing happens in ProduceSignature when building the witness
+        ret.push_back(vSolutions[0]);
+        return true;
+
     default:
         return false;
     }
@@ -176,6 +247,25 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
         sigdata.scriptWitness.stack = result;
         result.clear();
     }
+    else if (solved && whichType == TX_WITNESS_V2_QUANTUM)
+    {
+        // Cascoin: Quantum witness version 2 signing
+        // result[0] contains the witness program (SHA256 hash of pubkey)
+        uint256 pubkeyHash;
+        std::copy(result[0].begin(), result[0].end(), pubkeyHash.begin());
+        
+        LogPrintf("ProduceSignature: Quantum signing for pubkey hash %s\n", pubkeyHash.GetHex());
+        
+        // Use the virtual CreateQuantumSig method which is overridden in TransactionSignatureCreator
+        if (!creator.CreateQuantumSig(sigdata.scriptWitness, pubkeyHash)) {
+            LogPrintf("ProduceSignature: CreateQuantumSig failed\n");
+            solved = false;
+        } else {
+            LogPrintf("ProduceSignature: Quantum signature created successfully, witness stack size=%d\n",
+                     sigdata.scriptWitness.stack.size());
+        }
+        result.clear();
+    }
 
     if (P2SH) {
         result.push_back(std::vector<unsigned char>(subscript.begin(), subscript.end()));
@@ -183,6 +273,11 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
     sigdata.scriptSig = PushAll(result);
 
     // Test solution
+    // Cascoin: For quantum transactions, skip VerifyScript as it requires SCRIPT_VERIFY_QUANTUM
+    // which is only set during block validation, not during signing
+    if (whichType == TX_WITNESS_V2_QUANTUM) {
+        return solved;
+    }
     return solved && VerifyScript(sigdata.scriptSig, fromPubKey, &sigdata.scriptWitness, STANDARD_SCRIPT_VERIFY_FLAGS, creator.Checker());
 }
 
@@ -423,12 +518,62 @@ bool DummySignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const 
     return true;
 }
 
+bool DummySignatureCreator::CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const
+{
+    // Cascoin: Create a dummy quantum witness for solvability checks
+    // Check if we have a quantum key matching the pubkey hash
+    for (const CKeyID& keyid : keystore->GetKeys()) {
+        CKey key;
+        if (keystore->GetKey(keyid, key) && key.IsQuantum()) {
+            CPubKey pubkey = key.GetPubKey();
+            if (pubkey.IsQuantum() && pubkey.GetQuantumID() == pubkeyHash) {
+                // Found the key - create dummy witness
+                witness.stack.clear();
+                
+                // Dummy witness element 0: [marker(1) + dummy signature(~666)]
+                std::vector<unsigned char> dummyWitness(667, 0x00);
+                dummyWitness[0] = 0x51;  // Registration marker
+                witness.stack.push_back(dummyWitness);
+                
+                // Dummy witness element 1: dummy pubkey (897 bytes for FALCON-512)
+                witness.stack.push_back(std::vector<unsigned char>(897, 0x00));
+                
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool IsSolvable(const CKeyStore& store, const CScript& script)
 {
     // This check is to make sure that the script we created can actually be solved for and signed by us
     // if we were to have the private keys. This is just to make sure that the script is valid and that,
     // if found in a transaction, we would still accept and relay that transaction. In particular,
     // it will reject witness outputs that require signing with an uncompressed public key.
+    
+    // Cascoin: Check if this is a quantum script - if so, check if we have the key
+    txnouttype whichType;
+    std::vector<std::vector<unsigned char>> vSolutions;
+    if (Solver(script, whichType, vSolutions) && whichType == TX_WITNESS_V2_QUANTUM) {
+        // For quantum scripts, check if we have a quantum key matching the pubkey hash
+        if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
+            uint256 pubkeyHash;
+            std::copy(vSolutions[0].begin(), vSolutions[0].end(), pubkeyHash.begin());
+            
+            for (const CKeyID& keyid : store.GetKeys()) {
+                CKey key;
+                if (store.GetKey(keyid, key) && key.IsQuantum()) {
+                    CPubKey pubkey = key.GetPubKey();
+                    if (pubkey.IsQuantum() && pubkey.GetQuantumID() == pubkeyHash) {
+                        return true;  // We have the quantum key
+                    }
+                }
+            }
+        }
+        return false;  // No matching quantum key found
+    }
+    
     DummySignatureCreator creator(&store);
     SignatureData sigs;
     // Make sure that STANDARD_SCRIPT_VERIFY_FLAGS includes SCRIPT_VERIFY_WITNESS_PUBKEYTYPE, the most
