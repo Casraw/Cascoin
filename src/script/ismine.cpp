@@ -9,9 +9,59 @@
 #include <keystore.h>
 #include <script/script.h>
 #include <script/sign.h>
+#include <pubkey.h>
+#include <util.h>
+#include <utilstrencodings.h>
 
 
 typedef std::vector<unsigned char> valtype;
+
+/**
+ * Check if the keystore contains a quantum key matching the given witness program.
+ * The witness program for quantum addresses is the SHA256 hash of the FALCON-512 public key.
+ * 
+ * @param keystore The keystore to search
+ * @param witnessProgram The 32-byte SHA256 hash from the witness program
+ * @return true if a matching quantum key is found
+ */
+static bool HaveQuantumKey(const CKeyStore& keystore, const uint256& witnessProgram)
+{
+    // Get all keys from the keystore and check if any quantum key matches
+    std::set<CKeyID> keys = keystore.GetKeys();
+    LogPrintf("HaveQuantumKey: Checking %d keys for witness program %s\n", 
+             keys.size(), witnessProgram.GetHex());
+    LogPrintf("HaveQuantumKey: Witness program raw bytes: %s\n", 
+             HexStr(witnessProgram.begin(), witnessProgram.end()));
+    
+    int quantumKeysFound = 0;
+    for (const CKeyID& keyID : keys) {
+        CKey key;
+        if (keystore.GetKey(keyID, key)) {
+            // Check if this is a quantum key by checking the key type
+            if (key.IsQuantum()) {
+                quantumKeysFound++;
+                CPubKey pubkey = key.GetPubKey();
+                if (pubkey.IsValid() && pubkey.IsQuantum()) {
+                    uint256 quantumID = pubkey.GetQuantumID();
+                    LogPrintf("HaveQuantumKey: Found quantum key with ID %s (raw: %s)\n", 
+                             quantumID.GetHex(), HexStr(quantumID.begin(), quantumID.end()));
+                    LogPrintf("HaveQuantumKey: Looking for %s (raw: %s)\n", 
+                             witnessProgram.GetHex(), HexStr(witnessProgram.begin(), witnessProgram.end()));
+                    // Compare the quantum ID (SHA256 of pubkey) with the witness program
+                    if (quantumID == witnessProgram) {
+                        LogPrintf("HaveQuantumKey: MATCH FOUND!\n");
+                        return true;
+                    }
+                } else {
+                    LogPrintf("HaveQuantumKey: Quantum key found but GetPubKey returned invalid/non-quantum pubkey\n");
+                }
+            }
+        }
+    }
+    LogPrintf("HaveQuantumKey: No matching quantum key found (checked %d keys, %d were quantum)\n", 
+             keys.size(), quantumKeysFound);
+    return false;
+}
 
 unsigned int HaveKeys(const std::vector<valtype>& pubkeys, const CKeyStore& keystore)
 {
@@ -60,8 +110,26 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     {
     case TX_NONSTANDARD:
     case TX_NULL_DATA:
-    case TX_WITNESS_UNKNOWN:
         break;
+    case TX_WITNESS_UNKNOWN:
+    {
+        // Check for witness version 2 with 32-byte program (quantum address)
+        // vSolutions[0] contains the witness version, vSolutions[1] contains the program
+        if (vSolutions.size() >= 2) {
+            unsigned int witnessVersion = vSolutions[0][0];
+            if (witnessVersion == 2 && vSolutions[1].size() == 32) {
+                // This is a quantum address - check if we have the corresponding quantum key
+                // The witness program bytes are in the same order as they appear in the script
+                // Use the uint256 constructor which handles the byte order correctly
+                uint256 witnessProgram(vSolutions[1]);
+                
+                if (HaveQuantumKey(keystore, witnessProgram)) {
+                    return ISMINE_SPENDABLE;
+                }
+            }
+        }
+        break;
+    }
     case TX_PUBKEY:
         keyID = CPubKey(vSolutions[0]).GetID();
         if (sigversion != SIGVERSION_BASE && vSolutions[0].size() != 33) {

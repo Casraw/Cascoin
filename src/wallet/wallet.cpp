@@ -3964,6 +3964,21 @@ void CWallet::LoadKeyPool(int64_t nIndex, const CKeyPool &keypool)
 {
     AssertLockHeld(cs_wallet);
     
+    // Cascoin: Quantum: Validate quantum keypool entries
+    // Skip entries where the key doesn't exist in the wallet (stale entries from previous versions)
+    if (keypool.fQuantum) {
+        // For quantum keys, verify the key actually exists in the wallet
+        if (!HaveKey(keypool.vchPubKey.GetID())) {
+            LogPrintf("LoadKeyPool: Skipping stale quantum keypool entry %d - key not in wallet\n", nIndex);
+            return;
+        }
+        // Also verify the pubkey is actually a quantum key
+        if (!keypool.vchPubKey.IsQuantum()) {
+            LogPrintf("LoadKeyPool: Skipping invalid quantum keypool entry %d - pubkey is not quantum type\n", nIndex);
+            return;
+        }
+    }
+    
     // Cascoin: Quantum: Route to appropriate key pool based on quantum flag
     if (keypool.fQuantum) {
         // Quantum key pool
@@ -4094,6 +4109,8 @@ bool CWallet::TopUpQuantumKeyPool(unsigned int kpSize)
             }
             
             CPubKey pubkey = quantumKey.GetPubKey();
+            LogPrintf("TopUpQuantumKeyPool: Generated quantum key, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     pubkey.IsQuantum(), pubkey.GetQuantumID().GetHex());
             
             // Add the key to the wallet
             if (!AddKeyPubKey(quantumKey, pubkey)) {
@@ -4103,6 +4120,10 @@ bool CWallet::TopUpQuantumKeyPool(unsigned int kpSize)
             
             // Write to the key pool with quantum flag
             CKeyPool keypool(pubkey, internal, true /* quantum */);
+            LogPrintf("TopUpQuantumKeyPool: Writing keypool entry %d, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     index, keypool.vchPubKey.IsQuantum(), 
+                     keypool.vchPubKey.IsQuantum() ? keypool.vchPubKey.GetQuantumID().GetHex() : "N/A");
+            
             if (!walletdb.WritePool(index, keypool)) {
                 throw std::runtime_error(std::string(__func__) + ": writing generated quantum key failed");
             }
@@ -4200,31 +4221,86 @@ void CWallet::ReserveKeyFromQuantumKeyPool(int64_t& nIndex, CKeyPool& keypool, b
         bool fReturningInternal = IsHDEnabled() && CanSupportFeature(FEATURE_HD_SPLIT) && fRequestedInternal;
         std::set<int64_t>& setKeyPool = fReturningInternal ? setQuantumInternalKeyPool : setQuantumExternalKeyPool;
 
-        // Get the oldest key
-        if(setKeyPool.empty())
-            return;
-
         CWalletDB walletdb(*dbw);
 
-        auto it = setKeyPool.begin();
-        nIndex = *it;
-        setKeyPool.erase(it);
-        if (!walletdb.ReadPool(nIndex, keypool)) {
-            throw std::runtime_error(std::string(__func__) + ": read failed");
-        }
-        if (!HaveKey(keypool.vchPubKey.GetID())) {
-            throw std::runtime_error(std::string(__func__) + ": unknown key in quantum key pool");
-        }
-        if (!keypool.fQuantum) {
-            throw std::runtime_error(std::string(__func__) + ": non-quantum key in quantum key pool");
-        }
-        if (keypool.fInternal != fReturningInternal) {
-            throw std::runtime_error(std::string(__func__) + ": quantum keypool entry misclassified");
-        }
+        // Loop through keypool entries until we find a valid one
+        while (!setKeyPool.empty()) {
+            auto it = setKeyPool.begin();
+            int64_t candidateIndex = *it;
+            setKeyPool.erase(it);
+            
+            CKeyPool candidateKeypool;
+            if (!walletdb.ReadPool(candidateIndex, candidateKeypool)) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Failed to read keypool entry %d, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            LogPrintf("ReserveKeyFromQuantumKeyPool: Read keypool entry %d, pubkey IsQuantum=%d, fQuantum=%d, GetQuantumID=%s\n",
+                     candidateIndex, candidateKeypool.vchPubKey.IsQuantum(), candidateKeypool.fQuantum,
+                     candidateKeypool.vchPubKey.IsQuantum() ? candidateKeypool.vchPubKey.GetQuantumID().GetHex() : "N/A");
+            
+            // Validate the keypool entry
+            if (!candidateKeypool.fQuantum) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d is not marked as quantum, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            if (!candidateKeypool.vchPubKey.IsQuantum()) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d pubkey is not quantum type, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            if (!HaveKey(candidateKeypool.vchPubKey.GetID())) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d key not in wallet (stale entry), skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up stale entry
+                continue;
+            }
+            
+            // Additional validation: verify the pubkey in the keypool matches the one in the wallet
+            // This catches cases where the keypool entry was corrupted or the key was replaced
+            CKey walletKey;
+            if (GetKey(candidateKeypool.vchPubKey.GetID(), walletKey)) {
+                CPubKey walletPubKey = walletKey.GetPubKey();
+                if (walletPubKey != candidateKeypool.vchPubKey) {
+                    LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d pubkey mismatch - keypool has %s but wallet has %s, skipping\n", 
+                             candidateIndex, 
+                             candidateKeypool.vchPubKey.GetQuantumID().GetHex(),
+                             walletPubKey.IsQuantum() ? walletPubKey.GetQuantumID().GetHex() : "non-quantum");
+                    walletdb.ErasePool(candidateIndex);  // Clean up mismatched entry
+                    continue;
+                }
+            } else {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d - could not retrieve key from wallet, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);
+                continue;
+            }
+            
+            if (candidateKeypool.fInternal != fReturningInternal) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d internal flag mismatch, skipping\n", candidateIndex);
+                // Don't erase - just wrong pool, put it back in the correct pool
+                if (candidateKeypool.fInternal) {
+                    setQuantumInternalKeyPool.insert(candidateIndex);
+                } else {
+                    setQuantumExternalKeyPool.insert(candidateIndex);
+                }
+                continue;
+            }
 
-        assert(keypool.vchPubKey.IsValid());
-        m_pool_key_to_index.erase(keypool.vchPubKey.GetID());
-        LogPrintf("quantum keypool reserve %d\n", nIndex);
+            // Found a valid entry
+            assert(candidateKeypool.vchPubKey.IsValid());
+            m_pool_key_to_index.erase(candidateKeypool.vchPubKey.GetID());
+            
+            nIndex = candidateIndex;
+            keypool = candidateKeypool;
+            LogPrintf("quantum keypool reserve %d\n", nIndex);
+            return;
+        }
+        
+        // No valid entries found
+        LogPrintf("ReserveKeyFromQuantumKeyPool: No valid quantum keys in pool\n");
     }
 }
 
@@ -4267,6 +4343,8 @@ bool CWallet::GetQuantumKeyFromPool(CPubKey& result, bool internal)
             }
             
             result = quantumKey.GetPubKey();
+            LogPrintf("GetQuantumKeyFromPool: Generated new quantum key, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     result.IsQuantum(), result.GetQuantumID().GetHex());
             
             // Add the key to the wallet
             if (!AddKeyPubKey(quantumKey, result)) {
@@ -4278,6 +4356,8 @@ bool CWallet::GetQuantumKeyFromPool(CPubKey& result, bool internal)
         }
         KeepKey(nIndex);
         result = keypool.vchPubKey;
+        LogPrintf("GetQuantumKeyFromPool: Got key from pool, pubkey IsQuantum=%d, keypool.fQuantum=%d, GetQuantumID=%s\n",
+                 result.IsQuantum(), keypool.fQuantum, result.IsQuantum() ? result.GetQuantumID().GetHex() : "N/A");
     }
     return true;
 }

@@ -216,8 +216,18 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         addressRet = hash;
         return true;
     } else if (whichType == TX_WITNESS_UNKNOWN) {
+        // Check for witness version 2 with 32-byte program (quantum address)
+        unsigned int version = vSolutions[0][0];
+        if (version == 2 && vSolutions[1].size() == 32) {
+            // This is a quantum address (WitnessV2Quantum)
+            WitnessV2Quantum quantum;
+            std::copy(vSolutions[1].begin(), vSolutions[1].end(), quantum.begin());
+            addressRet = quantum;
+            return true;
+        }
+        // Other unknown witness versions
         WitnessUnknown unk;
-        unk.version = vSolutions[0][0];
+        unk.version = version;
         std::copy(vSolutions[1].begin(), vSolutions[1].end(), unk.program);
         unk.length = vSolutions[1].size();
         addressRet = unk;
