@@ -119,9 +119,13 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             unsigned int witnessVersion = vSolutions[0][0];
             if (witnessVersion == 2 && vSolutions[1].size() == 32) {
                 // This is a quantum address - check if we have the corresponding quantum key
-                // The witness program bytes are in the same order as they appear in the script
-                // Use the uint256 constructor which handles the byte order correctly
-                uint256 witnessProgram(vSolutions[1]);
+                // The witness program is stored in big-endian order (as encoded in Bech32m),
+                // but GetQuantumID() returns bytes in the order SHA256 outputs them.
+                // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
+                uint256 witnessProgram;
+                for (size_t i = 0; i < 32; i++) {
+                    witnessProgram.begin()[31 - i] = vSolutions[1][i];
+                }
                 
                 if (HaveQuantumKey(keystore, witnessProgram)) {
                     return ISMINE_SPENDABLE;
@@ -134,8 +138,14 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     {
         // Cascoin: Quantum address (witness version 2)
         // vSolutions[0] contains the 32-byte witness program (SHA256 of pubkey)
+        // The witness program is stored in big-endian order (as encoded in Bech32m),
+        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
+        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
         if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
-            uint256 witnessProgram(vSolutions[0]);
+            uint256 witnessProgram;
+            for (size_t i = 0; i < 32; i++) {
+                witnessProgram.begin()[31 - i] = vSolutions[0][i];
+            }
             
             if (HaveQuantumKey(keystore, witnessProgram)) {
                 return ISMINE_SPENDABLE;

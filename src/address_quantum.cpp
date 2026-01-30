@@ -6,6 +6,7 @@
 
 #include <bech32.h>
 #include <chainparams.h>
+#include <crypto/sha256.h>
 #include <hash.h>
 #include <pubkey.h>
 #include <utilstrencodings.h>
@@ -39,7 +40,10 @@ uint256 GetQuantumWitnessProgram(const CPubKey& pubkey)
 uint256 GetQuantumWitnessProgram(const std::vector<unsigned char>& pubkeyData)
 {
     // Derive witness program from SHA256 of the raw public key data
-    return Hash(pubkeyData.begin(), pubkeyData.end());
+    // Note: Use single SHA256, not double SHA256 (Hash() does double)
+    uint256 result;
+    CSHA256().Write(pubkeyData.data(), pubkeyData.size()).Finalize(result.begin());
+    return result;
 }
 
 std::string EncodeQuantumAddress(const CPubKey& pubkey, const CChainParams& params)
@@ -60,7 +64,12 @@ std::string EncodeQuantumAddress(const CPubKey& pubkey, const CChainParams& para
     data.push_back(QUANTUM_WITNESS_VERSION);  // Witness version 2
     
     // Convert 32-byte program to 5-bit groups
-    std::vector<uint8_t> programBytes(program.begin(), program.end());
+    // Note: uint256.begin() returns little-endian, but we need big-endian for the address
+    // So we reverse the bytes when copying
+    std::vector<uint8_t> programBytes(32);
+    for (size_t i = 0; i < 32; i++) {
+        programBytes[i] = program.begin()[31 - i];
+    }
     ConvertBits<8, 5, true>(data, programBytes.begin(), programBytes.end());
     
     // Encode using Bech32m (BIP-350)
@@ -85,7 +94,12 @@ std::string EncodeQuantumAddress(const std::vector<unsigned char>& pubkeyData, c
     data.push_back(QUANTUM_WITNESS_VERSION);  // Witness version 2
     
     // Convert 32-byte program to 5-bit groups
-    std::vector<uint8_t> programBytes(program.begin(), program.end());
+    // Note: uint256.begin() returns little-endian, but we need big-endian for the address
+    // So we reverse the bytes when copying
+    std::vector<uint8_t> programBytes(32);
+    for (size_t i = 0; i < 32; i++) {
+        programBytes[i] = program.begin()[31 - i];
+    }
     ConvertBits<8, 5, true>(data, programBytes.begin(), programBytes.end());
     
     // Encode using Bech32m (BIP-350)

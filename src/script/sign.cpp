@@ -251,10 +251,17 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
     {
         // Cascoin: Quantum witness version 2 signing
         // result[0] contains the witness program (SHA256 hash of pubkey)
+        // The witness program is stored in big-endian order (as encoded in Bech32m),
+        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
+        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
         uint256 pubkeyHash;
-        std::copy(result[0].begin(), result[0].end(), pubkeyHash.begin());
+        if (result[0].size() == 32) {
+            for (size_t i = 0; i < 32; i++) {
+                pubkeyHash.begin()[31 - i] = result[0][i];
+            }
+        }
         
-        LogPrintf("ProduceSignature: Quantum signing for pubkey hash %s\n", pubkeyHash.GetHex());
+        LogPrintf("ProduceSignature: Quantum signing for pubkey hash %s (from witness program)\n", pubkeyHash.GetHex());
         
         // Use the virtual CreateQuantumSig method which is overridden in TransactionSignatureCreator
         if (!creator.CreateQuantumSig(sigdata.scriptWitness, pubkeyHash)) {
@@ -557,9 +564,14 @@ bool IsSolvable(const CKeyStore& store, const CScript& script)
     std::vector<std::vector<unsigned char>> vSolutions;
     if (Solver(script, whichType, vSolutions) && whichType == TX_WITNESS_V2_QUANTUM) {
         // For quantum scripts, check if we have a quantum key matching the pubkey hash
+        // The witness program is stored in big-endian order (as encoded in Bech32m),
+        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
+        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
         if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
             uint256 pubkeyHash;
-            std::copy(vSolutions[0].begin(), vSolutions[0].end(), pubkeyHash.begin());
+            for (size_t i = 0; i < 32; i++) {
+                pubkeyHash.begin()[31 - i] = vSolutions[0][i];
+            }
             
             for (const CKeyID& keyid : store.GetKeys()) {
                 CKey key;
