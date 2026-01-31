@@ -230,7 +230,7 @@ This implementation plan breaks down the wallet trust propagation feature into d
     - Add clustertrustquery.cpp/h
     - Add test files to test sources
 
-- [~] 18. Final checkpoint - Full integration test
+- [ ] 18. Final checkpoint - Full integration test
   - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
