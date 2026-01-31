@@ -1,7 +1,7 @@
 dnl require autoconf 2.60 (AS_ECHO/AS_ECHO_N)
 AC_PREREQ([2.60])
 define(_CLIENT_VERSION_MAJOR, 4)
-define(_CLIENT_VERSION_MINOR, 0)
+define(_CLIENT_VERSION_MINOR, 1)
 define(_CLIENT_VERSION_REVISION, 0)
 define(_CLIENT_VERSION_BUILD, 0)
 define(_CLIENT_VERSION_IS_RELEASE, true)
@@ -201,6 +201,12 @@ AC_ARG_ENABLE([zmq],
   [disable ZMQ notifications])],
   [use_zmq=$enableval],
   [use_zmq=yes])
+
+AC_ARG_ENABLE([quantum],
+  [AS_HELP_STRING([--disable-quantum],
+  [disable post-quantum cryptography support (enabled by default)])],
+  [use_quantum=$enableval],
+  [use_quantum=yes])
 
 AC_ARG_ENABLE([sse2],
     [AS_HELP_STRING([--enable-sse2],
@@ -1025,6 +1031,45 @@ else
   fi
 fi
 
+dnl liboqs (Open Quantum Safe) check for post-quantum cryptography
+if test "x$use_quantum" = "xyes"; then
+  if test x$use_pkgconfig = xyes; then
+    m4_ifdef(
+      [PKG_CHECK_MODULES],
+      [
+        PKG_CHECK_MODULES([LIBOQS], [liboqs >= 0.10.0],
+          [have_liboqs=yes
+           AC_DEFINE([ENABLE_QUANTUM],[1],[Define to 1 to enable post-quantum cryptography])],
+          [have_liboqs=no])
+      ],
+      [have_liboqs=no]
+    )
+  else
+    AC_CHECK_HEADER([oqs/oqs.h], [
+      AC_CHECK_LIB([oqs], [OQS_SIG_new], [
+        LIBOQS_LIBS="-loqs"
+        have_liboqs=yes
+        AC_DEFINE([ENABLE_QUANTUM],[1],[Define to 1 to enable post-quantum cryptography])
+      ], [have_liboqs=no])
+    ], [have_liboqs=no])
+  fi
+
+  if test "x$have_liboqs" = "xyes"; then
+    AC_MSG_NOTICE([liboqs found, enabling post-quantum cryptography support])
+  else
+    if test "x$use_quantum" = "xyes"; then
+      AC_MSG_WARN([liboqs not found, disabling post-quantum cryptography support])
+    fi
+    use_quantum=no
+    AC_DEFINE([ENABLE_QUANTUM],[0],[Define to 1 to enable post-quantum cryptography])
+  fi
+else
+  AC_DEFINE([ENABLE_QUANTUM],[0],[Define to 1 to enable post-quantum cryptography])
+fi
+
+AC_SUBST(LIBOQS_CFLAGS)
+AC_SUBST(LIBOQS_LIBS)
+
 dnl EVMC (Ethereum Virtual Machine C API) check
 AC_ARG_ENABLE([evmc],
   [AS_HELP_STRING([--disable-evmc],
@@ -1267,6 +1312,7 @@ if test x$bitcoin_enable_qt != xno; then
 fi
 
 AM_CONDITIONAL([ENABLE_ZMQ], [test "x$use_zmq" = "xyes"])
+AM_CONDITIONAL([ENABLE_QUANTUM], [test "x$use_quantum" = "xyes"])
 
 AC_MSG_CHECKING([whether to build test_cascoin])
 if test x$use_tests = xyes; then
@@ -1432,6 +1478,7 @@ if test x$bitcoin_enable_qt != xno; then
     echo "    with qr     = $use_qr"
 fi
 echo "  with zmq      = $use_zmq"
+echo "  with quantum  = $use_quantum"
 echo "  with evmc     = $use_evmc"
 echo "  with test     = $use_tests"
 echo "  with bench    = $use_bench"

@@ -60,9 +60,15 @@ uint64_t GetOpCodeGasCost(OpCode opcode) {
         case OpCode::OP_SHA256:
             return GasCost::SHA256;
         case OpCode::OP_VERIFY_SIG:
-            return GasCost::VERIFY_SIG;
+            return GasCost::VERIFY_SIG;  // Default to quantum cost for auto-detect
         case OpCode::OP_PUBKEY:
             return GasCost::VERIFY_SIG;
+        
+        // Explicit signature verification opcodes (Req 7.4)
+        case OpCode::OP_VERIFY_SIG_QUANTUM:
+            return GasCost::VERIFY_SIG_QUANTUM;  // 3000 gas for FALCON-512
+        case OpCode::OP_VERIFY_SIG_ECDSA:
+            return GasCost::VERIFY_SIG_ECDSA;    // 60 gas for ECDSA
         
         // Context operations
         case OpCode::OP_ADDRESS:
@@ -122,6 +128,8 @@ bool IsValidOpCode(uint8_t byte) {
         case OpCode::OP_SHA256:
         case OpCode::OP_VERIFY_SIG:
         case OpCode::OP_PUBKEY:
+        case OpCode::OP_VERIFY_SIG_QUANTUM:  // Explicit quantum verification
+        case OpCode::OP_VERIFY_SIG_ECDSA:    // Explicit ECDSA verification
         case OpCode::OP_ADDRESS:
         case OpCode::OP_BALANCE:
         case OpCode::OP_CALLER:
@@ -169,6 +177,8 @@ const char* GetOpCodeName(OpCode opcode) {
         case OpCode::OP_SHA256: return "SHA256";
         case OpCode::OP_VERIFY_SIG: return "VERIFY_SIG";
         case OpCode::OP_PUBKEY: return "PUBKEY";
+        case OpCode::OP_VERIFY_SIG_QUANTUM: return "VERIFY_SIG_QUANTUM";
+        case OpCode::OP_VERIFY_SIG_ECDSA: return "VERIFY_SIG_ECDSA";
         case OpCode::OP_ADDRESS: return "ADDRESS";
         case OpCode::OP_BALANCE: return "BALANCE";
         case OpCode::OP_CALLER: return "CALLER";

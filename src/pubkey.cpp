@@ -1,12 +1,29 @@
 // Copyright (c) 2009-2017 The Bitcoin Core developers
 // Copyright (c) 2017 The Zcash developers
+// Copyright (c) 2025 The Cascoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <pubkey.h>
 
+#include <config/bitcoin-config.h>
+
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+
+#if ENABLE_QUANTUM
+#include <crypto/quantum/falcon.h>
+#endif
+
+// Static constant definitions for CPubKey class
+// These are required for ODR-use (e.g., when taking address or using in BOOST_CHECK_EQUAL)
+const unsigned int CPubKey::PUBLIC_KEY_SIZE;
+const unsigned int CPubKey::COMPRESSED_PUBLIC_KEY_SIZE;
+const unsigned int CPubKey::SIGNATURE_SIZE;
+const unsigned int CPubKey::COMPACT_SIGNATURE_SIZE;
+const unsigned int CPubKey::QUANTUM_PUBLIC_KEY_SIZE;
+const unsigned int CPubKey::QUANTUM_SIGNATURE_SIZE;
+const unsigned int CPubKey::MAX_QUANTUM_SIGNATURE_SIZE;
 
 namespace
 {
@@ -169,6 +186,13 @@ static int ecdsa_signature_parse_der_lax(const secp256k1_context* ctx, secp256k1
 bool CPubKey::Verify(const uint256 &hash, const std::vector<unsigned char>& vchSig) const {
     if (!IsValid())
         return false;
+    
+    // Dispatch based on key type (Requirement 2.2)
+    if (keyType == CPubKeyType::PUBKEY_TYPE_QUANTUM) {
+        return VerifyQuantum(hash, vchSig);
+    }
+    
+    // ECDSA verification for classical keys
     secp256k1_pubkey pubkey;
     secp256k1_ecdsa_signature sig;
     if (!secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size())) {
@@ -181,6 +205,39 @@ bool CPubKey::Verify(const uint256 &hash, const std::vector<unsigned char>& vchS
      * not historically been enforced in Bitcoin, so normalize them first. */
     secp256k1_ecdsa_signature_normalize(secp256k1_context_verify, &sig, &sig);
     return secp256k1_ecdsa_verify(secp256k1_context_verify, &sig, hash.begin(), &pubkey);
+}
+
+bool CPubKey::VerifyQuantum(const uint256 &hash, const std::vector<unsigned char>& vchSig) const {
+    // Validate this is a valid quantum public key (Requirement 2.2)
+    if (!IsValid()) {
+        return false;
+    }
+    
+    if (keyType != CPubKeyType::PUBKEY_TYPE_QUANTUM) {
+        // This method should only be called for quantum keys
+        return false;
+    }
+    
+    // Validate public key size matches FALCON-512 (897 bytes)
+    if (vchQuantum.size() != QUANTUM_PUBLIC_KEY_SIZE) {
+        return false;
+    }
+    
+    // Validate signature size (max 700 bytes for FALCON-512)
+    if (vchSig.size() > MAX_QUANTUM_SIGNATURE_SIZE) {
+        return false;
+    }
+    
+#if ENABLE_QUANTUM
+    // Call quantum::Verify() with the public key and message hash
+    // The hash is treated as the message to verify (32 bytes)
+    return quantum::Verify(vchQuantum, hash.begin(), 32, vchSig);
+#else
+    // Quantum support not compiled in - verification fails
+    (void)hash;
+    (void)vchSig;
+    return false;
+#endif
 }
 
 bool CPubKey::RecoverCompact(const uint256 &hash, const std::vector<unsigned char>& vchSig) {
@@ -206,6 +263,13 @@ bool CPubKey::RecoverCompact(const uint256 &hash, const std::vector<unsigned cha
 bool CPubKey::IsFullyValid() const {
     if (!IsValid())
         return false;
+    
+    // For quantum keys, check size is exactly 897 bytes
+    if (keyType == CPubKeyType::PUBKEY_TYPE_QUANTUM) {
+        return vchQuantum.size() == QUANTUM_PUBLIC_KEY_SIZE;
+    }
+    
+    // For ECDSA keys, parse with secp256k1 to validate
     secp256k1_pubkey pubkey;
     return secp256k1_ec_pubkey_parse(secp256k1_context_verify, &pubkey, &(*this)[0], size());
 }

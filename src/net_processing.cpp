@@ -884,6 +884,11 @@ static uint256 most_recent_block_hash;
 static bool fWitnessesPresentInMostRecentCompactBlock;
 
 void PeerLogicValidation::NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock>& pblock) {
+    // Cascoin: Quantum: Blocks are relayed to ALL peers regardless of NODE_QUANTUM capability
+    // This is intentional per requirement 8.8 - blocks containing quantum transactions
+    // must be relayed universally to maintain network consensus.
+    // Only individual quantum transactions are filtered to quantum-capable peers.
+    
     std::shared_ptr<const CBlockHeaderAndShortTxIDs> pcmpctblock = std::make_shared<const CBlockHeaderAndShortTxIDs> (*pblock, true);
     const CNetMsgMaker msgMaker(PROTOCOL_VERSION);
 
@@ -1090,10 +1095,16 @@ static bool ShouldRelayImmediately(uint32_t reputation, bool isContractTx)
 /**
  * Relay transaction to peers with reputation-based prioritization
  * Cascoin: Enhanced to prioritize high-reputation contract transactions
+ * Cascoin: Quantum: Filter quantum transactions to quantum-capable peers only
+ * Requirements: 8.4, 8.5 (check NODE_QUANTUM flag before relaying quantum tx)
  */
 static void RelayTransaction(const CTransaction& tx, CConnman* connman)
 {
     CInv inv(MSG_TX, tx.GetHash());
+    
+    // Cascoin: Quantum: Check if this is a quantum transaction
+    // Requirements: 8.5 (skip relay to non-quantum peers for quantum transactions)
+    bool isQuantumTx = tx.HasQuantumSignatures();
     
     // Check if this is a contract transaction
     bool isContractTx = IsContractTransaction(tx);
@@ -1109,9 +1120,23 @@ static void RelayTransaction(const CTransaction& tx, CConnman* connman)
     // Determine relay priority
     bool relayImmediately = ShouldRelayImmediately(reputation, isContractTx);
     
-    // Relay to all peers
-    connman->ForEachNode([&inv, relayImmediately, reputation](CNode* pnode)
+    // Log quantum transaction relay
+    if (isQuantumTx) {
+        LogPrint(BCLog::NET, "Relaying quantum transaction %s (filtering to quantum-capable peers)\n",
+                 tx.GetHash().ToString());
+    }
+    
+    // Relay to peers (with quantum filtering)
+    connman->ForEachNode([&inv, relayImmediately, reputation, isQuantumTx](CNode* pnode)
     {
+        // Cascoin: Quantum: Skip relay to non-quantum peers for quantum transactions
+        // Requirements: 8.5 (skip relay to non-quantum peers)
+        if (isQuantumTx && !(pnode->nServices & NODE_QUANTUM)) {
+            LogPrint(BCLog::NET, "Skipping quantum tx relay to non-quantum peer %s\n",
+                     pnode->GetAddrName());
+            return;
+        }
+        
         if (relayImmediately) {
             // High reputation or non-contract = immediate relay
             pnode->PushInventory(inv);
@@ -1431,9 +1456,10 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     {
         LOCK(cs_main);
 
-        // Cascoin: Rialto
-        //while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX)) {
-        while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX || it->type == MSG_RIALTO)) {
+        // Cascoin: Rialto + Quantum
+        // Handle transaction types: MSG_TX, MSG_WITNESS_TX, MSG_RIALTO, MSG_QUANTUM_TX
+        // Requirements: 8.6 (inventory type for quantum transactions)
+        while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX || it->type == MSG_RIALTO || it->type == MSG_QUANTUM_TX)) {
             if (interruptMsgProc)
                 return;
             // Don't bother if send buffer is too full to respond anyway
@@ -1452,10 +1478,20 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                     vNotFound.push_back(inv);
                 }
             } else {
-                // Send stream from relay memory
+                // Send stream from relay memory (handles MSG_TX, MSG_WITNESS_TX, MSG_QUANTUM_TX)
                 bool push = false;
                 auto mi = mapRelay.find(inv.hash);
                 int nSendFlags = (inv.type == MSG_TX ? SERIALIZE_TRANSACTION_NO_WITNESS : 0);
+                
+                // Cascoin: Quantum: Check if peer supports quantum transactions
+                // Requirements: 8.5 (skip relay to non-quantum peers)
+                if (inv.type == MSG_QUANTUM_TX && !(pfrom->nServices & NODE_QUANTUM)) {
+                    LogPrint(BCLog::NET, "Skipping quantum tx %s to non-quantum peer=%d\n",
+                             inv.hash.ToString(), pfrom->GetId());
+                    vNotFound.push_back(inv);
+                    continue;
+                }
+                
                 if (mi != mapRelay.end()) {
                     connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::TX, *mi->second));
                     push = true;

@@ -187,6 +187,18 @@ public:
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
         consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
 
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.1 (mainnet activation at block 350000)
+        consensus.quantumActivationHeight   = 350000;                                   // Activate quantum at block 350000 (current: ~276606)
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = 1800000000;  // ~January 2027 - Start signaling for quantum
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = 1800000000 + 31536000;  // Start + 1 year
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Cascoin: 1695238
 
@@ -364,6 +376,18 @@ public:
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
         consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
 
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.2 (testnet activation at block 50000)
+        consensus.quantumActivationHeight   = 5680;                                    // Activate quantum at block 50000 (current: ~5377)
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;  // Always active for testnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;  // No timeout
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Block 412
 
@@ -495,6 +519,18 @@ public:
         consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
         consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
+
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.3 (regtest activation at block 1)
+        consensus.quantumActivationHeight   = 1;                                        // Activate quantum at block 1 for testing
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment (always active for regtest)
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");

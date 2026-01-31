@@ -145,6 +145,10 @@ bool IsContractTransaction(const CTransaction& tx) {
 }
 
 uint160 GenerateContractAddress(const uint160& deployerAddr, uint64_t nonce) {
+    // Contract address derivation is key-type agnostic (Req 7.7)
+    // The same contract address is generated regardless of whether the deployer
+    // uses an ECDSA or quantum key. Only the deployer's address (uint160) and
+    // nonce are used in the derivation.
     // Similar to Ethereum: hash(deployer_address + nonce)
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << deployerAddr << nonce;

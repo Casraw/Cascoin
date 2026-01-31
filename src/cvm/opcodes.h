@@ -55,9 +55,13 @@ enum class OpCode : uint8_t {
     OP_SSTORE = 0x51,    // Store to storage (STORAGE_WRITE)
     
     // Cryptographic operations
-    OP_SHA256 = 0x60,    // SHA256 hash
-    OP_VERIFY_SIG = 0x61, // Verify signature
-    OP_PUBKEY = 0x62,    // Get public key from signature
+    OP_SHA256 = 0x58,    // SHA256 hash
+    OP_VERIFY_SIG = 0x59, // Verify signature (auto-detect ECDSA or quantum by size)
+    OP_PUBKEY = 0x5A,    // Get public key from signature
+    
+    // Quantum signature operations (explicit type enforcement)
+    OP_VERIFY_SIG_QUANTUM = 0x60,  // Explicit FALCON-512 verification (Req 7.5)
+    OP_VERIFY_SIG_ECDSA = 0x61,    // Explicit ECDSA verification (Req 7.6)
     
     // Context operations
     OP_ADDRESS = 0x70,   // Get current contract address
@@ -97,7 +101,9 @@ struct GasCost {
     static constexpr uint64_t JUMPI = 10;
     static constexpr uint64_t CALL = 700;
     static constexpr uint64_t SHA256 = 60;
-    static constexpr uint64_t VERIFY_SIG = 3000;
+    static constexpr uint64_t VERIFY_SIG = 3000;       // Default: quantum cost for auto-detect
+    static constexpr uint64_t VERIFY_SIG_ECDSA = 60;   // ECDSA signature verification (Req 7.4)
+    static constexpr uint64_t VERIFY_SIG_QUANTUM = 3000; // FALCON-512 signature verification (Req 7.4)
     static constexpr uint64_t LOG = 375;
 };
 

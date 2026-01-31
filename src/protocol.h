@@ -341,6 +341,11 @@ enum ServiceFlags : uint64_t {
     // These nodes participate in block production and consensus
     NODE_L2_SEQUENCER = (1 << 12),
 
+    // Cascoin: Quantum: NODE_QUANTUM means the node supports post-quantum cryptography
+    // This includes FALCON-512 signatures and witness version 2 transactions
+    // Requirements: 8.2, 8.3 (quantum capability flag in version message)
+    NODE_QUANTUM = (1 << 8),
+
     // Bits 24-31 are reserved for temporary experiments. Just pick a bit that
     // isn't getting used, or one not being used much, and notify the
     // bitcoin-development mailing list. Remember that service bits are just
@@ -458,6 +463,10 @@ enum GetDataMsg
     MSG_L2_TX = 7,           // L2 transaction
     MSG_L2_SEQANNOUNCE = 8,  // Sequencer announcement
     MSG_L2_VOTE = 9,         // Sequencer vote
+
+    // Cascoin: Quantum message types
+    // Requirements: 8.6 (inventory type for quantum transactions)
+    MSG_QUANTUM_TX = 10,     // Quantum transaction (contains FALCON-512 signatures)
 };
 
 /** inv message data */

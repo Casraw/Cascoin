@@ -214,6 +214,31 @@
            </widget>
           </item>
           <item>
+           <widget class="QCheckBox" name="useQuantum">
+            <property name="sizePolicy">
+             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
+              <horstretch>0</horstretch>
+              <verstretch>0</verstretch>
+             </sizepolicy>
+            </property>
+            <property name="maximumSize">
+             <size>
+              <width>1000</width>
+              <height>16777215</height>
+             </size>
+            </property>
+            <property name="focusPolicy">
+             <enum>Qt::StrongFocus</enum>
+            </property>
+            <property name="toolTip">
+             <string>Generate a quantum-resistant address using FALCON-512 post-quantum cryptography. These addresses start with "casq" and provide protection against future quantum computer attacks.</string>
+            </property>
+            <property name="text">
+             <string>Generate Quantum address</string>
+            </property>
+           </widget>
+          </item>
+          <item>
            <spacer name="horizontalSpacer_3">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
@@ -361,6 +386,7 @@
   <tabstop>reqLabel</tabstop>
   <tabstop>reqAmount</tabstop>
   <tabstop>useBech32</tabstop>
+  <tabstop>useQuantum</tabstop>
   <tabstop>reqMessage</tabstop>
   <tabstop>receiveButton</tabstop>
   <tabstop>clearButton</tabstop>

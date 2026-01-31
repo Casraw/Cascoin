@@ -18,6 +18,8 @@
 #include <sync.h>               // Cascoin: Hive
 #include <validation.h>         // Cascoin: Hive
 #include <utilstrencodings.h>   // Cascoin: Hive
+#include <crypto/quantum/falcon.h>  // Cascoin: Quantum Hive support
+#include <address_quantum.h>        // Cascoin: Quantum address support
 
 BeePopGraphPoint beePopGraph[1024*40];       // Cascoin: Hive
 
@@ -39,13 +41,26 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
     // TESTNET ONLY: Allow minimum difficulty blocks if we haven't seen a block for ostensibly 10 blocks worth of time.
     // Reading this code because you're porting CAS features? Considering doing this on your mainnet?
     // ***** THIS IS NOT SAFE TO DO ON YOUR MAINNET! *****
+    // 
+    // IMPORTANT: This stall detection should ONLY apply when VALIDATING blocks from peers that were
+    // mined with minimum difficulty during a stall period. It should NOT affect getblocktemplate
+    // or mining operations - those should always use the calculated LWMA difficulty.
+    //
+    // The stall detection works as follows:
+    // - If a block comes in with nBits == powLimit AND the time gap is large, accept it
+    // - But for mining (nBits == 0), always calculate proper difficulty via LWMA
     if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + T * 10) {
-        if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (apparent testnet stall)\\n", POW_TYPE_NAMES[powType]);
-        // Cascoin: Added detailed SHA256 logging
-        if (powType == POW_TYPE_SHA256) {
-            LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Testnet stall. Returning powLimit 0x%08x\\n", powLimit.GetCompact());
+        // Only allow minimum difficulty for blocks being VALIDATED (not mined)
+        // A block being validated will have nBits already set to powLimit
+        // A mining template will have nBits == 0
+        if (pblock->nBits != 0 && pblock->nBits == powLimit.GetCompact()) {
+            // This is a block from the network that was mined with minimum difficulty during a stall
+            // Accept it as valid
+            if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Accepting %s block with powLimit (testnet stall recovery block)\n", POW_TYPE_NAMES[powType]);
+            return powLimit.GetCompact();
         }
-        return powLimit.GetCompact();
+        // For mining templates (nBits == 0) or blocks with real difficulty, proceed with normal LWMA
+        if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Stall detected but using LWMA for %s (nBits=0x%08x, mining or real difficulty)\n", POW_TYPE_NAMES[powType], pblock->nBits);
     }
 
     // Not enough blocks on chain? Return limit
@@ -187,8 +202,15 @@ unsigned int DarkGravityWave(const CBlockIndex* pindexLast, const CBlockHeader *
     int64_t nPastBlocks = 24;
 
     // Cascoin: Allow minimum difficulty blocks if we haven't seen a block for ostensibly 10 blocks worth of time
-    if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing * 10)
-        return bnPowLimit.GetCompact();
+    // IMPORTANT: Only accept min-diff blocks from the network, don't generate them for mining
+    if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing * 10) {
+        // Only allow minimum difficulty for blocks being VALIDATED (not mined)
+        // A block being validated will have nBits already set to powLimit
+        if (pblock->nBits != 0 && pblock->nBits == bnPowLimit.GetCompact()) {
+            return bnPowLimit.GetCompact();
+        }
+        // For mining templates (nBits == 0) or blocks with real difficulty, proceed with normal DGW
+    }
 
     // Cascoin: Hive 1.1: Skip over Hivemined blocks at tip
     if (IsHive11Enabled(pindexLast, params)) {
@@ -276,16 +298,19 @@ unsigned int GetNextWorkRequiredLTC(const CBlockIndex* pindexLast, const CBlockH
             // Special difficulty rule for testnet:
             // If the new block's timestamp is more than 2* 10 minutes
             // then allow mining of a min-difficulty block.
-            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2)
-                return nProofOfWorkLimit;
-            else
-            {
-                // Return the last non-special-min-difficulty-rules-block
-                const CBlockIndex* pindex = pindexLast;
-                while (pindex->pprev && pindex->nHeight % params.DifficultyAdjustmentInterval() != 0 && pindex->nBits == nProofOfWorkLimit)
-                    pindex = pindex->pprev;
-                return pindex->nBits;
+            // IMPORTANT: Only accept min-diff blocks from the network, don't generate them for mining
+            if (pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing*2) {
+                // Only allow minimum difficulty for blocks being VALIDATED (not mined)
+                if (pblock->nBits != 0 && pblock->nBits == nProofOfWorkLimit) {
+                    return nProofOfWorkLimit;
+                }
+                // For mining templates (nBits == 0), fall through to normal logic
             }
+            // Return the last non-special-min-difficulty-rules-block
+            const CBlockIndex* pindex = pindexLast;
+            while (pindex->pprev && pindex->nHeight % params.DifficultyAdjustmentInterval() != 0 && pindex->nBits == nProofOfWorkLimit)
+                pindex = pindex->pprev;
+            return pindex->nBits;
         }
         return pindexLast->nBits;
     }
@@ -782,9 +807,30 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
     }
     
     // Grab the message sig (bytes 79-end; byte 78 is size)
-    std::vector<unsigned char> messageSig(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
+    // Cascoin: Quantum Hive: Support both ECDSA (65 bytes) and FALCON-512 (up to 700 bytes) signatures
+    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
+    uint8_t sigSize = txCoinbase->vout[0].scriptPubKey[78];
+    bool isQuantumSig = (sigSize > 100);  // FALCON-512 signatures are ~666 bytes, ECDSA compact is 65 bytes
+    
+    std::vector<unsigned char> messageSig;
+    if (isQuantumSig) {
+        // Quantum signature: variable size up to 700 bytes
+        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + sigSize) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum signature\n");
+            return false;
+        }
+        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + sigSize]);
+    } else {
+        // ECDSA compact signature: 65 bytes
+        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + 65) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for ECDSA signature\n");
+            return false;
+        }
+        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
+    }
     if (verbose)
-        LogPrintf("CheckHiveProof: messageSig          = %s\n", HexStr(&messageSig[0], &messageSig[messageSig.size()]));
+        LogPrintf("CheckHiveProof: messageSig          = %s (size=%d, quantum=%s)\n", 
+                  HexStr(&messageSig[0], &messageSig[messageSig.size()]), (int)messageSig.size(), isQuantumSig ? "yes" : "no");
     
     // Grab the honey address from the honey vout
     CTxDestination honeyDestination;
@@ -800,22 +846,97 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         LogPrintf("CheckHiveProof: honeyAddress        = %s\n", EncodeDestination(honeyDestination));
 
     // Verify the message sig
-    const CKeyID *keyID = boost::get<CKeyID>(&honeyDestination);
-    if (!keyID) {
-        LogPrintf("CheckHiveProof: Can't get pubkey for honey address\n");
-        return false;
-    }
+    // Cascoin: Quantum Hive: Support both ECDSA and quantum signature verification
+    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
     CHashWriter ss(SER_GETHASH, 0);
     ss << deterministicRandString;
     uint256 mhash = ss.GetHash();
-    CPubKey pubkey;
-    if (!pubkey.RecoverCompact(mhash, messageSig)) {
-        LogPrintf("CheckHiveProof: Couldn't recover pubkey from hash\n");
-        return false;
-    }
-    if (pubkey.GetID() != *keyID) {
-        LogPrintf("CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
-        return false;
+    
+    if (isQuantumSig) {
+        // Quantum signature verification using FALCON-512
+        // For quantum addresses, the witness program contains the pubkey hash
+        const WitnessV2Quantum* quantumDest = boost::get<WitnessV2Quantum>(&honeyDestination);
+        if (!quantumDest) {
+            LogPrintf("CheckHiveProof: Quantum signature requires quantum address destination\n");
+            return false;
+        }
+        
+        // The quantum public key should be provided in the coinbase after the signature
+        // Format: [sig_size][signature][pubkey_size][pubkey]
+        size_t pubkeyOffset = 79 + sigSize;
+        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 1) {
+            LogPrintf("CheckHiveProof: Missing quantum pubkey size\n");
+            return false;
+        }
+        
+        // Read pubkey size (could be 2 bytes for sizes > 255)
+        size_t pubkeySize = 0;
+        size_t pubkeySizeBytes = 1;
+        if (txCoinbase->vout[0].scriptPubKey[pubkeyOffset] == 0xFD) {
+            // 2-byte size follows
+            if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 3) {
+                LogPrintf("CheckHiveProof: Missing quantum pubkey size bytes\n");
+                return false;
+            }
+            pubkeySize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[pubkeyOffset + 1]);
+            pubkeySizeBytes = 3;
+        } else {
+            pubkeySize = txCoinbase->vout[0].scriptPubKey[pubkeyOffset];
+        }
+        
+        if (pubkeySize != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+            LogPrintf("CheckHiveProof: Invalid quantum pubkey size %d (expected %d)\n", 
+                      (int)pubkeySize, CPubKey::QUANTUM_PUBLIC_KEY_SIZE);
+            return false;
+        }
+        
+        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + pubkeySizeBytes + pubkeySize) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum pubkey\n");
+            return false;
+        }
+        
+        std::vector<unsigned char> quantumPubkey(
+            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes],
+            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes + pubkeySize]);
+        
+        // Verify the pubkey matches the address (SHA256 hash)
+        uint256 pubkeyHash = Hash(quantumPubkey.begin(), quantumPubkey.end());
+        if (pubkeyHash != *quantumDest) {
+            LogPrintf("CheckHiveProof: Quantum pubkey hash mismatch\n");
+            return false;
+        }
+        
+        // Verify the FALCON-512 signature
+        if (!quantum::Verify(quantumPubkey, mhash.begin(), 32, messageSig)) {
+            LogPrintf("CheckHiveProof: Quantum signature verification failed\n");
+            return false;
+        }
+        
+        if (verbose)
+            LogPrintf("CheckHiveProof: Quantum signature verified successfully\n");
+    } else {
+        // ECDSA signature verification (original code)
+        // Requirements: 4.5, 4.6 (verify signature matches agent's registered key type)
+        const CKeyID *keyID = boost::get<CKeyID>(&honeyDestination);
+        if (!keyID) {
+            // Check if this is a quantum address - ECDSA signatures are not valid for quantum addresses
+            const WitnessV2Quantum* quantumDest = boost::get<WitnessV2Quantum>(&honeyDestination);
+            if (quantumDest) {
+                LogPrintf("CheckHiveProof: ECDSA signature not valid for quantum address - use quantum signature\n");
+                return false;
+            }
+            LogPrintf("CheckHiveProof: Can't get pubkey for honey address\n");
+            return false;
+        }
+        CPubKey pubkey;
+        if (!pubkey.RecoverCompact(mhash, messageSig)) {
+            LogPrintf("CheckHiveProof: Couldn't recover pubkey from hash\n");
+            return false;
+        }
+        if (pubkey.GetID() != *keyID) {
+            LogPrintf("CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
+            return false;
+        }
     }
 
     // Grab the BCT utxo

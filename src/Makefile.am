@@ -18,7 +18,7 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS) $(SQLITE3_CFLAGS)
+BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS) $(SQLITE3_CFLAGS) $(LIBOQS_CFLAGS)
 
 BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
 BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
@@ -41,6 +41,9 @@ endif
 if ENABLE_WALLET
 LIBBITCOIN_WALLET=libbitcoin_wallet.a
 endif
+if ENABLE_QUANTUM
+LIBBITCOIN_QUANTUM=crypto/quantum/libbitcoin_quantum.a
+endif
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
@@ -49,6 +52,7 @@ $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
 # But to build the less dependent modules first, we manually select their order here:
 EXTRA_LIBRARIES += \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_CONSENSUS) \
@@ -78,6 +82,7 @@ endif
 BITCOIN_CORE_H = \
   addrdb.h \
   addrman.h \
+  address_quantum.h \
   base58.h \
   bech32.h \
   bloom.h \
@@ -279,7 +284,10 @@ BITCOIN_CORE_H = \
   l2/l2_peer_manager.h \
   l2/timestamp_validator.h \
   l2/collusion_detector.h \
-  l2/security_monitor.h
+  l2/security_monitor.h \
+  crypto/quantum/falcon.h \
+  quantum_registry.h \
+  quantum_registry_fwd.h
 
 
 obj/build.h: FORCE
@@ -440,6 +448,8 @@ libbitcoin_server_a_SOURCES = \
   rpc/cvm.cpp \
   rpc/l2.cpp \
   rpc/l2_burn.cpp \
+  rpc/quantum.cpp \
+  quantum_registry.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_ZMQ
@@ -560,6 +570,15 @@ if USE_ASM
 crypto_libbitcoin_crypto_a_SOURCES += crypto/sha256_sse4.cpp
 endif
 
+# Post-quantum cryptography library (FALCON-512 via liboqs)
+if ENABLE_QUANTUM
+crypto_quantum_libbitcoin_quantum_a_CPPFLAGS = $(AM_CPPFLAGS) $(LIBOQS_CFLAGS)
+crypto_quantum_libbitcoin_quantum_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_quantum_libbitcoin_quantum_a_SOURCES = \
+  crypto/quantum/falcon.h \
+  crypto/quantum/falcon.cpp
+endif
+
 # consensus: shared between all executables that validate any consensus rules.
 libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libbitcoin_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
@@ -582,6 +601,7 @@ libbitcoin_consensus_a_SOURCES = \
   script/bitcoinconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/quantum_consensus.cpp \
   script/script.cpp \
   script/script.h \
   script/script_error.cpp \
@@ -598,6 +618,7 @@ libbitcoin_consensus_a_SOURCES = \
 libbitcoin_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libbitcoin_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_common_a_SOURCES = \
+  address_quantum.cpp \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
@@ -676,12 +697,13 @@ cascoind_LDADD = \
   $(LIBBITCOIN_ZMQ) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBLEVELDB) \
   $(LIBLEVELDB_SSE42) \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
 
 if ENABLE_EVMC
 cascoind_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
@@ -701,9 +723,10 @@ cascoin_cli_LDADD = \
   $(LIBBITCOIN_CLI) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_CRYPTO)
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM)
 
-cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(LIBOQS_LIBS)
 
 if ENABLE_EVMC
 cascoin_cli_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
@@ -726,9 +749,10 @@ cascoin_tx_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBSECP256K1)
 
-cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(LIBOQS_LIBS)
 
 if ENABLE_EVMC
 cascoin_tx_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions

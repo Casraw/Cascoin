@@ -721,6 +721,8 @@ BUILD_DARWIN_FALSE
 BUILD_DARWIN_TRUE
 TARGET_DARWIN_FALSE
 TARGET_DARWIN_TRUE
+ENABLE_QUANTUM_FALSE
+ENABLE_QUANTUM_TRUE
 ENABLE_ZMQ_FALSE
 ENABLE_ZMQ_TRUE
 BUILD_BITCOIN_LIBS_FALSE
@@ -739,6 +741,8 @@ EVMONE_CFLAGS
 EVMC_LIBS
 EVMC_CFLAGS
 EVMONE_PRECOMPILES_LIBS
+LIBOQS_LIBS
+LIBOQS_CFLAGS
 ZMQ_LIBS
 ZMQ_CFLAGS
 SQLITE3_LIBS
@@ -1006,6 +1010,7 @@ enable_glibc_back_compat
 enable_asm
 with_system_univalue
 enable_zmq
+enable_quantum
 enable_sse2
 with_protoc_bindir
 enable_man
@@ -1091,6 +1096,8 @@ SQLITE3_CFLAGS
 SQLITE3_LIBS
 ZMQ_CFLAGS
 ZMQ_LIBS
+LIBOQS_CFLAGS
+LIBOQS_LIBS
 EVMONE_PRECOMPILES_LIBS
 EVMC_CFLAGS
 EVMC_LIBS
@@ -1768,6 +1775,8 @@ Optional Features:
                           enable backwards compatibility with glibc
   --enable-asm            Enable assembly routines (default is yes)
   --disable-zmq           disable ZMQ notifications
+  --disable-quantum       disable post-quantum cryptography support (enabled
+                          by default)
   --enable-sse2           enable SSE2 instructions in the scrypt library.
                           (default is disabled)
   --disable-man           do not install man pages (default is to install)
@@ -1925,6 +1934,9 @@ Some influential environment variables:
               linker flags for SQLITE3, overriding pkg-config
   ZMQ_CFLAGS  C compiler flags for ZMQ, overriding pkg-config
   ZMQ_LIBS    linker flags for ZMQ, overriding pkg-config
+  LIBOQS_CFLAGS
+              C compiler flags for LIBOQS, overriding pkg-config
+  LIBOQS_LIBS linker flags for LIBOQS, overriding pkg-config
   EVMONE_PRECOMPILES_LIBS
               Additional libraries for evmone precompiles (e.g.,
               -levmone_precompiles -lblst)
@@ -20826,6 +20838,16 @@ esac
 fi
 
 
+# Check whether --enable-quantum was given.
+if test ${enable_quantum+y}
+then :
+  enableval=$enable_quantum; use_quantum=$enableval
+else case e in #(
+  e) use_quantum=yes ;;
+esac
+fi
+
+
 # Check whether --enable-sse2 was given.
 if test ${enable_sse2+y}
 then :
@@ -34307,6 +34329,169 @@ fi
   fi
 fi
 
+if test "x$use_quantum" = "xyes"; then
+  if test x$use_pkgconfig = xyes; then
+
+
+pkg_failed=no
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for liboqs >= 0.10.0" >&5
+printf %s "checking for liboqs >= 0.10.0... " >&6; }
+
+if test -n "$LIBOQS_CFLAGS"; then
+    pkg_cv_LIBOQS_CFLAGS="$LIBOQS_CFLAGS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"liboqs >= 0.10.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "liboqs >= 0.10.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBOQS_CFLAGS=`$PKG_CONFIG --cflags "liboqs >= 0.10.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+if test -n "$LIBOQS_LIBS"; then
+    pkg_cv_LIBOQS_LIBS="$LIBOQS_LIBS"
+ elif test -n "$PKG_CONFIG"; then
+    if test -n "$PKG_CONFIG" && \
+    { { printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$PKG_CONFIG --exists --print-errors \"liboqs >= 0.10.0\""; } >&5
+  ($PKG_CONFIG --exists --print-errors "liboqs >= 0.10.0") 2>&5
+  ac_status=$?
+  printf "%s\n" "$as_me:${as_lineno-$LINENO}: \$? = $ac_status" >&5
+  test $ac_status = 0; }; then
+  pkg_cv_LIBOQS_LIBS=`$PKG_CONFIG --libs "liboqs >= 0.10.0" 2>/dev/null`
+		      test "x$?" != "x0" && pkg_failed=yes
+else
+  pkg_failed=yes
+fi
+ else
+    pkg_failed=untried
+fi
+
+
+
+if test $pkg_failed = yes; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+
+if $PKG_CONFIG --atleast-pkgconfig-version 0.20; then
+        _pkg_short_errors_supported=yes
+else
+        _pkg_short_errors_supported=no
+fi
+        if test $_pkg_short_errors_supported = yes; then
+                LIBOQS_PKG_ERRORS=`$PKG_CONFIG --short-errors --print-errors --cflags --libs "liboqs >= 0.10.0" 2>&1`
+        else
+                LIBOQS_PKG_ERRORS=`$PKG_CONFIG --print-errors --cflags --libs "liboqs >= 0.10.0" 2>&1`
+        fi
+        # Put the nasty error message in config.log where it belongs
+        echo "$LIBOQS_PKG_ERRORS" >&5
+
+        have_liboqs=no
+elif test $pkg_failed = untried; then
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: no" >&5
+printf "%s\n" "no" >&6; }
+        have_liboqs=no
+else
+        LIBOQS_CFLAGS=$pkg_cv_LIBOQS_CFLAGS
+        LIBOQS_LIBS=$pkg_cv_LIBOQS_LIBS
+        { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+printf "%s\n" "yes" >&6; }
+        have_liboqs=yes
+
+printf "%s\n" "#define ENABLE_QUANTUM 1" >>confdefs.h
+
+fi
+
+  else
+    ac_fn_cxx_check_header_compile "$LINENO" "oqs/oqs.h" "ac_cv_header_oqs_oqs_h" "$ac_includes_default"
+if test "x$ac_cv_header_oqs_oqs_h" = xyes
+then :
+
+      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for OQS_SIG_new in -loqs" >&5
+printf %s "checking for OQS_SIG_new in -loqs... " >&6; }
+if test ${ac_cv_lib_oqs_OQS_SIG_new+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) ac_check_lib_save_LIBS=$LIBS
+LIBS="-loqs  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+namespace conftest {
+  extern "C" int OQS_SIG_new ();
+}
+int
+main (void)
+{
+return conftest::OQS_SIG_new ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_cxx_try_link "$LINENO"
+then :
+  ac_cv_lib_oqs_OQS_SIG_new=yes
+else case e in #(
+  e) ac_cv_lib_oqs_OQS_SIG_new=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_oqs_OQS_SIG_new" >&5
+printf "%s\n" "$ac_cv_lib_oqs_OQS_SIG_new" >&6; }
+if test "x$ac_cv_lib_oqs_OQS_SIG_new" = xyes
+then :
+
+        LIBOQS_LIBS="-loqs"
+        have_liboqs=yes
+
+printf "%s\n" "#define ENABLE_QUANTUM 1" >>confdefs.h
+
+
+else case e in #(
+  e) have_liboqs=no ;;
+esac
+fi
+
+
+else case e in #(
+  e) have_liboqs=no ;;
+esac
+fi
+
+  fi
+
+  if test "x$have_liboqs" = "xyes"; then
+    { printf "%s\n" "$as_me:${as_lineno-$LINENO}: liboqs found, enabling post-quantum cryptography support" >&5
+printf "%s\n" "$as_me: liboqs found, enabling post-quantum cryptography support" >&6;}
+  else
+    if test "x$use_quantum" = "xyes"; then
+      { printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: liboqs not found, disabling post-quantum cryptography support" >&5
+printf "%s\n" "$as_me: WARNING: liboqs not found, disabling post-quantum cryptography support" >&2;}
+    fi
+    use_quantum=no
+
+printf "%s\n" "#define ENABLE_QUANTUM 0" >>confdefs.h
+
+  fi
+else
+
+printf "%s\n" "#define ENABLE_QUANTUM 0" >>confdefs.h
+
+fi
+
+
+
+
 # Check whether --enable-evmc was given.
 if test ${enable_evmc+y}
 then :
@@ -35174,6 +35359,14 @@ else
   ENABLE_ZMQ_FALSE=
 fi
 
+ if test "x$use_quantum" = "xyes"; then
+  ENABLE_QUANTUM_TRUE=
+  ENABLE_QUANTUM_FALSE='#'
+else
+  ENABLE_QUANTUM_TRUE='#'
+  ENABLE_QUANTUM_FALSE=
+fi
+
 
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking whether to build test_cascoin" >&5
 printf %s "checking whether to build test_cascoin... " >&6; }
@@ -35656,6 +35849,10 @@ Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${ENABLE_ZMQ_TRUE}" && test -z "${ENABLE_ZMQ_FALSE}"; then
   as_fn_error $? "conditional \"ENABLE_ZMQ\" was never defined.
+Usually this means the macro was only invoked conditionally." "$LINENO" 5
+fi
+if test -z "${ENABLE_QUANTUM_TRUE}" && test -z "${ENABLE_QUANTUM_FALSE}"; then
+  as_fn_error $? "conditional \"ENABLE_QUANTUM\" was never defined.
 Usually this means the macro was only invoked conditionally." "$LINENO" 5
 fi
 if test -z "${TARGET_DARWIN_TRUE}" && test -z "${TARGET_DARWIN_FALSE}"; then
@@ -38364,6 +38561,7 @@ if test x$bitcoin_enable_qt != xno; then
     echo "    with qr     = $use_qr"
 fi
 echo "  with zmq      = $use_zmq"
+echo "  with quantum  = $use_quantum"
 echo "  with evmc     = $use_evmc"
 echo "  with test     = $use_tests"
 echo "  with bench    = $use_bench"

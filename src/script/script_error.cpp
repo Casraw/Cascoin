@@ -92,7 +92,16 @@ const char* ScriptErrorString(const ScriptError serror)
         case SCRIPT_ERR_ILLEGAL_FORKID:                 // Cascoin: Replay attack prevention error message
             return "Illegal use of SIGHASH_FORKID";
         case SCRIPT_ERR_MUST_USE_FORKID:                // Cascoin: Replay attack prevention error message
-            return "Signature must use SIGHASH_FORKID";            
+            return "Signature must use SIGHASH_FORKID";
+        // Cascoin: Post-Quantum Cryptography (PQC) error messages
+        case SCRIPT_ERR_SIG_QUANTUM_VERIFY:
+            return "FALCON-512 quantum signature verification failed";
+        case SCRIPT_ERR_QUANTUM_NOT_ACTIVE:
+            return "Quantum features not yet activated at this block height";
+        case SCRIPT_ERR_QUANTUM_PUBKEY_SIZE:
+            return "Quantum public key must be exactly 897 bytes";
+        case SCRIPT_ERR_QUANTUM_SIG_SIZE:
+            return "Quantum signature exceeds maximum size of 700 bytes";
         case SCRIPT_ERR_UNKNOWN_ERROR:
         case SCRIPT_ERR_ERROR_COUNT:
         default: break;

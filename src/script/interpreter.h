@@ -115,7 +115,12 @@ enum
 
     // Cascoin: Support SIGHASH_FORKID
     //
-    SCRIPT_ENABLE_SIGHASH_FORKID = (1U << 16),    
+    SCRIPT_ENABLE_SIGHASH_FORKID = (1U << 16),
+
+    // Cascoin: Support post-quantum FALCON-512 signatures (witness version 2)
+    // Requirements: 9.1, 9.2, 9.3 (Activation height enforcement)
+    //
+    SCRIPT_VERIFY_QUANTUM = (1U << 17),
 };
 
 bool CheckSignatureEncoding(const std::vector<unsigned char> &vchSig, unsigned int flags, ScriptError* serror);
@@ -132,6 +137,7 @@ enum SigVersion
 {
     SIGVERSION_BASE = 0,
     SIGVERSION_WITNESS_V0 = 1,
+    SIGVERSION_WITNESS_V2_QUANTUM = 2,  // Cascoin: Post-quantum FALCON-512 signatures (witness version 2)
 };
 
 uint256 SignatureHash(const CScript &scriptCode, const CTransaction& txTo, unsigned int nIn, int nHashType, const CAmount& amount, SigVersion sigversion, const PrecomputedTransactionData* cache = nullptr);

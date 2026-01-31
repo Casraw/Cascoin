@@ -107,6 +107,7 @@ enum OutputType : int
     OUTPUT_TYPE_LEGACY,
     OUTPUT_TYPE_P2SH_SEGWIT,
     OUTPUT_TYPE_BECH32,
+    OUTPUT_TYPE_QUANTUM,  // Cascoin: Quantum-resistant address (FALCON-512)
 
     OUTPUT_TYPE_DEFAULT = OUTPUT_TYPE_P2SH_SEGWIT
 };
@@ -122,9 +123,14 @@ public:
     int64_t nTime;
     CPubKey vchPubKey;
     bool fInternal; // for change outputs
+    bool fQuantum;  // Cascoin: Quantum: true if this is a quantum (FALCON-512) key
 
     CKeyPool();
     CKeyPool(const CPubKey& vchPubKeyIn, bool internalIn);
+    CKeyPool(const CPubKey& vchPubKeyIn, bool internalIn, bool quantumIn);
+
+    //! Check if this is a quantum key pool entry
+    bool IsQuantum() const { return fQuantum; }
 
     ADD_SERIALIZE_METHODS;
 
@@ -144,9 +150,20 @@ public:
                    (this will be the case for any wallet before the HD chain split version) */
                 fInternal = false;
             }
+            // Cascoin: Quantum: Read quantum flag if present
+            try {
+                READWRITE(fQuantum);
+            }
+            catch (std::ios_base::failure&) {
+                /* flag as ECDSA key if we can't read the quantum boolean
+                   (this will be the case for any wallet before quantum support) */
+                fQuantum = false;
+            }
         }
         else {
             READWRITE(fInternal);
+            // Cascoin: Quantum: Write quantum flag
+            READWRITE(fQuantum);
         }
     }
 };
@@ -756,6 +773,12 @@ private:
 
     std::set<int64_t> setInternalKeyPool;
     std::set<int64_t> setExternalKeyPool;
+    
+    // Cascoin: Quantum: Separate key pools for quantum keys
+    // Requirements: 10.6 (maintain separate key pools for ECDSA and quantum keys)
+    std::set<int64_t> setQuantumInternalKeyPool;
+    std::set<int64_t> setQuantumExternalKeyPool;
+    
     int64_t m_max_keypool_index;
     std::map<CKeyID, int64_t> m_pool_key_to_index;
 
@@ -1061,10 +1084,50 @@ public:
     bool NewKeyPool();
     size_t KeypoolCountExternalKeys();
     bool TopUpKeyPool(unsigned int kpSize = 0);
+    
+    /**
+     * Cascoin: Quantum: Top up the quantum key pool.
+     * Creates new FALCON-512 quantum keys and adds them to the quantum key pools.
+     * Requirements: 10.6 (implement TopUpQuantumKeyPool)
+     *
+     * @param[in] kpSize Target size for the quantum key pool (0 = use default)
+     * @return true on success, false if wallet is locked
+     */
+    bool TopUpQuantumKeyPool(unsigned int kpSize = 0);
+    
     void ReserveKeyFromKeyPool(int64_t& nIndex, CKeyPool& keypool, bool fRequestedInternal);
+    
+    /**
+     * Cascoin: Quantum: Reserve a key from the quantum key pool.
+     * Requirements: 10.6 (separate key pools for quantum keys)
+     *
+     * @param[out] nIndex Index of the reserved key
+     * @param[out] keypool The reserved key pool entry
+     * @param[in] fRequestedInternal Whether to get from internal (change) pool
+     */
+    void ReserveKeyFromQuantumKeyPool(int64_t& nIndex, CKeyPool& keypool, bool fRequestedInternal);
+    
     void KeepKey(int64_t nIndex);
     void ReturnKey(int64_t nIndex, bool fInternal, const CPubKey& pubkey);
+    
+    /**
+     * Cascoin: Quantum: Return a quantum key to the quantum key pool.
+     * Requirements: 10.6 (separate key pools for quantum keys)
+     */
+    void ReturnQuantumKey(int64_t nIndex, bool fInternal, const CPubKey& pubkey);
+    
     bool GetKeyFromPool(CPubKey &key, bool internal = false);
+    
+    /**
+     * Cascoin: Quantum: Get a quantum key from the quantum key pool.
+     * Requirements: 10.6 (separate key pools for quantum keys)
+     *
+     * @param[out] key The quantum public key
+     * @param[in] internal Whether to get from internal (change) pool
+     * @return true on success, false if pool is empty and wallet is locked
+     */
+    bool GetQuantumKeyFromPool(CPubKey &key, bool internal = false);
+    
     int64_t GetOldestKeyPoolTime();
     /**
      * Marks all keys in the keypool up to and including reserve_key as used.
@@ -1123,6 +1186,16 @@ public:
     {
         AssertLockHeld(cs_wallet); // set{Ex,In}ternalKeyPool
         return setInternalKeyPool.size() + setExternalKeyPool.size();
+    }
+    
+    /**
+     * Cascoin: Quantum: Get the size of the quantum key pool.
+     * Requirements: 10.6 (separate key pools for quantum keys)
+     */
+    unsigned int GetQuantumKeyPoolSize()
+    {
+        AssertLockHeld(cs_wallet);
+        return setQuantumInternalKeyPool.size() + setQuantumExternalKeyPool.size();
     }
 
     //! signify that a particular wallet feature is now used. this may change nWalletVersion and nWalletMaxVersion if those are lower
