@@ -56,6 +56,7 @@
 #endif
 #include <warnings.h>
 #include <cvm/cvmdb.h>  // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>  // Cascoin: CVM Block Processor and Trust Propagation
 #include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
 #include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
 #include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
@@ -272,6 +273,9 @@ void Shutdown()
     
     // Shutdown contract state sync
     CVM::ShutdownContractStateSync();
+    
+    // Shutdown trust propagation components (Requirements: 2.4, 16.1)
+    CVM::ShutdownTrustPropagation();
     
     // Shutdown CVM database
     CVM::ShutdownCVMDatabase();
@@ -1717,6 +1721,15 @@ bool AppInitMain()
         return InitError(_("Failed to initialize CVM database"));
     }
     LogPrintf("CVM database initialized successfully\n");
+    
+    // Initialize trust propagation components (Requirements: 2.4, 16.1)
+    LogPrintf("Initializing trust propagation components...\n");
+    if (!CVM::InitTrustPropagation(*CVM::g_cvmdb)) {
+        LogPrintf("Warning: Failed to initialize trust propagation components\n");
+        // Non-fatal - node can still operate without trust propagation
+    } else {
+        LogPrintf("Trust propagation components initialized successfully\n");
+    }
     
     // Initialize cross-chain trust bridge
     LogPrintf("Initializing cross-chain trust bridge...\n");

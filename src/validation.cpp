@@ -2212,6 +2212,9 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
         if (CVM::g_cvmdb) {
             CVM::CVMBlockProcessor::ProcessBlock(block, pindex->nHeight, *CVM::g_cvmdb);
+            
+            // Process cluster updates for wallet trust propagation (Requirements: 2.4, 16.1)
+            CVM::CVMBlockProcessor::ProcessClusterUpdates(block, pindex->nHeight, *CVM::g_cvmdb);
         } else {
             LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
         }

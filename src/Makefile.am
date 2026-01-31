@@ -206,6 +206,9 @@ BITCOIN_CORE_H = \
   cvm/graphanalysis.h \
   cvm/securehat.h \
   cvm/walletcluster.h \
+  cvm/trustpropagator.h \
+  cvm/clusterupdatehandler.h \
+  cvm/clustertrustquery.h \
   cvm/cvmtx.h \
   cvm/evmc_host.h \
   cvm/trust_context.h \
@@ -357,6 +360,9 @@ libbitcoin_server_a_SOURCES = \
   cvm/graphanalysis.cpp \
   cvm/securehat.cpp \
   cvm/walletcluster.cpp \
+  cvm/trustpropagator.cpp \
+  cvm/clusterupdatehandler.cpp \
+  cvm/clustertrustquery.cpp \
   cvm/cvmtx.cpp \
   cvm/evmc_host.cpp \
   cvm/trust_context.cpp \

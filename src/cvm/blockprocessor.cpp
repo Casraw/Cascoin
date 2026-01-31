@@ -8,6 +8,9 @@
 #include <cvm/reputation.h>
 #include <cvm/contract.h>
 #include <cvm/trustgraph.h>
+#include <cvm/walletcluster.h>
+#include <cvm/trustpropagator.h>
+#include <cvm/clusterupdatehandler.h>
 #include <cvm/enhanced_vm.h>
 #include <cvm/trust_context.h>
 #include <cvm/gas_allowance.h>
@@ -25,6 +28,12 @@ static GasAllowanceTracker g_gasAllowanceTracker;
 
 // Global gas subsidy tracker
 static GasSubsidyTracker g_gasSubsidyTracker;
+
+// Global trust propagation components (Requirements: 2.4, 16.1)
+std::unique_ptr<TrustGraph> g_trustGraph;
+std::unique_ptr<WalletClusterer> g_walletClusterer;
+std::unique_ptr<TrustPropagator> g_trustPropagator;
+std::unique_ptr<ClusterUpdateHandler> g_clusterUpdateHandler;
 
 void CVMBlockProcessor::ProcessBlock(
     const CBlock& block,
@@ -619,6 +628,109 @@ bool CVMBlockProcessor::ValidateBond(
     }
     
     return true;
+}
+
+uint32_t CVMBlockProcessor::ProcessClusterUpdates(
+    const CBlock& block,
+    int height,
+    CVMDatabase& db
+) {
+    // Requirements: 2.3, 2.4
+    // 2.3: When a new address inherits trust, emit an event for audit purposes
+    // 2.4: While processing new blocks, check for new addresses joining existing clusters
+    
+    // Check if cluster update handler is initialized
+    if (!g_clusterUpdateHandler) {
+        LogPrint(BCLog::CVM, "CVM: ClusterUpdateHandler not initialized, skipping cluster updates\n");
+        return 0;
+    }
+    
+    // Convert block transactions to vector of CTransaction references
+    std::vector<CTransaction> transactions;
+    transactions.reserve(block.vtx.size());
+    
+    for (const auto& tx : block.vtx) {
+        if (!tx->IsCoinBase()) {
+            transactions.push_back(*tx);
+        }
+    }
+    
+    // Process cluster updates
+    uint32_t updateCount = g_clusterUpdateHandler->ProcessBlock(height, transactions);
+    
+    if (updateCount > 0) {
+        LogPrintf("CVM: Processed %u cluster updates at height %d\n", updateCount, height);
+    }
+    
+    return updateCount;
+}
+
+bool InitTrustPropagation(CVMDatabase& db)
+{
+    LogPrintf("CVM: Initializing trust propagation components...\n");
+    
+    try {
+        // Initialize TrustGraph
+        g_trustGraph.reset(new TrustGraph(db));
+        LogPrint(BCLog::CVM, "CVM: TrustGraph initialized\n");
+        
+        // Initialize WalletClusterer
+        g_walletClusterer.reset(new WalletClusterer(db));
+        LogPrint(BCLog::CVM, "CVM: WalletClusterer initialized\n");
+        
+        // Initialize TrustPropagator
+        g_trustPropagator.reset(new TrustPropagator(db, *g_walletClusterer, *g_trustGraph));
+        LogPrint(BCLog::CVM, "CVM: TrustPropagator initialized\n");
+        
+        // Initialize ClusterUpdateHandler
+        g_clusterUpdateHandler.reset(new ClusterUpdateHandler(db, *g_walletClusterer, *g_trustPropagator));
+        LogPrint(BCLog::CVM, "CVM: ClusterUpdateHandler initialized\n");
+        
+        LogPrintf("CVM: Trust propagation components initialized successfully\n");
+        return true;
+        
+    } catch (const std::exception& e) {
+        LogPrintf("CVM: ERROR - Failed to initialize trust propagation: %s\n", e.what());
+        
+        // Clean up any partially initialized components
+        g_clusterUpdateHandler.reset();
+        g_trustPropagator.reset();
+        g_walletClusterer.reset();
+        g_trustGraph.reset();
+        
+        return false;
+    }
+}
+
+void ShutdownTrustPropagation()
+{
+    LogPrintf("CVM: Shutting down trust propagation components...\n");
+    
+    // Shutdown in reverse order of initialization
+    if (g_clusterUpdateHandler) {
+        // Save any pending state
+        g_clusterUpdateHandler->SaveKnownMemberships();
+        g_clusterUpdateHandler.reset();
+        LogPrint(BCLog::CVM, "CVM: ClusterUpdateHandler shutdown\n");
+    }
+    
+    if (g_trustPropagator) {
+        g_trustPropagator.reset();
+        LogPrint(BCLog::CVM, "CVM: TrustPropagator shutdown\n");
+    }
+    
+    if (g_walletClusterer) {
+        g_walletClusterer->SaveClusters();
+        g_walletClusterer.reset();
+        LogPrint(BCLog::CVM, "CVM: WalletClusterer shutdown\n");
+    }
+    
+    if (g_trustGraph) {
+        g_trustGraph.reset();
+        LogPrint(BCLog::CVM, "CVM: TrustGraph shutdown\n");
+    }
+    
+    LogPrintf("CVM: Trust propagation components shutdown complete\n");
 }
 
 } // namespace CVM

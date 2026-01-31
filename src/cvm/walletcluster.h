@@ -70,63 +70,64 @@ struct WalletClusterInfo {
 class WalletClusterer {
 public:
     explicit WalletClusterer(CVMDatabase& db);
+    virtual ~WalletClusterer() = default;
     
     // Core Clustering Functions
     /**
      * Analyze all transactions and build address clusters
      * This should be called periodically or when significant new transactions occur
      */
-    void BuildClusters();
+    virtual void BuildClusters();
     
     /**
      * Find which cluster an address belongs to
      * Returns cluster_id (primary address of cluster) or null if address is alone
      */
-    uint160 GetClusterForAddress(const uint160& address);
+    virtual uint160 GetClusterForAddress(const uint160& address);
     
     /**
      * Get all addresses in the same cluster as given address
      */
-    std::set<uint160> GetClusterMembers(const uint160& address);
+    virtual std::set<uint160> GetClusterMembers(const uint160& address);
     
     /**
      * Get complete cluster information
      */
-    WalletClusterInfo GetClusterInfo(const uint160& cluster_id);
+    virtual WalletClusterInfo GetClusterInfo(const uint160& cluster_id);
     
     /**
      * Manually link two addresses as belonging to same wallet
      * Useful for user-provided information or external chain analysis
      */
-    void LinkAddresses(const uint160& addr1, const uint160& addr2);
+    virtual void LinkAddresses(const uint160& addr1, const uint160& addr2);
     
     /**
      * Calculate shared reputation for a cluster
      * Strategy: Use MINIMUM reputation (most conservative)
      * Alternative: Could use weighted average, but minimum is safer
      */
-    double CalculateClusterReputation(const uint160& cluster_id);
+    virtual double CalculateClusterReputation(const uint160& cluster_id);
     
     /**
      * Get effective reputation for an address (considering cluster)
      * This is what should be used instead of individual address reputation
      */
-    double GetEffectiveReputation(const uint160& address);
+    virtual double GetEffectiveReputation(const uint160& address);
     
     /**
      * Get effective HAT v2 score for an address (considering cluster)
      */
-    double GetEffectiveHATScore(const uint160& address);
+    virtual double GetEffectiveHATScore(const uint160& address);
     
     // Statistics
-    uint32_t GetTotalClusters() const;
-    uint32_t GetLargestClusterSize() const;
-    std::map<uint160, uint32_t> GetClusterSizeMap() const;
+    virtual uint32_t GetTotalClusters() const;
+    virtual uint32_t GetLargestClusterSize() const;
+    virtual std::map<uint160, uint32_t> GetClusterSizeMap() const;
     
     // Cache management
-    void InvalidateCache();
-    void SaveClusters();
-    void LoadClusters();
+    virtual void InvalidateCache();
+    virtual void SaveClusters();
+    virtual void LoadClusters();
     
 private:
     CVMDatabase& database;
