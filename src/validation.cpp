@@ -2508,12 +2508,12 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
                         JSONRPCRequest request;
                         CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
                         if (!EnsureWalletIsAvailable(pwallet, true)) {
-                            LogPrintf("Rialto: ERROR: Can't check if nick %s is local; wallet unavailable\n", nickname);
+                            LogPrint(BCLog::RIALTO, "Rialto: ERROR: Can't check if nick %s is local; wallet unavailable\n", nickname);
                             continue;
                         }
 
                         if (pwallet->IsLocked()) {
-                            LogPrintf("Rialto: ERROR: Can't check if nick %s is local; wallet locked\n", nickname);
+                            LogPrint(BCLog::RIALTO, "Rialto: ERROR: Can't check if nick %s is local; wallet locked\n", nickname);
                             continue;
                         }
 
@@ -3471,7 +3471,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             }
 
             if (LogAcceptCategory(BCLog::ALL)) { 
-                LogPrintf("ContextualCheckBlockHeader: block.nVersion=0x%08x, raw block.GetPoWType()=%d, effectivePowTypeForHashing=%d (%s)\\n",
+                LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: block.nVersion=0x%08x, raw block.GetPoWType()=%d, effectivePowTypeForHashing=%d (%s)\\n",
                     block.nVersion, static_cast<int>(block.GetPoWType()), static_cast<int>(effectivePowType),
                     effective_pow_type_name_for_log
                 );
@@ -3497,15 +3497,15 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
                         prev_pow_type_name_for_log = "PREV_POW_TYPE_OUT_OF_BOUNDS";
                     }
                 }
-                LogPrintf("ContextualCheckBlockHeader: SHA256 PRE-CHECK (using effectiveType): block.nBits=0x%08x, expected_nBits (from LWMA)=0x%08x. MismatchFound=%s. pindexPrev height %d, PrevPoWType %s\\n",
+                LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 PRE-CHECK (using effectiveType): block.nBits=0x%08x, expected_nBits (from LWMA)=0x%08x. MismatchFound=%s. pindexPrev height %d, PrevPoWType %s\\n",
                     block.nBits, expected_nBits, MismatchFound ? "true" : "false",
                     pindexPrev ? pindexPrev->nHeight : -1,
                     prev_pow_type_name_for_log
                 );
                 if (MismatchFound) {
-                    LogPrintf("ContextualCheckBlockHeader: SHA256 MISMATCH CONFIRMED (block.nBits 0x%08x != expected_nBits 0x%08x)\\n", block.nBits, expected_nBits);
+                    LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 MISMATCH CONFIRMED (block.nBits 0x%08x != expected_nBits 0x%08x)\\n", block.nBits, expected_nBits);
                 } else {
-                    LogPrintf("ContextualCheckBlockHeader: SHA256 nBits OK (MismatchFound=false). Proceeding with other contextual checks.\\n");
+                    LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 nBits OK (MismatchFound=false). Proceeding with other contextual checks.\\n");
                 }
             }
 
@@ -3560,7 +3560,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             // However, if raw bits are problematic despite effective type being okay, it could be an issue.
             // For now, if effectivePowType passed its NUM_BLOCK_TYPES check, we trust that for consensus.
             // This log helps if we still see issues related to raw PoW type bits.
-            LogPrintf("ContextualCheckBlockHeader: Warning - Raw PoW type bits (0x%02x) from nVersion (0x%08x) are >= NUM_BLOCK_TYPES (%d), but effectivePoWType was %d and passed its check.\n",
+            LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: Warning - Raw PoW type bits (0x%02x) from nVersion (0x%08x) are >= NUM_BLOCK_TYPES (%d), but effectivePoWType was %d and passed its check.\n",
                       rawBlockPoWType, block.nVersion, NUM_BLOCK_TYPES, static_cast<int>(block.GetEffectivePoWTypeForHashing(consensusParams)));
             // Do not return invalid here if the effectivePoWType was deemed valid for consensus (e.g. SHA256)
             // return state.Invalid(false, REJECT_INVALID, "bad-blocktype-raw", strprintf("unrecognised raw blocktype bits =0x%02x in nVersion 0x%08x", rawBlockPoWType, block.nVersion));
@@ -3569,7 +3569,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
 
     // Cascoin: Log before returning true if all checks passed so far for SHA256 (MinotaurX enabled path)
     if (block.GetPoWType() == POW_TYPE_SHA256 && !block.IsHiveMined(consensusParams) && IsMinotaurXEnabled(pindexPrev, consensusParams) ) {
-         LogPrintf("ContextualCheckBlockHeader: SHA256 All contextual checks PASSED. Returning true.\\n");
+         LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 All contextual checks PASSED. Returning true.\\n");
     }
 
     return true; // All good
@@ -3907,20 +3907,20 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
     if (!CheckBlock(block, state, chainparams.GetConsensus(), fCheckPOW, fCheckMerkleRoot)) {
         // If CheckBlock fails, state will be set with the reason.
         // For fCheckPOW=true, a failure here is likely due to CheckProofOfWork returning false.
-        LogPrintf("TestBlockValidity: CheckBlock FAILED. Reason: %s. (If fCheckPOW=true, likely PoW failure: high-hash or bad-algo-proof etc.)\n",
+        LogPrint(BCLog::LEVELDB, "TestBlockValidity: CheckBlock FAILED. Reason: %s. (If fCheckPOW=true, likely PoW failure: high-hash or bad-algo-proof etc.)\n",
             FormatStateMessage(state).c_str());
         return error("%s: CheckBlock failed: %s", __func__, FormatStateMessage(state));
     }
-    LogPrintf("TestBlockValidity: CheckBlock PASSED.\n");
+    LogPrint(BCLog::LEVELDB, "TestBlockValidity: CheckBlock PASSED.\n");
 
     // Contextual checks (including the detailed nBits check in ContextualCheckBlockHeader for MinotaurX)
     // This function (ContextualCheckBlock) internally calls ContextualCheckBlockHeader.
     if (!ContextualCheckBlock(block, state, chainparams.GetConsensus(), pindexPrev)) {
-        LogPrintf("TestBlockValidity: ContextualCheckBlock FAILED. Reason: %s.\n",
+        LogPrint(BCLog::LEVELDB, "TestBlockValidity: ContextualCheckBlock FAILED. Reason: %s.\n",
             FormatStateMessage(state).c_str());
         return error("%s: ContextualCheckBlock failed: %s", __func__, FormatStateMessage(state));
     }
-    LogPrintf("TestBlockValidity: ContextualCheckBlock PASSED.\n");
+    LogPrint(BCLog::LEVELDB, "TestBlockValidity: ContextualCheckBlock PASSED.\n");
     
     // The problematic line should be removed by this edit if it exists below.
     // if (fCheckpointsEnabled && !CheckAgainstCheckpoint(pindexPrev, block.GetHash(), chainparams))

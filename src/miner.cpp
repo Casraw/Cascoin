@@ -305,7 +305,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
             count++;
         }
         if (!foundPrevShaBlock) {
-            LogPrintf("CreateNewBlock: About to TestBlockValidity for a new SHA256 block. No prior SHA256 blocks found. pindexPrev height %d, type %s. Block nBits: %08x, Expected PoW limit for SHA256: %08x\n",
+            LogPrint(BCLog::MINOTAURX, "CreateNewBlock: About to TestBlockValidity for a new SHA256 block. No prior SHA256 blocks found. pindexPrev height %d, type %s. Block nBits: %08x, Expected PoW limit for SHA256: %08x\n",
                 pindexPrev->nHeight,
                 pindexPrev->GetBlockHeader().GetPoWTypeName(),
                 pblock->nBits,
@@ -802,13 +802,13 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
             hiveBlocksAtTip++;
         }
         if (hiveBlocksAtTip >= consensusParams.maxConsecutiveHiveBlocks) {
-            LogPrintf("BusyBees: Skipping hive check (max Hive blocks without a POW block reached)\n");
+            LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (max Hive blocks without a POW block reached)\n");
             return false;
         }
     } else {
         // Check previous block wasn't hivemined
         if (pindexPrev->GetBlockHeader().IsHiveMined(consensusParams)) {
-            LogPrintf("BusyBees: Skipping hive check (Hive block must follow a POW block)\n");
+            LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (Hive block must follow a POW block)\n");
             return false;
         }
     }
@@ -834,7 +834,7 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     // Find beeHashTarget
     arith_uint256 beeHashTarget;
     beeHashTarget.SetCompact(GetNextHiveWorkRequired(pindexPrev, consensusParams));
-    LogPrintf("BusyBees: beeHashTarget for current attempt = %s\n", beeHashTarget.ToString());
+    LogPrint(BCLog::HIVE, "BusyBees: beeHashTarget for current attempt = %s\n", beeHashTarget.ToString());
 
     // Grab all BCTs from wallet that are mature and not yet expired.
     // We don't need to scan for rewards here as we only need the txid and honey address.

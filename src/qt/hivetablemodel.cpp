@@ -221,7 +221,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             
         } catch (const std::exception& e) {
             QMetaObject::invokeMethod(this, [=]() {
-                LogPrintf("Error updating BCTs: %s\n", e.what());
+                LogPrint(BCLog::QT, "Error updating BCTs: %s\n", e.what());
                 // Reset update flag on error too
                 updateInProgress = false;
             }, Qt::QueuedConnection);
