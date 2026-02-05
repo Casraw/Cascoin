@@ -60,7 +60,8 @@ steps:
           --prefix=/ \
           --disable-tests \
           --disable-bench \
-          --with-incompatible-bdb
+          --with-incompatible-bdb \
+          --enable-quantum
       - cd /woodpecker/src/codeberg.org/Cascoin/Cascoin && make -j$(nproc)
       
       # Binaries strippen

@@ -729,7 +729,8 @@ jobs:
             --prefix=/ \
             --disable-tests \
             --disable-bench \
-            --with-incompatible-bdb
+            --with-incompatible-bdb \
+            --enable-quantum
           echo "=== Configure completed ==="
           tail -20 config.log || true
       - name: Build (Windows ${HOST})

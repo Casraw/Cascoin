@@ -1,5 +1,4 @@
-packages:=boost openssl libevent zeromq evmc intx evmone
-quantum_packages:=liboqs
+packages:=boost openssl libevent zeromq evmc intx evmone liboqs
 native_packages := native_ccache
 
 qt_native_packages = native_qt native_protobuf

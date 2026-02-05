@@ -63,6 +63,20 @@ The following can be set when running make: make FOO=bar
     BUILD_ID_SALT: Optional salt to use when generating build package ids
     JOBS: Number of parallel jobs for internal package builds (default: 4)
 
+### Post-Quantum Cryptography (liboqs)
+
+The depends system automatically builds liboqs (Open Quantum Safe) for post-quantum
+cryptography support. This enables Falcon-512 and Dilithium-2 signature schemes.
+
+To enable quantum features when configuring Cascoin:
+
+    CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure --enable-quantum
+
+For Linux cross-compilation:
+
+    make HOST=x86_64-pc-linux-gnu JOBS=$(nproc)
+    CONFIG_SITE=$PWD/depends/x86_64-pc-linux-gnu/share/config.site ./configure --enable-quantum
+
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
 options will be passed to cascoin's configure. In this case, `--disable-wallet`.
 
