@@ -705,8 +705,15 @@ cascoind_LDADD = \
 
 cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
 
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+cascoind_LDADD += -lbcrypt
+endif
+
 if ENABLE_EVMC
-cascoind_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
+# Use EVMC_LIBS which is set correctly by configure for each platform
+# For Windows cross-compilation, configure adds -levmone-standalone
+cascoind_LDADD += $(EVMC_LIBS) $(EVMONE_PRECOMPILES_LIBS)
 endif
 
 # bitcoin-cli binary #
@@ -734,7 +741,7 @@ endif
 #
 
 # bitcoin-tx binary #
-cascoin_tx_SOURCES = bitcoin-tx.cpp
+cascoin_tx_SOURCES = bitcoin-tx.cpp script/quantum_registry_stub.cpp
 cascoin_tx_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 cascoin_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 cascoin_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
@@ -762,7 +769,11 @@ endif
 # bitcoinconsensus library #
 if BUILD_BITCOIN_LIBS
 include_HEADERS = script/bitcoinconsensus.h
-libbitcoinconsensus_la_SOURCES = $(crypto_libbitcoin_crypto_a_SOURCES) $(libbitcoin_consensus_a_SOURCES)
+libbitcoinconsensus_la_SOURCES = $(crypto_libbitcoin_crypto_a_SOURCES) $(libbitcoin_consensus_a_SOURCES) script/quantum_registry_stub.cpp
+
+if ENABLE_QUANTUM
+libbitcoinconsensus_la_SOURCES += crypto/quantum/falcon.cpp crypto/quantum/falcon.h
+endif
 
 if GLIBC_BACK_COMPAT
   libbitcoinconsensus_la_SOURCES += compat/glibc_compat.cpp
@@ -774,7 +785,12 @@ libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
 if ENABLE_EVMC
 libbitcoinconsensus_la_LIBADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
 endif
-libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
+
+if ENABLE_QUANTUM
+libbitcoinconsensus_la_LIBADD += $(LIBOQS_LIBS)
+endif
+
+libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS) $(LIBOQS_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 endif

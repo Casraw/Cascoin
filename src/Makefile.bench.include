@@ -56,6 +56,10 @@ bench_bench_cascoin_LDADD += $(LIBBITCOIN_WALLET) $(LIBBITCOIN_CRYPTO)
 endif
 
 bench_bench_cascoin_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+bench_bench_cascoin_LDADD += -lbcrypt
+endif
 bench_bench_cascoin_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
 
 CLEAN_BITCOIN_BENCH = bench/*.gcda bench/*.gcno $(GENERATED_BENCH_FILES)

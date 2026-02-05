@@ -81,6 +81,8 @@ CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure \
   --disable-bench \
   --with-gui=qt6 \
   --with-incompatible-bdb
+  --enable-quantum
+  --enable-cvm
 
 make -j$(nproc)
 ```

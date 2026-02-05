@@ -1098,8 +1098,9 @@ if test "x$use_evmc" = "xyes"; then
       # Check if we're cross-compiling and just verify headers exist
       if test "x$cross_compiling" = "xyes"; then
         AC_CHECK_HEADER([evmone/evmone.h], [
-          EVMC_LIBS="-levmc-loader"
-          EVMONE_LIBS="-levmone -levmc-loader -levmc-instructions"
+          # For Windows cross-compilation, libevmone-standalone contains ethash_keccak256
+          EVMC_LIBS="-levmone -levmone-standalone -levmc-loader -levmc-instructions"
+          EVMONE_LIBS=""
           have_evmc=yes
           have_evmone=yes
         ], [

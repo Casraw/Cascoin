@@ -655,7 +655,7 @@ private:
      * @brief Get current timestamp
      * @return Unix timestamp in seconds
      */
-    static uint64_t GetCurrentTime();
+    static uint64_t GetCurrentTimeSeconds();
 
     /**
      * @brief Calculate the decryption threshold

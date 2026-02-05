@@ -45,7 +45,7 @@ bool L2Faucet::IsEnabled()
     return (networkId == "test" || networkId == "regtest");
 }
 
-uint64_t L2Faucet::GetCurrentTime(uint64_t providedTime)
+uint64_t L2Faucet::GetCurrentTimeImpl(uint64_t providedTime)
 {
     if (providedTime > 0) {
         return providedTime;
@@ -71,7 +71,7 @@ bool L2Faucet::CanRequest(const uint160& address, uint64_t currentTime) const
         return true;
     }
     
-    uint64_t now = GetCurrentTime(currentTime);
+    uint64_t now = GetCurrentTimeImpl(currentTime);
     uint64_t lastTime = it->second;
     
     return (now >= lastTime + COOLDOWN_SECONDS);
@@ -89,7 +89,7 @@ uint64_t L2Faucet::GetCooldownRemaining(const uint160& address, uint64_t current
         return 0;
     }
     
-    uint64_t now = GetCurrentTime(currentTime);
+    uint64_t now = GetCurrentTimeImpl(currentTime);
     uint64_t lastTime = it->second;
     uint64_t cooldownEnd = lastTime + COOLDOWN_SECONDS;
     
@@ -125,7 +125,7 @@ FaucetResult L2Faucet::RequestTokens(
     
     LOCK(cs_faucet_);
     
-    uint64_t currentTime = GetCurrentTime(0);
+    uint64_t currentTime = GetCurrentTimeImpl(0);
     
     // Requirement 5.3: Check cooldown
     auto it = lastRequest_.find(recipient);

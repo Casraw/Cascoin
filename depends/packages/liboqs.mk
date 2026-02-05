@@ -9,7 +9,7 @@ define $(package)_set_vars
   $(package)_config_opts+=-DBUILD_SHARED_LIBS=OFF
   $(package)_config_opts+=-DOQS_BUILD_ONLY_LIB=ON
   $(package)_config_opts+=-DOQS_USE_OPENSSL=OFF
-  $(package)_config_opts+=-DOQS_MINIMAL_BUILD="OQS_ENABLE_SIG_falcon_512;OQS_ENABLE_SIG_dilithium_2"
+  $(package)_config_opts+=-DOQS_MINIMAL_BUILD="SIG_falcon_512;SIG_dilithium_2"
   $(package)_config_opts+=-DOQS_DIST_BUILD=ON
   $(package)_config_opts+=-DCMAKE_BUILD_TYPE=Release
   $(package)_config_opts+=-DOQS_PERMIT_UNSUPPORTED_ARCHITECTURE=ON

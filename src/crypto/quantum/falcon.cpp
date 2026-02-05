@@ -4,7 +4,15 @@
 
 #include <crypto/quantum/falcon.h>
 
+// For consensus library builds (BUILD_BITCOIN_INTERNAL), we don't have access
+// to the full logging infrastructure. Use a no-op macro instead.
+#ifdef BUILD_BITCOIN_INTERNAL
+// Consensus library build - no logging available
+#define QUANTUM_LOG(...)
+#else
 #include <util.h>
+#define QUANTUM_LOG LogPrintf
+#endif
 
 #ifdef ENABLE_QUANTUM
 #include <oqs/oqs.h>
@@ -31,9 +39,9 @@ void PQC_Start()
     OQS_init();
 
     g_pqc_initialized.store(true);
-    LogPrintf("Post-quantum cryptography subsystem initialized (FALCON-512)\n");
+    QUANTUM_LOG("Post-quantum cryptography subsystem initialized (FALCON-512)\n");
 #else
-    LogPrintf("Post-quantum cryptography support not compiled in\n");
+    QUANTUM_LOG("Post-quantum cryptography support not compiled in\n");
 #endif
 }
 
@@ -49,7 +57,7 @@ void PQC_Stop()
     // Individual signature objects are cleaned up when destroyed
 
     g_pqc_initialized.store(false);
-    LogPrintf("Post-quantum cryptography subsystem shutdown\n");
+    QUANTUM_LOG("Post-quantum cryptography subsystem shutdown\n");
 #endif
 }
 
@@ -58,7 +66,7 @@ bool PQC_InitSanityCheck()
 #ifdef ENABLE_QUANTUM
     // Check if FALCON-512 is available
     if (!OQS_SIG_alg_is_enabled(OQS_SIG_alg_falcon_512)) {
-        LogPrintf("ERROR: FALCON-512 algorithm not available in liboqs\n");
+        QUANTUM_LOG("ERROR: FALCON-512 algorithm not available in liboqs\n");
         return false;
     }
 
@@ -66,7 +74,7 @@ bool PQC_InitSanityCheck()
     std::vector<unsigned char> privkey, pubkey, signature;
     
     if (!GenerateKeyPair(privkey, pubkey)) {
-        LogPrintf("ERROR: FALCON-512 key generation failed during sanity check\n");
+        QUANTUM_LOG("ERROR: FALCON-512 key generation failed during sanity check\n");
         return false;
     }
 
@@ -75,12 +83,12 @@ bool PQC_InitSanityCheck()
     const size_t testMsgLen = sizeof(testMsg) - 1;
 
     if (!Sign(privkey, testMsg, testMsgLen, signature)) {
-        LogPrintf("ERROR: FALCON-512 signing failed during sanity check\n");
+        QUANTUM_LOG("ERROR: FALCON-512 signing failed during sanity check\n");
         return false;
     }
 
     if (!Verify(pubkey, testMsg, testMsgLen, signature)) {
-        LogPrintf("ERROR: FALCON-512 verification failed during sanity check\n");
+        QUANTUM_LOG("ERROR: FALCON-512 verification failed during sanity check\n");
         return false;
     }
 
@@ -88,11 +96,11 @@ bool PQC_InitSanityCheck()
     unsigned char tamperedMsg[] = "Cascoin PQC sanity check";
     tamperedMsg[0] = 'X';
     if (Verify(pubkey, tamperedMsg, testMsgLen, signature)) {
-        LogPrintf("ERROR: FALCON-512 verification should have failed for tampered message\n");
+        QUANTUM_LOG("ERROR: FALCON-512 verification should have failed for tampered message\n");
         return false;
     }
 
-    LogPrintf("Post-quantum cryptography sanity check passed\n");
+    QUANTUM_LOG("Post-quantum cryptography sanity check passed\n");
     return true;
 #else
     // If quantum support is not compiled in, sanity check passes trivially
@@ -107,20 +115,20 @@ bool GenerateKeyPair(
 #ifdef ENABLE_QUANTUM
     OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_falcon_512);
     if (sig == nullptr) {
-        LogPrintf("ERROR: Failed to create FALCON-512 signature object\n");
+        QUANTUM_LOG("ERROR: Failed to create FALCON-512 signature object\n");
         return false;
     }
 
     // Verify expected key sizes match FALCON-512 constants
     // This ensures liboqs is configured correctly for FALCON-512
     if (sig->length_secret_key != FALCON512_PRIVATE_KEY_SIZE) {
-        LogPrintf("ERROR: liboqs FALCON-512 private key size mismatch: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: liboqs FALCON-512 private key size mismatch: %zu (expected %zu)\n",
                   sig->length_secret_key, FALCON512_PRIVATE_KEY_SIZE);
         OQS_SIG_free(sig);
         return false;
     }
     if (sig->length_public_key != FALCON512_PUBLIC_KEY_SIZE) {
-        LogPrintf("ERROR: liboqs FALCON-512 public key size mismatch: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: liboqs FALCON-512 public key size mismatch: %zu (expected %zu)\n",
                   sig->length_public_key, FALCON512_PUBLIC_KEY_SIZE);
         OQS_SIG_free(sig);
         return false;
@@ -140,7 +148,7 @@ bool GenerateKeyPair(
     OQS_SIG_free(sig);
 
     if (status != OQS_SUCCESS) {
-        LogPrintf("ERROR: FALCON-512 key generation failed\n");
+        QUANTUM_LOG("ERROR: FALCON-512 key generation failed\n");
         privkey.clear();
         pubkey.clear();
         return false;
@@ -148,14 +156,14 @@ bool GenerateKeyPair(
 
     // Final validation: verify generated keys have correct sizes
     if (privkey.size() != FALCON512_PRIVATE_KEY_SIZE) {
-        LogPrintf("ERROR: Generated FALCON-512 private key has wrong size: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: Generated FALCON-512 private key has wrong size: %zu (expected %zu)\n",
                   privkey.size(), FALCON512_PRIVATE_KEY_SIZE);
         privkey.clear();
         pubkey.clear();
         return false;
     }
     if (pubkey.size() != FALCON512_PUBLIC_KEY_SIZE) {
-        LogPrintf("ERROR: Generated FALCON-512 public key has wrong size: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: Generated FALCON-512 public key has wrong size: %zu (expected %zu)\n",
                   pubkey.size(), FALCON512_PUBLIC_KEY_SIZE);
         privkey.clear();
         pubkey.clear();
@@ -166,7 +174,7 @@ bool GenerateKeyPair(
 #else
     (void)privkey;
     (void)pubkey;
-    LogPrintf("ERROR: Post-quantum cryptography support not compiled in\n");
+    QUANTUM_LOG("ERROR: Post-quantum cryptography support not compiled in\n");
     return false;
 #endif
 }
@@ -179,14 +187,14 @@ bool Sign(
 {
 #ifdef ENABLE_QUANTUM
     if (privkey.size() != FALCON512_PRIVATE_KEY_SIZE) {
-        LogPrintf("ERROR: Invalid FALCON-512 private key size: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: Invalid FALCON-512 private key size: %zu (expected %zu)\n",
                   privkey.size(), FALCON512_PRIVATE_KEY_SIZE);
         return false;
     }
 
     OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_falcon_512);
     if (sig == nullptr) {
-        LogPrintf("ERROR: Failed to create FALCON-512 signature object\n");
+        QUANTUM_LOG("ERROR: Failed to create FALCON-512 signature object\n");
         return false;
     }
 
@@ -203,7 +211,7 @@ bool Sign(
     OQS_SIG_free(sig);
 
     if (status != OQS_SUCCESS) {
-        LogPrintf("ERROR: FALCON-512 signing failed\n");
+        QUANTUM_LOG("ERROR: FALCON-512 signing failed\n");
         signature.clear();
         return false;
     }
@@ -216,7 +224,7 @@ bool Sign(
     // We use a reasonable upper bound that allows for the non-padded variant
     static constexpr size_t FALCON512_ABSOLUTE_MAX_SIZE = 752;
     if (sigLen > FALCON512_ABSOLUTE_MAX_SIZE) {
-        LogPrintf("ERROR: FALCON-512 signature exceeds maximum size: %zu (max %zu)\n",
+        QUANTUM_LOG("ERROR: FALCON-512 signature exceeds maximum size: %zu (max %zu)\n",
                   sigLen, FALCON512_ABSOLUTE_MAX_SIZE);
         signature.clear();
         return false;
@@ -224,7 +232,7 @@ bool Sign(
 
     // Verify the generated signature is in canonical form (Requirement 9.8)
     if (!IsCanonicalSignature(signature)) {
-        LogPrintf("ERROR: FALCON-512 generated non-canonical signature\n");
+        QUANTUM_LOG("ERROR: FALCON-512 generated non-canonical signature\n");
         signature.clear();
         return false;
     }
@@ -235,7 +243,7 @@ bool Sign(
     (void)message;
     (void)messageLen;
     (void)signature;
-    LogPrintf("ERROR: Post-quantum cryptography support not compiled in\n");
+    QUANTUM_LOG("ERROR: Post-quantum cryptography support not compiled in\n");
     return false;
 #endif
 }
@@ -249,7 +257,7 @@ bool Verify(
 #ifdef ENABLE_QUANTUM
     // Validate public key size (Requirement 2.6: exactly 897 bytes)
     if (pubkey.size() != FALCON512_PUBLIC_KEY_SIZE) {
-        LogPrintf("ERROR: Invalid FALCON-512 public key size: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: Invalid FALCON-512 public key size: %zu (expected %zu)\n",
                   pubkey.size(), FALCON512_PUBLIC_KEY_SIZE);
         return false;
     }
@@ -258,30 +266,30 @@ bool Verify(
     // FALCON-512 (non-padded) signatures can be up to 752 bytes
     static constexpr size_t FALCON512_ABSOLUTE_MAX_SIZE = 752;
     if (signature.size() > FALCON512_ABSOLUTE_MAX_SIZE) {
-        LogPrintf("ERROR: FALCON-512 signature too large: %zu (max %zu)\n",
+        QUANTUM_LOG("ERROR: FALCON-512 signature too large: %zu (max %zu)\n",
                   signature.size(), FALCON512_ABSOLUTE_MAX_SIZE);
         return false;
     }
 
     // Check signature is in canonical form to prevent malleability (Requirement 9.8, 9.9)
     if (!IsCanonicalSignature(signature)) {
-        LogPrintf("ERROR: FALCON-512 signature is not in canonical form\n");
+        QUANTUM_LOG("ERROR: FALCON-512 signature is not in canonical form\n");
         return false;
     }
 
     OQS_SIG* sig = OQS_SIG_new(OQS_SIG_alg_falcon_512);
     if (sig == nullptr) {
-        LogPrintf("ERROR: Failed to create FALCON-512 signature object\n");
+        QUANTUM_LOG("ERROR: Failed to create FALCON-512 signature object\n");
         return false;
     }
 
     // Verify the signature using liboqs OQS_SIG_verify()
-    LogPrintf("DEBUG: Calling OQS_SIG_verify with pubkey size=%zu, message size=%zu, sig size=%zu\n",
+    QUANTUM_LOG("DEBUG: Calling OQS_SIG_verify with pubkey size=%zu, message size=%zu, sig size=%zu\n",
               pubkey.size(), messageLen, signature.size());
     OQS_STATUS status = OQS_SIG_verify(sig, message, messageLen,
                                         signature.data(), signature.size(),
                                         pubkey.data());
-    LogPrintf("DEBUG: OQS_SIG_verify returned status=%d (SUCCESS=%d)\n", status, OQS_SUCCESS);
+    QUANTUM_LOG("DEBUG: OQS_SIG_verify returned status=%d (SUCCESS=%d)\n", status, OQS_SUCCESS);
 
     OQS_SIG_free(sig);
 
@@ -291,7 +299,7 @@ bool Verify(
     (void)message;
     (void)messageLen;
     (void)signature;
-    LogPrintf("ERROR: Post-quantum cryptography support not compiled in\n");
+    QUANTUM_LOG("ERROR: Post-quantum cryptography support not compiled in\n");
     return false;
 #endif
 }
@@ -362,7 +370,7 @@ bool DerivePublicKey(
 {
 #ifdef ENABLE_QUANTUM
     if (privkey.size() != FALCON512_PRIVATE_KEY_SIZE) {
-        LogPrintf("ERROR: Invalid FALCON-512 private key size: %zu (expected %zu)\n",
+        QUANTUM_LOG("ERROR: Invalid FALCON-512 private key size: %zu (expected %zu)\n",
                   privkey.size(), FALCON512_PRIVATE_KEY_SIZE);
         return false;
     }
@@ -393,7 +401,7 @@ bool DerivePublicKey(
     static constexpr size_t FALCON512_PUBKEY_OFFSET = 384;
     
     if (privkey.size() < FALCON512_PUBKEY_OFFSET + FALCON512_PUBLIC_KEY_SIZE) {
-        LogPrintf("ERROR: FALCON-512 private key too small for public key extraction\n");
+        QUANTUM_LOG("ERROR: FALCON-512 private key too small for public key extraction\n");
         return false;
     }
     
@@ -406,7 +414,7 @@ bool DerivePublicKey(
 #else
     (void)privkey;
     (void)pubkey;
-    LogPrintf("ERROR: Post-quantum cryptography support not compiled in\n");
+    QUANTUM_LOG("ERROR: Post-quantum cryptography support not compiled in\n");
     return false;
 #endif
 }

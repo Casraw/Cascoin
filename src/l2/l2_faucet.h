@@ -294,7 +294,7 @@ private:
      * @param providedTime Provided time (0 = use system time)
      * @return Current timestamp in seconds
      */
-    static uint64_t GetCurrentTime(uint64_t providedTime);
+    static uint64_t GetCurrentTimeImpl(uint64_t providedTime);
 
     /**
      * @brief Record a distribution event

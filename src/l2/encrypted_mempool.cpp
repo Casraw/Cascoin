@@ -47,7 +47,7 @@ bool EncryptedMempool::SubmitEncryptedTx(const EncryptedTransaction& encTx)
     }
 
     // Check if expired
-    uint64_t currentTime = GetCurrentTime();
+    uint64_t currentTime = GetCurrentTimeSeconds();
     if (encTx.IsExpired(currentTime)) {
         LogPrint(BCLog::L2, "EncryptedMempool: Transaction expired\n");
         return false;
@@ -93,7 +93,7 @@ std::vector<EncryptedTransaction> EncryptedMempool::GetTransactionsForBlock(
     LOCK(cs_mempool_);
 
     std::vector<EncryptedTransaction> result;
-    uint64_t currentTime = GetCurrentTime();
+    uint64_t currentTime = GetCurrentTimeSeconds();
     uint64_t totalGas = 0;
 
     // Estimate gas per transaction (we don't know actual gas until decryption)
@@ -365,7 +365,7 @@ bool EncryptedMempool::CheckRateLimit(const uint160& address) const
         return true;  // No limit set yet
     }
 
-    return it->second.CanSubmit(GetCurrentTime());
+    return it->second.CanSubmit(GetCurrentTimeSeconds());
 }
 
 void EncryptedMempool::UpdateRateLimitForReputation(const uint160& address, uint32_t hatScore)
@@ -436,7 +436,7 @@ EncryptedTransaction EncryptedMempool::EncryptTransaction(
     encTx.senderAddress = tx.from;
     encTx.nonce = tx.nonce;
     encTx.maxFee = tx.GetMaxFee();
-    encTx.submissionTime = GetCurrentTime();
+    encTx.submissionTime = GetCurrentTimeSeconds();
     encTx.schemeVersion = 1;
     encTx.l2ChainId = tx.l2ChainId;
     
@@ -494,7 +494,7 @@ std::optional<std::vector<unsigned char>> EncryptedMempool::ThresholdDecrypt(
     return XorDecrypt(encryptedData, *recoveredKey, nonce);
 }
 
-uint64_t EncryptedMempool::GetCurrentTime()
+uint64_t EncryptedMempool::GetCurrentTimeSeconds()
 {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();

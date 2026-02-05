@@ -132,18 +132,3 @@ QuantumWitnessData ParseQuantumWitness(const std::vector<std::vector<unsigned ch
     return result;
 }
 
-/**
- * Lookup a public key from the global registry
- * 
- * This is a stub implementation for consensus-only builds.
- * The full implementation in quantum_registry.cpp will override this
- * when linking with libbitcoin_server.
- * 
- * Note: This function uses weak linkage so it can be overridden.
- */
-bool __attribute__((weak)) LookupQuantumPubKey(const uint256& hash, std::vector<unsigned char>& pubkey)
-{
-    // In consensus-only builds, the registry is not available
-    // Reference transactions (0x52) will fail validation
-    return false;
-}

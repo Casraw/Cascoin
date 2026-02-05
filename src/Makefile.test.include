@@ -150,6 +150,10 @@ test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_C
 test_test_cascoin_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+test_test_cascoin_LDADD += -lbcrypt
+endif
 test_test_cascoin_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ

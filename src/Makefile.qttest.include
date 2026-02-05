@@ -61,7 +61,18 @@ qt_test_test_cascoin_qt_LDADD += $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBIT
   $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(QT_DBUS_LIBS) $(QT_TEST_LIBS) $(QT_LIBS) \
   $(QR_LIBS) $(PROTOBUF_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(LIBSECP256K1) \
   $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+if TARGET_WINDOWS
+# Windows Qt6 linking: Order matters! Qt libraries first, then bundled dependencies, then Windows system libs
+qt_test_test_cascoin_qt_LDADD += \
+  -lQt6EntryPoint -lqwindows -lQt6DeviceDiscoverySupport -lQt6FbSupport \
+  -lQt6Gui -lQt6Core \
+  -lQt6BundledHarfbuzz -lQt6BundledPcre2 -lQt6BundledLibpng -lQt6BundledZLIB -lQt6BundledFreetype \
+  -ld3d9 -lruntimeobject -lshcore -lwtsapi32 -luxtheme -lsetupapi -ldwmapi -lcomdlg32 -loleaut32 -limm32 -lwinmm -lws2_32 -lole32 -luuid -ladvapi32 \
+  -lsecur32 -lversion -ldwrite -ldxgi -ld3d11 -ld3d12 -lauthz -lnetapi32 -luserenv -lsynchronization -lbcrypt
+qt_test_test_cascoin_qt_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(QT_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -L$(top_srcdir)/depends/x86_64-w64-mingw32/plugins/platforms
+else
 qt_test_test_cascoin_qt_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(QT_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
+endif
 qt_test_test_cascoin_qt_CXXFLAGS = $(AM_CXXFLAGS) $(QT_PIE_FLAGS)
 
 CLEAN_BITCOIN_QT_TEST = $(TEST_QT_MOC_CPP) qt/test/*.gcda qt/test/*.gcno

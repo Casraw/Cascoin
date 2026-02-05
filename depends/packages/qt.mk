@@ -298,13 +298,13 @@ define $(package)_postprocess_cmds
   mkdir -p native/bin && \
   cd native/bin && \
   for tool in moc rcc uic; do \
-    if [ -f ../../libexec/"$$$$tool" ] && [ ! -e "$$$$tool" ]; then \
-      ln -sf ../../libexec/"$$$$tool" "$$$$tool"; \
+    if [ -f ../libexec/"$$tool" ] && [ ! -e "$$tool" ]; then \
+      ln -sf ../libexec/"$$tool" "$$tool"; \
     fi; \
   done && \
   for tool in lrelease lconvert lupdate; do \
-    if [ -f ../../bin/"$$$$tool" ] && [ ! -e "$$$$tool" ]; then \
-      ln -sf ../../bin/"$$$$tool" "$$$$tool"; \
+    if [ -f ../../bin/"$$tool" ] && [ ! -e "$$tool" ]; then \
+      ln -sf ../../bin/"$$tool" "$$tool"; \
     fi; \
   done
 endef
