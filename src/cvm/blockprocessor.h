@@ -64,6 +64,25 @@ public:
         int height,
         CVMDatabase& db
     );
+    
+    /**
+     * Process cluster updates after CVM transactions
+     * 
+     * Detects new cluster members and triggers trust inheritance.
+     * Called after ProcessBlock() to handle wallet trust propagation.
+     * 
+     * @param block Block that was processed
+     * @param height Block height
+     * @param db CVM database
+     * @return Number of cluster updates processed
+     * 
+     * Requirements: 2.3, 2.4
+     */
+    static uint32_t ProcessClusterUpdates(
+        const CBlock& block,
+        int height,
+        CVMDatabase& db
+    );
 
 private:
     /**
@@ -187,25 +206,6 @@ private:
     static bool ValidateBond(
         const CTransaction& tx,
         CAmount expectedBond
-    );
-    
-    /**
-     * Process cluster updates after CVM transactions
-     * 
-     * Detects new cluster members and triggers trust inheritance.
-     * Called after ProcessBlock() to handle wallet trust propagation.
-     * 
-     * @param block Block that was processed
-     * @param height Block height
-     * @param db CVM database
-     * @return Number of cluster updates processed
-     * 
-     * Requirements: 2.3, 2.4
-     */
-    static uint32_t ProcessClusterUpdates(
-        const CBlock& block,
-        int height,
-        CVMDatabase& db
     );
 };
 
