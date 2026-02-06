@@ -15,11 +15,15 @@ on:
         required: false
         default: ''
 
+env:
+  SERVER_1: ${{ secrets.TESTNET_SERVER_1 }}
+  SERVER_2: ${{ secrets.TESTNET_SERVER_2 }}
+  SEED_SERVER: ${{ secrets.TESTNET_SEED_SERVER }}
+
 jobs:
   deploy-testnet:
     runs-on: default
     timeout-minutes: 15
-    # Bei workflow_run nur bei Erfolg deployen
     if: >
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -72,14 +76,14 @@ jobs:
           echo "Archiv gefunden: $ARCHIVE"
 
       # ────────────────────────────────────────────
-      # Server 1: 164.68.108.60
+      # Server 1
       # ────────────────────────────────────────────
-      - name: "Deploy: 164.68.108.60"
+      - name: "Deploy: ${{ env.SERVER_1 }}"
         run: |
           ARCHIVE="${{ steps.archive.outputs.archive }}"
-          scp "$ARCHIVE" root@164.68.108.60:/root/cascoin-test/deploy-update.tar.gz
+          scp "$ARCHIVE" root@${{ env.SERVER_1 }}:/root/cascoin-test/deploy-update.tar.gz
 
-          ssh root@164.68.108.60 bash -s << 'REMOTE'
+          ssh root@${{ env.SERVER_1 }} bash -s << 'REMOTE'
           set -e
           cd /root/cascoin-test
 
@@ -105,19 +109,19 @@ jobs:
           sleep 3
 
           pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 \
-            && echo "✓ Daemon läuft auf 164.68.108.60" \
+            && echo "✓ Daemon läuft" \
             || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
           REMOTE
 
       # ────────────────────────────────────────────
-      # Server 2: 173.212.243.215
+      # Server 2
       # ────────────────────────────────────────────
-      - name: "Deploy: 173.212.243.215"
+      - name: "Deploy: ${{ env.SERVER_2 }}"
         run: |
           ARCHIVE="${{ steps.archive.outputs.archive }}"
-          scp "$ARCHIVE" root@173.212.243.215:/root/cascoin-test/deploy-update.tar.gz
+          scp "$ARCHIVE" root@${{ env.SERVER_2 }}:/root/cascoin-test/deploy-update.tar.gz
 
-          ssh root@173.212.243.215 bash -s << 'REMOTE'
+          ssh root@${{ env.SERVER_2 }} bash -s << 'REMOTE'
           set -e
           cd /root/cascoin-test
 
@@ -143,24 +147,22 @@ jobs:
           sleep 3
 
           pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 \
-            && echo "✓ Daemon läuft auf 173.212.243.215" \
+            && echo "✓ Daemon läuft" \
             || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
           REMOTE
 
       # ────────────────────────────────────────────
-      # Server 3: seed.cascoin.net (Binaries direkt)
+      # Seed Server (Binaries direkt)
       # ────────────────────────────────────────────
-      - name: "Deploy: seed.cascoin.net"
+      - name: "Deploy: ${{ env.SEED_SERVER }}"
         run: |
           ARCHIVE="${{ steps.archive.outputs.archive }}"
 
-          # Lokal entpacken, nur Binaries hochladen
           rm -rf /tmp/cascoin-seed-deploy
           mkdir -p /tmp/cascoin-seed-deploy
           tar -xzf "$ARCHIVE" -C /tmp/cascoin-seed-deploy
 
-          # Staging-Ordner auf Server anlegen
-          ssh root@seed.cascoin.net "mkdir -p /root/testnetcascoin/deploy-staging"
+          ssh root@${{ env.SEED_SERVER }} "mkdir -p /root/testnetcascoin/deploy-staging"
 
           scp /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoind \
               /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-cli \
@@ -168,9 +170,9 @@ jobs:
               /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-qt \
               /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoind-wrapper \
               /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-qt-wrapper \
-              root@seed.cascoin.net:/root/testnetcascoin/deploy-staging/
+              root@${{ env.SEED_SERVER }}:/root/testnetcascoin/deploy-staging/
 
-          ssh root@seed.cascoin.net bash -s << 'REMOTE'
+          ssh root@${{ env.SEED_SERVER }} bash -s << 'REMOTE'
           set -e
           cd /root/testnetcascoin
 
@@ -199,7 +201,7 @@ jobs:
           sleep 3
 
           pgrep -f "/root/testnetcascoin/cascoind.*-testnet" > /dev/null 2>&1 \
-            && echo "✓ Daemon läuft auf seed.cascoin.net" \
+            && echo "✓ Daemon läuft" \
             || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
           REMOTE
 
@@ -212,7 +214,7 @@ jobs:
         run: |
           echo "=== Deployment Verifikation ==="
           FAILED=0
-          for host in 164.68.108.60 173.212.243.215 seed.cascoin.net; do
+          for host in "${{ env.SERVER_1 }}" "${{ env.SERVER_2 }}" "${{ env.SEED_SERVER }}"; do
             echo -n "$host: "
             if ssh root@$host "pgrep -af 'cascoind.*-testnet'" 2>/dev/null; then
               echo "  ✓"
