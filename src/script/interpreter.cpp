@@ -1495,7 +1495,13 @@ static bool VerifyWitnessV2Quantum(const CScriptWitness& witness, const std::vec
             
             uint256 pubkeyHash;
             CSHA256().Write(vchPubKey.data(), vchPubKey.size()).Finalize(pubkeyHash.begin());
-            if (memcmp(pubkeyHash.begin(), program.data(), 32) != 0) {
+            // The witness program is stored in big-endian (reversed during Bech32m encoding),
+            // but uint256/SHA256 output is little-endian. Reverse program bytes for comparison.
+            std::vector<unsigned char> programLE(32);
+            for (size_t i = 0; i < 32; i++) {
+                programLE[i] = program[31 - i];
+            }
+            if (memcmp(pubkeyHash.begin(), programLE.data(), 32) != 0) {
                 // Requirements: 5.5 - Address derivation mismatch
                 return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
             }
@@ -1557,7 +1563,13 @@ static bool VerifyWitnessV2Quantum(const CScriptWitness& witness, const std::vec
     
     uint256 pubkeyHash;
     CSHA256().Write(vchPubKey.data(), vchPubKey.size()).Finalize(pubkeyHash.begin());
-    if (memcmp(pubkeyHash.begin(), program.data(), 32) != 0) {
+    // The witness program is stored in big-endian (reversed during Bech32m encoding),
+    // but uint256/SHA256 output is little-endian. Reverse program bytes for comparison.
+    std::vector<unsigned char> programLE(32);
+    for (size_t i = 0; i < 32; i++) {
+        programLE[i] = program[31 - i];
+    }
+    if (memcmp(pubkeyHash.begin(), programLE.data(), 32) != 0) {
         return set_error(serror, SCRIPT_ERR_WITNESS_PROGRAM_MISMATCH);
     }
     

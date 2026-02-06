@@ -78,22 +78,22 @@ bool TransactionSignatureCreator::CreateQuantumSig(CScriptWitness& witness, cons
     }
     
     // Build the quantum witness stack
-    // Format: [marker + signature + pubkey_or_hash]
+    // Registry format: single stack item [marker + pubkey/hash + signature]
     witness.stack.clear();
     
     // Check if pubkey is already registered in the quantum registry
     // For now, always use registration format (0x51) with full pubkey
     // TODO: Check registry and use reference format (0x52) if registered
     
-    // Witness element 0: [marker(1) + signature(~666)]
+    // Single witness element: [marker(1) + pubkey(897) + signature(~666)]
     std::vector<unsigned char> witnessData;
     witnessData.push_back(0x51);  // Registration marker
+    // Full public key (897 bytes)
+    std::vector<unsigned char> pubkeyData(quantumPubKey.begin(), quantumPubKey.end());
+    witnessData.insert(witnessData.end(), pubkeyData.begin(), pubkeyData.end());
+    // Signature
     witnessData.insert(witnessData.end(), signature.begin(), signature.end());
     witness.stack.push_back(witnessData);
-    
-    // Witness element 1: Full public key (897 bytes)
-    std::vector<unsigned char> pubkeyData(quantumPubKey.begin(), quantumPubKey.end());
-    witness.stack.push_back(pubkeyData);
     
     LogPrintf("CreateQuantumSig: Created quantum witness with %d stack elements\n", witness.stack.size());
     return true;

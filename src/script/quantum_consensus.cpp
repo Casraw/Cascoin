@@ -70,8 +70,10 @@ QuantumWitnessData ParseQuantumWitness(const std::vector<std::vector<unsigned ch
         result.pubkey.assign(witnessData.begin() + 1, 
                              witnessData.begin() + 1 + QUANTUM_PUBKEY_SIZE);
         
-        // Compute the hash of the public key
-        result.pubkeyHash = Hash(result.pubkey.begin(), result.pubkey.end());
+        // Compute the hash of the public key (single SHA256, consistent with address derivation)
+        CSHA256 sha;
+        sha.Write(result.pubkey.data(), result.pubkey.size());
+        sha.Finalize(result.pubkeyHash.begin());
         
         // Extract the signature (remaining bytes after pubkey)
         result.signature.assign(witnessData.begin() + 1 + QUANTUM_PUBKEY_SIZE,
