@@ -10,8 +10,6 @@
 #include <script/script.h>
 #include <script/sign.h>
 #include <pubkey.h>
-#include <util.h>
-#include <utilstrencodings.h>
 
 
 typedef std::vector<unsigned char> valtype;
@@ -19,47 +17,47 @@ typedef std::vector<unsigned char> valtype;
 /**
  * Check if the keystore contains a quantum key matching the given witness program.
  * The witness program for quantum addresses is the SHA256 hash of the FALCON-512 public key.
- * 
+ *
+ * Compatibility note: Pre-endianness-fix transactions stored the witness program
+ * in big-endian (BE) byte order inside the script, while GetQuantumID() returns
+ * little-endian (LE) bytes (the native uint256 layout).  Post-fix transactions
+ * store LE directly.  To recognise both old and new UTXOs we compare against
+ * the program as-is (LE, new format) AND against its byte-reversed form (BE,
+ * legacy format).  This dual check can be removed after a testnet reset.
+ *
  * @param keystore The keystore to search
- * @param witnessProgram The 32-byte SHA256 hash from the witness program
+ * @param witnessProgram The 32-byte witness program extracted from the script
  * @return true if a matching quantum key is found
  */
 static bool HaveQuantumKey(const CKeyStore& keystore, const uint256& witnessProgram)
 {
-    // Get all keys from the keystore and check if any quantum key matches
+    // Pre-compute the byte-reversed witness program for legacy (BE) compatibility.
+    uint256 witnessProgramReversed;
+    const unsigned char* src = witnessProgram.begin();
+    unsigned char* dst = witnessProgramReversed.begin();
+    for (size_t i = 0; i < 32; i++) {
+        dst[i] = src[31 - i];
+    }
+
     std::set<CKeyID> keys = keystore.GetKeys();
-    LogPrintf("HaveQuantumKey: Checking %d keys for witness program %s\n", 
-             keys.size(), witnessProgram.GetHex());
-    LogPrintf("HaveQuantumKey: Witness program raw bytes: %s\n", 
-             HexStr(witnessProgram.begin(), witnessProgram.end()));
-    
-    int quantumKeysFound = 0;
+
     for (const CKeyID& keyID : keys) {
         CKey key;
-        if (keystore.GetKey(keyID, key)) {
-            // Check if this is a quantum key by checking the key type
-            if (key.IsQuantum()) {
-                quantumKeysFound++;
-                CPubKey pubkey = key.GetPubKey();
-                if (pubkey.IsValid() && pubkey.IsQuantum()) {
-                    uint256 quantumID = pubkey.GetQuantumID();
-                    LogPrintf("HaveQuantumKey: Found quantum key with ID %s (raw: %s)\n", 
-                             quantumID.GetHex(), HexStr(quantumID.begin(), quantumID.end()));
-                    LogPrintf("HaveQuantumKey: Looking for %s (raw: %s)\n", 
-                             witnessProgram.GetHex(), HexStr(witnessProgram.begin(), witnessProgram.end()));
-                    // Compare the quantum ID (SHA256 of pubkey) with the witness program
-                    if (quantumID == witnessProgram) {
-                        LogPrintf("HaveQuantumKey: MATCH FOUND!\n");
-                        return true;
-                    }
-                } else {
-                    LogPrintf("HaveQuantumKey: Quantum key found but GetPubKey returned invalid/non-quantum pubkey\n");
+        if (keystore.GetKey(keyID, key) && key.IsQuantum()) {
+            CPubKey pubkey = key.GetPubKey();
+            if (pubkey.IsValid() && pubkey.IsQuantum()) {
+                uint256 quantumID = pubkey.GetQuantumID();
+                // Match against new (LE) format
+                if (quantumID == witnessProgram) {
+                    return true;
+                }
+                // Match against legacy (BE) format (pre-endianness-fix UTXOs)
+                if (quantumID == witnessProgramReversed) {
+                    return true;
                 }
             }
         }
     }
-    LogPrintf("HaveQuantumKey: No matching quantum key found (checked %d keys, %d were quantum)\n", 
-             keys.size(), quantumKeysFound);
     return false;
 }
 
@@ -119,13 +117,10 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
             unsigned int witnessVersion = vSolutions[0][0];
             if (witnessVersion == 2 && vSolutions[1].size() == 32) {
                 // This is a quantum address - check if we have the corresponding quantum key
-                // The witness program is stored in big-endian order (as encoded in Bech32m),
-                // but GetQuantumID() returns bytes in the order SHA256 outputs them.
-                // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
+                // The witness program is now stored in canonical LE order (matching GetQuantumID()),
+                // so we can copy directly without byte reversal.
                 uint256 witnessProgram;
-                for (size_t i = 0; i < 32; i++) {
-                    witnessProgram.begin()[31 - i] = vSolutions[1][i];
-                }
+                memcpy(witnessProgram.begin(), vSolutions[1].data(), 32);
                 
                 if (HaveQuantumKey(keystore, witnessProgram)) {
                     return ISMINE_SPENDABLE;
@@ -138,14 +133,11 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     {
         // Cascoin: Quantum address (witness version 2)
         // vSolutions[0] contains the 32-byte witness program (SHA256 of pubkey)
-        // The witness program is stored in big-endian order (as encoded in Bech32m),
-        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
-        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
+        // The witness program is now stored in canonical LE order (matching GetQuantumID()),
+        // so we can copy directly without byte reversal.
         if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
             uint256 witnessProgram;
-            for (size_t i = 0; i < 32; i++) {
-                witnessProgram.begin()[31 - i] = vSolutions[0][i];
-            }
+            memcpy(witnessProgram.begin(), vSolutions[0].data(), 32);
             
             if (HaveQuantumKey(keystore, witnessProgram)) {
                 return ISMINE_SPENDABLE;

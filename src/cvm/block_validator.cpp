@@ -14,6 +14,8 @@
 #include <utilstrencodings.h>
 #include <script/script.h>
 #include <script/standard.h>
+#include <pubkey.h>
+#include <hash.h>
 #include <net_processing.h>
 #include <cstdlib>
 
@@ -351,6 +353,65 @@ bool BlockValidator::DeployContract(
             error = "Contract deployment denied by access control";
             return false;
         }
+    }
+    
+    // The OP_RETURN only contains codeHash, gasLimit, format, and metadata.
+    // The actual bytecode is NOT stored in the OP_RETURN (80-byte limit).
+    // Try to extract bytecode from the transaction's witness data, where
+    // the wallet may have placed it as an additional witness stack element.
+    if (deployData.bytecode.empty()) {
+        // Try extracting bytecode from witness data of the first input
+        for (const auto& txin : tx.vin) {
+            const auto& wit = txin.scriptWitness;
+            // Convention: if witness stack has 3+ elements, the first element
+            // (before sig and pubkey) may contain the contract bytecode
+            if (wit.stack.size() >= 3) {
+                const auto& candidate = wit.stack[0];
+                // Verify against codeHash from OP_RETURN
+                if (!candidate.empty()) {
+                    uint256 candidateHash = Hash(candidate.begin(), candidate.end());
+                    if (candidateHash == deployData.codeHash) {
+                        deployData.bytecode = candidate;
+                        LogPrint(BCLog::CVM, "BlockValidator: Extracted bytecode (%d bytes) from witness data, hash matches\n",
+                                 candidate.size());
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
+    // If bytecode is still empty, register the contract as a metadata-only
+    // deployment. The OP_RETURN soft-fork design stores only the codeHash;
+    // the bytecode is provided out-of-band. During block validation we
+    // accept the deployment based on the OP_RETURN metadata and register
+    // the contract address so future calls can reference it.
+    if (deployData.bytecode.empty()) {
+        LogPrint(BCLog::CVM, "BlockValidator: No bytecode in tx %s, registering metadata-only deployment (codeHash=%s)\n",
+                 tx.GetHash().ToString(), deployData.codeHash.ToString());
+        
+        // Generate contract address from deployer + nonce
+        uint64_t nonce = 0;
+        if (m_db) {
+            nonce = m_db->GetNextNonce(deployer);
+        }
+        contractAddr = GenerateContractAddress(deployer, nonce);
+        
+        // Register the contract in the database with empty code but valid metadata
+        if (m_db) {
+            Contract contract;
+            contract.address = contractAddr;
+            // code stays empty — bytecode not available in OP_RETURN
+            contract.deploymentTx = tx.GetHash();
+            contract.deploymentHeight = blockHeight;
+            m_db->WriteContract(contractAddr, contract);
+            m_db->WriteNonce(deployer, nonce + 1);
+        }
+        
+        gasUsed = 0; // No execution, no gas consumed
+        LogPrint(BCLog::CVM, "BlockValidator: Metadata-only contract registered at %s (deployer=%s, nonce=%d)\n",
+                 contractAddr.ToString(), deployer.ToString(), nonce);
+        return true;
     }
     
     // Check if VM is available
@@ -696,61 +757,93 @@ uint160 BlockValidator::GetSenderAddress(const CTransaction& tx, CCoinsViewCache
         return uint160();
     }
     
-    // Look up the input's previous output from UTXO set
     const CTxIn& txin = tx.vin[0];
     
-    // Get the coin from the view
+    // Strategy 1: Try to extract from witness data (SegWit / Quantum)
+    const auto& scriptWitness = txin.scriptWitness;
+    if (scriptWitness.stack.size() >= 2) {
+        const std::vector<unsigned char>& pubkeyData = scriptWitness.stack.back();
+        // Standard ECDSA compressed/uncompressed pubkey
+        if (pubkeyData.size() == 33 || pubkeyData.size() == 65) {
+            CPubKey pubkey(pubkeyData.begin(), pubkeyData.end());
+            if (pubkey.IsValid()) {
+                LogPrint(BCLog::CVM, "BlockValidator: Extracted address from witness pubkey: %s\n",
+                         pubkey.GetID().ToString());
+                return pubkey.GetID();
+            }
+        }
+        // Quantum FALCON-512 pubkey (897 bytes)
+        if (pubkeyData.size() == CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+            CPubKey pubkey(pubkeyData.begin(), pubkeyData.end());
+            if (pubkey.IsValid() && pubkey.IsQuantum()) {
+                // For quantum keys, use Hash160 of the pubkey as the address
+                uint160 address = Hash160(pubkeyData.begin(), pubkeyData.end());
+                LogPrint(BCLog::CVM, "BlockValidator: Extracted address from quantum witness pubkey: %s\n",
+                         address.ToString());
+                return address;
+            }
+        }
+    }
+    
+    // Strategy 2: Try to extract from scriptSig (P2PKH)
+    const CScript& scriptSig = txin.scriptSig;
+    if (scriptSig.size() > 0) {
+        CScript::const_iterator pc = scriptSig.begin();
+        std::vector<unsigned char> data;
+        opcodetype opcode;
+        
+        // Skip signature
+        if (scriptSig.GetOp(pc, opcode, data)) {
+            // Get pubkey
+            if (scriptSig.GetOp(pc, opcode, data)) {
+                if (data.size() == 33 || data.size() == 65) {
+                    CPubKey pubkey(data.begin(), data.end());
+                    if (pubkey.IsValid()) {
+                        LogPrint(BCLog::CVM, "BlockValidator: Extracted address from scriptSig pubkey: %s\n",
+                                 pubkey.GetID().ToString());
+                        return pubkey.GetID();
+                    }
+                }
+            }
+        }
+    }
+    
+    // Strategy 3: Fall back to UTXO lookup (may fail if coins already spent by UpdateCoins)
     Coin coin;
-    if (!view.GetCoin(txin.prevout, coin)) {
-        LogPrint(BCLog::CVM, "BlockValidator: Could not find input coin for %s:%d\n",
-                 txin.prevout.hash.ToString(), txin.prevout.n);
-        return uint160();
+    if (view.GetCoin(txin.prevout, coin)) {
+        const CScript& scriptPubKey = coin.out.scriptPubKey;
+        CTxDestination dest;
+        if (ExtractDestination(scriptPubKey, dest)) {
+            if (const CKeyID* keyID = boost::get<CKeyID>(&dest)) {
+                return *keyID;
+            }
+            if (const CScriptID* scriptID = boost::get<CScriptID>(&dest)) {
+                return *scriptID;
+            }
+            if (const WitnessV0KeyHash* wkh = boost::get<WitnessV0KeyHash>(&dest)) {
+                return *wkh;
+            }
+            if (const WitnessV0ScriptHash* wsh = boost::get<WitnessV0ScriptHash>(&dest)) {
+                uint160 address;
+                memcpy(address.begin(), wsh->begin(), 20);
+                return address;
+            }
+            if (const WitnessV2Quantum* quantum = boost::get<WitnessV2Quantum>(&dest)) {
+                uint160 address;
+                memcpy(address.begin(), quantum->begin(), 20);
+                return address;
+            }
+            if (const WitnessUnknown* wu = boost::get<WitnessUnknown>(&dest)) {
+                uint160 address;
+                unsigned int copyLen = std::min(wu->length, (unsigned int)20);
+                memcpy(address.begin(), wu->program, copyLen);
+                return address;
+            }
+        }
     }
     
-    // Extract address from scriptPubKey
-    const CScript& scriptPubKey = coin.out.scriptPubKey;
-    
-    // Try to extract destination
-    // In Bitcoin, addresses are encoded in scriptPubKey
-    // Common patterns: P2PKH, P2SH, P2WPKH, P2WSH
-    
-    // For P2PKH: OP_DUP OP_HASH160 <pubKeyHash> OP_EQUALVERIFY OP_CHECKSIG
-    if (scriptPubKey.size() == 25 && 
-        scriptPubKey[0] == OP_DUP &&
-        scriptPubKey[1] == OP_HASH160 &&
-        scriptPubKey[2] == 20 &&
-        scriptPubKey[23] == OP_EQUALVERIFY &&
-        scriptPubKey[24] == OP_CHECKSIG) {
-        
-        // Extract the 20-byte hash
-        uint160 address;
-        memcpy(address.begin(), &scriptPubKey[3], 20);
-        
-        LogPrint(BCLog::CVM, "BlockValidator: Extracted P2PKH address: %s\n",
-                 address.ToString());
-        return address;
-    }
-    
-    // For P2SH: OP_HASH160 <scriptHash> OP_EQUAL
-    if (scriptPubKey.size() == 23 &&
-        scriptPubKey[0] == OP_HASH160 &&
-        scriptPubKey[1] == 20 &&
-        scriptPubKey[22] == OP_EQUAL) {
-        
-        // Extract the 20-byte hash
-        uint160 address;
-        memcpy(address.begin(), &scriptPubKey[2], 20);
-        
-        LogPrint(BCLog::CVM, "BlockValidator: Extracted P2SH address: %s\n",
-                 address.ToString());
-        return address;
-    }
-    
-    // For other script types, we would need more complex parsing
-    // For now, return empty address
-    LogPrint(BCLog::CVM, "BlockValidator: Unsupported scriptPubKey type, size=%d\n",
-             scriptPubKey.size());
-    
+    LogPrint(BCLog::CVM, "BlockValidator: Could not extract sender address for tx %s input %s:%d\n",
+             tx.GetHash().ToString(), txin.prevout.hash.ToString(), txin.prevout.n);
     return uint160();
 }
 

@@ -515,41 +515,50 @@ uint160 EnhancedVM::GenerateCreate2Address(const uint160& deployer, const uint25
 bool EnhancedVM::ValidateContractDeployment(const std::vector<uint8_t>& bytecode, const uint160& deployer) {
     // Check bytecode size
     if (bytecode.empty()) {
-        LogExecution("ERROR", "Contract deployment validation failed: empty bytecode");
+        LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: empty bytecode\n");
         return false;
     }
     
     if (bytecode.size() > MAX_BYTECODE_SIZE) {
-        LogExecution("ERROR", "Contract deployment validation failed: bytecode too large (" + 
-                    std::to_string(bytecode.size()) + " > " + std::to_string(MAX_BYTECODE_SIZE) + ")");
+        LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: bytecode too large (%d > %d)\n",
+                  bytecode.size(), MAX_BYTECODE_SIZE);
         return false;
     }
     
     // Validate bytecode format
     auto detection = DetectBytecodeFormat(bytecode);
     if (!detection.is_valid) {
-        LogExecution("ERROR", "Contract deployment validation failed: invalid bytecode format");
+        LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: invalid bytecode format (format=%d, confidence=%.2f)\n",
+                  static_cast<int>(detection.format), detection.confidence);
         return false;
     }
     
     // Check if we can execute this format
     if (!CanExecuteFormat(detection.format)) {
-        LogExecution("ERROR", "Contract deployment validation failed: unsupported bytecode format");
+        LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: unsupported bytecode format %d (cvm=%d, evm=%d)\n",
+                  static_cast<int>(detection.format), cvm_engine != nullptr,
+#ifdef ENABLE_EVMC
+                  evmc_host != nullptr
+#else
+                  0
+#endif
+                  );
         return false;
     }
     
     // Check trust gates
     if (trust_context) {
         if (!trust_context->CheckTrustGate(deployer, "contract_deployment")) {
-            LogExecution("ERROR", "Contract deployment validation failed: trust gate check failed");
+            LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: trust gate check failed for %s\n",
+                     deployer.ToString());
             return false;
         }
         
         // Additional reputation check for deployment
         uint32_t deployer_reputation = trust_context->GetReputation(deployer);
-        if (deployer_reputation < 50) { // Require at least medium reputation
-            LogExecution("ERROR", "Contract deployment validation failed: insufficient reputation (" +
-                        std::to_string(deployer_reputation) + " < 50)");
+        if (deployer_reputation < 50) {
+            LogPrint(BCLog::CVM, "EnhancedVM: Contract deployment validation failed: insufficient reputation (%d < 50) for %s\n",
+                     deployer_reputation, deployer.ToString());
             return false;
         }
     }

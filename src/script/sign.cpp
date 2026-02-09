@@ -251,13 +251,31 @@ bool ProduceSignature(const BaseSignatureCreator& creator, const CScript& fromPu
     {
         // Cascoin: Quantum witness version 2 signing
         // result[0] contains the witness program (SHA256 hash of pubkey)
-        // The witness program is stored in big-endian order (as encoded in Bech32m),
-        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
-        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
+        // Try LE (new format) first; fall back to byte-reversed BE (legacy UTXOs).
         uint256 pubkeyHash;
         if (result[0].size() == 32) {
-            for (size_t i = 0; i < 32; i++) {
-                pubkeyHash.begin()[31 - i] = result[0][i];
+            memcpy(pubkeyHash.begin(), result[0].data(), 32);
+        }
+        // Check if this pubkeyHash matches any quantum key; if not, try reversed
+        {
+            bool found = false;
+            for (const CKeyID& kid : creator.KeyStore().GetKeys()) {
+                CKey k;
+                if (creator.KeyStore().GetKey(kid, k) && k.IsQuantum()) {
+                    CPubKey pk = k.GetPubKey();
+                    if (pk.IsQuantum() && pk.GetQuantumID() == pubkeyHash) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found && result[0].size() == 32) {
+                // Try byte-reversed (legacy BE) interpretation
+                uint256 reversed;
+                for (size_t i = 0; i < 32; i++) {
+                    reversed.begin()[i] = result[0][31 - i];
+                }
+                pubkeyHash = reversed;
             }
         }
         
@@ -528,24 +546,33 @@ bool DummySignatureCreator::CreateSig(std::vector<unsigned char>& vchSig, const 
 bool DummySignatureCreator::CreateQuantumSig(CScriptWitness& witness, const uint256& pubkeyHash) const
 {
     // Cascoin: Create a dummy quantum witness for solvability checks
-    // Check if we have a quantum key matching the pubkey hash
+    // Check if we have a quantum key matching the pubkey hash.
+    // Try LE (new format) first, then byte-reversed BE (legacy pre-endianness-fix UTXOs).
+    uint256 pubkeyHashReversed;
+    for (size_t i = 0; i < 32; i++) {
+        pubkeyHashReversed.begin()[i] = pubkeyHash.begin()[31 - i];
+    }
+
     for (const CKeyID& keyid : keystore->GetKeys()) {
         CKey key;
         if (keystore->GetKey(keyid, key) && key.IsQuantum()) {
             CPubKey pubkey = key.GetPubKey();
-            if (pubkey.IsQuantum() && pubkey.GetQuantumID() == pubkeyHash) {
-                // Found the key - create dummy witness
-                witness.stack.clear();
-                
-                // Dummy witness element 0: [marker(1) + dummy signature(~666)]
-                std::vector<unsigned char> dummyWitness(667, 0x00);
-                dummyWitness[0] = 0x51;  // Registration marker
-                witness.stack.push_back(dummyWitness);
-                
-                // Dummy witness element 1: dummy pubkey (897 bytes for FALCON-512)
-                witness.stack.push_back(std::vector<unsigned char>(897, 0x00));
-                
-                return true;
+            if (pubkey.IsQuantum()) {
+                uint256 qid = pubkey.GetQuantumID();
+                if (qid == pubkeyHash || qid == pubkeyHashReversed) {
+                    // Found the key - create dummy witness
+                    witness.stack.clear();
+                    
+                    // Dummy witness element 0: [marker(1) + dummy signature(~666)]
+                    std::vector<unsigned char> dummyWitness(667, 0x00);
+                    dummyWitness[0] = 0x51;  // Registration marker
+                    witness.stack.push_back(dummyWitness);
+                    
+                    // Dummy witness element 1: dummy pubkey (897 bytes for FALCON-512)
+                    witness.stack.push_back(std::vector<unsigned char>(897, 0x00));
+                    
+                    return true;
+                }
             }
         }
     }
@@ -563,22 +590,26 @@ bool IsSolvable(const CKeyStore& store, const CScript& script)
     txnouttype whichType;
     std::vector<std::vector<unsigned char>> vSolutions;
     if (Solver(script, whichType, vSolutions) && whichType == TX_WITNESS_V2_QUANTUM) {
-        // For quantum scripts, check if we have a quantum key matching the pubkey hash
-        // The witness program is stored in big-endian order (as encoded in Bech32m),
-        // but GetQuantumID() returns bytes in the order SHA256 outputs them.
-        // EncodeQuantumAddress reverses the bytes, so we need to reverse them back.
+        // For quantum scripts, check if we have a quantum key matching the pubkey hash.
+        // Try LE (new format) first, then byte-reversed BE (legacy pre-endianness-fix UTXOs).
         if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
             uint256 pubkeyHash;
+            memcpy(pubkeyHash.begin(), vSolutions[0].data(), 32);
+
+            uint256 pubkeyHashReversed;
             for (size_t i = 0; i < 32; i++) {
-                pubkeyHash.begin()[31 - i] = vSolutions[0][i];
+                pubkeyHashReversed.begin()[i] = vSolutions[0][31 - i];
             }
             
             for (const CKeyID& keyid : store.GetKeys()) {
                 CKey key;
                 if (store.GetKey(keyid, key) && key.IsQuantum()) {
                     CPubKey pubkey = key.GetPubKey();
-                    if (pubkey.IsQuantum() && pubkey.GetQuantumID() == pubkeyHash) {
-                        return true;  // We have the quantum key
+                    if (pubkey.IsQuantum()) {
+                        uint256 qid = pubkey.GetQuantumID();
+                        if (qid == pubkeyHash || qid == pubkeyHashReversed) {
+                            return true;  // We have the quantum key
+                        }
                     }
                 }
             }

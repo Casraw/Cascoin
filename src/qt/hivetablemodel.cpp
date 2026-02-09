@@ -5,6 +5,7 @@
 // Cascoin: Hive
 
 #include <qt/hivetablemodel.h>
+#include <qt/safeinvoke.h>
 #include <bctdb.h>  // For BCTDatabaseSQLite
 
 #include <qt/bitcoinunits.h>
@@ -19,6 +20,7 @@
 #include <util.h>
 #include <validation.h>
 
+#include <QPointer>
 #include <thread>
 
 HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent) : platformStyle(_platformStyle), QAbstractTableModel(parent), walletModel(parent)
@@ -56,6 +58,13 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
         return;
     }
     updateInProgress = true;
+
+    // Prevent use-after-free: capture a QPointer so the queued lambda
+    // is silently dropped when this model has already been destroyed.
+    QPointer<HiveTableModel> guard(this);
+    // Also guard walletModel — it may be deleted during shutdown before
+    // the background thread's safeInvoke lambda runs on the main thread.
+    QPointer<WalletModel> wmGuard(walletModel);
 
     // Move database operations to background thread to prevent GUI hang
     std::thread([=]() {
@@ -125,7 +134,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             const Consensus::Params& consensusParams = Params().GetConsensus();
             
             // Update UI on main thread
-            QMetaObject::invokeMethod(this, [=]() {
+            safeInvoke(guard, [=]() {
                 // Rebuild the entire model atomically to avoid incorrect row counts
                 beginResetModel();
 
@@ -207,8 +216,11 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
 
-                // Fire signal
-                QMetaObject::invokeMethod(walletModel, "newHiveSummaryAvailable", Qt::QueuedConnection);
+                // Fire signal — use the captured QPointer to avoid invoking on a
+                // WalletModel that has already been deleted during shutdown.
+                if (wmGuard) {
+                    QMetaObject::invokeMethod(wmGuard.data(), "newHiveSummaryAvailable", Qt::QueuedConnection);
+                }
 
                 // Reset update flag and process any pending request
                 updateInProgress = false;
@@ -217,14 +229,14 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                     // Re-run with the same includeDeadBees value requested last
                     updateBCTs(lastIncludeDeadBees);
                 }
-            }, Qt::QueuedConnection);
+            });
             
         } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(this, [=]() {
+            safeInvoke(guard, [=]() {
                 LogPrintf("Error updating BCTs: %s\n", e.what());
                 // Reset update flag on error too
                 updateInProgress = false;
-            }, Qt::QueuedConnection);
+            });
         }
     }).detach();
 }

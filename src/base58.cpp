@@ -256,16 +256,25 @@ public:
     /**
      * Encode a WitnessV2Quantum destination as a quantum address.
      * Uses Bech32m encoding with quantum HRP (casq/tcasq/rcasq).
-     * Requirements: 3.1, 3.2, 3.3, 3.4 (quantum address encoding)
+     * Requirements: 1.2, 2.2, 3.1, 3.2, 3.3, 3.4 (quantum address encoding)
+     *
+     * WitnessV2Quantum stores bytes in LE order (matching GetQuantumID()),
+     * but Bech32m encoding expects BE order. Reverse LE→BE before encoding.
      */
     std::string operator()(const WitnessV2Quantum& id) const
     {
         // Get the quantum HRP for this network
         std::string hrp = address::GetQuantumHRP(m_params);
         
+        // Reverse LE→BE for Bech32m encoding
+        std::vector<unsigned char> programBE(32);
+        for (size_t i = 0; i < 32; i++) {
+            programBE[i] = id.begin()[31 - i];
+        }
+        
         // Build Bech32m data: [witness_version=2] + [program in 5-bit groups]
         std::vector<unsigned char> data = {address::QUANTUM_WITNESS_VERSION};
-        ConvertBits<8, 5, true>(data, id.begin(), id.end());
+        ConvertBits<8, 5, true>(data, programBE.begin(), programBE.end());
         
         // Encode using Bech32m (BIP-350)
         return bech32::EncodeBech32m(hrp, data);
@@ -335,8 +344,13 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
                     data.size() == address::QUANTUM_PROGRAM_SIZE &&
                     bechResult.hrp == expectedHRP) {
                     
+                    // Reverse BE→LE to match GetQuantumID() output byte order.
+                    // Bech32m encoding stores bytes in big-endian order, but
+                    // WitnessV2Quantum (uint256) uses little-endian internally.
                     WitnessV2Quantum quantum;
-                    std::copy(data.begin(), data.end(), quantum.begin());
+                    for (size_t i = 0; i < 32; i++) {
+                        quantum.begin()[i] = data[31 - i];
+                    }
                     return quantum;
                 }
                 // Invalid quantum address format or wrong network

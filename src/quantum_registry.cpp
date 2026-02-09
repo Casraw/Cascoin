@@ -4,6 +4,7 @@
 
 #include <quantum_registry.h>
 #include <hash.h>
+#include <crypto/sha256.h>
 #include <util.h>
 #include <pubkey.h>
 #include <chain.h>
@@ -392,7 +393,9 @@ bool VerifyQuantumTransaction(const QuantumWitnessData& witnessData,
     }
     
     // Requirements: 5.4 - Verify SHA256(pubkey) matches quantum address program
-    uint256 computedProgram = Hash(pubkey.begin(), pubkey.end());
+    // Use single SHA256 (CSHA256) consistent with GetQuantumID()
+    uint256 computedProgram;
+    CSHA256().Write(pubkey.data(), pubkey.size()).Finalize(computedProgram.begin());
     if (computedProgram != quantumProgram) {
         // Requirements: 5.5 - Address derivation mismatch
         LogPrint(BCLog::ALL, "VerifyQuantumTransaction: Public key does not match quantum address "

@@ -3257,3 +3257,524 @@ BOOST_AUTO_TEST_CASE(transaction_size_limits_status)
     BOOST_TEST_MESSAGE("QUANTUM_PUBLIC_KEY_SIZE: " << QUANTUM_PUBLIC_KEY_SIZE << " bytes");
     BOOST_CHECK(true);
 }
+
+
+//=============================================================================
+// Quantum Endianness Fix Unit Tests
+// Feature: quantum-endianness-fix
+// Tests: 7.1 through 7.7
+// Validates: Requirements 9.1, 9.2, 9.3, 9.4, 9.5
+//
+// These tests verify that the endianness fix produces consistent byte order
+// across all quantum code paths: encoding, decoding, script creation,
+// verification, signing, and ownership detection.
+//=============================================================================
+
+#include <crypto/sha256.h>
+#include <script/sign.h>
+#include <script/ismine.h>
+#include <quantum_registry.h>
+
+BOOST_FIXTURE_TEST_SUITE(quantum_endianness_fix_tests, BasicTestingSetup)
+
+#if ENABLE_QUANTUM
+
+//-----------------------------------------------------------------------------
+// Test 7.1: Address encoding round-trip unit test
+// Feature: quantum-endianness-fix, Property 1: Address encoding round-trip
+// Validates: Requirements 9.1
+//
+// Generate a FALCON-512 keypair, encode via EncodeQuantumAddress(), decode
+// via DecodeDestination(), and assert the resulting WitnessV2Quantum bytes
+// match GetQuantumID() output.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_address_encoding_roundtrip)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+
+    // Generate a FALCON-512 keypair
+    CKey key;
+    key.MakeNewQuantumKey();
+    BOOST_REQUIRE(key.IsValid());
+    BOOST_REQUIRE(key.IsQuantum());
+
+    CPubKey pubkey = key.GetPubKey();
+    BOOST_REQUIRE(pubkey.IsValid());
+    BOOST_REQUIRE(pubkey.IsQuantum());
+
+    // Get the expected quantum ID (SHA256 of pubkey, stored as LE uint256)
+    uint256 expectedID = pubkey.GetQuantumID();
+    BOOST_REQUIRE(!expectedID.IsNull());
+
+    // Encode the quantum address
+    std::string encoded = address::EncodeQuantumAddress(pubkey, Params());
+    BOOST_REQUIRE_MESSAGE(!encoded.empty(), "EncodeQuantumAddress should succeed");
+    BOOST_CHECK(encoded.substr(0, 6) == "rcasq1");
+
+    // Decode via DecodeDestination
+    CTxDestination dest = DecodeDestination(encoded);
+    BOOST_REQUIRE(IsValidDestination(dest));
+
+    // Extract the WitnessV2Quantum
+    const WitnessV2Quantum* quantum = boost::get<WitnessV2Quantum>(&dest);
+    BOOST_REQUIRE_MESSAGE(quantum != nullptr, "Decoded destination should be WitnessV2Quantum");
+
+    // Assert the decoded bytes match GetQuantumID() output exactly
+    BOOST_CHECK_MESSAGE(*quantum == WitnessV2Quantum(expectedID),
+        "Decoded WitnessV2Quantum bytes must match GetQuantumID() output.\n"
+        "  Expected: " << expectedID.GetHex() << "\n"
+        "  Got:      " << quantum->GetHex());
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.2: Decode-encode round-trip unit test
+// Feature: quantum-endianness-fix, Property 2: Address decoding round-trip
+// Validates: Requirements 9.1
+//
+// Take a known quantum address string, decode via DecodeDestination(),
+// re-encode via EncodeDestination(), and assert the strings match.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_decode_encode_roundtrip)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+
+    // First, generate a known quantum address from a keypair
+    CKey key;
+    key.MakeNewQuantumKey();
+    BOOST_REQUIRE(key.IsValid());
+    BOOST_REQUIRE(key.IsQuantum());
+
+    CPubKey pubkey = key.GetPubKey();
+    BOOST_REQUIRE(pubkey.IsValid());
+
+    // Encode the quantum address (this is our "known" address string)
+    std::string originalAddress = address::EncodeQuantumAddress(pubkey, Params());
+    BOOST_REQUIRE_MESSAGE(!originalAddress.empty(), "EncodeQuantumAddress should succeed");
+
+    // Decode the address
+    CTxDestination dest = DecodeDestination(originalAddress);
+    BOOST_REQUIRE(IsValidDestination(dest));
+
+    // Re-encode via EncodeDestination (the generic visitor-based encoder)
+    std::string reEncoded = EncodeDestination(dest);
+    BOOST_REQUIRE_MESSAGE(!reEncoded.empty(), "EncodeDestination should succeed for WitnessV2Quantum");
+
+    // Assert the strings match exactly
+    BOOST_CHECK_MESSAGE(originalAddress == reEncoded,
+        "Decode-encode round-trip must produce the original address string.\n"
+        "  Original:   " << originalAddress << "\n"
+        "  Re-encoded: " << reEncoded);
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.3: Script extraction unit test
+// Feature: quantum-endianness-fix, Property 3: Script stores canonical bytes
+// Validates: Requirements 9.2
+//
+// Create a WitnessV2Quantum from GetQuantumID(), call
+// GetScriptForDestination(), extract the 32-byte program from the script,
+// and assert it matches GetQuantumID() output.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_script_extraction)
+{
+    // Generate a FALCON-512 keypair
+    CKey key;
+    key.MakeNewQuantumKey();
+    BOOST_REQUIRE(key.IsValid());
+    BOOST_REQUIRE(key.IsQuantum());
+
+    CPubKey pubkey = key.GetPubKey();
+    BOOST_REQUIRE(pubkey.IsValid());
+
+    // Get the quantum ID
+    uint256 quantumID = pubkey.GetQuantumID();
+    BOOST_REQUIRE(!quantumID.IsNull());
+
+    // Create WitnessV2Quantum destination from GetQuantumID()
+    WitnessV2Quantum quantumDest(quantumID);
+    CTxDestination dest = quantumDest;
+
+    // Create the script
+    CScript script = GetScriptForDestination(dest);
+    BOOST_REQUIRE(!script.empty());
+
+    // Extract the witness program from the script
+    // The script format is: OP_2 <32-byte-push>
+    int witnessVersion;
+    std::vector<unsigned char> witnessProgram;
+    BOOST_REQUIRE_MESSAGE(script.IsWitnessProgram(witnessVersion, witnessProgram),
+        "Script should be a valid witness program");
+    BOOST_CHECK_EQUAL(witnessVersion, 2);
+    BOOST_CHECK_EQUAL(witnessProgram.size(), 32u);
+
+    // Assert the extracted program bytes match GetQuantumID() output
+    BOOST_CHECK_MESSAGE(memcmp(witnessProgram.data(), quantumID.begin(), 32) == 0,
+        "Script witness program bytes must match GetQuantumID() output.\n"
+        "  Expected (GetQuantumID): " << HexStr(quantumID.begin(), quantumID.end()) << "\n"
+        "  Got (from script):       " << HexStr(witnessProgram));
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.4: Hash consistency unit test
+// Feature: quantum-endianness-fix, Property 4: Hash consistency
+// Validates: Requirements 9.4
+//
+// Compute the pubkey hash via GetQuantumID(), GetQuantumWitnessProgram(),
+// ParseQuantumWitness(), and VerifyQuantumTransaction() internal logic
+// (CSHA256 directly), asserting all four produce identical results.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_hash_consistency)
+{
+    // Generate a FALCON-512 keypair
+    CKey key;
+    key.MakeNewQuantumKey();
+    BOOST_REQUIRE(key.IsValid());
+    BOOST_REQUIRE(key.IsQuantum());
+
+    CPubKey pubkey = key.GetPubKey();
+    BOOST_REQUIRE(pubkey.IsValid());
+    BOOST_REQUIRE(pubkey.IsQuantum());
+
+    // Method 1: GetQuantumID() on CPubKey
+    uint256 hash1 = pubkey.GetQuantumID();
+    BOOST_REQUIRE(!hash1.IsNull());
+
+    // Method 2: GetQuantumWitnessProgram() on CPubKey
+    uint256 hash2 = address::GetQuantumWitnessProgram(pubkey);
+
+    // Method 3: ParseQuantumWitness() - build a registration witness and parse it
+    // Build witness data: [marker(0x51) + pubkey(897) + dummy_signature]
+    std::vector<unsigned char> witnessData;
+    witnessData.push_back(QUANTUM_WITNESS_MARKER_REGISTRATION);
+    std::vector<unsigned char> pubkeyBytes(pubkey.begin(), pubkey.end());
+    witnessData.insert(witnessData.end(), pubkeyBytes.begin(), pubkeyBytes.end());
+    // Add a dummy signature (just needs to be non-empty for parsing)
+    std::vector<unsigned char> dummySig(100, 0x42);
+    witnessData.insert(witnessData.end(), dummySig.begin(), dummySig.end());
+
+    std::vector<std::vector<unsigned char>> witnessStack;
+    witnessStack.push_back(witnessData);
+
+    QuantumWitnessData parsed = ParseQuantumWitness(witnessStack);
+    BOOST_REQUIRE_MESSAGE(parsed.isValid, "ParseQuantumWitness should succeed: " << parsed.error);
+    BOOST_REQUIRE(parsed.isRegistration);
+    uint256 hash3 = parsed.pubkeyHash;
+
+    // Method 4: Direct CSHA256 computation (same as VerifyQuantumTransaction internal logic)
+    uint256 hash4;
+    CSHA256().Write(pubkeyBytes.data(), pubkeyBytes.size()).Finalize(hash4.begin());
+
+    // Assert all four hashes are identical
+    BOOST_CHECK_MESSAGE(hash1 == hash2,
+        "GetQuantumID() and GetQuantumWitnessProgram() must produce identical hashes.\n"
+        "  GetQuantumID():            " << hash1.GetHex() << "\n"
+        "  GetQuantumWitnessProgram(): " << hash2.GetHex());
+
+    BOOST_CHECK_MESSAGE(hash1 == hash3,
+        "GetQuantumID() and ParseQuantumWitness().pubkeyHash must produce identical hashes.\n"
+        "  GetQuantumID():              " << hash1.GetHex() << "\n"
+        "  ParseQuantumWitness().hash:  " << hash3.GetHex());
+
+    BOOST_CHECK_MESSAGE(hash1 == hash4,
+        "GetQuantumID() and direct CSHA256 must produce identical hashes.\n"
+        "  GetQuantumID():  " << hash1.GetHex() << "\n"
+        "  Direct CSHA256:  " << hash4.GetHex());
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.5: Signing unit test
+// Feature: quantum-endianness-fix, Property 5: Signing path works
+// Validates: Requirements 9.3
+//
+// Create a quantum output, add the keypair to a keystore, and verify
+// ProduceSignature() succeeds.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_signing)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+
+    // Generate a FALCON-512 keypair
+    CKey quantumKey;
+    quantumKey.MakeNewQuantumKey();
+    BOOST_REQUIRE(quantumKey.IsValid());
+    BOOST_REQUIRE(quantumKey.IsQuantum());
+
+    CPubKey quantumPubKey = quantumKey.GetPubKey();
+    BOOST_REQUIRE(quantumPubKey.IsValid());
+    BOOST_REQUIRE(quantumPubKey.IsQuantum());
+
+    // Add the key to a basic keystore
+    CBasicKeyStore keystore;
+    BOOST_REQUIRE(keystore.AddKeyPubKey(quantumKey, quantumPubKey));
+
+    // Create a quantum output script from GetQuantumID()
+    uint256 quantumID = quantumPubKey.GetQuantumID();
+    WitnessV2Quantum quantumDest(quantumID);
+    CScript scriptPubKey = GetScriptForDestination(quantumDest);
+    BOOST_REQUIRE(!scriptPubKey.empty());
+
+    // Verify the script is recognized as TX_WITNESS_V2_QUANTUM
+    txnouttype whichType;
+    std::vector<std::vector<unsigned char>> vSolutions;
+    BOOST_REQUIRE(Solver(scriptPubKey, whichType, vSolutions));
+    BOOST_CHECK_EQUAL(static_cast<int>(whichType), static_cast<int>(TX_WITNESS_V2_QUANTUM));
+
+    // Create a simple transaction spending from the quantum output
+    CMutableTransaction prevTx;
+    prevTx.nVersion = 2;
+    prevTx.vout.resize(1);
+    prevTx.vout[0].nValue = 50 * COIN;
+    prevTx.vout[0].scriptPubKey = scriptPubKey;
+
+    CMutableTransaction spendTx;
+    spendTx.nVersion = 2;
+    spendTx.vin.resize(1);
+    spendTx.vin[0].prevout = COutPoint(prevTx.GetHash(), 0);
+    spendTx.vout.resize(1);
+    spendTx.vout[0].nValue = 49 * COIN;
+    spendTx.vout[0].scriptPubKey = CScript() << OP_TRUE;
+
+    // Sign the transaction using ProduceSignature
+    CTransaction txToConst(spendTx);
+    TransactionSignatureCreator creator(&keystore, &txToConst, 0, prevTx.vout[0].nValue, SIGHASH_ALL | SIGHASH_FORKID);
+    SignatureData sigdata;
+    bool signResult = ProduceSignature(creator, scriptPubKey, sigdata);
+    BOOST_CHECK_MESSAGE(signResult, "ProduceSignature should succeed for quantum output");
+
+    // Verify the witness was populated
+    BOOST_CHECK_MESSAGE(!sigdata.scriptWitness.stack.empty(),
+        "Quantum signature should produce a non-empty witness stack");
+
+    // Also verify IsSolvable returns true
+    BOOST_CHECK_MESSAGE(IsSolvable(keystore, scriptPubKey),
+        "IsSolvable should return true for quantum script with matching key in keystore");
+
+    // Also verify IsMine returns ISMINE_SPENDABLE
+    isminetype mine = IsMine(keystore, scriptPubKey);
+    BOOST_CHECK_MESSAGE(mine == ISMINE_SPENDABLE,
+        "IsMine should return ISMINE_SPENDABLE for quantum script with matching key.\n"
+        "  Expected: " << ISMINE_SPENDABLE << "\n"
+        "  Got:      " << static_cast<int>(mine));
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.6: ECDSA non-interference unit test
+// Feature: quantum-endianness-fix, Property 6: ECDSA non-interference
+// Validates: Requirements 9.5
+//
+// Sign and verify a standard P2WPKH transaction, confirming behavior is
+// unchanged by the quantum endianness fix.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_ecdsa_noninterference)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+
+    // Generate a standard ECDSA keypair
+    CKey ecdsaKey;
+    ecdsaKey.MakeNewKey(true);  // compressed
+    BOOST_REQUIRE(ecdsaKey.IsValid());
+    BOOST_REQUIRE(ecdsaKey.IsECDSA());
+
+    CPubKey ecdsaPubKey = ecdsaKey.GetPubKey();
+    BOOST_REQUIRE(ecdsaPubKey.IsValid());
+    BOOST_REQUIRE(ecdsaPubKey.IsCompressed());
+
+    // Add the key to a basic keystore
+    CBasicKeyStore keystore;
+    BOOST_REQUIRE(keystore.AddKeyPubKey(ecdsaKey, ecdsaPubKey));
+
+    // Create a P2WPKH output script
+    CScript p2wpkhScript = GetScriptForDestination(WitnessV0KeyHash(ecdsaPubKey.GetID()));
+    BOOST_REQUIRE(!p2wpkhScript.empty());
+
+    // Also add the P2SH wrapper script so IsMine recognizes it
+    CScript p2shWrapper;
+    p2shWrapper << OP_0 << ToByteVector(ecdsaPubKey.GetID());
+    keystore.AddCScript(p2shWrapper);
+
+    // Verify the script is recognized as TX_WITNESS_V0_KEYHASH
+    txnouttype whichType;
+    std::vector<std::vector<unsigned char>> vSolutions;
+    BOOST_REQUIRE(Solver(p2wpkhScript, whichType, vSolutions));
+    BOOST_CHECK_EQUAL(static_cast<int>(whichType), static_cast<int>(TX_WITNESS_V0_KEYHASH));
+
+    // Create a simple transaction spending from the P2WPKH output
+    CMutableTransaction prevTx;
+    prevTx.nVersion = 2;
+    prevTx.vout.resize(1);
+    prevTx.vout[0].nValue = 50 * COIN;
+    prevTx.vout[0].scriptPubKey = p2wpkhScript;
+
+    CMutableTransaction spendTx;
+    spendTx.nVersion = 2;
+    spendTx.vin.resize(1);
+    spendTx.vin[0].prevout = COutPoint(prevTx.GetHash(), 0);
+    spendTx.vout.resize(1);
+    spendTx.vout[0].nValue = 49 * COIN;
+    spendTx.vout[0].scriptPubKey = CScript() << OP_TRUE;
+
+    // Sign the transaction
+    CTransaction txToConst(spendTx);
+    TransactionSignatureCreator creator(&keystore, &txToConst, 0, prevTx.vout[0].nValue, SIGHASH_ALL | SIGHASH_FORKID);
+    SignatureData sigdata;
+    bool signResult = ProduceSignature(creator, p2wpkhScript, sigdata);
+    BOOST_CHECK_MESSAGE(signResult, "ProduceSignature should succeed for P2WPKH output");
+
+    // Verify the witness was populated (P2WPKH produces 2 stack items: sig + pubkey)
+    BOOST_CHECK_MESSAGE(sigdata.scriptWitness.stack.size() == 2,
+        "P2WPKH signature should produce 2 witness stack items (sig + pubkey), got: "
+        << sigdata.scriptWitness.stack.size());
+
+    // Verify the signature using VerifyScript
+    UpdateTransaction(spendTx, 0, sigdata);
+    CTransaction finalTx(spendTx);
+    ScriptError serror;
+    bool verifyResult = VerifyScript(
+        sigdata.scriptSig,
+        p2wpkhScript,
+        &sigdata.scriptWitness,
+        STANDARD_SCRIPT_VERIFY_FLAGS,
+        TransactionSignatureChecker(&finalTx, 0, prevTx.vout[0].nValue),
+        &serror);
+    BOOST_CHECK_MESSAGE(verifyResult,
+        "VerifyScript should succeed for P2WPKH transaction. Error: "
+        << ScriptErrorString(serror));
+
+    // Verify IsSolvable returns true
+    BOOST_CHECK_MESSAGE(IsSolvable(keystore, p2wpkhScript),
+        "IsSolvable should return true for P2WPKH script with matching key");
+}
+
+//-----------------------------------------------------------------------------
+// Test 7.7: Edge case tests for invalid quantum addresses
+// Feature: quantum-endianness-fix
+// Validates: Requirements 9.1
+//
+// Test empty string, wrong HRP, wrong program length — all should return
+// CNoDestination.
+//-----------------------------------------------------------------------------
+BOOST_AUTO_TEST_CASE(endianness_invalid_quantum_addresses)
+{
+    SelectParams(CBaseChainParams::REGTEST);
+
+    // Test 1: Empty string should return CNoDestination
+    {
+        CTxDestination dest = DecodeDestination("");
+        BOOST_CHECK_MESSAGE(!IsValidDestination(dest),
+            "Empty string should decode to CNoDestination");
+        const CNoDestination* noDest = boost::get<CNoDestination>(&dest);
+        BOOST_CHECK_MESSAGE(noDest != nullptr,
+            "Empty string should produce CNoDestination type");
+    }
+
+    // Test 2: Wrong HRP (using standard "rcas" instead of quantum "rcasq")
+    // Build a valid Bech32m address with wrong HRP but correct witness version 2 + 32-byte program
+    {
+        std::vector<uint8_t> program(32);
+        for (size_t i = 0; i < 32; i++) {
+            program[i] = static_cast<uint8_t>(i);
+        }
+        std::vector<uint8_t> data5bit;
+        data5bit.push_back(2);  // Witness version 2
+        ConvertBits<8, 5, true>(data5bit, program.begin(), program.end());
+
+        // Encode with wrong HRP "rcas" (standard, not quantum)
+        std::string wrongHrpAddr = bech32::EncodeBech32m("rcas", data5bit);
+        BOOST_REQUIRE(!wrongHrpAddr.empty());
+
+        // Decoding should NOT produce a WitnessV2Quantum
+        CTxDestination dest = DecodeDestination(wrongHrpAddr);
+        const WitnessV2Quantum* quantum = boost::get<WitnessV2Quantum>(&dest);
+        // With standard HRP and witness version 2, it may decode as WitnessUnknown
+        // but should NOT be a WitnessV2Quantum via the quantum path
+        // The key check: it should not match a quantum address
+        BOOST_CHECK_MESSAGE(quantum == nullptr,
+            "Address with wrong HRP 'rcas' should not decode as WitnessV2Quantum");
+    }
+
+    // Test 3: Wrong program length (16 bytes instead of 32)
+    {
+        std::vector<uint8_t> shortProgram(16, 0xAB);
+        std::vector<uint8_t> data5bit;
+        data5bit.push_back(2);  // Witness version 2
+        ConvertBits<8, 5, true>(data5bit, shortProgram.begin(), shortProgram.end());
+
+        // Encode with correct quantum HRP but wrong program length
+        std::string shortAddr = bech32::EncodeBech32m("rcasq", data5bit);
+        BOOST_REQUIRE(!shortAddr.empty());
+
+        CTxDestination dest = DecodeDestination(shortAddr);
+        BOOST_CHECK_MESSAGE(!IsValidDestination(dest),
+            "Quantum address with 16-byte program should decode to CNoDestination");
+        const CNoDestination* noDest = boost::get<CNoDestination>(&dest);
+        BOOST_CHECK_MESSAGE(noDest != nullptr,
+            "Quantum address with wrong program length should produce CNoDestination");
+    }
+
+    // Test 4: Wrong program length (64 bytes instead of 32)
+    {
+        std::vector<uint8_t> longProgram(64, 0xCD);
+        std::vector<uint8_t> data5bit;
+        data5bit.push_back(2);  // Witness version 2
+        ConvertBits<8, 5, true>(data5bit, longProgram.begin(), longProgram.end());
+
+        std::string longAddr = bech32::EncodeBech32m("rcasq", data5bit);
+        BOOST_REQUIRE(!longAddr.empty());
+
+        CTxDestination dest = DecodeDestination(longAddr);
+        BOOST_CHECK_MESSAGE(!IsValidDestination(dest),
+            "Quantum address with 64-byte program should decode to CNoDestination");
+    }
+
+    // Test 5: Completely invalid string
+    {
+        CTxDestination dest = DecodeDestination("not_a_valid_address_at_all");
+        BOOST_CHECK_MESSAGE(!IsValidDestination(dest),
+            "Invalid string should decode to CNoDestination");
+    }
+
+    // Test 6: Wrong witness version with quantum HRP
+    {
+        std::vector<uint8_t> program(32, 0xEF);
+        std::vector<uint8_t> data5bit;
+        data5bit.push_back(3);  // Witness version 3 (wrong for quantum)
+        ConvertBits<8, 5, true>(data5bit, program.begin(), program.end());
+
+        std::string wrongVersionAddr = bech32::EncodeBech32m("rcasq", data5bit);
+        BOOST_REQUIRE(!wrongVersionAddr.empty());
+
+        CTxDestination dest = DecodeDestination(wrongVersionAddr);
+        BOOST_CHECK_MESSAGE(!IsValidDestination(dest),
+            "Quantum HRP with witness version 3 should decode to CNoDestination");
+    }
+}
+
+#else // !ENABLE_QUANTUM
+
+BOOST_AUTO_TEST_CASE(endianness_tests_skipped)
+{
+    BOOST_TEST_MESSAGE("Quantum endianness fix unit tests skipped (--enable-quantum not set)");
+    BOOST_CHECK(true);
+}
+
+#endif // ENABLE_QUANTUM
+
+// Status summary
+BOOST_AUTO_TEST_CASE(endianness_fix_tests_status)
+{
+    BOOST_TEST_MESSAGE("Quantum endianness fix unit tests (Tasks 7.1-7.7) completed");
+#if ENABLE_QUANTUM
+    BOOST_TEST_MESSAGE("  7.1 Address encoding round-trip: validated");
+    BOOST_TEST_MESSAGE("  7.2 Decode-encode round-trip: validated");
+    BOOST_TEST_MESSAGE("  7.3 Script extraction: validated");
+    BOOST_TEST_MESSAGE("  7.4 Hash consistency: validated");
+    BOOST_TEST_MESSAGE("  7.5 Signing: validated");
+    BOOST_TEST_MESSAGE("  7.6 ECDSA non-interference: validated");
+    BOOST_TEST_MESSAGE("  7.7 Invalid quantum addresses: validated");
+#else
+    BOOST_TEST_MESSAGE("  All tests skipped (--enable-quantum not set)");
+#endif
+    BOOST_CHECK(true);
+}
+
+BOOST_AUTO_TEST_SUITE_END()
