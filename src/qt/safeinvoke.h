@@ -23,11 +23,12 @@
  *       safeInvoke(guard, [data]() { ... update UI ... });
  *   }).detach();
  */
-template <typename Func>
-void safeInvoke(QPointer<QObject> guard, Func&& fn)
+template <typename T, typename Func>
+void safeInvoke(QPointer<T> guard, Func&& fn)
 {
     if (guard.isNull()) return;
-    QMetaObject::invokeMethod(guard.data(), [guard, f = std::forward<Func>(fn)]() {
+    QObject* obj = guard.data();
+    QMetaObject::invokeMethod(obj, [guard, f = std::forward<Func>(fn)]() {
         if (!guard.isNull()) {
             f();
         }
