@@ -77,6 +77,11 @@ bool TransactionSignatureCreator::CreateQuantumSig(CScriptWitness& witness, cons
         return false;
     }
     
+    // Append the hash type byte to the signature, matching ECDSA convention.
+    // CheckSig in interpreter.cpp expects the last byte to be the hash type
+    // and pops it before verifying.
+    signature.push_back((unsigned char)nHashType);
+    
     // Build the quantum witness stack
     // Registry format: single stack item [marker + pubkey/hash + signature]
     witness.stack.clear();
@@ -85,13 +90,13 @@ bool TransactionSignatureCreator::CreateQuantumSig(CScriptWitness& witness, cons
     // For now, always use registration format (0x51) with full pubkey
     // TODO: Check registry and use reference format (0x52) if registered
     
-    // Single witness element: [marker(1) + pubkey(897) + signature(~666)]
+    // Single witness element: [marker(1) + pubkey(897) + signature(~666) + hashtype(1)]
     std::vector<unsigned char> witnessData;
     witnessData.push_back(0x51);  // Registration marker
     // Full public key (897 bytes)
     std::vector<unsigned char> pubkeyData(quantumPubKey.begin(), quantumPubKey.end());
     witnessData.insert(witnessData.end(), pubkeyData.begin(), pubkeyData.end());
-    // Signature
+    // Signature (includes hash type byte at the end)
     witnessData.insert(witnessData.end(), signature.begin(), signature.end());
     witness.stack.push_back(witnessData);
     

@@ -111,6 +111,7 @@ BITCOIN_CORE_H = \
   httpserver/cvmdashboard.h \
   httpserver/cvmdashboard_html.h \
   httpserver/cvmdashboard_evm.h \
+  httpserver/cvmdashboard_contracts.h \
   httpserver/l2_dashboard.h \
   httpserver/l2_dashboard_html.h \
   httpserver/l2_websocket.h \

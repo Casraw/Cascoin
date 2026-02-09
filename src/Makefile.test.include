@@ -33,6 +33,7 @@ BITCOIN_TESTS =\
   test/cvm_quantum_tests.cpp \
   test/cvm_sustainable_gas_tests.cpp \
   test/cvm_trust_context_tests.cpp \
+  test/cvm_dashboard_contracts_tests.cpp \
   test/arith_uint256_tests.cpp \
   test/scriptnum10.h \
   test/addrman_tests.cpp \

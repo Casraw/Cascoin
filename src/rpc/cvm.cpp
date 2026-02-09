@@ -36,6 +36,8 @@
 #include <cvm/validator_compensation.h>
 #include <validation.h>
 #include <consensus/validation.h>
+#include <chainparams.h>
+#include <coins.h>
 #include <txmempool.h>
 #include <util.h>
 #include <base58.h>
@@ -5675,6 +5677,335 @@ UniValue getsybilalerts(const JSONRPCRequest& request)
     return result;
 }
 
+/**
+ * listmycontracts - List all contracts deployed by the current wallet
+ *
+ * Iterates over all contracts in the CVMDatabase, loads each contract's
+ * deployment transaction, extracts the deployer address, and checks if
+ * it belongs to the current wallet using IsMine().
+ *
+ * Requirements: 1.1, 1.3, 1.4, 1.5, 2.1, 2.2, 2.3, 7.3
+ */
+UniValue listmycontracts(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "listmycontracts\n"
+            "\nList all smart contracts deployed by addresses in the current wallet.\n"
+            "\nScans all contracts in the CVM database and returns those whose deployer\n"
+            "address belongs to the current wallet.\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"address\": \"hex\",           (string) Contract address (uint160 hex)\n"
+            "    \"deployer\": \"base58\",       (string) Deployer wallet address\n"
+            "    \"deploymentHeight\": n,      (numeric) Block height of deployment\n"
+            "    \"deploymentTx\": \"hex\",      (string) Deployment transaction hash\n"
+            "    \"codeSize\": n,              (numeric) Bytecode size in bytes\n"
+            "    \"format\": \"CVM\"|\"EVM\",     (string) Bytecode format\n"
+            "    \"isCleanedUp\": bool         (boolean) Whether contract storage was cleaned up\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("listmycontracts", "")
+            + HelpExampleRpc("listmycontracts", "")
+        );
+
+    // Check CVM database is initialized
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, "CVM database not initialized");
+    }
+
+    // Get wallet reference
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!pwallet) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Wallet not available");
+    }
+
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Get all contract addresses from the database
+    std::vector<uint160> contractAddresses = CVM::g_cvmdb->ListContracts();
+
+    UniValue result(UniValue::VARR);
+
+    // Bytecode detector for format detection
+    CVM::BytecodeDetector detector;
+
+    for (const uint160& contractAddr : contractAddresses) {
+        // Load contract metadata
+        CVM::Contract contract;
+        if (!CVM::g_cvmdb->ReadContract(contractAddr, contract)) {
+            continue;  // Skip contracts that can't be read
+        }
+
+        // Load the deployment transaction from the blockchain
+        CTransactionRef deployTx;
+        uint256 hashBlock;
+        if (!GetTransaction(contract.deploymentTx, deployTx, Params().GetConsensus(), hashBlock, true)) {
+            continue;  // Skip if deployment tx can't be found
+        }
+
+        // Extract the deployer address from the transaction inputs
+        uint160 deployerAddr;
+        if (!CVM::ExtractDeployerAddress(*deployTx, deployerAddr)) {
+            continue;  // Skip if deployer can't be determined
+        }
+
+        // Check if the deployer address belongs to this wallet
+        // Convert uint160 to CTxDestination (CKeyID) and check with IsMine
+        CTxDestination deployerDest = CKeyID(deployerAddr);
+        if (!(IsMine(*pwallet, deployerDest) & ISMINE_SPENDABLE)) {
+            // Also try as watch-only
+            if (!(IsMine(*pwallet, deployerDest) & ISMINE_WATCH_ONLY)) {
+                continue;  // Not our contract
+            }
+        }
+
+        // Detect bytecode format
+        CVM::BytecodeDetectionResult detection = detector.DetectFormat(contract.code);
+        std::string formatStr;
+        switch (detection.format) {
+            case CVM::BytecodeFormat::EVM_BYTECODE:
+                formatStr = "EVM";
+                break;
+            case CVM::BytecodeFormat::CVM_NATIVE:
+                formatStr = "CVM";
+                break;
+            case CVM::BytecodeFormat::HYBRID:
+                formatStr = "HYBRID";
+                break;
+            default:
+                formatStr = "UNKNOWN";
+                break;
+        }
+
+        // Build JSON entry for this contract
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("address", contractAddr.GetHex());
+        entry.pushKV("deployer", EncodeDestination(deployerDest));
+        entry.pushKV("deploymentHeight", contract.deploymentHeight);
+        entry.pushKV("deploymentTx", contract.deploymentTx.GetHex());
+        entry.pushKV("codeSize", (int64_t)contract.code.size());
+        entry.pushKV("format", formatStr);
+        entry.pushKV("isCleanedUp", contract.isCleanedUp);
+
+        result.push_back(entry);
+    }
+
+    return result;
+}
+
+/**
+ * getcontractstorage "contractaddress"
+ *
+ * Returns all storage key-value pairs for a given contract address.
+ * Storage entries are returned as hex-encoded uint256 key/value pairs.
+ *
+ * Requirements: 5.1, 5.2, 5.3
+ */
+UniValue getcontractstorage(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "getcontractstorage \"contractaddress\"\n"
+            "\nGet all storage key-value pairs for a deployed contract.\n"
+            "\nArguments:\n"
+            "1. \"contractaddress\" (string, required) Contract address (hex format, 40 characters)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"address\": \"hex\",        (string) Contract address\n"
+            "  \"entries\": [              (array) Storage entries\n"
+            "    {\n"
+            "      \"key\": \"hex\",        (string) Storage key (uint256 hex)\n"
+            "      \"value\": \"hex\"       (string) Storage value (uint256 hex)\n"
+            "    },\n"
+            "    ...\n"
+            "  ],\n"
+            "  \"count\": n               (numeric) Number of entries\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getcontractstorage", "\"a1b2c3d4e5f6...\"")
+            + HelpExampleRpc("getcontractstorage", "\"a1b2c3d4e5f6...\"")
+        );
+
+    // Check CVM database is initialized
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, "CVM database not initialized");
+    }
+
+    // Parse contract address
+    std::string addressStr = request.params[0].get_str();
+    if (addressStr.substr(0, 2) == "0x") {
+        addressStr = addressStr.substr(2);
+    }
+
+    if (addressStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
+    }
+
+    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
+    uint160 contractAddr(addressBytes);
+
+    // Check contract exists
+    if (!CVM::g_cvmdb->Exists(contractAddr)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Contract not found");
+    }
+
+    // Build the storage key prefix: 'S' + raw contract address (20 bytes)
+    std::string storagePrefix = std::string(1, CVM::DB_STORAGE) +
+                                std::string((char*)contractAddr.begin(), 20);
+
+    // List all storage keys for this contract
+    std::vector<std::string> storageKeys = CVM::g_cvmdb->ListKeysWithPrefix(storagePrefix);
+
+    UniValue entries(UniValue::VARR);
+
+    for (const std::string& fullKey : storageKeys) {
+        // The full key is: 'S' (1 byte) + contractAddr (20 bytes) + storageKey (32 bytes)
+        // Extract the storage key (last 32 bytes)
+        if (fullKey.size() != 1 + 20 + 32) {
+            continue;  // Skip malformed keys
+        }
+
+        uint256 storageKey;
+        memcpy(storageKey.begin(), fullKey.data() + 1 + 20, 32);
+
+        // Load the value for this key
+        uint256 storageValue;
+        if (!CVM::g_cvmdb->Load(contractAddr, storageKey, storageValue)) {
+            continue;  // Skip keys whose values can't be loaded
+        }
+
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("key", storageKey.GetHex());
+        entry.pushKV("value", storageValue.GetHex());
+        entries.push_back(entry);
+    }
+
+    // Build result
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("address", contractAddr.GetHex());
+    result.pushKV("entries", entries);
+    result.pushKV("count", (int64_t)entries.size());
+
+    return result;
+}
+
+/**
+ * getcontractreceipts "contractaddress" ( count )
+ *
+ * Returns transaction receipts for a given contract address,
+ * sorted by block number descending.
+ *
+ * Requirements: 6.1, 6.2, 6.3
+ */
+UniValue getcontractreceipts(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "getcontractreceipts \"contractaddress\" ( count )\n"
+            "\nGet transaction receipts for a deployed contract.\n"
+            "\nArguments:\n"
+            "1. \"contractaddress\" (string, required) Contract address (hex format, 40 characters)\n"
+            "2. count              (numeric, optional, default=50) Maximum number of receipts to return\n"
+            "\nResult:\n"
+            "[\n"
+            "  {\n"
+            "    \"txHash\": \"hex\",        (string) Transaction hash\n"
+            "    \"from\": \"hex\",          (string) Sender address\n"
+            "    \"to\": \"hex\",            (string) Recipient address\n"
+            "    \"blockNumber\": n,        (numeric) Block number\n"
+            "    \"gasUsed\": n,            (numeric) Gas used\n"
+            "    \"status\": n,             (numeric) 1=success, 0=failure\n"
+            "    \"revertReason\": \"str\",  (string) Revert reason (only on failure)\n"
+            "    \"logCount\": n            (numeric) Number of log entries\n"
+            "  },\n"
+            "  ...\n"
+            "]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("getcontractreceipts", "\"a1b2c3d4e5f6...\"")
+            + HelpExampleCli("getcontractreceipts", "\"a1b2c3d4e5f6...\" 10")
+            + HelpExampleRpc("getcontractreceipts", "\"a1b2c3d4e5f6...\", 10")
+        );
+
+    // Check CVM database is initialized
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_DATABASE_ERROR, "CVM database not initialized");
+    }
+
+    // Parse contract address
+    std::string addressStr = request.params[0].get_str();
+    if (addressStr.substr(0, 2) == "0x") {
+        addressStr = addressStr.substr(2);
+    }
+
+    if (addressStr.length() != 40) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
+    }
+
+    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
+    uint160 contractAddr(addressBytes);
+
+    // Check contract exists
+    if (!CVM::g_cvmdb->Exists(contractAddr)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Contract not found");
+    }
+
+    // Parse optional count parameter (default=50)
+    int count = 50;
+    if (request.params.size() > 1) {
+        count = request.params[1].get_int();
+        if (count <= 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Count must be a positive integer");
+        }
+    }
+
+    // Load TX hashes from the contract receipt index
+    std::vector<uint256> txHashes;
+    CVM::g_cvmdb->ReadContractReceiptIndex(contractAddr, txHashes);
+
+    // Load receipts for each TX hash
+    std::vector<CVM::TransactionReceipt> receipts;
+    for (const uint256& txHash : txHashes) {
+        CVM::TransactionReceipt receipt;
+        if (CVM::g_cvmdb->ReadReceipt(txHash, receipt)) {
+            receipts.push_back(receipt);
+        }
+    }
+
+    // Sort by blockNumber descending
+    std::sort(receipts.begin(), receipts.end(),
+        [](const CVM::TransactionReceipt& a, const CVM::TransactionReceipt& b) {
+            return a.blockNumber > b.blockNumber;
+        });
+
+    // Limit to count entries
+    if ((int)receipts.size() > count) {
+        receipts.resize(count);
+    }
+
+    // Build JSON array response
+    UniValue result(UniValue::VARR);
+    for (const CVM::TransactionReceipt& receipt : receipts) {
+        UniValue entry(UniValue::VOBJ);
+        entry.pushKV("txHash", receipt.transactionHash.GetHex());
+        entry.pushKV("from", receipt.from.GetHex());
+        entry.pushKV("to", receipt.to.GetHex());
+        entry.pushKV("blockNumber", (int64_t)receipt.blockNumber);
+        entry.pushKV("gasUsed", (int64_t)receipt.gasUsed);
+        entry.pushKV("status", (int)receipt.status);
+        if (receipt.status == 0 && !receipt.revertReason.empty()) {
+            entry.pushKV("revertReason", receipt.revertReason);
+        }
+        entry.pushKV("logCount", (int64_t)receipt.logs.size());
+        result.push_back(entry);
+    }
+
+    return result;
+}
+
 // Register CVM RPC commands
 static const CRPCCommand commands[] =
 { //  category              name                      actor (function)         argNames
@@ -5683,6 +6014,9 @@ static const CRPCCommand commands[] =
     { "cvm",                "callcontract",          &callcontract,           {"contractaddress","data","gaslimit","value"} },
     { "cvm",                "getcontractinfo",       &getcontractinfo,        {"contractaddress"} },
     { "cvm",                "sendcvmcontract",       &sendcvmcontract,        {"bytecode","gaslimit"} },
+    { "cvm",                "listmycontracts",       &listmycontracts,        {} },
+    { "cvm",                "getcontractstorage",    &getcontractstorage,     {"contractaddress"} },
+    { "cvm",                "getcontractreceipts",   &getcontractreceipts,    {"contractaddress","count"} },
     { "reputation",         "getreputation",         &getreputation,          {"address"} },
     { "reputation",         "getgasallowance",       &getgasallowance,        {"address"} },
     { "reputation",         "getnetworkcongestion",  &getnetworkcongestion,   {} },

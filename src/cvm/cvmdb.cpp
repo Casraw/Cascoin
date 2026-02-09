@@ -319,7 +319,18 @@ void ShutdownCVMDatabase() {
 // Receipt management
 bool CVMDatabase::WriteReceipt(const uint256& txHash, const TransactionReceipt& receipt) {
     std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
-    return db->Write(key, receipt);
+    if (!db->Write(key, receipt)) {
+        return false;
+    }
+
+    // Update contract receipt index
+    // Use contractAddress for contract creation, otherwise use 'to'
+    uint160 contractAddr = receipt.IsContractCreation() ? receipt.contractAddress : receipt.to;
+    if (!contractAddr.IsNull()) {
+        AppendContractReceiptIndex(contractAddr, txHash);
+    }
+
+    return true;
 }
 
 bool CVMDatabase::ReadReceipt(const uint256& txHash, TransactionReceipt& receipt) {
@@ -345,6 +356,33 @@ bool CVMDatabase::WriteBlockReceipts(const uint256& blockHash, const std::vector
 bool CVMDatabase::ReadBlockReceipts(const uint256& blockHash, std::vector<uint256>& txHashes) {
     std::string key = std::string(1, DB_RECEIPT_BLOCK) + blockHash.ToString();
     return db->Read(key, txHashes);
+}
+
+bool CVMDatabase::WriteContractReceiptIndex(const uint160& contractAddr, const std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_CONTRACT_RECEIPTS) +
+                     std::string((char*)contractAddr.begin(), 20);
+    return db->Write(key, txHashes);
+}
+
+bool CVMDatabase::ReadContractReceiptIndex(const uint160& contractAddr, std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_CONTRACT_RECEIPTS) +
+                     std::string((char*)contractAddr.begin(), 20);
+    return db->Read(key, txHashes);
+}
+
+bool CVMDatabase::AppendContractReceiptIndex(const uint160& contractAddr, const uint256& txHash) {
+    std::vector<uint256> txHashes;
+    ReadContractReceiptIndex(contractAddr, txHashes);
+
+    // Check if already present to avoid duplicates
+    for (const auto& hash : txHashes) {
+        if (hash == txHash) {
+            return true;
+        }
+    }
+
+    txHashes.push_back(txHash);
+    return WriteContractReceiptIndex(contractAddr, txHashes);
 }
 
 bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {

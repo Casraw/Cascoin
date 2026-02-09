@@ -4,6 +4,7 @@
 
 #include <httpserver/cvmdashboard.h>
 #include <httpserver/cvmdashboard_html.h>
+#include <httpserver/cvmdashboard_contracts.h>
 #include <httpserver/cvmdashboard_evm.h>
 #include <httpserver.h>
 #include <rpc/protocol.h>
@@ -25,22 +26,24 @@ std::string BuildCompleteDashboardHTML() {
     // Find the insertion point (before the footer)
     size_t footerPos = html.find("<footer class=\"footer\">");
     if (footerPos != std::string::npos) {
-        // Insert EVM sections before footer
-        std::string evmSections = CVMDashboardEVM::EVM_CONTRACT_SECTION;
-        evmSections += CVMDashboardEVM::GAS_MANAGEMENT_SECTION;
-        evmSections += CVMDashboardEVM::TRUST_AWARE_SECTION;
+        // Insert Contract Management section before EVM sections
+        std::string allSections = CVMDashboardContracts::CONTRACT_MANAGEMENT_SECTION;
+        allSections += CVMDashboardEVM::EVM_CONTRACT_SECTION;
+        allSections += CVMDashboardEVM::GAS_MANAGEMENT_SECTION;
+        allSections += CVMDashboardEVM::TRUST_AWARE_SECTION;
         
-        html.insert(footerPos, evmSections);
+        html.insert(footerPos, allSections);
     }
     
-    // Find the script section and add EVM JavaScript
+    // Find the script section and add Contract Management + EVM JavaScript
     size_t scriptEndPos = html.rfind("</script>");
     if (scriptEndPos != std::string::npos) {
-        std::string evmJS = CVMDashboardEVM::EVM_DASHBOARD_JS;
-        evmJS += CVMDashboardEVM::GAS_MANAGEMENT_JS;
-        evmJS += CVMDashboardEVM::TRUST_AWARE_JS;
+        std::string allJS = CVMDashboardContracts::CONTRACT_MANAGEMENT_JS;
+        allJS += CVMDashboardEVM::EVM_DASHBOARD_JS;
+        allJS += CVMDashboardEVM::GAS_MANAGEMENT_JS;
+        allJS += CVMDashboardEVM::TRUST_AWARE_JS;
         
-        html.insert(scriptEndPos, evmJS);
+        html.insert(scriptEndPos, allJS);
     }
     
     return html;

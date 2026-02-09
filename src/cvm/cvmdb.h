@@ -54,6 +54,7 @@ static const char DB_RECEIPT = 'R';           // Transaction receipt: 'R' + txha
 static const char DB_RECEIPT_BLOCK = 'X';     // Block receipts index: 'X' + blockhash -> vector<txhash>
 static const char DB_VALIDATOR_PARTICIPATION = 'V';  // Validator participation: 'V' + txhash -> TransactionValidationRecord
 static const char DB_VALIDATOR_RECORD = 'E';  // Validator eligibility: 'E' + address -> ValidatorEligibilityRecord
+static const char DB_CONTRACT_RECEIPTS = 'T'; // Contract receipts: 'T' + contractAddr -> vector<uint256>
 
 /**
  * CVMDatabase - LevelDB-backed storage for CVM state
@@ -109,6 +110,11 @@ public:
     // Block receipt index (for efficient block-based queries)
     bool WriteBlockReceipts(const uint256& blockHash, const std::vector<uint256>& txHashes);
     bool ReadBlockReceipts(const uint256& blockHash, std::vector<uint256>& txHashes);
+    
+    // Contract receipt index (for efficient contract-based receipt queries)
+    bool WriteContractReceiptIndex(const uint160& contractAddr, const std::vector<uint256>& txHashes);
+    bool ReadContractReceiptIndex(const uint160& contractAddr, std::vector<uint256>& txHashes);
+    bool AppendContractReceiptIndex(const uint160& contractAddr, const uint256& txHash);
     
     // Receipt pruning (delete receipts older than specified block height)
     bool PruneReceipts(uint32_t beforeBlockNumber);
