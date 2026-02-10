@@ -290,6 +290,11 @@ UniValue generatetoaddress(const JSONRPCRequest& request)
         );
 
     int nGenerate = request.params[0].get_int();
+    // Safety guard: extremely large nblocks responses can exhaust memory/HTTP worker.
+    // Encourage batching instead of single huge responses.
+    if (nGenerate > 50000) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "nblocks too large; please use batches of 50000 or less");
+    }
     uint64_t nMaxTries = 1000000;
     if (!request.params[2].isNull()) {
         nMaxTries = request.params[2].get_int();
@@ -799,7 +804,14 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     result.push_back(Pair("previousblockhash", pblock->hashPrevBlock.GetHex()));
     result.push_back(Pair("transactions", transactions));
     result.push_back(Pair("coinbaseaux", aux));
-    result.push_back(Pair("coinbasevalue", (int64_t)pblock->vtx[0]->vout[0].nValue));
+    
+    // Cascoin: Calculate total coinbasevalue from all outputs (for HAT v2 validator payments compatibility)
+    // Pools expect the full block reward + fees, not just the miner's share
+    CAmount totalCoinbaseValue = 0;
+    for (const auto& out : pblock->vtx[0]->vout) {
+        totalCoinbaseValue += out.nValue;
+    }
+    result.push_back(Pair("coinbasevalue", (int64_t)totalCoinbaseValue));
     result.push_back(Pair("longpollid", chainActive.Tip()->GetBlockHash().GetHex() + i64tostr(nTransactionsUpdatedLast)));
     result.push_back(Pair("target", hashTarget.GetHex()));
     result.push_back(Pair("mintime", (int64_t)pindexPrev->GetMedianTimePast()+1));

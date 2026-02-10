@@ -1,9 +1,11 @@
 // Copyright (c) 2014-2017 The Bitcoin Core developers
+// Copyright (c) 2025 The Cascoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <base58.h>
 
+#include <address_quantum.h>
 #include <bech32.h>
 #include <hash.h>
 #include <script/script.h>
@@ -251,6 +253,33 @@ public:
         return bech32::Encode(m_params.Bech32HRP(), data);
     }
 
+    /**
+     * Encode a WitnessV2Quantum destination as a quantum address.
+     * Uses Bech32m encoding with quantum HRP (casq/tcasq/rcasq).
+     * Requirements: 1.2, 2.2, 3.1, 3.2, 3.3, 3.4 (quantum address encoding)
+     *
+     * WitnessV2Quantum stores bytes in LE order (matching GetQuantumID()),
+     * but Bech32m encoding expects BE order. Reverse LE→BE before encoding.
+     */
+    std::string operator()(const WitnessV2Quantum& id) const
+    {
+        // Get the quantum HRP for this network
+        std::string hrp = address::GetQuantumHRP(m_params);
+        
+        // Reverse LE→BE for Bech32m encoding
+        std::vector<unsigned char> programBE(32);
+        for (size_t i = 0; i < 32; i++) {
+            programBE[i] = id.begin()[31 - i];
+        }
+        
+        // Build Bech32m data: [witness_version=2] + [program in 5-bit groups]
+        std::vector<unsigned char> data = {address::QUANTUM_WITNESS_VERSION};
+        ConvertBits<8, 5, true>(data, programBE.begin(), programBE.end());
+        
+        // Encode using Bech32m (BIP-350)
+        return bech32::EncodeBech32m(hrp, data);
+    }
+
     std::string operator()(const WitnessUnknown& id) const
     {
         if (id.version < 1 || id.version > 16 || id.length < 2 || id.length > 40) {
@@ -294,11 +323,86 @@ CTxDestination DecodeDestination(const std::string& str, const CChainParams& par
         }
     }
     data.clear();
+    
+    // Try Bech32/Bech32m decoding with type detection
+    // Requirements: 3.5, 3.7, 3.8, 3.9 (quantum address recognition and routing)
+    bech32::DecodeResult bechResult = bech32::DecodeWithType(str);
+    
+    if (bechResult.encoding != bech32::Encoding::INVALID && !bechResult.data.empty()) {
+        int version = bechResult.data[0]; // First 5-bit symbol is witness version
+        
+        // Convert remaining 5-bit groups to 8-bit bytes
+        if (ConvertBits<5, 8, false>(data, bechResult.data.begin() + 1, bechResult.data.end())) {
+            
+            // Check for quantum address (casq/tcasq/rcasq HRP)
+            if (bech32::IsQuantumHRP(bechResult.hrp)) {
+                // Quantum address: must be Bech32m with witness version 2 and 32-byte program
+                // Requirements: 3.5, 3.9 (quantum address validation)
+                std::string expectedHRP = address::GetQuantumHRP(params);
+                if (bechResult.encoding == bech32::Encoding::BECH32M &&
+                    version == address::QUANTUM_WITNESS_VERSION &&
+                    data.size() == address::QUANTUM_PROGRAM_SIZE &&
+                    bechResult.hrp == expectedHRP) {
+                    
+                    // Reverse BE→LE to match GetQuantumID() output byte order.
+                    // Bech32m encoding stores bytes in big-endian order, but
+                    // WitnessV2Quantum (uint256) uses little-endian internally.
+                    WitnessV2Quantum quantum;
+                    for (size_t i = 0; i < 32; i++) {
+                        quantum.begin()[i] = data[31 - i];
+                    }
+                    return quantum;
+                }
+                // Invalid quantum address format or wrong network
+                return CNoDestination();
+            }
+            
+            // Standard Bech32/Bech32m address (cas/tcas/rcas HRP)
+            if (bechResult.hrp == params.Bech32HRP()) {
+                if (version == 0) {
+                    // Witness v0: must use Bech32 encoding
+                    if (bechResult.encoding != bech32::Encoding::BECH32) {
+                        return CNoDestination();
+                    }
+                    {
+                        WitnessV0KeyHash keyid;
+                        if (data.size() == keyid.size()) {
+                            std::copy(data.begin(), data.end(), keyid.begin());
+                            return keyid;
+                        }
+                    }
+                    {
+                        WitnessV0ScriptHash scriptid;
+                        if (data.size() == scriptid.size()) {
+                            std::copy(data.begin(), data.end(), scriptid.begin());
+                            return scriptid;
+                        }
+                    }
+                    return CNoDestination();
+                }
+                
+                // Witness v1+: must use Bech32m encoding (BIP-350)
+                if (version >= 1 && version <= 16) {
+                    if (bechResult.encoding != bech32::Encoding::BECH32M) {
+                        return CNoDestination();
+                    }
+                    if (data.size() < 2 || data.size() > 40) {
+                        return CNoDestination();
+                    }
+                    WitnessUnknown unk;
+                    unk.version = version;
+                    std::copy(data.begin(), data.end(), unk.program);
+                    unk.length = data.size();
+                    return unk;
+                }
+            }
+        }
+    }
+    
+    // Fallback: try legacy Bech32 decoding for backward compatibility
     auto bech = bech32::Decode(str);
     if (bech.second.size() > 0 && bech.first == params.Bech32HRP()) {
-        // Bech32 decoding
-        int version = bech.second[0]; // The first 5 bit symbol is the witness version (0-16)
-        // The rest of the symbols are converted witness program bytes.
+        int version = bech.second[0];
         if (ConvertBits<5, 8, false>(data, bech.second.begin() + 1, bech.second.end())) {
             if (version == 0) {
                 {
@@ -382,4 +486,18 @@ bool IsValidDestinationString(const std::string& str, const CChainParams& params
 bool IsValidDestinationString(const std::string& str)
 {
     return IsValidDestinationString(str, Params());
+}
+
+CTxDestination GetQuantumDestination(const CPubKey& pubkey)
+{
+    // Validate that this is a quantum public key
+    if (!pubkey.IsQuantum() || !pubkey.IsValid()) {
+        return CNoDestination();
+    }
+    
+    // Get the SHA256 hash of the public key as the witness program
+    uint256 program = pubkey.GetQuantumID();
+    
+    // Create and return the WitnessV2Quantum destination
+    return WitnessV2Quantum(program);
 }

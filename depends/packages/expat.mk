@@ -1,8 +1,8 @@
 package=expat
-$(package)_version=2.2.1
-$(package)_download_path=https://downloads.sourceforge.net/project/expat/expat/$($(package)_version)
-$(package)_file_name=$(package)-$($(package)_version).tar.bz2
-$(package)_sha256_hash=1868cadae4c82a018e361e2b2091de103cd820aaacb0d6cfa49bd2cd83978885
+$(package)_version=2.6.4
+$(package)_download_path=https://github.com/libexpat/libexpat/releases/download/R_2_6_4
+$(package)_file_name=$(package)-$($(package)_version).tar.xz
+$(package)_sha256_hash=a695629dae047055b37d50a0ff4776d1d45d0a4c842cf4ccee158441f55ff7ee
 
 define $(package)_set_vars
 $(package)_config_opts=--disable-static

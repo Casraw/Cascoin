@@ -23,6 +23,17 @@ GENERATED_TEST_FILES = $(JSON_TEST_FILES:.json=.json.h) $(RAW_TEST_FILES:.raw=.r
 
 # test_bitcoin binary #
 BITCOIN_TESTS =\
+  test/bctdb_tests.cpp \
+  test/challenger_reward_tests.cpp \
+  test/cvm_backward_compat_tests.cpp \
+  test/cvm_bytecode_detector_tests.cpp \
+  test/cvm_consensus_safety_tests.cpp \
+  test/cvm_enhanced_storage_tests.cpp \
+  test/cvm_integration_tests.cpp \
+  test/cvm_quantum_tests.cpp \
+  test/cvm_sustainable_gas_tests.cpp \
+  test/cvm_trust_context_tests.cpp \
+  test/cvm_dashboard_contracts_tests.cpp \
   test/arith_uint256_tests.cpp \
   test/scriptnum10.h \
   test/addrman_tests.cpp \
@@ -41,10 +52,43 @@ BITCOIN_TESTS =\
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/cuckoocache_tests.cpp \
+  test/quantum_tests.cpp \
+  test/quantum_endianness_property_tests.cpp \
+  test/quantum_registry_tests.cpp \
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
   test/key_tests.cpp \
+  test/l2_block_tests.cpp \
+  test/l2_bridge_contract_tests.cpp \
+  test/l2_burn_mint_integration_tests.cpp \
+  test/l2_burn_parser_tests.cpp \
+  test/l2_burn_registry_tests.cpp \
+  test/l2_burn_validator_tests.cpp \
+  test/l2_challenge_handler_tests.cpp \
+  test/l2_collusion_detector_tests.cpp \
+  test/l2_cross_layer_messaging_tests.cpp \
+  test/l2_data_availability_tests.cpp \
+  test/l2_encrypted_mempool_tests.cpp \
+  test/l2_fee_distributor_tests.cpp \
+  test/l2_forced_inclusion_tests.cpp \
+  test/l2_fraud_proof_tests.cpp \
+  test/l2_leader_election_tests.cpp \
+  test/l2_mint_consensus_tests.cpp \
+  test/l2_minter_tests.cpp \
+  test/l2_rate_limiter_tests.cpp \
+  test/l2_registry_tests.cpp \
+  test/l2_reorg_monitor_tests.cpp \
+  test/l2_reputation_tests.cpp \
+  test/l2_security_monitor_tests.cpp \
+  test/l2_sequencer_consensus_tests.cpp \
+  test/l2_sequencer_discovery_tests.cpp \
+  test/l2_sparse_merkle_tree_tests.cpp \
+  test/l2_state_manager_tests.cpp \
+  test/l2_timestamp_validator_tests.cpp \
+  test/l2_token_tests.cpp \
+  test/l2_token_manager_tests.cpp \
+  test/l2_faucet_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
   test/main_tests.cpp \
@@ -81,6 +125,7 @@ BITCOIN_TESTS =\
   test/timedata_tests.cpp \
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
+  test/trustpropagator_tests.cpp \
   test/txvalidation_tests.cpp \
   test/txvalidationcache_tests.cpp \
   test/versionbits_tests.cpp \
@@ -102,11 +147,15 @@ test_test_cascoin_LDADD =
 if ENABLE_WALLET
 test_test_cascoin_LDADD += $(LIBBITCOIN_WALLET)
 endif
-test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) \
+test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBBITCOIN_QUANTUM) $(LIBUNIVALUE) \
   $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(BOOST_UNIT_TEST_FRAMEWORK_LIB) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
 test_test_cascoin_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
-test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS)
+test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+test_test_cascoin_LDADD += -lbcrypt
+endif
 test_test_cascoin_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ
@@ -127,9 +176,10 @@ test_test_cascoin_fuzzy_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBSECP256K1)
 
-test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS)
 #
 
 nodist_test_test_cascoin_SOURCES = $(GENERATED_TEST_FILES)

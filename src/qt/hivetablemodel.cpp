@@ -5,7 +5,8 @@
 // Cascoin: Hive
 
 #include <qt/hivetablemodel.h>
-#include <qt/bctdatabase.h>  // For BCTDatabase synchronization
+#include <qt/safeinvoke.h>
+#include <bctdb.h>  // For BCTDatabaseSQLite
 
 #include <qt/bitcoinunits.h>
 #include <qt/guiutil.h>
@@ -17,7 +18,9 @@
 #include <streams.h>
 
 #include <util.h>
+#include <validation.h>
 
+#include <QPointer>
 #include <thread>
 
 HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent) : platformStyle(_platformStyle), QAbstractTableModel(parent), walletModel(parent)
@@ -34,6 +37,7 @@ HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wal
     immature = mature = dead = blocksFound = 0;
     updateInProgress = false;
     pendingUpdate = false;
+    lastIncludeDeadBees = false;
 }
 
 HiveTableModel::~HiveTableModel() {
@@ -45,6 +49,9 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
         return;
     }
 
+    // Remember the filter setting for refresh
+    lastIncludeDeadBees = includeDeadBees;
+
     // Prevent concurrent updates: coalesce into a single follow-up run
     if (updateInProgress) {
         pendingUpdate = true;
@@ -52,15 +59,82 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
     }
     updateInProgress = true;
 
-    // Move expensive wallet operations to background thread to prevent GUI hang
+    // Prevent use-after-free: capture a QPointer so the queued lambda
+    // is silently dropped when this model has already been destroyed.
+    QPointer<HiveTableModel> guard(this);
+    // Also guard walletModel — it may be deleted during shutdown before
+    // the background thread's safeInvoke lambda runs on the main thread.
+    QPointer<WalletModel> wmGuard(walletModel);
+
+    // Move database operations to background thread to prevent GUI hang
     std::thread([=]() {
         try {
-            // Load entries from wallet in background thread
-            std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
-            walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
+            // Load entries from BCTDatabaseSQLite in background thread
+            BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+            std::vector<BCTRecord> records;
+            
+            // Helper lambda to convert wallet BCTs to BCTRecords
+            auto convertWalletBCTs = [](const std::vector<CBeeCreationTransactionInfo>& walletBCTs) {
+                std::vector<BCTRecord> result;
+                result.reserve(walletBCTs.size());
+                for (const auto& bct : walletBCTs) {
+                    BCTRecord record;
+                    record.txid = bct.txid;
+                    record.honeyAddress = bct.honeyAddress;
+                    record.status = bct.beeStatus;
+                    record.beeCount = bct.beeCount;
+                    record.creationHeight = bct.creationHeight;
+                    record.maturityHeight = bct.maturityHeight;
+                    record.expirationHeight = bct.expirationHeight;
+                    record.timestamp = bct.time;
+                    record.cost = bct.beeFeePaid;
+                    record.blocksFound = bct.blocksFound;
+                    record.rewardsPaid = bct.rewardsPaid;
+                    record.profit = bct.profit;
+                    result.push_back(record);
+                }
+                return result;
+            };
+            
+            if (bctDb && bctDb->isInitialized()) {
+                // Use SQLite database for fast queries
+                records = bctDb->getAllBCTs(includeDeadBees);
+                LogPrintf("HiveTableModel: Loaded %zu BCT records from SQLite database (includeDeadBees=%d)\n", records.size(), includeDeadBees);
+                
+                // Debug: Count records with rewards
+                int recordsWithRewards = 0;
+                for (const auto& r : records) {
+                    if (r.blocksFound > 0) recordsWithRewards++;
+                }
+                LogPrintf("HiveTableModel: %d of %zu records have blocksFound > 0\n", recordsWithRewards, records.size());
+                
+                // If database is empty, fall back to wallet scan
+                if (records.empty()) {
+                    LogPrintf("HiveTableModel: SQLite database is empty, falling back to wallet scan\n");
+                    std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
+                    walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
+                    records = convertWalletBCTs(vBeeCreationTransactions);
+                    LogPrintf("HiveTableModel: Loaded %zu BCT records from wallet scan\n", records.size());
+                }
+            } else {
+                // Fallback to wallet scan if database not initialized
+                LogPrintf("HiveTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n", 
+                          bctDb, bctDb ? bctDb->isInitialized() : false);
+                std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
+                walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
+                records = convertWalletBCTs(vBeeCreationTransactions);
+            }
+            
+            // Get current chain height for blocks left calculation
+            int currentHeight = 0;
+            {
+                LOCK(cs_main);
+                currentHeight = chainActive.Height();
+            }
+            const Consensus::Params& consensusParams = Params().GetConsensus();
             
             // Update UI on main thread
-            QMetaObject::invokeMethod(this, [=]() {
+            safeInvoke(guard, [=]() {
                 // Rebuild the entire model atomically to avoid incorrect row counts
                 beginResetModel();
 
@@ -73,7 +147,53 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 rewardsPaid = 0;
                 profit = 0;
 
-                for (const CBeeCreationTransactionInfo& bct : vBeeCreationTransactions) {
+                for (const BCTRecord& record : records) {
+                    // Convert BCTRecord to CBeeCreationTransactionInfo for display
+                    CBeeCreationTransactionInfo bct;
+                    bct.txid = record.txid;
+                    bct.honeyAddress = record.honeyAddress;
+                    bct.beeCount = record.beeCount;
+                    bct.time = record.timestamp;
+                    bct.beeFeePaid = record.cost;
+                    bct.blocksFound = record.blocksFound;
+                    bct.rewardsPaid = record.rewardsPaid;
+                    bct.profit = record.profit;
+                    bct.creationHeight = record.creationHeight;
+                    bct.maturityHeight = record.maturityHeight;
+                    bct.expirationHeight = record.expirationHeight;
+                    
+                    // Debug: Log first few records with rewards
+                    static int loggedCount = 0;
+                    if (record.blocksFound > 0 && loggedCount < 3) {
+                        LogPrintf("HiveTableModel: BCT %s has blocksFound=%d, rewardsPaid=%lld\n", 
+                                  record.txid, record.blocksFound, record.rewardsPaid);
+                        loggedCount++;
+                    }
+                    
+                    // Calculate blocks left and status based on CURRENT height
+                    // This ensures the UI always shows the correct status even if
+                    // the database hasn't been updated yet
+                    if (record.creationHeight > 0 && record.expirationHeight > 0) {
+                        bct.blocksLeft = record.getBlocksLeft(currentHeight);
+                        
+                        // Recalculate status based on current height
+                        if (currentHeight >= record.expirationHeight) {
+                            bct.beeStatus = "expired";
+                        } else if (currentHeight >= record.maturityHeight) {
+                            bct.beeStatus = "mature";
+                        } else {
+                            bct.beeStatus = "immature";
+                        }
+                    } else {
+                        // Fallback to database status if heights not available
+                        bct.beeStatus = record.status.empty() ? "expired" : record.status;
+                        bct.blocksLeft = 0;
+                        bct.creationHeight = 0;
+                        bct.maturityHeight = 0;
+                        bct.expirationHeight = 0;
+                    }
+
+                    // Update summary counts
                     if (bct.beeStatus == "mature") {
                         mature += bct.beeCount;
                     } else if (bct.beeStatus == "immature") {
@@ -96,13 +216,10 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
 
-                // Fire signal
-                QMetaObject::invokeMethod(walletModel, "newHiveSummaryAvailable", Qt::QueuedConnection);
-
-                // Sync BCT database with real wallet data (fix dummy data issue)
-                BCTDatabase* bctDb = BCTDatabase::instance();
-                if (bctDb) {
-                    bctDb->syncWithWalletBCTs(vBeeCreationTransactions);
+                // Fire signal — use the captured QPointer to avoid invoking on a
+                // WalletModel that has already been deleted during shutdown.
+                if (wmGuard) {
+                    QMetaObject::invokeMethod(wmGuard.data(), "newHiveSummaryAvailable", Qt::QueuedConnection);
                 }
 
                 // Reset update flag and process any pending request
@@ -110,18 +227,43 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 if (pendingUpdate) {
                     pendingUpdate = false;
                     // Re-run with the same includeDeadBees value requested last
-                    updateBCTs(includeDeadBees);
+                    updateBCTs(lastIncludeDeadBees);
                 }
-            }, Qt::QueuedConnection);
+            });
             
         } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(this, [=]() {
+            safeInvoke(guard, [=]() {
                 LogPrintf("Error updating BCTs: %s\n", e.what());
                 // Reset update flag on error too
                 updateInProgress = false;
-            }, Qt::QueuedConnection);
+            });
         }
     }).detach();
+}
+
+void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadBees) {
+    // This method is called from the main thread for immediate cache access
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (!bctDb || !bctDb->isInitialized()) {
+        return;
+    }
+
+    // Get summary from database for immediate display
+    BCTSummary summary = bctDb->getSummary();
+    
+    immature = summary.immatureCount;
+    mature = summary.matureCount;
+    dead = summary.expiredCount;
+    blocksFound = summary.blocksFound;
+    cost = summary.totalCost;
+    rewardsPaid = summary.totalRewards;
+    profit = summary.totalProfit;
+}
+
+void HiveTableModel::onDatabaseUpdated() {
+    // Called when BCTDatabaseSQLite signals an update
+    // Refresh the model with the last filter setting
+    updateBCTs(lastIncludeDeadBees);
 }
 
 void HiveTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit) {
@@ -160,17 +302,37 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
             case Status:
                 {
                     QString status = QString::fromStdString(rec->beeStatus);
+                    if (status.isEmpty())
+                        return tr("Unknown");
                     status[0] = status[0].toUpper();
                     return status;
                 }
             case EstimatedTime:
                 {
                     QString status = "";
-                    if (rec->beeStatus == "immature") {
-                        int blocksTillMature = rec->blocksLeft - Params().GetConsensus().beeLifespanBlocks;
-                        status = "Matures in " + QString::number(blocksTillMature) + " blocks (" + secondsToString(blocksTillMature * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
-                    } else if (rec->beeStatus == "mature")
-                        status = "Expires in " + QString::number(rec->blocksLeft) + " blocks (" + secondsToString(rec->blocksLeft * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                    if (rec->beeStatus == "immature" && rec->maturityHeight > 0) {
+                        // Calculate blocks until maturity using the stored maturity height
+                        LOCK(cs_main);
+                        int currentHeight = chainActive.Height();
+                        int blocksTillMature = rec->maturityHeight - currentHeight;
+                        if (blocksTillMature > 0) {
+                            status = "Matures in " + QString::number(blocksTillMature) + " blocks (" + secondsToString(blocksTillMature * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                        } else {
+                            status = "Maturing...";
+                        }
+                    } else if (rec->beeStatus == "mature" && rec->expirationHeight > 0) {
+                        // Calculate blocks until expiration using the stored expiration height
+                        LOCK(cs_main);
+                        int currentHeight = chainActive.Height();
+                        int blocksLeft = rec->expirationHeight - currentHeight;
+                        if (blocksLeft > 0) {
+                            status = "Expires in " + QString::number(blocksLeft) + " blocks (" + secondsToString(blocksLeft * Params().GetConsensus().nPowTargetSpacing / 2) + ")";
+                        } else {
+                            status = "Expiring...";
+                        }
+                    } else if (rec->beeStatus == "expired") {
+                        status = "Expired";
+                    }
                     return status;
                 }
             case Cost:

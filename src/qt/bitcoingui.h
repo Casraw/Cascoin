@@ -94,6 +94,7 @@ private:
     QAction *overviewAction;
     QAction *hiveAction;                // Cascoin: Hive page
     QAction *beeNFTAction;              // Cascoin: Mice NFT page
+    QAction *l2Action;                  // Cascoin: L2 page
     QAction *importPrivateKeyAction;    // Cascoin: Key import helper
     QAction *historyAction;
     QAction *quitAction;
@@ -214,6 +215,9 @@ private Q_SLOTS:
     
     // Cascoin: Mice NFT: Switch to mice NFT page
     void gotoBeeNFTPage();
+
+    // Cascoin: L2: Switch to L2 page
+    void gotoL2Page();
 
     /** Show Sign/Verify Message dialog and switch to sign message tab */
     void gotoSignMessageTab(QString addr = "");

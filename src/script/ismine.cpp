@@ -9,9 +9,57 @@
 #include <keystore.h>
 #include <script/script.h>
 #include <script/sign.h>
+#include <pubkey.h>
 
 
 typedef std::vector<unsigned char> valtype;
+
+/**
+ * Check if the keystore contains a quantum key matching the given witness program.
+ * The witness program for quantum addresses is the SHA256 hash of the FALCON-512 public key.
+ *
+ * Compatibility note: Pre-endianness-fix transactions stored the witness program
+ * in big-endian (BE) byte order inside the script, while GetQuantumID() returns
+ * little-endian (LE) bytes (the native uint256 layout).  Post-fix transactions
+ * store LE directly.  To recognise both old and new UTXOs we compare against
+ * the program as-is (LE, new format) AND against its byte-reversed form (BE,
+ * legacy format).  This dual check can be removed after a testnet reset.
+ *
+ * @param keystore The keystore to search
+ * @param witnessProgram The 32-byte witness program extracted from the script
+ * @return true if a matching quantum key is found
+ */
+static bool HaveQuantumKey(const CKeyStore& keystore, const uint256& witnessProgram)
+{
+    // Pre-compute the byte-reversed witness program for legacy (BE) compatibility.
+    uint256 witnessProgramReversed;
+    const unsigned char* src = witnessProgram.begin();
+    unsigned char* dst = witnessProgramReversed.begin();
+    for (size_t i = 0; i < 32; i++) {
+        dst[i] = src[31 - i];
+    }
+
+    std::set<CKeyID> keys = keystore.GetKeys();
+
+    for (const CKeyID& keyID : keys) {
+        CKey key;
+        if (keystore.GetKey(keyID, key) && key.IsQuantum()) {
+            CPubKey pubkey = key.GetPubKey();
+            if (pubkey.IsValid() && pubkey.IsQuantum() && pubkey.size() > 0) {
+                uint256 quantumID = pubkey.GetQuantumID();
+                // Match against new (LE) format
+                if (quantumID == witnessProgram) {
+                    return true;
+                }
+                // Match against legacy (BE) format (pre-endianness-fix UTXOs)
+                if (quantumID == witnessProgramReversed) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
 
 unsigned int HaveKeys(const std::vector<valtype>& pubkeys, const CKeyStore& keystore)
 {
@@ -60,8 +108,43 @@ isminetype IsMine(const CKeyStore &keystore, const CScript& scriptPubKey, bool& 
     {
     case TX_NONSTANDARD:
     case TX_NULL_DATA:
-    case TX_WITNESS_UNKNOWN:
         break;
+    case TX_WITNESS_UNKNOWN:
+    {
+        // Check for witness version 2 with 32-byte program (quantum address)
+        // vSolutions[0] contains the witness version, vSolutions[1] contains the program
+        if (vSolutions.size() >= 2) {
+            unsigned int witnessVersion = vSolutions[0][0];
+            if (witnessVersion == 2 && vSolutions[1].size() == 32) {
+                // This is a quantum address - check if we have the corresponding quantum key
+                // The witness program is now stored in canonical LE order (matching GetQuantumID()),
+                // so we can copy directly without byte reversal.
+                uint256 witnessProgram;
+                memcpy(witnessProgram.begin(), vSolutions[1].data(), 32);
+                
+                if (HaveQuantumKey(keystore, witnessProgram)) {
+                    return ISMINE_SPENDABLE;
+                }
+            }
+        }
+        break;
+    }
+    case TX_WITNESS_V2_QUANTUM:
+    {
+        // Cascoin: Quantum address (witness version 2)
+        // vSolutions[0] contains the 32-byte witness program (SHA256 of pubkey)
+        // The witness program is now stored in canonical LE order (matching GetQuantumID()),
+        // so we can copy directly without byte reversal.
+        if (vSolutions.size() >= 1 && vSolutions[0].size() == 32) {
+            uint256 witnessProgram;
+            memcpy(witnessProgram.begin(), vSolutions[0].data(), 32);
+            
+            if (HaveQuantumKey(keystore, witnessProgram)) {
+                return ISMINE_SPENDABLE;
+            }
+        }
+        break;
+    }
     case TX_PUBKEY:
         keyID = CPubKey(vSolutions[0]).GetID();
         if (sigversion != SIGVERSION_BASE && vSolutions[0].size() != 33) {

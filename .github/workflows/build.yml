@@ -2,7 +2,7 @@ name: Build Cascoin (Qt6 GUI + Wallet)
 
 on:
   push:
-    branches: [ master, main ]
+    branches: [ '*' ]
     tags:
       - 'v*'
   pull_request:
@@ -15,10 +15,15 @@ on:
       tag:
         description: 'Tag-Name (bei manueller Ausführung)'
         required: false
+      skip_release:
+        description: 'Release-Job überspringen?'
+        required: false
+        default: 'true'
+        type: boolean
 
 jobs:
   build-linux:
-    runs-on: self-hosted
+    runs-on: default
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -39,11 +44,162 @@ jobs:
             qt6-base-dev qt6-base-dev-tools qt6-tools-dev qt6-tools-dev-tools qt6-svg-dev \
             libqt6core5compat6-dev \
             binutils ccache \
-            libdb-dev libdb++-dev || true
+            libdb-dev libdb++-dev libsqlite3-dev \
+            cmake git || true
+          # hexdump für Tests (bsdmainutils auf Ubuntu 20.04, bsdextrautils auf 22.04+)
+          sudo apt-get install -y bsdmainutils || sudo apt-get install -y bsdextrautils || true
           # Fallback: install all Boost dev libs if specific ones are insufficient on this runner
           sudo apt-get install -y libboost-all-dev || true
           # Try specific BDB package name if the generic one isn't available
           sudo apt-get install -y libdb5.3++-dev || true
+
+      - name: Build and install liboqs (Open Quantum Safe)
+        shell: bash
+        run: |
+          # Install dependencies for liboqs
+          sudo apt-get install -y cmake ninja-build astyle || true
+          
+          # Build liboqs 0.12.0
+          echo "Building liboqs..."
+          cd /tmp
+          rm -rf liboqs
+          git clone --depth 1 --branch 0.12.0 https://github.com/open-quantum-safe/liboqs.git
+          cd liboqs
+          mkdir -p build && cd build
+          cmake -GNinja .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DBUILD_SHARED_LIBS=ON \
+            -DOQS_BUILD_ONLY_LIB=ON
+          ninja
+          sudo ninja install
+          
+          # Update library cache
+          sudo ldconfig
+          
+          # Create pkg-config file for liboqs
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          sudo tee /usr/local/lib/pkgconfig/liboqs.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: liboqs
+          Description: Open Quantum Safe library
+          Version: 0.12.0
+          Libs: -L${libdir} -loqs
+          Cflags: -I${includedir}
+          EOF
+          
+          # Verify installation
+          echo "Verifying liboqs installation..."
+          ls -la /usr/local/lib/liboqs* || echo "liboqs libraries not found"
+          ls -la /usr/local/include/oqs/ || echo "liboqs headers not found"
+          pkg-config --modversion liboqs || echo "liboqs pkg-config not available"
+
+      - name: Build and install EVMC and evmone
+        shell: bash
+        run: |
+          # Install additional dependencies for EVMC/evmone
+          sudo apt-get install -y \
+            cmake git build-essential \
+            libgmp-dev \
+            ninja-build || true
+          
+          # Build EVMC
+          echo "Building EVMC..."
+          cd /tmp
+          rm -rf evmc evmone blst  # Clean up any existing directories
+          git clone --recursive https://github.com/ethereum/evmc.git
+          cd evmc
+          git checkout v12.1.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMC_TESTING=OFF \
+            -DEVMC_TOOLS=OFF \
+            -DEVMC_EXAMPLES=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Build blst (BLS12-381 library required by evmone 0.18.0 precompiles)
+          echo "Building blst..."
+          cd /tmp
+          git clone https://github.com/supranational/blst.git
+          cd blst
+          git checkout v0.3.13
+          ./build.sh
+          sudo cp libblst.a /usr/local/lib/
+          sudo cp bindings/blst.h bindings/blst_aux.h /usr/local/include/
+          
+          # Build evmone
+          echo "Building evmone..."
+          cd /tmp
+          git clone --recursive https://github.com/ethereum/evmone.git
+          cd evmone
+          git checkout v0.18.0
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DEVMONE_TESTING=OFF \
+            -DEVMONE_FUZZING=OFF \
+            -DBUILD_SHARED_LIBS=ON
+          make -j$(nproc)
+          sudo make install
+          
+          # Update library cache and verify installation
+          sudo ldconfig
+          
+          # Create pkg-config files (required for configure script)
+          echo "Creating pkg-config files..."
+          sudo mkdir -p /usr/local/lib/pkgconfig
+          
+          # Create EVMC pkg-config file
+          sudo tee /usr/local/lib/pkgconfig/evmc.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmc
+          Description: Ethereum Virtual Machine Connector
+          Version: 12.1.0
+          Libs: -L${libdir} -levmc-loader -levmc-instructions
+          Cflags: -I${includedir}
+          EOF
+          
+          # Create evmone pkg-config file (without precompiles for system builds)
+          # Note: evmone_precompiles and blst are only available in depends builds
+          sudo tee /usr/local/lib/pkgconfig/evmone.pc << 'EOF'
+          prefix=/usr/local
+          exec_prefix=${prefix}
+          libdir=${exec_prefix}/lib
+          includedir=${prefix}/include
+          
+          Name: evmone
+          Description: Fast Ethereum Virtual Machine implementation
+          Version: 0.18.0
+          Requires: evmc
+          Libs: -L${libdir} -levmone
+          Cflags: -I${includedir}
+          EOF
+          
+          # Verify EVMC installation
+          echo "Verifying EVMC installation..."
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          pkg-config --exists evmc && echo "✓ EVMC pkg-config found" || echo "✗ EVMC pkg-config not found"
+          pkg-config --exists evmone && echo "✓ evmone pkg-config found" || echo "✗ evmone pkg-config not found"
+          pkg-config --modversion evmc || echo "EVMC version not available"
+          pkg-config --modversion evmone || echo "evmone version not available"
+          echo "Installed libraries:"
+          ls -la /usr/local/lib/libevmc* || echo "EVMC libraries not found in /usr/local/lib"
+          ls -la /usr/local/lib/libevmone* || echo "evmone libraries not found in /usr/local/lib"
+          ls -la /usr/local/lib/libblst* || echo "blst library not found in /usr/local/lib"
+          ls -la /usr/local/include/evmc/ || echo "EVMC headers not found in /usr/local/include"
 
       - name: Ensure ccache directory exists
         shell: bash
@@ -67,21 +223,38 @@ jobs:
         shell: bash
         run: ./autogen.sh
 
-      - name: Configure (Qt6 GUI, wallet, incompatible BDB)
+      - name: Configure (Qt6 GUI, wallet, incompatible BDB, EVMC)
         shell: bash
         run: |
+          # Set PKG_CONFIG_PATH to find EVMC
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+          
+          # Verify EVMC can be found
+          echo "Checking EVMC availability..."
+          pkg-config --exists evmc && echo "✓ EVMC found via pkg-config" || echo "✗ EVMC not found via pkg-config"
+          pkg-config --modversion evmc || echo "Could not get EVMC version"
+          
           CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
           MOC=/usr/lib/qt6/libexec/moc \
           UIC=/usr/lib/qt6/libexec/uic \
           RCC=/usr/lib/qt6/libexec/rcc \
           LRELEASE=/usr/lib/qt6/bin/lrelease \
           LUPDATE=/usr/lib/qt6/bin/lupdate \
+          PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" \
           ./configure \
             --with-gui=qt6 \
             --with-boost=/usr \
             --with-boost-libdir=/usr/lib/x86_64-linux-gnu \
             --enable-wallet \
+            --enable-evmc \
+            --with-evmc=/usr/local \
+            --with-evmone=/usr/local \
+            --enable-quantum \
             --with-incompatible-bdb
+          
+          # Check if EVMC was properly detected
+          echo "Checking configure results for EVMC..."
+          grep -i "evmc" config.log | tail -10 || echo "No EVMC entries in config.log"
 
       - name: Build
         shell: bash
@@ -248,6 +421,58 @@ jobs:
             done
           done
           
+          # Copy EVMC and evmone libraries (for CVM EVM compatibility)
+          echo "  Collecting EVMC/evmone libraries..."
+          evmc_libs=(
+            "libevmone.so*"
+            "libevmc-loader.a"
+            "libevmc-instructions.a"
+          )
+          
+          for evmc_lib in "${evmc_libs[@]}"; do
+            find /usr/local/lib -name "$evmc_lib" 2>/dev/null | while read lib; do
+              if [[ -f "$lib" ]]; then
+                lib_name=$(basename "$lib")
+                if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                  echo "    Copying: $lib_name"
+                  cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                fi
+              fi
+            done
+          done
+          
+          # Also copy symlinks for evmone
+          if [[ -L /usr/local/lib/libevmone.so ]]; then
+            cp -P /usr/local/lib/libevmone.so "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: libevmone.so"
+          fi
+          if [[ -L /usr/local/lib/libevmone.so.0.18 ]]; then
+            cp -P /usr/local/lib/libevmone.so.0.18 "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: libevmone.so.0.18"
+          fi
+          
+          # Copy liboqs (Open Quantum Safe) library for FALCON-512 post-quantum signatures
+          echo "  Collecting liboqs libraries..."
+          find /usr/local/lib -name "liboqs.so*" 2>/dev/null | while read lib; do
+            if [[ -f "$lib" ]]; then
+              lib_name=$(basename "$lib")
+              if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                echo "    Copying: $lib_name"
+                cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+              fi
+            fi
+          done
+          
+          # Also copy symlinks for liboqs
+          if [[ -L /usr/local/lib/liboqs.so ]]; then
+            cp -P /usr/local/lib/liboqs.so "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: liboqs.so"
+          fi
+          if [[ -L /usr/local/lib/liboqs.so.7 ]]; then
+            cp -P /usr/local/lib/liboqs.so.7 "$LIB_DIR/" 2>/dev/null || true
+            echo "    Copying symlink: liboqs.so.7"
+          fi
+          
           # Create wrapper scripts
           cat > "$DIST_DIR"/bin/cascoin-qt-wrapper << 'EOF'
           #!/bin/bash
@@ -334,6 +559,8 @@ jobs:
           - libprotobuf (serialization)
           - libqrencode (QR code generation)
           - libzmq (ZeroMQ messaging)
+          - libevmone + libevmc (EVM compatibility for CVM)
+          - liboqs (Open Quantum Safe - FALCON-512 post-quantum signatures)
           
           Note: OpenSSL libraries are not included - use system libraries.
           
@@ -346,6 +573,10 @@ jobs:
           ls -la "$LIB_DIR"/libboost_*.so* 2>/dev/null | head -10 || echo "    No Boost libraries found"
           echo "  Berkeley DB libraries:"
           ls -la "$LIB_DIR"/libdb*.so* 2>/dev/null || echo "    No Berkeley DB libraries found"
+          echo "  EVMC/evmone libraries:"
+          ls -la "$LIB_DIR"/libevmone*.so* "$LIB_DIR"/libevmc*.a 2>/dev/null || echo "    No EVMC/evmone libraries found"
+          echo "  liboqs libraries (post-quantum):"
+          ls -la "$LIB_DIR"/liboqs*.so* 2>/dev/null || echo "    No liboqs libraries found"
           echo "  OpenSSL libraries: (not included - use system libraries)"
           echo "  Qt6 libraries: (not included - installed via package manager)"
           echo "  Other required libraries:"
@@ -357,7 +588,7 @@ jobs:
           find "$DIST_DIR" -type d | sort
           echo ""
           echo "Libraries collected:"
-          ls -la "$DIST_DIR"/lib/x86_64-linux-gnu/ | head -10
+          ls -la "$DIST_DIR"/lib/x86_64-linux-gnu/ | head -20
           echo ""
           echo "Binaries:"
           ls -la "$DIST_DIR"/bin/
@@ -373,7 +604,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-build
+          name: cascoin-linux-build-${{ github.run_id }}
           path: |
             src/qt/*-qt
             src/*coind
@@ -384,7 +615,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution
+          name: cascoin-linux-x86_64-distribution-${{ github.run_id }}
           path: |
             cascoin-linux-x86_64-distribution-*.tar.gz
           if-no-files-found: warn
@@ -393,7 +624,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-linux-debug
+          name: cascoin-linux-debug-${{ github.run_id }}
           path: |
             src/qt/*.debug
             src/*.debug
@@ -401,8 +632,9 @@ jobs:
 
 
   build-windows:
-    runs-on: self-hosted
+    runs-on: default
     timeout-minutes: 120
+    needs: build-linux
     env:
       HOST: x86_64-w64-mingw32
     steps:
@@ -415,11 +647,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake libtool build-essential pkg-config curl ca-certificates \
-            g++-mingw-w64-x86-64 mingw-w64 binutils-mingw-w64 \
+            g++-mingw-w64-x86-64-posix mingw-w64 binutils-mingw-w64 \
             zip unzip cmake gperf \
-            python3 bsdextrautils faketime libfaketime \
-            rsync git \
-            qt6-tools-dev qt6-tools-dev-tools
+            python3 faketime libfaketime \
+            rsync git
+          # bsdextrautils nur auf neueren Ubuntu-Versionen verfügbar
+          sudo apt-get install -y bsdextrautils || true
+          # Set POSIX threading alternatives as default (required for std::condition_variable)
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
+          # Verify POSIX threading is active
+          x86_64-w64-mingw32-g++ --version
+          echo "Threading model should show 'posix':"
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep -i thread || true
 
       - name: Prepare depends cache directories
         shell: bash
@@ -438,25 +678,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: depends/${{ env.HOST }}
-          key: depends-built-${{ runner.os }}-${{ env.HOST }}-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
+          key: depends-built-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
           restore-keys: |
-            depends-built-${{ runner.os }}-${{ env.HOST }}-
+            depends-built-${{ runner.os }}-${{ env.HOST }}-posix-v2-
 
       - name: Cache depends (built artifacts)
         uses: actions/cache@v4
         with:
           path: depends/built
-          key: depends-artifacts-${{ runner.os }}-${{ env.HOST }}-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
+          key: depends-artifacts-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
           restore-keys: |
-            depends-artifacts-${{ runner.os }}-${{ env.HOST }}-
+            depends-artifacts-${{ runner.os }}-${{ env.HOST }}-posix-v2-
 
       - name: Cache depends (work - experimental)
         uses: actions/cache@v4
         with:
           path: depends/work
-          key: depends-work-${{ runner.os }}-${{ env.HOST }}-${{ hashFiles('depends/**/*.mk') }}-${{ github.run_id }}
+          key: depends-work-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk') }}-${{ github.run_id }}
           restore-keys: |
-            depends-work-${{ runner.os }}-${{ env.HOST }}-${{ hashFiles('depends/**/*.mk') }}-
+            depends-work-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk') }}-
 
       # Disabled ccache for Qt depends build to avoid path complexity
       # - name: Prebuild native ccache and ensure path for depends
@@ -473,7 +713,7 @@ jobs:
       - name: Build depends (${{ env.HOST }})
         shell: bash
         run: |
-          make -C depends HOST=${HOST} -j"$(nproc)"
+          make -C depends HOST=${HOST} JOBS=$(nproc)
           # show whether native ccache was staged
           ls -lah depends/*/native/bin || true
           ls -lah depends/${HOST}
@@ -485,45 +725,20 @@ jobs:
       - name: Configure (Windows ${HOST}, Qt6 GUI, wallet, incompatible BDB)
         shell: bash
         run: |
-          export CONFIG_SITE="$PWD/depends/${HOST}/share/config.site"
-          echo "=== Checking Qt6 tools from depends ==="
-          ls -la "$PWD/depends/${HOST}/native/libexec/" | head -10
-          echo "=== Checking Qt6 libraries ==="
-          ls -la "$PWD/depends/x86_64-w64-mingw32/lib/" | grep -i qt || echo "No Qt libraries found"
-          echo "=== Checking Qt6 includes ==="
-          ls -la "$PWD/depends/x86_64-w64-mingw32/include/" | grep -i qt || echo "No Qt includes found"
-          echo "=== Running configure ==="
-          CFLAGS="-g -D_WIN32_WINNT=0x0601" CXXFLAGS="-g -D_WIN32_WINNT=0x0601" \
-          export PATH=/usr/lib/qt6/bin:$PATH
-          CPPFLAGS="-I$PWD/depends/x86_64-w64-mingw32/include" \
-          LDFLAGS="-L$PWD/depends/x86_64-w64-mingw32/lib" \
-          PKG_CONFIG_PATH="$PWD/depends/x86_64-w64-mingw32/lib/pkgconfig" \
-          ./configure \
-            --prefix=$PWD/depends/x86_64-w64-mingw32 \
-            --host=x86_64-w64-mingw32 \
+          CONFIG_SITE="$PWD/depends/${HOST}/share/config.site" ./configure \
+            --prefix=/ \
             --disable-tests \
             --disable-bench \
-            --with-gui=qt6 \
-            --with-qt-incdir=$PWD/depends/x86_64-w64-mingw32/include \
-            --with-qt-libdir=$PWD/depends/x86_64-w64-mingw32/lib \
-            --with-qt-bindir=$PWD/depends/x86_64-w64-mingw32/native/libexec:/usr/lib/qt6/bin \
-            --with-incompatible-bdb
-          echo "=== Configure completed, checking config.log for Qt6 detection ==="
-          grep -A 5 -B 5 "checking for Qt" config.log || echo "Qt check not found in config.log"
-          grep -A 5 -B 5 "GUI.*qt" config.log || echo "GUI check not found in config.log"
+            --with-incompatible-bdb \
+            --enable-quantum
+          echo "=== Configure completed ==="
+          tail -20 config.log || true
       - name: Build (Windows ${HOST})
         shell: bash
         run: |
-          echo "=== Starting build ==="
-          echo "Available make targets:"
-          make help | head -20 || true
-          echo "=== Building all targets ==="
-          make -j"$(nproc)"
-          echo "=== Build completed, checking what was built ==="
-          echo "Files in src/:"
-          ls -la src/ | head -20 || true
-          echo "Files in src/qt/:"
-          ls -la src/qt/ || true
+          make -j$(nproc)
+          echo "=== Build completed ==="
+          ls -la src/*.exe || true
 
       - name: Strip Windows binaries (non-fatal) and keep debug symbols
         shell: bash
@@ -570,7 +785,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-build
+          name: cascoin-windows-${{ env.HOST }}-build-${{ github.run_id }}
           path: |
             src/qt/*-qt.exe
             src/*coind.exe
@@ -584,7 +799,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-windows-${{ env.HOST }}-debug
+          name: cascoin-windows-${{ env.HOST }}-debug-${{ github.run_id }}
           path: |
             src/*.exe.debug
             src/qt/*.exe.debug
@@ -592,11 +807,16 @@ jobs:
 
 
   release:
-    runs-on: self-hosted
+    runs-on: default
     needs:
       - build-linux
       - build-windows
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
+    if: |
+      (github.event_name == 'workflow_dispatch' && !inputs.skip_release) ||
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'push' && 
+       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && 
+       contains(github.event.head_commit.message, '[release]'))
     permissions:
       contents: write
     steps:
@@ -624,7 +844,7 @@ jobs:
       - name: Download Linux distribution artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-linux-x86_64-distribution
+          name: cascoin-linux-x86_64-distribution-${{ github.run_id }}
           path: release/linux
 
       - name: Normalize Linux artifact filename
@@ -641,7 +861,7 @@ jobs:
       - name: Download Windows build artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-windows-x86_64-w64-mingw32-build
+          name: cascoin-windows-x86_64-w64-mingw32-build-${{ github.run_id }}
           path: release/windows
 
       - name: Package Windows ZIP

@@ -85,4 +85,12 @@ void Misbehaving(NodeId nodeid, int howmuch);
 // Cascoin: Rialto: Relay a Rialto message to the network (apart from the origin node)
 void RelayRialtoMessage(const CRialtoMessage message, CConnman* connman, CNode* originNode = nullptr);
 
+// Cascoin: HAT v2 Consensus - Forward declaration
+namespace CVM {
+    class HATConsensusValidator;
+}
+
+// Cascoin: HAT v2 Consensus - Global validator instance
+extern CVM::HATConsensusValidator* g_hatConsensusValidator;
+
 #endif // BITCOIN_NET_PROCESSING_H

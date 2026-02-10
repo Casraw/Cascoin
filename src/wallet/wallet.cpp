@@ -30,6 +30,11 @@
 #include <utilmoneystr.h>
 #include <wallet/fees.h>
 #include <rialto.h>  // Cascoin: Rialto: For IsValidNick()
+#include <cvm/softfork.h>  // Cascoin: CVM/EVM contract transactions
+#include <cvm/cvm.h>  // Cascoin: CVM constants and validation
+#include <cvm/contract.h>  // Cascoin: CVM contract validation
+#include <crypto/quantum/falcon.h>  // Cascoin: Quantum Hive support
+#include <address_quantum.h>        // Cascoin: Quantum address support
 
 #include <assert.h>
 #include <future>
@@ -2807,6 +2812,11 @@ CBeeCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDe
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
     bct.profit = rewardsPaid - beeFeePaid;
+    
+    // Set height information for UI calculations
+    bct.creationHeight = height;
+    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
+    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
 
     return bct;
 }
@@ -2893,6 +2903,11 @@ CBeeCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool 
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
     bct.profit = rewardsPaid - beeFeePaid;
+    
+    // Set height information for UI calculations
+    bct.creationHeight = height;
+    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
+    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
 
     return bct;
 }
@@ -3025,21 +3040,28 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
 
     // Create a new honey address for future coinbase rewards if needed
     CTxDestination destinationFCA;
+    bool isQuantumHoneyAddress = false;
     if (honeyAddress.empty()) {
         if (!IsLocked())
             TopUpKeyPool();
 
-        CPubKey newKey;
-        if (!reservekeyHoney.GetReservedKey(newKey, true)) {
-            strFailReason = "Error: Couldn't create a new pubkey";
-            return false;
-        }
+        // Cascoin: Default to legacy ECDSA keys for auto-generated honey addresses
+        // Quantum honey addresses are only used when explicitly specified by the user
+        // This ensures backward compatibility with all nodes on the network
+        {
+            // Use legacy ECDSA key (original behavior)
+            CPubKey newKey;
+            if (!reservekeyHoney.GetReservedKey(newKey, true)) {
+                strFailReason = "Error: Couldn't create a new pubkey";
+                return false;
+            }
 
-        std::string strLabel = "Found Cheese";
-        OutputType output_type = OUTPUT_TYPE_LEGACY;
-        LearnRelatedScripts(newKey, output_type);
-        destinationFCA = GetDestinationForKey(newKey, output_type);
-        SetAddressBook(destinationFCA, strLabel, "receive");
+            std::string strLabel = "Found Cheese";
+            OutputType output_type = OUTPUT_TYPE_LEGACY;
+            LearnRelatedScripts(newKey, output_type);
+            destinationFCA = GetDestinationForKey(newKey, output_type);
+            SetAddressBook(destinationFCA, strLabel, "receive");
+        }
     } else {
         // If a honey address was passed in, make sure it decodes
         destinationFCA = DecodeDestination(honeyAddress);
@@ -3048,16 +3070,28 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
             return false;
         }
 
-        // Make sure it's legacy format (TX_PUBKEYHASH)
-        std::vector<std::vector<unsigned char>> vSolutions;
-        txnouttype whichType;
-        if (!Solver(GetScriptForDestination(destinationFCA), whichType, vSolutions)) {
-            strFailReason = "Error: Couldn't solve scriptPubKey for honey address";
-            return false;
-        }
-        if (whichType != TX_PUBKEYHASH) {
-            strFailReason = "Error: If specifying a honey address, it must be legacy format (TX_PUBKEYHASH)";
-            return false;
+        // Check if it's a quantum address
+        // Requirements: 4.3 (maintain legacy agent validation for existing agents)
+        const WitnessV2Quantum* quantumDest = boost::get<WitnessV2Quantum>(&destinationFCA);
+        if (quantumDest) {
+            isQuantumHoneyAddress = true;
+            // Quantum addresses are valid post-activation
+            if (chainActive.Height() < consensusParams.quantumActivationHeight) {
+                strFailReason = "Error: Quantum addresses are not yet active on the network";
+                return false;
+            }
+        } else {
+            // Check if it's legacy format (TX_PUBKEYHASH)
+            std::vector<std::vector<unsigned char>> vSolutions;
+            txnouttype whichType;
+            if (!Solver(GetScriptForDestination(destinationFCA), whichType, vSolutions)) {
+                strFailReason = "Error: Couldn't solve scriptPubKey for honey address";
+                return false;
+            }
+            if (whichType != TX_PUBKEYHASH) {
+                strFailReason = "Error: If specifying a honey address, it must be legacy format (TX_PUBKEYHASH) or quantum format";
+                return false;
+            }
         }
 
         // Make sure it's a wallet address (otherwise bees won't be able to mint)
@@ -3863,6 +3897,17 @@ bool CWallet::NewKeyPool()
             walletdb.ErasePool(nIndex);
         }
         setExternalKeyPool.clear();
+        
+        // Cascoin: Quantum: Clear quantum key pools as well
+        for (int64_t nIndex : setQuantumInternalKeyPool) {
+            walletdb.ErasePool(nIndex);
+        }
+        setQuantumInternalKeyPool.clear();
+
+        for (int64_t nIndex : setQuantumExternalKeyPool) {
+            walletdb.ErasePool(nIndex);
+        }
+        setQuantumExternalKeyPool.clear();
 
         m_pool_key_to_index.clear();
 
@@ -3883,11 +3928,39 @@ size_t CWallet::KeypoolCountExternalKeys()
 void CWallet::LoadKeyPool(int64_t nIndex, const CKeyPool &keypool)
 {
     AssertLockHeld(cs_wallet);
-    if (keypool.fInternal) {
-        setInternalKeyPool.insert(nIndex);
-    } else {
-        setExternalKeyPool.insert(nIndex);
+    
+    // Cascoin: Quantum: Validate quantum keypool entries
+    // Skip entries where the key doesn't exist in the wallet (stale entries from previous versions)
+    if (keypool.fQuantum) {
+        // For quantum keys, verify the key actually exists in the wallet
+        if (!HaveKey(keypool.vchPubKey.GetID())) {
+            LogPrintf("LoadKeyPool: Skipping stale quantum keypool entry %d - key not in wallet\n", nIndex);
+            return;
+        }
+        // Also verify the pubkey is actually a quantum key
+        if (!keypool.vchPubKey.IsQuantum()) {
+            LogPrintf("LoadKeyPool: Skipping invalid quantum keypool entry %d - pubkey is not quantum type\n", nIndex);
+            return;
+        }
     }
+    
+    // Cascoin: Quantum: Route to appropriate key pool based on quantum flag
+    if (keypool.fQuantum) {
+        // Quantum key pool
+        if (keypool.fInternal) {
+            setQuantumInternalKeyPool.insert(nIndex);
+        } else {
+            setQuantumExternalKeyPool.insert(nIndex);
+        }
+    } else {
+        // ECDSA key pool
+        if (keypool.fInternal) {
+            setInternalKeyPool.insert(nIndex);
+        } else {
+            setExternalKeyPool.insert(nIndex);
+        }
+    }
+    
     m_max_keypool_index = std::max(m_max_keypool_index, nIndex);
     m_pool_key_to_index[keypool.vchPubKey.GetID()] = nIndex;
 
@@ -3954,6 +4027,89 @@ bool CWallet::TopUpKeyPool(unsigned int kpSize)
     return true;
 }
 
+// Cascoin: Quantum: Top up the quantum key pool with FALCON-512 keys
+// Requirements: 10.6 (implement TopUpQuantumKeyPool)
+bool CWallet::TopUpQuantumKeyPool(unsigned int kpSize)
+{
+    {
+        LOCK(cs_wallet);
+
+        if (IsLocked())
+            return false;
+
+        // Top up quantum key pool
+        unsigned int nTargetSize;
+        if (kpSize > 0)
+            nTargetSize = kpSize;
+        else
+            nTargetSize = std::max(gArgs.GetArg("-keypool", DEFAULT_KEYPOOL_SIZE), (int64_t) 0);
+
+        // Count amount of available quantum keys (internal, external)
+        int64_t missingExternal = std::max(std::max((int64_t) nTargetSize, (int64_t) 1) - (int64_t)setQuantumExternalKeyPool.size(), (int64_t) 0);
+        int64_t missingInternal = std::max(std::max((int64_t) nTargetSize, (int64_t) 1) - (int64_t)setQuantumInternalKeyPool.size(), (int64_t) 0);
+
+        if (!IsHDEnabled() || !CanSupportFeature(FEATURE_HD_SPLIT))
+        {
+            // don't create extra internal keys
+            missingInternal = 0;
+        }
+        
+        bool internal = false;
+        CWalletDB walletdb(*dbw);
+        for (int64_t i = missingInternal + missingExternal; i--;)
+        {
+            if (i < missingInternal) {
+                internal = true;
+            }
+
+            assert(m_max_keypool_index < std::numeric_limits<int64_t>::max());
+            int64_t index = ++m_max_keypool_index;
+
+            // Generate a new quantum key
+            CKey quantumKey;
+            quantumKey.MakeNewQuantumKey();
+            if (!quantumKey.IsValid()) {
+                LogPrintf("TopUpQuantumKeyPool: Failed to generate quantum key\n");
+                continue;
+            }
+            
+            CPubKey pubkey = quantumKey.GetPubKey();
+            LogPrintf("TopUpQuantumKeyPool: Generated quantum key, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     pubkey.IsQuantum(), pubkey.GetQuantumID().GetHex());
+            
+            // Add the key to the wallet
+            if (!AddKeyPubKey(quantumKey, pubkey)) {
+                LogPrintf("TopUpQuantumKeyPool: Failed to add quantum key to wallet\n");
+                continue;
+            }
+            
+            // Write to the key pool with quantum flag
+            CKeyPool keypool(pubkey, internal, true /* quantum */);
+            LogPrintf("TopUpQuantumKeyPool: Writing keypool entry %d, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     index, keypool.vchPubKey.IsQuantum(), 
+                     keypool.vchPubKey.IsQuantum() ? keypool.vchPubKey.GetQuantumID().GetHex() : "N/A");
+            
+            if (!walletdb.WritePool(index, keypool)) {
+                throw std::runtime_error(std::string(__func__) + ": writing generated quantum key failed");
+            }
+
+            if (internal) {
+                setQuantumInternalKeyPool.insert(index);
+            } else {
+                setQuantumExternalKeyPool.insert(index);
+            }
+            m_pool_key_to_index[pubkey.GetID()] = index;
+        }
+        if (missingInternal + missingExternal > 0) {
+            LogPrintf("quantum keypool added %d keys (%d internal), size=%u (%u internal)\n", 
+                      missingInternal + missingExternal, missingInternal, 
+                      setQuantumInternalKeyPool.size() + setQuantumExternalKeyPool.size(), 
+                      setQuantumInternalKeyPool.size());
+        }
+    }
+    return true;
+}
+
 void CWallet::ReserveKeyFromKeyPool(int64_t& nIndex, CKeyPool& keypool, bool fRequestedInternal)
 {
     nIndex = -1;
@@ -4013,6 +4169,162 @@ void CWallet::ReturnKey(int64_t nIndex, bool fInternal, const CPubKey& pubkey)
         m_pool_key_to_index[pubkey.GetID()] = nIndex;
     }
     LogPrintf("keypool return %d\n", nIndex);
+}
+
+// Cascoin: Quantum: Reserve a key from the quantum key pool
+// Requirements: 10.6 (separate key pools for quantum keys)
+void CWallet::ReserveKeyFromQuantumKeyPool(int64_t& nIndex, CKeyPool& keypool, bool fRequestedInternal)
+{
+    nIndex = -1;
+    keypool.vchPubKey = CPubKey();
+    {
+        LOCK(cs_wallet);
+
+        if (!IsLocked())
+            TopUpQuantumKeyPool();
+
+        bool fReturningInternal = IsHDEnabled() && CanSupportFeature(FEATURE_HD_SPLIT) && fRequestedInternal;
+        std::set<int64_t>& setKeyPool = fReturningInternal ? setQuantumInternalKeyPool : setQuantumExternalKeyPool;
+
+        CWalletDB walletdb(*dbw);
+
+        // Loop through keypool entries until we find a valid one
+        while (!setKeyPool.empty()) {
+            auto it = setKeyPool.begin();
+            int64_t candidateIndex = *it;
+            setKeyPool.erase(it);
+            
+            CKeyPool candidateKeypool;
+            if (!walletdb.ReadPool(candidateIndex, candidateKeypool)) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Failed to read keypool entry %d, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            LogPrintf("ReserveKeyFromQuantumKeyPool: Read keypool entry %d, pubkey IsQuantum=%d, fQuantum=%d, GetQuantumID=%s\n",
+                     candidateIndex, candidateKeypool.vchPubKey.IsQuantum(), candidateKeypool.fQuantum,
+                     candidateKeypool.vchPubKey.IsQuantum() ? candidateKeypool.vchPubKey.GetQuantumID().GetHex() : "N/A");
+            
+            // Validate the keypool entry
+            if (!candidateKeypool.fQuantum) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d is not marked as quantum, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            if (!candidateKeypool.vchPubKey.IsQuantum()) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d pubkey is not quantum type, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up invalid entry
+                continue;
+            }
+            
+            if (!HaveKey(candidateKeypool.vchPubKey.GetID())) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d key not in wallet (stale entry), skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);  // Clean up stale entry
+                continue;
+            }
+            
+            // Additional validation: verify the pubkey in the keypool matches the one in the wallet
+            // This catches cases where the keypool entry was corrupted or the key was replaced
+            CKey walletKey;
+            if (GetKey(candidateKeypool.vchPubKey.GetID(), walletKey)) {
+                CPubKey walletPubKey = walletKey.GetPubKey();
+                if (walletPubKey != candidateKeypool.vchPubKey) {
+                    LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d pubkey mismatch - keypool has %s but wallet has %s, skipping\n", 
+                             candidateIndex, 
+                             candidateKeypool.vchPubKey.GetQuantumID().GetHex(),
+                             walletPubKey.IsQuantum() ? walletPubKey.GetQuantumID().GetHex() : "non-quantum");
+                    walletdb.ErasePool(candidateIndex);  // Clean up mismatched entry
+                    continue;
+                }
+            } else {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d - could not retrieve key from wallet, skipping\n", candidateIndex);
+                walletdb.ErasePool(candidateIndex);
+                continue;
+            }
+            
+            if (candidateKeypool.fInternal != fReturningInternal) {
+                LogPrintf("ReserveKeyFromQuantumKeyPool: Entry %d internal flag mismatch, skipping\n", candidateIndex);
+                // Don't erase - just wrong pool, put it back in the correct pool
+                if (candidateKeypool.fInternal) {
+                    setQuantumInternalKeyPool.insert(candidateIndex);
+                } else {
+                    setQuantumExternalKeyPool.insert(candidateIndex);
+                }
+                continue;
+            }
+
+            // Found a valid entry
+            assert(candidateKeypool.vchPubKey.IsValid());
+            m_pool_key_to_index.erase(candidateKeypool.vchPubKey.GetID());
+            
+            nIndex = candidateIndex;
+            keypool = candidateKeypool;
+            LogPrintf("quantum keypool reserve %d\n", nIndex);
+            return;
+        }
+        
+        // No valid entries found
+        LogPrintf("ReserveKeyFromQuantumKeyPool: No valid quantum keys in pool\n");
+    }
+}
+
+// Cascoin: Quantum: Return a quantum key to the quantum key pool
+// Requirements: 10.6 (separate key pools for quantum keys)
+void CWallet::ReturnQuantumKey(int64_t nIndex, bool fInternal, const CPubKey& pubkey)
+{
+    // Return to quantum key pool
+    {
+        LOCK(cs_wallet);
+        if (fInternal) {
+            setQuantumInternalKeyPool.insert(nIndex);
+        } else {
+            setQuantumExternalKeyPool.insert(nIndex);
+        }
+        m_pool_key_to_index[pubkey.GetID()] = nIndex;
+    }
+    LogPrintf("quantum keypool return %d\n", nIndex);
+}
+
+// Cascoin: Quantum: Get a quantum key from the quantum key pool
+// Requirements: 10.6 (separate key pools for quantum keys)
+bool CWallet::GetQuantumKeyFromPool(CPubKey& result, bool internal)
+{
+    CKeyPool keypool;
+    {
+        LOCK(cs_wallet);
+        int64_t nIndex = 0;
+        ReserveKeyFromQuantumKeyPool(nIndex, keypool, internal);
+        if (nIndex == -1)
+        {
+            if (IsLocked()) return false;
+            
+            // Generate a new quantum key on the fly
+            CKey quantumKey;
+            quantumKey.MakeNewQuantumKey();
+            if (!quantumKey.IsValid()) {
+                LogPrintf("GetQuantumKeyFromPool: Failed to generate quantum key\n");
+                return false;
+            }
+            
+            result = quantumKey.GetPubKey();
+            LogPrintf("GetQuantumKeyFromPool: Generated new quantum key, pubkey IsQuantum=%d, GetQuantumID=%s\n",
+                     result.IsQuantum(), result.GetQuantumID().GetHex());
+            
+            // Add the key to the wallet
+            if (!AddKeyPubKey(quantumKey, result)) {
+                LogPrintf("GetQuantumKeyFromPool: Failed to add quantum key to wallet\n");
+                return false;
+            }
+            
+            return true;
+        }
+        KeepKey(nIndex);
+        result = keypool.vchPubKey;
+        LogPrintf("GetQuantumKeyFromPool: Got key from pool, pubkey IsQuantum=%d, keypool.fQuantum=%d, GetQuantumID=%s\n",
+                 result.IsQuantum(), keypool.fQuantum, result.IsQuantum() ? result.GetQuantumID().GetHex() : "N/A");
+    }
+    return true;
 }
 
 bool CWallet::GetKeyFromPool(CPubKey& result, bool internal)
@@ -4707,6 +5019,7 @@ CKeyPool::CKeyPool()
 {
     nTime = GetTime();
     fInternal = false;
+    fQuantum = false;  // Cascoin: Quantum: Default to ECDSA key
 }
 
 CKeyPool::CKeyPool(const CPubKey& vchPubKeyIn, bool internalIn)
@@ -4714,6 +5027,16 @@ CKeyPool::CKeyPool(const CPubKey& vchPubKeyIn, bool internalIn)
     nTime = GetTime();
     vchPubKey = vchPubKeyIn;
     fInternal = internalIn;
+    fQuantum = vchPubKeyIn.IsQuantum();  // Cascoin: Quantum: Auto-detect from pubkey
+}
+
+// Cascoin: Quantum: Constructor with explicit quantum flag
+CKeyPool::CKeyPool(const CPubKey& vchPubKeyIn, bool internalIn, bool quantumIn)
+{
+    nTime = GetTime();
+    vchPubKey = vchPubKeyIn;
+    fInternal = internalIn;
+    fQuantum = quantumIn;
 }
 
 CWalletKey::CWalletKey(int64_t nExpires)
@@ -4879,3 +5202,153 @@ CTxDestination CWallet::AddAndGetDestinationForScript(const CScript& script, Out
     }
 }
 
+
+/**
+ * Create a transaction for deploying a smart contract (CVM or EVM)
+ * This creates a soft-fork compatible OP_RETURN transaction
+ */
+bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
+                                                  const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
+                                                  CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                                  const CCoinControl* coin_control)
+{
+    // Validate bytecode
+    if (bytecode.empty()) {
+        strFailReason = "Contract bytecode cannot be empty";
+        return false;
+    }
+    
+    if (bytecode.size() > CVM::MAX_CONTRACT_SIZE) {
+        strFailReason = strprintf("Contract bytecode exceeds maximum size (%d bytes)", CVM::MAX_CONTRACT_SIZE);
+        return false;
+    }
+    
+    // Validate gas limit
+    if (gasLimit == 0) {
+        strFailReason = "Gas limit must be greater than zero";
+        return false;
+    }
+    
+    if (gasLimit > CVM::MAX_GAS_PER_TX) {
+        strFailReason = strprintf("Gas limit exceeds maximum (%d)", CVM::MAX_GAS_PER_TX);
+        return false;
+    }
+    
+    // Validate bytecode format
+    std::string error;
+    if (!CVM::ValidateContractCode(bytecode, error)) {
+        strFailReason = "Invalid contract bytecode: " + error;
+        return false;
+    }
+    
+    // Create deployment data structure
+    CVM::CVMDeployData deployData;
+    deployData.bytecode = bytecode;
+    deployData.gasLimit = gasLimit;
+    deployData.constructorData = initData;
+    deployData.format = CVM::BytecodeFormat::UNKNOWN;  // Will be auto-detected
+    deployData.codeHash = Hash(bytecode.begin(), bytecode.end());
+    
+    // Build OP_RETURN output with deployment data (Soft Fork compatible!)
+    std::vector<uint8_t> deployBytes = deployData.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::CONTRACT_DEPLOY, deployBytes);
+    
+    // Create recipient for OP_RETURN output (zero value)
+    std::vector<CRecipient> vecSend;
+    CRecipient recipient = {cvmScript, 0, false};
+    vecSend.push_back(recipient);
+    
+    // Create the transaction using standard CreateTransaction
+    // This handles coin selection, fee calculation, change output, and signing
+    int nChangePosInOut = -1;
+    CCoinControl defaultControl;
+    const CCoinControl& controlRef = coin_control ? *coin_control : defaultControl;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
+    
+    if (!result) {
+        return false;
+    }
+    
+    LogPrintf("CVM: Created contract deployment transaction, bytecode size: %d, gas limit: %d, fee: %s\n",
+              bytecode.size(), gasLimit, FormatMoney(nFeeRet));
+    
+    return true;
+}
+
+/**
+ * Create a transaction for calling a smart contract function
+ * This creates a soft-fork compatible OP_RETURN transaction
+ */
+bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, const std::vector<uint8_t>& callData,
+                                            uint64_t gasLimit, CAmount value, CWalletTx& wtxNew,
+                                            CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
+                                            const CCoinControl* coin_control)
+{
+    // Validate contract address
+    if (contractAddress.IsNull()) {
+        strFailReason = "Contract address cannot be null";
+        return false;
+    }
+    
+    // Validate gas limit
+    if (gasLimit == 0) {
+        strFailReason = "Gas limit must be greater than zero";
+        return false;
+    }
+    
+    if (gasLimit > CVM::MAX_GAS_PER_TX) {
+        strFailReason = strprintf("Gas limit exceeds maximum (%d)", CVM::MAX_GAS_PER_TX);
+        return false;
+    }
+    
+    // Validate value
+    if (value < 0) {
+        strFailReason = "Value cannot be negative";
+        return false;
+    }
+    
+    // Create call data structure
+    CVM::CVMCallData callDataStruct;
+    callDataStruct.contractAddress = contractAddress;
+    callDataStruct.callData = callData;
+    callDataStruct.gasLimit = gasLimit;
+    callDataStruct.format = CVM::BytecodeFormat::UNKNOWN;  // Will be auto-detected
+    
+    // Build OP_RETURN output with call data (Soft Fork compatible!)
+    std::vector<uint8_t> callBytes = callDataStruct.Serialize();
+    CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::CONTRACT_CALL, callBytes);
+    
+    // Create recipients
+    std::vector<CRecipient> vecSend;
+    
+    // OP_RETURN output (zero value)
+    CRecipient opReturnRecipient = {cvmScript, 0, false};
+    vecSend.push_back(opReturnRecipient);
+    
+    // If sending value to contract, add a second output
+    // Note: In the actual implementation, this value would be locked and
+    // transferred to the contract during execution
+    if (value > 0) {
+        // Create a script that locks the value for the contract
+        // For now, we'll use a simple P2PKH to a derived address
+        // In production, this should be a special script type
+        CScript valueScript = CScript() << OP_RETURN << ToByteVector(contractAddress);
+        CRecipient valueRecipient = {valueScript, value, false};
+        vecSend.push_back(valueRecipient);
+    }
+    
+    // Create the transaction using standard CreateTransaction
+    int nChangePosInOut = -1;
+    CCoinControl defaultControl;
+    const CCoinControl& controlRef = coin_control ? *coin_control : defaultControl;
+    bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
+    
+    if (!result) {
+        return false;
+    }
+    
+    LogPrintf("CVM: Created contract call transaction, contract: %s, gas limit: %d, value: %s, fee: %s\n",
+              contractAddress.ToString(), gasLimit, FormatMoney(value), FormatMoney(nFeeRet));
+    
+    return true;
+}

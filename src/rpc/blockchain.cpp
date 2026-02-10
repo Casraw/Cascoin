@@ -26,6 +26,7 @@
 #include <utilstrencodings.h>
 #include <hash.h>
 #include <validationinterface.h>
+#include <versionbits.h>
 #include <warnings.h>
 
 #include <stdint.h>
@@ -1366,7 +1367,22 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
             "           \"possible\": xx       (boolean) returns false if there are not enough blocks left in this period to pass activation threshold \n"
             "        }\n"
             "     }\n"
-            "  }\n"
+            "  },\n"
+            "  \"cvm\": {                      (object) Cascoin Virtual Machine status\n"
+            "     \"active\": xx,              (boolean) whether CVM is currently active\n"
+            "     \"status\": \"xxxx\",          (string) \"defined\" or \"active\"\n"
+            "     \"activation_height\": xx,   (numeric) block height at which CVM activates\n"
+            "     \"max_gas_per_block\": xx,   (numeric) maximum gas allowed per block\n"
+            "     \"max_gas_per_tx\": xx,      (numeric) maximum gas allowed per transaction\n"
+            "     \"max_code_size\": xx,       (numeric) maximum contract bytecode size\n"
+            "     \"blocks_until_activation\": xx, (numeric) blocks remaining until activation (only when not active)\n"
+            "     \"activated_at_height\": xx, (numeric) height at which CVM was activated (only when active)\n"
+            "     \"evm_enhancement\": {       (object) CVM-EVM enhancement status (only when CVM is active)\n"
+            "        \"active\": xx,           (boolean) whether EVM compatibility is active\n"
+            "        \"status\": \"xxxx\",       (string) one of \"defined\", \"started\", \"locked_in\", \"active\", \"failed\"\n"
+            "        \"features\": \"xxxx\"      (string) description of enhanced features (only when active)\n"
+            "     }\n"
+            "  },\n"
             "  \"warnings\" : \"...\",           (string) any network and blockchain warnings.\n"
             "}\n"
             "\nExamples:\n"
@@ -1419,6 +1435,51 @@ UniValue getblockchaininfo(const JSONRPCRequest& request)
     }
     obj.push_back(Pair("softforks",             softforks));
     obj.push_back(Pair("bip9_softforks", bip9_softforks));
+
+    // Cascoin: Add CVM status information
+    UniValue cvmInfo(UniValue::VOBJ);
+    int currentHeight = chainActive.Height();
+    bool cvmActive = currentHeight >= consensusParams.cvmActivationHeight;
+    
+    cvmInfo.push_back(Pair("active", cvmActive));
+    cvmInfo.push_back(Pair("activation_height", consensusParams.cvmActivationHeight));
+    cvmInfo.push_back(Pair("max_gas_per_block", (uint64_t)consensusParams.cvmMaxGasPerBlock));
+    cvmInfo.push_back(Pair("max_gas_per_tx", (uint64_t)consensusParams.cvmMaxGasPerTx));
+    cvmInfo.push_back(Pair("max_code_size", (uint64_t)consensusParams.cvmMaxCodeSize));
+    
+    if (cvmActive) {
+        cvmInfo.push_back(Pair("status", "active"));
+        cvmInfo.push_back(Pair("activated_at_height", consensusParams.cvmActivationHeight));
+        
+        // Cascoin: Add CVM-EVM enhancement status (only relevant when base CVM is active)
+        ThresholdState cvmEvmState = VersionBitsState(tip, consensusParams, Consensus::DEPLOYMENT_CVM_EVM, versionbitscache);
+        bool cvmEvmActive = (cvmEvmState == THRESHOLD_ACTIVE);
+        
+        UniValue cvmEvmInfo(UniValue::VOBJ);
+        cvmEvmInfo.push_back(Pair("active", cvmEvmActive));
+        
+        if (cvmEvmActive) {
+            cvmEvmInfo.push_back(Pair("status", "active"));
+            cvmEvmInfo.push_back(Pair("features", "EVM bytecode execution, trust-aware operations, sustainable gas system"));
+        } else {
+            std::string statusStr;
+            switch (cvmEvmState) {
+                case THRESHOLD_DEFINED:   statusStr = "defined"; break;
+                case THRESHOLD_STARTED:   statusStr = "started"; break;
+                case THRESHOLD_LOCKED_IN: statusStr = "locked_in"; break;
+                case THRESHOLD_FAILED:    statusStr = "failed"; break;
+                default:                  statusStr = "unknown"; break;
+            }
+            cvmEvmInfo.push_back(Pair("status", statusStr));
+        }
+        
+        cvmInfo.push_back(Pair("evm_enhancement", cvmEvmInfo));
+    } else {
+        cvmInfo.push_back(Pair("status", "defined"));
+        cvmInfo.push_back(Pair("blocks_until_activation", consensusParams.cvmActivationHeight - currentHeight));
+    }
+    
+    obj.push_back(Pair("cvm", cvmInfo));
 
     obj.push_back(Pair("warnings", GetWarnings("statusbar")));
     return obj;

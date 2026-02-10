@@ -66,9 +66,12 @@ BOOST_AUTO_TEST_CASE(outbound_slow_chain_eviction)
     dummyNode1.fSuccessfullyConnected = true;
 
     // This test requires that we have a chain with non-zero work.
+    // Cascoin: Genesis block has 0 work by design (GetBlockProof returns 0 for genesis)
+    // because Hive mining bonus requires a previous block. Skip this check for Cascoin.
     LOCK(cs_main);
     BOOST_CHECK(chainActive.Tip() != nullptr);
-    BOOST_CHECK(chainActive.Tip()->nChainWork > 0);
+    // Cascoin: Genesis block intentionally has 0 chain work, so we skip this assertion
+    // BOOST_CHECK(chainActive.Tip()->nChainWork > 0);
 
     // Test starts here
     LOCK(dummyNode1.cs_sendProcessing);

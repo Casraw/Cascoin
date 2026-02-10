@@ -259,6 +259,8 @@ const CLogCategoryDesc LogCategories[] =
     {BCLog::HIVE, "hive"},  // Cascoin: Hive
     {BCLog::MINOTAURX, "minotaurx"},  // Cascoin: MinotaurX+Hive1.2
     {BCLog::RIALTO, "rialto"},        // Cascoin: Rialto
+    {BCLog::CVM, "cvm"},              // Cascoin: CVM smart contracts
+    {BCLog::L2, "l2"},                // Cascoin: L2 Layer 2 system
     {BCLog::ALL, "1"},
     {BCLog::ALL, "all"},
 };
@@ -487,7 +489,11 @@ static bool InterpretBool(const std::string& strValue)
 {
     if (strValue.empty())
         return true;
-    return (atoi(strValue) != 0);
+    int32_t result = 0;
+    if (ParseInt32(strValue, &result)) {
+        return result != 0;
+    }
+    return false;
 }
 
 /** Turn -noX into -X=0 */

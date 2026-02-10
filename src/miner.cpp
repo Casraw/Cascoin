@@ -37,6 +37,8 @@
 #include <sync.h>           // Cascoin: Hive
 #include <boost/thread.hpp> // Cascoin: Hive: Mining optimisations
 #include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
+#include <cvm/mempool_priority.h>  // Cascoin: CVM/EVM reputation-based priority
+#include <cvm/validator_compensation.h>  // Cascoin: HAT v2 validator compensation
 
 
 static CCriticalSection cs_solution_vars;
@@ -194,6 +196,9 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     if (hiveProofScript)
         fIncludeBCTs = false;
 
+    // Cascoin: CVM/EVM - Add guaranteed inclusion transactions first (90+ reputation)
+    addGuaranteedInclusionTxs();
+
     addPackageTxs(nPackagesSelected, nDescendantsUpdated);
 
     int64_t nTime1 = GetTimeMicros();
@@ -238,29 +243,32 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
         pblocktemplate->vchCoinbaseCommitment = GenerateCoinbaseCommitment(*pblock, pindexPrev, chainparams.GetConsensus());
         pblocktemplate->vTxFees[0] = -nFees;
     } else {
-        CMutableTransaction coinbaseTx;
-        coinbaseTx.vin.resize(1);
-        coinbaseTx.vin[0].prevout.SetNull();
-        coinbaseTx.vout.resize(1);
-        coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
-
         // Cascoin: MinotaurX+Hive1.2: Pow rewards are 50% of base block reward
-        coinbaseTx.vout[0].nValue = GetBlockSubsidy(nHeight, chainparams.GetConsensus());
+        CAmount blockReward = GetBlockSubsidy(nHeight, chainparams.GetConsensus());
         if (IsMinotaurXEnabled(pindexPrev, chainparams.GetConsensus()))
-            coinbaseTx.vout[0].nValue = coinbaseTx.vout[0].nValue >> 1;
+            blockReward = blockReward >> 1;
 
-        coinbaseTx.vout[0].nValue += nFees;
+        // Cascoin: HAT v2: Create coinbase with validator payments (70/30 split)
+        CMutableTransaction coinbaseTx;
+        if (!CreateCoinbaseWithValidatorPayments(coinbaseTx, *pblock, scriptPubKeyIn, blockReward, nHeight, nFees)) {
+            // Fallback to traditional coinbase if validator payment creation fails
+            LogPrintf("CreateNewBlock: Failed to create coinbase with validator payments, using traditional coinbase\n");
+            
+            coinbaseTx.vin.resize(1);
+            coinbaseTx.vin[0].prevout.SetNull();
+            coinbaseTx.vout.resize(1);
+            coinbaseTx.vout[0].scriptPubKey = scriptPubKeyIn;
+            coinbaseTx.vout[0].nValue = blockReward + nFees;
 
-        // BIP34 requires the block height to be included in the coinbase
-        // The validation code specifically expects the scriptSig to BEGIN WITH: CScript() << nHeight
-        // We then append arbitrary data to ensure the minimum size requirement for coinbase scriptSig
-        CScript scriptSig;
-        scriptSig << nHeight;
-        // Ensure the scriptSig is at least 2 bytes by padding if needed
-        if (scriptSig.size() < 2) {
-            scriptSig << OP_0;
+            // BIP34 requires the block height to be included in the coinbase
+            CScript scriptSig;
+            scriptSig << nHeight;
+            if (scriptSig.size() < 2) {
+                scriptSig << OP_0;
+            }
+            coinbaseTx.vin[0].scriptSig = scriptSig;
         }
-        coinbaseTx.vin[0].scriptSig = scriptSig;
+        
         pblock->vtx[0] = MakeTransactionRef(std::move(coinbaseTx));
         pblocktemplate->vchCoinbaseCommitment = GenerateCoinbaseCommitment(*pblock, pindexPrev, chainparams.GetConsensus());
         pblocktemplate->vTxFees[0] = -nFees;
@@ -456,6 +464,67 @@ void BlockAssembler::SortForBlock(const CTxMemPool::setEntries& package, CTxMemP
     std::sort(sortedEntries.begin(), sortedEntries.end(), CompareTxIterByAncestorCount());
 }
 
+// Cascoin: CVM/EVM - Add guaranteed inclusion transactions (90+ reputation)
+// These transactions must be included in every block if they fit
+void BlockAssembler::addGuaranteedInclusionTxs()
+{
+    // Get all guaranteed inclusion transactions from mempool
+    CTxMemPool::setEntries guaranteed = CVM::BlockAssemblerPriorityHelper::GetGuaranteedInclusionTransactions(mempool);
+    
+    if (guaranteed.empty()) {
+        return;
+    }
+    
+    LogPrint(BCLog::CVM, "BlockAssembler: Found %d guaranteed inclusion transactions\n", guaranteed.size());
+    
+    // Sort by priority
+    std::vector<CTxMemPool::txiter> sortedGuaranteed = 
+        CVM::BlockAssemblerPriorityHelper::SortByPriority(guaranteed);
+    
+    // Try to add each guaranteed transaction
+    for (auto iter : sortedGuaranteed) {
+        // Skip if already in block
+        if (inBlock.count(iter)) {
+            continue;
+        }
+        
+        // Check if transaction fits in block
+        uint64_t packageSize = iter->GetSizeWithAncestors();
+        int64_t packageSigOpsCost = iter->GetSigOpCostWithAncestors();
+        
+        if (!TestPackage(packageSize, packageSigOpsCost)) {
+            LogPrint(BCLog::CVM, "BlockAssembler: Guaranteed inclusion tx %s doesn't fit in block\n",
+                     iter->GetTx().GetHash().ToString());
+            continue;
+        }
+        
+        // Get ancestors
+        CTxMemPool::setEntries ancestors;
+        uint64_t nNoLimit = std::numeric_limits<uint64_t>::max();
+        std::string dummy;
+        mempool.CalculateMemPoolAncestors(*iter, ancestors, nNoLimit, nNoLimit, nNoLimit, nNoLimit, dummy, false);
+        
+        onlyUnconfirmed(ancestors);
+        ancestors.insert(iter);
+        
+        // Test if all tx's are Final
+        if (!TestPackageTransactions(ancestors)) {
+            continue;
+        }
+        
+        // Add transaction and ancestors to block
+        std::vector<CTxMemPool::txiter> sortedEntries;
+        SortForBlock(ancestors, iter, sortedEntries);
+        
+        for (size_t i = 0; i < sortedEntries.size(); ++i) {
+            AddToBlock(sortedEntries[i]);
+        }
+        
+        LogPrint(BCLog::CVM, "BlockAssembler: Added guaranteed inclusion tx %s\n",
+                 iter->GetTx().GetHash().ToString());
+    }
+}
+
 // This transaction selection algorithm orders the mempool based
 // on feerate of a transaction including all unconfirmed ancestors.
 // Since we don't remove transactions from the mempool as we select them
@@ -622,10 +691,12 @@ void BeeKeeper(const CChainParams& chainparams) {
     LogPrintf("BeeKeeper: Thread started\n");
     RenameThread("hive-beekeeper");
 
-    int height;
+    int height = 0;
     {
         LOCK(cs_main);
-        height = chainActive.Tip()->nHeight;
+        if (chainActive.Tip()) {
+            height = chainActive.Tip()->nHeight;
+        }
     }
 
     try {
@@ -637,6 +708,10 @@ void BeeKeeper(const CChainParams& chainparams) {
             int newHeight;
             {
                 LOCK(cs_main);
+                // Check if blockchain is initialized
+                if (!chainActive.Tip()) {
+                    continue; // Wait for blockchain initialization
+                }
                 newHeight = chainActive.Tip()->nHeight;
             }
             if (newHeight != height) {
@@ -644,7 +719,7 @@ void BeeKeeper(const CChainParams& chainparams) {
                 height = newHeight;
                 try {
                     BusyBees(consensusParams, height);
-                } catch (const std::runtime_error &e) {
+                } catch (const std::exception &e) {
                     LogPrintf("! BeeKeeper: Error: %s\n", e.what());
                 }
             }
@@ -670,6 +745,9 @@ void AbortWatchThread(int height) {
         int newHeight;
         {
             LOCK(cs_main);
+            if (!chainActive.Tip()) {
+                continue; // Wait for blockchain initialization
+            }
             newHeight = chainActive.Tip()->nHeight;
         }
 
@@ -847,8 +925,15 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     int totalBees = 0;
 
     // Original logic to populate potentialBcts and totalBees based on wallet status
+    // Skip quantum BCTs - they can't be used for Hive mining (ECDSA only)
     for (const auto& bctInfoWallet : potentialBctsWallet) {
         if (bctInfoWallet.beeStatus == "mature") { // Filter by mature status from wallet
+            // Skip quantum honey addresses - can't sign Hive proofs with them
+            CTxDestination dest = DecodeDestination(bctInfoWallet.honeyAddress);
+            if (boost::get<WitnessV2Quantum>(&dest)) {
+                LogPrint(BCLog::HIVE, "BusyBees: Skipping quantum BCT %s (honey: %s)\n", bctInfoWallet.txid, bctInfoWallet.honeyAddress);
+                continue;
+            }
             potentialBcts.push_back(bctInfoWallet);
             totalBees += bctInfoWallet.beeCount;
         }
@@ -1024,21 +1109,30 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
             return false;
         }
 
+        CHashWriter ss(SER_GETHASH, 0);
+        ss << deterministicRandString;
+        uint256 mhash = ss.GetHash();
+
+        // Cascoin: Hive mining only supports ECDSA (Legacy P2PKH) honey addresses for now.
+        // Quantum Hive mining will be enabled later with its own activation height.
+        const WitnessV2Quantum *quantumDest = boost::get<WitnessV2Quantum>(&dest);
+        if (quantumDest) {
+            LogPrintf("BusyBees: Quantum honey address detected but quantum Hive mining is not yet supported. Use a legacy (P2PKH) honey address.\n");
+            return false;
+        }
+
         const CKeyID *keyID = boost::get<CKeyID>(&dest);
         if (!keyID) {
-            LogPrintf("BusyBees: Wallet doesn't have privkey for honey destination\n");
+            LogPrintf("BusyBees: Unsupported honey destination type (must be legacy P2PKH)\n");
             return false;
         }
 
         CKey key;
         if (!pwallet->GetKey(*keyID, key)) {
-            LogPrintf("BusyBees: Privkey unavailable\n");
+            LogPrintf("BusyBees: Wallet doesn't have privkey for honey destination\n");
             return false;
         }
 
-        CHashWriter ss(SER_GETHASH, 0);
-        ss << deterministicRandString;
-        uint256 mhash = ss.GetHash();
         if (!key.SignCompact(mhash, messageProofVec)) {
             LogPrintf("BusyBees: Couldn't sign the bee proof!\n");
             return false;
@@ -1072,6 +1166,10 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     // Make sure the new block's not stale
     {
         LOCK(cs_main);
+        if (!chainActive.Tip()) {
+            LogPrintf("BusyBees: Blockchain not initialized yet.\n");
+            return false;
+        }
         if (pblock->hashPrevBlock != chainActive.Tip()->GetBlockHash()) {
             LogPrintf("BusyBees: Generated block is stale.\n");
             return false;

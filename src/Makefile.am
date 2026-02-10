@@ -18,7 +18,7 @@ else
 LIBUNIVALUE = $(UNIVALUE_LIBS)
 endif
 
-BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS)
+BITCOIN_INCLUDES=-I$(builddir) $(BDB_CPPFLAGS) $(BOOST_CPPFLAGS) $(LEVELDB_CPPFLAGS) $(CRYPTO_CFLAGS) $(SSL_CFLAGS) $(EVMC_CFLAGS) $(SQLITE3_CFLAGS) $(LIBOQS_CFLAGS)
 
 BITCOIN_INCLUDES += -I$(srcdir)/secp256k1/include
 BITCOIN_INCLUDES += $(UNIVALUE_CFLAGS)
@@ -41,6 +41,9 @@ endif
 if ENABLE_WALLET
 LIBBITCOIN_WALLET=libbitcoin_wallet.a
 endif
+if ENABLE_QUANTUM
+LIBBITCOIN_QUANTUM=crypto/quantum/libbitcoin_quantum.a
+endif
 
 $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
 	$(AM_V_at)$(MAKE) $(AM_MAKEFLAGS) -C $(@D) $(@F)
@@ -49,6 +52,7 @@ $(LIBSECP256K1): $(wildcard secp256k1/src/*) $(wildcard secp256k1/include/*)
 # But to build the less dependent modules first, we manually select their order here:
 EXTRA_LIBRARIES += \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_COMMON) \
   $(LIBBITCOIN_CONSENSUS) \
@@ -78,6 +82,7 @@ endif
 BITCOIN_CORE_H = \
   addrdb.h \
   addrman.h \
+  address_quantum.h \
   base58.h \
   bech32.h \
   bloom.h \
@@ -103,6 +108,15 @@ BITCOIN_CORE_H = \
   fs.h \
   httprpc.h \
   httpserver.h \
+  httpserver/cvmdashboard.h \
+  httpserver/cvmdashboard_html.h \
+  httpserver/cvmdashboard_evm.h \
+  httpserver/cvmdashboard_contracts.h \
+  httpserver/l2_dashboard.h \
+  httpserver/l2_dashboard_html.h \
+  httpserver/l2_websocket.h \
+  httpserver/reward_dashboard.h \
+  httpserver/reward_dashboard_html.h \
   indirectmap.h \
   init.h \
   key.h \
@@ -177,7 +191,104 @@ BITCOIN_CORE_H = \
   zmq/zmqnotificationinterface.h \
   zmq/zmqpublishnotifier.h \
   rialto.h \
-  beenft.h
+  beenft.h \
+  bctdb.h \
+  cvm/cvm.h \
+  cvm/vmstate.h \
+  cvm/opcodes.h \
+  cvm/contract.h \
+  cvm/cvmdb.h \
+  cvm/reputation.h \
+  cvm/softfork.h \
+  cvm/txbuilder.h \
+  cvm/blockprocessor.h \
+  cvm/trustgraph.h \
+  cvm/behaviormetrics.h \
+  cvm/graphanalysis.h \
+  cvm/securehat.h \
+  cvm/walletcluster.h \
+  cvm/trustpropagator.h \
+  cvm/clusterupdatehandler.h \
+  cvm/clustertrustquery.h \
+  cvm/cvmtx.h \
+  cvm/evmc_host.h \
+  cvm/trust_context.h \
+  cvm/bytecode_detector.h \
+  cvm/enhanced_vm.h \
+  cvm/evm_engine.h \
+  cvm/enhanced_storage.h \
+  cvm/sustainable_gas.h \
+  cvm/gas_allowance.h \
+  cvm/tx_priority.h \
+  cvm/gas_subsidy.h \
+  cvm/reputation_signature.h \
+  cvm/resource_manager.h \
+  cvm/cleanup_manager.h \
+  cvm/mempool_manager.h \
+  cvm/fee_calculator.h \
+  cvm/mempool_priority.h \
+  cvm/block_validator.h \
+  cvm/evm_rpc.h \
+  cvm/validator_keys.h \
+  cvm/execution_tracer.h \
+  cvm/validator_attestation.h \
+  cvm/vote_manipulation_detector.h \
+  cvm/trust_graph_manipulation_detector.h \
+  cvm/validator_compensation.h \
+  cvm/trust_attestation.h \
+  cvm/cross_chain_bridge.h \
+  cvm/contract_state_sync.h \
+  cvm/consensus_safety.h \
+  cvm/trust_graph_sync.h \
+  cvm/security_audit.h \
+  cvm/anomaly_detector.h \
+  cvm/security_rpc.h \
+  cvm/access_control_audit.h \
+  cvm/backward_compat.h \
+  cvm/dos_protection.h \
+  cvm/metrics.h \
+  cvm/graceful_degradation.h \
+  cvm/reward_types.h \
+  cvm/commit_reveal.h \
+  cvm/reward_distributor.h \
+  l2/l2_common.h \
+  l2/l2_chainparams.h \
+  l2/l2_config.h \
+  l2/l2_block.h \
+  l2/l2_block_validator.h \
+  l2/l2_registry.h \
+  l2/l2_reputation.h \
+  l2/l2_transaction.h \
+  l2/bridge_contract.h \
+  l2/burn_parser.h \
+  l2/burn_registry.h \
+  l2/burn_validator.h \
+  l2/challenge_handler.h \
+  l2/cross_layer_messaging.h \
+  l2/data_availability.h \
+  l2/encrypted_mempool.h \
+  l2/fee_distributor.h \
+  l2/forced_inclusion.h \
+  l2/fraud_proof.h \
+  l2/l2_minter.h \
+  l2/leader_election.h \
+  l2/mint_consensus.h \
+  l2/rate_limiter.h \
+  l2/reorg_monitor.h \
+  l2/sequencer_consensus.h \
+  l2/sequencer_discovery.h \
+  l2/sparse_merkle_tree.h \
+  l2/account_state.h \
+  l2/state_manager.h \
+  l2/l2_token_manager.h \
+  l2/l2_faucet.h \
+  l2/l2_peer_manager.h \
+  l2/timestamp_validator.h \
+  l2/collusion_detector.h \
+  l2/security_monitor.h \
+  crypto/quantum/falcon.h \
+  quantum_registry.h \
+  quantum_registry_fwd.h
 
 
 obj/build.h: FORCE
@@ -200,6 +311,10 @@ libbitcoin_server_a_SOURCES = \
   consensus/tx_verify.cpp \
   httprpc.cpp \
   httpserver.cpp \
+  httpserver/cvmdashboard.cpp \
+  httpserver/l2_dashboard.cpp \
+  httpserver/l2_websocket.cpp \
+  httpserver/reward_dashboard.cpp \
   init.cpp \
   dbwrapper.cpp \
   merkleblock.cpp \
@@ -231,6 +346,111 @@ libbitcoin_server_a_SOURCES = \
   versionbits.cpp \
   rialto.cpp \
   beenft.cpp \
+  bctdb.cpp \
+  cvm/cvm.cpp \
+  cvm/vmstate.cpp \
+  cvm/opcodes.cpp \
+  cvm/contract.cpp \
+  cvm/cvmdb.cpp \
+  cvm/reputation.cpp \
+  cvm/softfork.cpp \
+  cvm/txbuilder.cpp \
+  cvm/blockprocessor.cpp \
+  cvm/trustgraph.cpp \
+  cvm/behaviormetrics.cpp \
+  cvm/graphanalysis.cpp \
+  cvm/securehat.cpp \
+  cvm/walletcluster.cpp \
+  cvm/trustpropagator.cpp \
+  cvm/clusterupdatehandler.cpp \
+  cvm/clustertrustquery.cpp \
+  cvm/cvmtx.cpp \
+  cvm/evmc_host.cpp \
+  cvm/trust_context.cpp \
+  cvm/bytecode_detector.cpp \
+  cvm/enhanced_vm.cpp \
+  cvm/evm_engine.cpp \
+  cvm/enhanced_storage.cpp \
+  cvm/sustainable_gas.cpp \
+  cvm/gas_allowance.cpp \
+  cvm/tx_priority.cpp \
+  cvm/gas_subsidy.cpp \
+  cvm/reputation_signature.cpp \
+  cvm/resource_manager.cpp \
+  cvm/cleanup_manager.cpp \
+  cvm/mempool_manager.cpp \
+  cvm/fee_calculator.cpp \
+  cvm/mempool_priority.cpp \
+  cvm/block_validator.cpp \
+  cvm/activation.cpp \
+  cvm/receipt.cpp \
+  cvm/address_index.cpp \
+  cvm/nonce_manager.cpp \
+  cvm/evm_rpc.cpp \
+  cvm/hat_consensus.cpp \
+  cvm/eclipse_sybil_protection.cpp \
+  cvm/consensus_validator.cpp \
+  cvm/trust_attestation.cpp \
+  cvm/cross_chain_bridge.cpp \
+  cvm/validator_attestation.cpp \
+  cvm/validator_keys.cpp \
+  cvm/execution_tracer.cpp \
+  cvm/validator_compensation.cpp \
+  cvm/vote_manipulation_detector.cpp \
+  cvm/trust_graph_manipulation_detector.cpp \
+  cvm/contract_state_sync.cpp \
+  cvm/consensus_safety.cpp \
+  cvm/trust_graph_sync.cpp \
+  cvm/security_audit.cpp \
+  cvm/anomaly_detector.cpp \
+  cvm/security_rpc.cpp \
+  cvm/access_control_audit.cpp \
+  cvm/backward_compat.cpp \
+  cvm/dos_protection.cpp \
+  cvm/metrics.cpp \
+  cvm/graceful_degradation.cpp \
+  cvm/reward_types.cpp \
+  cvm/commit_reveal.cpp \
+  cvm/reward_distributor.cpp \
+  l2/l2_common.cpp \
+  l2/l2_chainparams.cpp \
+  l2/l2_config.cpp \
+  l2/l2_block.cpp \
+  l2/l2_block_validator.cpp \
+  l2/l2_registry.cpp \
+  l2/l2_reputation.cpp \
+  l2/l2_transaction.cpp \
+  l2/bridge_contract.cpp \
+  l2/burn_parser.cpp \
+  l2/burn_registry.cpp \
+  l2/burn_validator.cpp \
+  l2/challenge_handler.cpp \
+  l2/cross_layer_messaging.cpp \
+  l2/data_availability.cpp \
+  l2/encrypted_mempool.cpp \
+  l2/fee_distributor.cpp \
+  l2/forced_inclusion.cpp \
+  l2/fraud_proof.cpp \
+  l2/l2_minter.cpp \
+  l2/leader_election.cpp \
+  l2/mint_consensus.cpp \
+  l2/rate_limiter.cpp \
+  l2/reorg_monitor.cpp \
+  l2/sequencer_consensus.cpp \
+  l2/sequencer_discovery.cpp \
+  l2/sparse_merkle_tree.cpp \
+  l2/state_manager.cpp \
+  l2/l2_token_manager.cpp \
+  l2/l2_faucet.cpp \
+  l2/l2_peer_manager.cpp \
+  l2/timestamp_validator.cpp \
+  l2/collusion_detector.cpp \
+  l2/security_monitor.cpp \
+  rpc/cvm.cpp \
+  rpc/l2.cpp \
+  rpc/l2_burn.cpp \
+  rpc/quantum.cpp \
+  quantum_registry.cpp \
   $(BITCOIN_CORE_H)
 
 if ENABLE_ZMQ
@@ -351,6 +571,15 @@ if USE_ASM
 crypto_libbitcoin_crypto_a_SOURCES += crypto/sha256_sse4.cpp
 endif
 
+# Post-quantum cryptography library (FALCON-512 via liboqs)
+if ENABLE_QUANTUM
+crypto_quantum_libbitcoin_quantum_a_CPPFLAGS = $(AM_CPPFLAGS) $(LIBOQS_CFLAGS)
+crypto_quantum_libbitcoin_quantum_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+crypto_quantum_libbitcoin_quantum_a_SOURCES = \
+  crypto/quantum/falcon.h \
+  crypto/quantum/falcon.cpp
+endif
+
 # consensus: shared between all executables that validate any consensus rules.
 libbitcoin_consensus_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libbitcoin_consensus_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
@@ -373,6 +602,7 @@ libbitcoin_consensus_a_SOURCES = \
   script/bitcoinconsensus.cpp \
   script/interpreter.cpp \
   script/interpreter.h \
+  script/quantum_consensus.cpp \
   script/script.cpp \
   script/script.h \
   script/script_error.cpp \
@@ -389,6 +619,7 @@ libbitcoin_consensus_a_SOURCES = \
 libbitcoin_common_a_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 libbitcoin_common_a_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 libbitcoin_common_a_SOURCES = \
+  address_quantum.cpp \
   base58.cpp \
   bech32.cpp \
   chainparams.cpp \
@@ -467,12 +698,24 @@ cascoind_LDADD = \
   $(LIBBITCOIN_ZMQ) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBLEVELDB) \
   $(LIBLEVELDB_SSE42) \
   $(LIBMEMENV) \
   $(LIBSECP256K1)
 
-cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS)
+cascoind_LDADD += $(BOOST_LIBS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVENT_PTHREADS_LIBS) $(EVENT_LIBS) $(ZMQ_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+cascoind_LDADD += -lbcrypt
+endif
+
+if ENABLE_EVMC
+# Use EVMC_LIBS which is set correctly by configure for each platform
+# For Windows cross-compilation, configure adds -levmone-standalone
+cascoind_LDADD += $(EVMC_LIBS) $(EVMONE_PRECOMPILES_LIBS)
+endif
 
 # bitcoin-cli binary #
 cascoin_cli_SOURCES = bitcoin-cli.cpp
@@ -488,13 +731,18 @@ cascoin_cli_LDADD = \
   $(LIBBITCOIN_CLI) \
   $(LIBUNIVALUE) \
   $(LIBBITCOIN_UTIL) \
-  $(LIBBITCOIN_CRYPTO)
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM)
 
-cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS)
+cascoin_cli_LDADD += $(BOOST_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(EVENT_LIBS) $(LIBOQS_LIBS)
+
+if ENABLE_EVMC
+cascoin_cli_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoin-tx binary #
-cascoin_tx_SOURCES = bitcoin-tx.cpp
+cascoin_tx_SOURCES = bitcoin-tx.cpp script/quantum_registry_stub.cpp
 cascoin_tx_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
 cascoin_tx_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 cascoin_tx_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS)
@@ -509,15 +757,24 @@ cascoin_tx_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBSECP256K1)
 
-cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+cascoin_tx_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(LIBOQS_LIBS)
+
+if ENABLE_EVMC
+cascoin_tx_LDADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
+endif
 #
 
 # bitcoinconsensus library #
 if BUILD_BITCOIN_LIBS
 include_HEADERS = script/bitcoinconsensus.h
-libbitcoinconsensus_la_SOURCES = $(crypto_libbitcoin_crypto_a_SOURCES) $(libbitcoin_consensus_a_SOURCES)
+libbitcoinconsensus_la_SOURCES = $(crypto_libbitcoin_crypto_a_SOURCES) $(libbitcoin_consensus_a_SOURCES) script/quantum_registry_stub.cpp
+
+if ENABLE_QUANTUM
+libbitcoinconsensus_la_SOURCES += crypto/quantum/falcon.cpp crypto/quantum/falcon.h
+endif
 
 if GLIBC_BACK_COMPAT
   libbitcoinconsensus_la_SOURCES += compat/glibc_compat.cpp
@@ -525,7 +782,16 @@ endif
 
 libbitcoinconsensus_la_LDFLAGS = $(AM_LDFLAGS) -no-undefined $(RELDFLAGS)
 libbitcoinconsensus_la_LIBADD = $(LIBSECP256K1) $(CRYPTO_LIBS)
-libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS)
+
+if ENABLE_EVMC
+libbitcoinconsensus_la_LIBADD += -levmone $(EVMONE_PRECOMPILES_LIBS) -levmc-loader -levmc-instructions
+endif
+
+if ENABLE_QUANTUM
+libbitcoinconsensus_la_LIBADD += $(LIBOQS_LIBS)
+endif
+
+libbitcoinconsensus_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/obj -I$(srcdir)/secp256k1/include -DBUILD_BITCOIN_INTERNAL $(SSL_CFLAGS) $(LIBOQS_CFLAGS)
 libbitcoinconsensus_la_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
 endif

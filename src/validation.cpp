@@ -46,6 +46,11 @@ using namespace boost::placeholders;
 #include <rpc/server.h>     // Cascoin: Rialto
 #include <wallet/wallet.h>  // Cascoin: Rialto
 #include <base58.h>         // Cascoin: Rialto: for DecodeDestination()
+#include <cvm/fee_calculator.h>  // Cascoin: CVM/EVM fee calculation
+#include <cvm/softfork.h>        // Cascoin: CVM soft fork support
+#include <cvm/block_validator.h> // Cascoin: CVM/EVM block validation
+#include <cvm/validator_compensation.h> // Cascoin: HAT v2 validator compensation
+#include <quantum_registry.h>    // Cascoin: FALCON-512 Public Key Registry
 
 #include <future>
 #include <sstream>
@@ -56,6 +61,10 @@ using namespace boost::placeholders;
 
 #include <miner.h>  // Cascoin: Hive
 #include <merkleblock.h> // Cascoin: Hive for merkle transaction check in block
+#include <beenft.h>   // Cascoin: BCT & NFT
+#include <cvm/cvmdb.h>   // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>   // Cascoin: CVM Block Processor
+#include <cvm/softfork.h>   // Cascoin: CVM Soft Fork
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -728,9 +737,56 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "mempool min fee not met", false, strprintf("%d < %d", nFees, mempoolRejectFee));
         }
 
-        // No transactions are allowed below minRelayTxFee except from disconnected blocks
-        if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
-            return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+        // Cascoin: CVM/EVM transaction fee validation with reputation-based pricing
+        // Check if this is a CVM/EVM transaction and apply reputation-based fee calculation
+        if (CVM::IsEVMTransaction(tx) || CVM::FindCVMOpReturn(tx) >= 0) {
+            static CVM::FeeCalculator feeCalculator;
+            static bool feeCalculatorInitialized = false;
+            
+            // Initialize fee calculator on first use
+            if (!feeCalculatorInitialized) {
+                // TODO: Initialize with CVM database when available
+                feeCalculatorInitialized = true;
+            }
+            
+            // Calculate reputation-adjusted fee
+            CVM::FeeCalculationResult feeResult = feeCalculator.CalculateFee(tx, chainActive.Height());
+            
+            if (feeResult.IsValid()) {
+                // For free gas eligible transactions (80+ reputation), allow zero fee
+                if (feeResult.isFreeGas) {
+                    LogPrint(BCLog::CVM, "AcceptToMemoryPool: Free gas transaction accepted for %s (reputation=%d)\n",
+                             tx.GetHash().ToString(), feeResult.reputation);
+                    // Skip standard fee checks for free gas transactions
+                } else {
+                    // Check if transaction meets minimum CVM/EVM fee requirements
+                    if (!bypass_limits && nModifiedFees < feeResult.effectiveFee) {
+                        return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "cvm fee not met", false,
+                                       strprintf("%d < %d (reputation=%d, discount=%d, subsidy=%d)",
+                                                nFees, feeResult.effectiveFee, feeResult.reputation,
+                                                feeResult.reputationDiscount, feeResult.gasSubsidy));
+                    }
+                    
+                    LogPrint(BCLog::CVM, "AcceptToMemoryPool: CVM/EVM transaction fee validated: "
+                             "base=%d effective=%d reputation=%d discount=%d subsidy=%d\n",
+                             feeResult.baseFee, feeResult.effectiveFee, feeResult.reputation,
+                             feeResult.reputationDiscount, feeResult.gasSubsidy);
+                }
+            } else {
+                // Fee calculation failed, log warning but continue with standard validation
+                LogPrint(BCLog::CVM, "AcceptToMemoryPool: CVM fee calculation failed: %s, using standard fee\n",
+                         feeResult.error);
+                
+                // Fall through to standard fee validation
+                if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+                    return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+                }
+            }
+        } else {
+            // Standard Bitcoin transaction - use normal fee validation
+            if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+                return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+            }
         }
 
         if (nAbsurdFee && nFees > nAbsurdFee)
@@ -895,6 +951,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (!chainparams.RequireStandard()) {
             scriptVerifyFlags = gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
+        }
+
+        // Cascoin: Add SCRIPT_VERIFY_QUANTUM flag if quantum features are active
+        // This allows quantum transactions to be accepted into the mempool after activation
+        if (chainActive.Height() >= chainparams.GetConsensus().quantumActivationHeight) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_QUANTUM;
         }
 
         // Check against previous transactions
@@ -1812,6 +1874,13 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
         flags |= SCRIPT_VERIFY_STRICTENC;
         flags |= SCRIPT_ENABLE_SIGHASH_FORKID;
     }
+
+    // Cascoin: Quantum - Enable post-quantum FALCON-512 signatures at activation height
+    // Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+    if (pindex->nHeight >= consensusparams.quantumActivationHeight) {
+        flags |= SCRIPT_VERIFY_QUANTUM;
+    }
+
     return flags;
 }
 
@@ -2021,6 +2090,38 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     int64_t nTime3 = GetTimeMicros(); nTimeConnect += nTime3 - nTime2;
     LogPrint(BCLog::BENCH, "      - Connect %u transactions: %.2fms (%.3fms/tx, %.3fms/txin) [%.2fs (%.2fms/blk)]\n", (unsigned)block.vtx.size(), MILLI * (nTime3 - nTime2), MILLI * (nTime3 - nTime2) / block.vtx.size(), nInputs <= 1 ? 0 : MILLI * (nTime3 - nTime2) / (nInputs-1), nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
+    // Cascoin: CVM/EVM - Validate and execute CVM/EVM transactions
+    {
+        static CVM::BlockValidator blockValidator;
+        static bool blockValidatorInitialized = false;
+        
+        // Initialize on first use with CVM database
+        if (!blockValidatorInitialized && CVM::g_cvmdb) {
+            blockValidator.Initialize(CVM::g_cvmdb.get());
+            blockValidatorInitialized = true;
+        }
+        
+        // Skip CVM validation if not initialized (pre-activation or db not ready)
+        if (!blockValidatorInitialized) {
+            LogPrint(BCLog::CVM, "ConnectBlock(): CVM validator not initialized, skipping CVM validation\n");
+        } else {
+            // Validate CVM/EVM transactions in block
+            CVM::BlockValidationResult cvmResult = blockValidator.ValidateBlock(
+                block, state, pindex, view, chainparams.GetConsensus(), fJustCheck
+            );
+            
+            if (!cvmResult.success) {
+                return error("ConnectBlock(): CVM/EVM validation failed: %s", cvmResult.error);
+            }
+            
+            if (cvmResult.contractsExecuted > 0 || cvmResult.contractsDeployed > 0) {
+                LogPrint(BCLog::CVM, "ConnectBlock(): CVM/EVM validation succeeded - "
+                         "contracts executed: %d, deployed: %d, gas used: %d\n",
+                         cvmResult.contractsExecuted, cvmResult.contractsDeployed, cvmResult.totalGasUsed);
+            }
+        }
+    }
+
     // Cascoin: MinotaurX+Hive1.2: Get correct block reward
     CAmount blockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
     if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
@@ -2038,8 +2139,35 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                                block.vtx[0]->GetValueOut(), blockReward),
                                REJECT_INVALID, "bad-cb-amount");
 
+    // Cascoin: HAT v2 - Validate coinbase validator payments (70/30 split)
+    // Only validate if CVM soft fork is active (validator compensation requires CVM)
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        // Calculate block reward without fees for validator payment validation
+        CAmount baseBlockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
+        if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
+            if (block.IsHiveMined(chainparams.GetConsensus()))
+                baseBlockReward += baseBlockReward >> 1;
+            else
+                baseBlockReward = baseBlockReward >> 1;
+        }
+        baseBlockReward += nFees;
+        
+        if (!CheckCoinbaseValidatorPayments(block, baseBlockReward)) {
+            // Log warning but don't reject block during transition period
+            // This allows blocks without validator payments to be accepted
+            // until the network fully transitions to the new system
+            LogPrint(BCLog::CVM, "ConnectBlock(): Validator payment validation failed (non-fatal during transition)\n");
+            // TODO: Make this a consensus rule after activation height
+            // return state.DoS(100, error("ConnectBlock(): invalid validator payments"),
+            //                  REJECT_INVALID, "bad-coinbase-validator-payments");
+        }
+    }
+
     // Cascoin: Ensure that lastScryptBlock+1 coinbase TX pays to the premine address
-    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1) {
+    // Skip this check for regtest and testnet as they use generatetoaddress
+    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1 && 
+        chainparams.NetworkIDString() != "regtest" && 
+        chainparams.NetworkIDString() != "test") {
         if (block.vtx[0]->vout[0].scriptPubKey.size() == 1) {
             LogPrintf("ConnectBlock(): allowing mine\n");
         } else if (block.vtx[0]->vout[0].scriptPubKey != chainparams.GetConsensus().premineOutputScript) {
@@ -2079,6 +2207,54 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
 
     int64_t nTime6 = GetTimeMicros(); nTimeCallbacks += nTime6 - nTime5;
     LogPrint(BCLog::BENCH, "    - Callbacks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime6 - nTime5), nTimeCallbacks * MICRO, nTimeCallbacks * MILLI / nBlocksTotal);
+
+    // Cascoin: CVM - Process CVM transactions in block (soft fork)
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        if (CVM::g_cvmdb) {
+            CVM::CVMBlockProcessor::ProcessBlock(block, pindex->nHeight, *CVM::g_cvmdb);
+            
+            // Process cluster updates for wallet trust propagation (Requirements: 2.4, 16.1)
+            CVM::CVMBlockProcessor::ProcessClusterUpdates(block, pindex->nHeight, *CVM::g_cvmdb);
+        } else {
+            LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
+        }
+    }
+
+    // Cascoin: Quantum Registry - Register public keys from registration transactions
+    // Requirements: 2.1-2.4 (Public key registration on successful validation)
+    if (pindex->nHeight >= chainparams.GetConsensus().quantumActivationHeight && g_quantumRegistry) {
+        for (const auto& tx : block.vtx) {
+            if (tx->IsCoinBase()) continue;
+            
+            for (const auto& txin : tx->vin) {
+                // Check if this input has a quantum witness
+                if (!txin.scriptWitness.IsNull() && !txin.scriptWitness.stack.empty()) {
+                    const auto& witnessStack = txin.scriptWitness.stack;
+                    
+                    // Check for registry format (single stack item with marker byte 0x51)
+                    if (witnessStack.size() == 1 && !witnessStack[0].empty()) {
+                        uint8_t marker = witnessStack[0][0];
+                        
+                        // Only process registration transactions (0x51)
+                        if (marker == QUANTUM_WITNESS_MARKER_REGISTRATION) {
+                            QuantumWitnessData witnessData = ParseQuantumWitness(witnessStack);
+                            
+                            if (witnessData.isValid && witnessData.isRegistration) {
+                                // Register the public key
+                                if (g_quantumRegistry->RegisterPubKey(witnessData.pubkey)) {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Registered quantum pubkey from tx %s at height %d\n",
+                                             tx->GetHash().ToString(), pindex->nHeight);
+                                } else {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Failed to register quantum pubkey from tx %s: %s\n",
+                                             tx->GetHash().ToString(), g_quantumRegistry->GetLastError());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     return true;
 }
@@ -2439,14 +2615,12 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
     // Read block from disk.
     int64_t nTime1 = GetTimeMicros();
     std::shared_ptr<const CBlock> pthisBlock;
-    if (!pblock) {
-        std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
-        if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
-            return AbortNode(state, "Failed to read block");
-        pthisBlock = pblockNew;
-    } else {
-        pthisBlock = pblock;
-    }
+    // CASCOIN FIX: Always read full block from disk for CVM processing
+    // The pblock parameter may be a witness-stripped block that doesn't contain all TXs
+    std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
+    if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
+        return AbortNode(state, "Failed to read block");
+    pthisBlock = pblockNew;
     const CBlock& blockConnecting = *pthisBlock;
     // Apply the block atomically to the chain state.
     int64_t nTime2 = GetTimeMicros(); nTimeReadFromDisk += nTime2 - nTime1;
@@ -3223,6 +3397,16 @@ bool IsMinotaurXEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& 
 bool IsRialtoEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params) {
     LOCK(cs_main);
     return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_RIALTO, versionbitscache) == THRESHOLD_ACTIVE);
+}
+
+// Cascoin: Quantum: Check if quantum features are activated at given point
+// Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+bool IsQuantumEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+    // Quantum activation is based on block height, not version bits
+    return (pindexPrev->nHeight + 1) >= params.quantumActivationHeight;
 }
 
 // Cascoin: Rialto: Check if a nick is already registered (helper to provide access to White Pages DB)

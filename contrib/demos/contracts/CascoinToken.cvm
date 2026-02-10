@@ -1,0 +1,278 @@
+# ============================================================
+# CascoinToken.cvm - Vereinfachte CVM Token Implementation
+# ============================================================
+#
+# Dieser Contract implementiert einen einfachen Token in nativen
+# CVM Opcodes. Er ist eine vereinfachte Version des Solidity
+# Contracts ohne Reputation-Integration.
+#
+# Verwendung:
+# - Kann direkt mit deploycontract RPC deployed werden
+# - Keine Solidity-Kompilierung erforderlich
+# - Ideal für Tests und Verständnis der CVM
+#
+# Requirements: 2.1 (ERC-20 Basis-Funktionalität)
+#
+# ============================================================
+# STORAGE LAYOUT
+# ============================================================
+#
+# Das Storage Layout definiert wo welche Daten gespeichert werden:
+#
+# Key                    | Value                | Description
+# -----------------------|----------------------|---------------------------
+# 0x00                   | uint256              | totalSupply
+# 0x01                   | address              | owner (deployer)
+# 0x02                   | string               | name ("CDEMO")
+# 0x03                   | uint8                | decimals (18)
+# 0x10 + addr            | uint256              | balances[addr]
+# 0x20 + hash(from,to)   | uint256              | allowances[from][to]
+#
+# Adress-Berechnung für Balances:
+#   balance_key = 0x10 + address
+#
+# Adress-Berechnung für Allowances:
+#   allowance_key = 0x20 + SHA256(from || to)
+#
+# ============================================================
+# FUNCTION SELECTORS
+# ============================================================
+#
+# Funktionen werden über 4-Byte Selektoren aufgerufen:
+#
+# Selector   | Function                | Description
+# -----------|-------------------------|---------------------------
+# 0x00000001 | constructor(supply)     | Initialisierung
+# 0x00000002 | transfer(to, amount)    | Token Transfer
+# 0x00000003 | balanceOf(addr)         | Balance abfragen
+# 0x00000004 | approve(spender, amt)   | Allowance setzen
+# 0x00000005 | transferFrom(f,t,amt)   | Delegierter Transfer
+# 0x00000006 | allowance(owner,spndr)  | Allowance abfragen
+# 0x00000007 | totalSupply()           | Gesamtmenge abfragen
+#
+# ============================================================
+# BYTECODE - CONSTRUCTOR
+# ============================================================
+#
+# Initialisiert den Token mit einer initialen Supply.
+# Alle Token werden an den Deployer (CALLER) vergeben.
+#
+# Input Stack: [initialSupply]
+# Output: Contract initialisiert
+#
+# Opcode  | Hex  | Description
+# --------|------|------------------------------------------
+
+# --- Store Owner ---
+CALLER          # 0x72 - Push deployer address onto stack
+PUSH 1 0x01     # 0x01 0x01 0x01 - Push storage key for owner
+SSTORE          # 0x51 - Store owner = CALLER
+
+# --- Store Decimals ---
+PUSH 1 0x12     # 0x01 0x01 0x12 - Push 18 (decimals)
+PUSH 1 0x03     # 0x01 0x01 0x03 - Push storage key for decimals
+SSTORE          # 0x51 - Store decimals = 18
+
+# --- Calculate Total Supply (initialSupply * 10^18) ---
+# Für Demo: Feste Supply von 1,000,000 Token
+PUSH 8 0x00000000000F4240  # 0x01 0x08 ... - Push 1,000,000
+PUSH 8 0x0DE0B6B3A7640000  # 0x01 0x08 ... - Push 10^18
+MUL             # 0x12 - Multiply: 1M * 10^18
+
+# --- Store Total Supply ---
+DUP             # 0x03 - Duplicate for balance assignment
+PUSH 1 0x00     # 0x01 0x01 0x00 - Push storage key for totalSupply
+SSTORE          # 0x51 - Store totalSupply
+
+# --- Store Deployer Balance ---
+# balance_key = 0x10 + CALLER
+CALLER          # 0x72 - Push deployer address
+PUSH 1 0x10     # 0x01 0x01 0x10 - Push balance prefix
+ADD             # 0x10 - Calculate balance key
+SWAP            # 0x04 - Swap: [key, totalSupply] -> [totalSupply, key]
+SSTORE          # 0x51 - Store balance[deployer] = totalSupply
+
+# --- Emit Transfer Event (0x0 -> deployer, totalSupply) ---
+PUSH 1 0x00     # 0x01 0x01 0x00 - Push zero address (from)
+CALLER          # 0x72 - Push deployer (to)
+PUSH 8 0x00000000000F4240  # Push amount (simplified)
+LOG             # 0x90 - Emit Transfer event
+
+STOP            # 0x44 - End constructor
+
+# ============================================================
+# BYTECODE - TRANSFER FUNCTION
+# ============================================================
+#
+# Transferiert Token von CALLER zu einer Zieladresse.
+#
+# Input Stack: [to_address, amount]
+# Output Stack: [success (1 or 0)]
+#
+# Opcode  | Hex  | Description
+# --------|------|------------------------------------------
+
+# --- Entry Point: Function Selector 0x00000002 ---
+
+# --- Load Sender Balance ---
+CALLER          # 0x72 - Push sender address
+PUSH 1 0x10     # 0x01 0x01 0x10 - Balance prefix
+ADD             # 0x10 - Calculate sender balance key
+SLOAD           # 0x50 - Load sender balance
+
+# --- Check Balance >= Amount ---
+# Stack: [sender_balance, to, amount]
+DUP             # 0x03 - Duplicate balance
+PUSH 1 0x02     # Position of amount in stack
+# (Vereinfachte Logik - in echtem Code würde hier
+#  ein komplexerer Stack-Zugriff erfolgen)
+
+# --- Subtract from Sender ---
+# sender_balance -= amount
+SUB             # 0x11 - Subtract amount from balance
+
+# --- Store New Sender Balance ---
+CALLER          # 0x72 - Push sender address
+PUSH 1 0x10     # 0x01 0x01 0x10 - Balance prefix
+ADD             # 0x10 - Calculate sender balance key
+SWAP            # 0x04 - Swap for SSTORE order
+SSTORE          # 0x51 - Store new sender balance
+
+# --- Add to Receiver ---
+# Stack should have: [to_address, amount]
+# receiver_balance += amount
+PUSH 1 0x10     # 0x01 0x01 0x10 - Balance prefix
+ADD             # 0x10 - Calculate receiver balance key
+SLOAD           # 0x50 - Load receiver balance
+ADD             # 0x10 - Add amount to balance
+SWAP            # 0x04 - Swap for SSTORE
+SSTORE          # 0x51 - Store new receiver balance
+
+# --- Emit Transfer Event ---
+CALLER          # 0x72 - from
+# to_address already on stack
+# amount already on stack
+LOG             # 0x90 - Emit Transfer event
+
+# --- Return Success ---
+PUSH 1 0x01     # 0x01 0x01 0x01 - Push 1 (true)
+RETURN          # 0x43 - Return success
+
+# ============================================================
+# BYTECODE - BALANCEOF FUNCTION
+# ============================================================
+#
+# Gibt das Token-Guthaben einer Adresse zurück.
+#
+# Input Stack: [address]
+# Output Stack: [balance]
+#
+# Opcode  | Hex  | Description
+# --------|------|------------------------------------------
+
+# --- Entry Point: Function Selector 0x00000003 ---
+
+# --- Calculate Balance Key ---
+PUSH 1 0x10     # 0x01 0x01 0x10 - Balance prefix
+ADD             # 0x10 - balance_key = 0x10 + address
+
+# --- Load and Return Balance ---
+SLOAD           # 0x50 - Load balance from storage
+RETURN          # 0x43 - Return balance
+
+# ============================================================
+# BYTECODE - APPROVE FUNCTION
+# ============================================================
+#
+# Setzt die Allowance für einen Spender.
+#
+# Input Stack: [spender, amount]
+# Output Stack: [success]
+#
+# Opcode  | Hex  | Description
+# --------|------|------------------------------------------
+
+# --- Entry Point: Function Selector 0x00000004 ---
+
+# --- Calculate Allowance Key ---
+# allowance_key = 0x20 + SHA256(CALLER || spender)
+CALLER          # 0x72 - Push owner (CALLER)
+# spender already on stack
+SHA256          # 0x60 - Hash(owner || spender)
+PUSH 1 0x20     # 0x01 0x01 0x20 - Allowance prefix
+ADD             # 0x10 - Calculate allowance key
+
+# --- Store Allowance ---
+SWAP            # 0x04 - Swap: [key, amount] -> [amount, key]
+SSTORE          # 0x51 - Store allowance
+
+# --- Emit Approval Event ---
+CALLER          # 0x72 - owner
+# spender on stack
+# amount on stack
+LOG             # 0x90 - Emit Approval event
+
+# --- Return Success ---
+PUSH 1 0x01     # 0x01 0x01 0x01 - Push 1 (true)
+RETURN          # 0x43 - Return success
+
+# ============================================================
+# BYTECODE - TOTALSUPPLY FUNCTION
+# ============================================================
+#
+# Gibt die Gesamtmenge aller Token zurück.
+#
+# Input Stack: []
+# Output Stack: [totalSupply]
+#
+# Opcode  | Hex  | Description
+# --------|------|------------------------------------------
+
+# --- Entry Point: Function Selector 0x00000007 ---
+
+PUSH 1 0x00     # 0x01 0x01 0x00 - Storage key for totalSupply
+SLOAD           # 0x50 - Load totalSupply
+RETURN          # 0x43 - Return totalSupply
+
+# ============================================================
+# COMPILED BYTECODE (Hex)
+# ============================================================
+#
+# Constructor Bytecode (deploy this):
+# 72 01 01 01 51 01 01 12 01 01 03 51 01 08 00 00
+# 00 00 00 0F 42 40 01 08 0D E0 B6 B3 A7 64 00 00
+# 12 03 01 01 00 51 72 01 01 10 10 04 51 01 01 00
+# 72 01 08 00 00 00 00 00 0F 42 40 90 44
+#
+# Runtime Bytecode (stored at contract address):
+# [Function dispatcher + all function implementations]
+#
+# ============================================================
+# GAS COSTS
+# ============================================================
+#
+# Operation          | Gas Cost | Count | Total
+# -------------------|----------|-------|-------
+# PUSH               | 3        | ~15   | 45
+# CALLER             | 3        | ~5    | 15
+# SSTORE             | 5000     | ~4    | 20000
+# SLOAD              | 200      | ~3    | 600
+# ADD/SUB/MUL        | 5        | ~5    | 25
+# SHA256             | 60       | ~1    | 60
+# LOG                | 375      | ~2    | 750
+# -------------------|----------|-------|-------
+# Constructor Total  |          |       | ~21500
+# Transfer Total     |          |       | ~10500
+# BalanceOf Total    |          |       | ~250
+#
+# ============================================================
+# NOTES
+# ============================================================
+#
+# 1. Diese CVM-Version ist vereinfacht und dient Demo-Zwecken
+# 2. Keine Reputation-Integration (nur in Solidity-Version)
+# 3. Keine Overflow-Checks (in Produktion erforderlich)
+# 4. Function Dispatcher nicht vollständig implementiert
+# 5. Für echte Verwendung: Solidity-Version empfohlen
+#
+# ============================================================
