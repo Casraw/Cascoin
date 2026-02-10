@@ -556,14 +556,15 @@ UniValue createrawbct(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Invalid honey address specified");
     }
 
-    // Cascoin: Quantum Hive: Accept both legacy (TX_PUBKEYHASH) and quantum (TX_WITNESS_V2_QUANTUM) honey addresses
+    // Cascoin: Hive: Only legacy (TX_PUBKEYHASH) honey addresses are supported for now.
+    // Quantum Hive mining will be enabled later with its own activation height.
     std::vector<std::vector<unsigned char>> vSolutions;
     txnouttype whichType;
     if (!Solver(GetScriptForDestination(destinationFCA), whichType, vSolutions)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Couldn't solve scriptPubKey for honey address");
     }
-    if (whichType != TX_PUBKEYHASH && whichType != TX_WITNESS_V2_QUANTUM) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Honey address must be legacy format (TX_PUBKEYHASH) or quantum format (TX_WITNESS_V2_QUANTUM)");
+    if (whichType != TX_PUBKEYHASH) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Honey address must be legacy format (P2PKH). Quantum honey addresses are not yet supported for Hive mining.");
     }
 
     CTxDestination destinationBCF = DecodeDestination(consensusParams.beeCreationAddress);

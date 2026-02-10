@@ -807,48 +807,53 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         }
     }
     
-    // Grab the message sig (bytes after txid)
-    // Cascoin: Quantum Hive: Support both ECDSA (65 bytes) and FALCON-512 (up to 700 bytes) signatures
-    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
-    // CScript push encoding: size < 76 → 1 byte direct, 76..255 → OP_PUSHDATA1 + 1 byte, 256..65535 → OP_PUSHDATA2 + 2 bytes LE
-    size_t sigOffset = 78;  // Position of the size/opcode byte for the signature push
+    // Grab the message sig
+    // CScript push encoding: byte 78 is the push opcode/size indicator
+    // ECDSA: single-byte push (0x41 = 65 bytes), data starts at byte 79
+    // FALCON-512: OP_PUSHDATA2 (0x4d) + 2-byte LE size, data starts at byte 81
+    const CScript& scriptPubKey = txCoinbase->vout[0].scriptPubKey;
     size_t sigSize = 0;
     size_t sigDataStart = 0;
-    uint8_t sigSizeByte = txCoinbase->vout[0].scriptPubKey[sigOffset];
+    bool isQuantumSig = false;
 
-    if (sigSizeByte < 76) {
-        // Direct push: single byte is the size
-        sigSize = sigSizeByte;
-        sigDataStart = sigOffset + 1;
-    } else if (sigSizeByte == 76) {  // OP_PUSHDATA1
-        if (txCoinbase->vout[0].scriptPubKey.size() < sigOffset + 2) {
-            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for OP_PUSHDATA1 sig size\n");
+    uint8_t pushByte = scriptPubKey[78];
+    if (pushByte < 76) {
+        // Direct push: size is the byte itself
+        sigSize = pushByte;
+        sigDataStart = 79;
+    } else if (pushByte == 76) {  // OP_PUSHDATA1
+        if (scriptPubKey.size() < 80) {
+            LogPrintf("CheckHiveProof: scriptPubKey too short for OP_PUSHDATA1 sig size\n");
             return false;
         }
-        sigSize = txCoinbase->vout[0].scriptPubKey[sigOffset + 1];
-        sigDataStart = sigOffset + 2;
-    } else if (sigSizeByte == 77) {  // OP_PUSHDATA2
-        if (txCoinbase->vout[0].scriptPubKey.size() < sigOffset + 3) {
-            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for OP_PUSHDATA2 sig size\n");
+        sigSize = scriptPubKey[79];
+        sigDataStart = 80;
+    } else if (pushByte == 77) {  // OP_PUSHDATA2
+        if (scriptPubKey.size() < 81) {
+            LogPrintf("CheckHiveProof: scriptPubKey too short for OP_PUSHDATA2 sig size\n");
             return false;
         }
-        sigSize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[sigOffset + 1]);
-        sigDataStart = sigOffset + 3;
+        sigSize = ReadLE16(&scriptPubKey[79]);
+        sigDataStart = 81;
     } else {
-        LogPrintf("CheckHiveProof: Unexpected push opcode 0x%02x at sig position\n", sigSizeByte);
+        LogPrintf("CheckHiveProof: Unexpected push opcode 0x%02x at sig position\n", pushByte);
         return false;
     }
 
-    bool isQuantumSig = (sigSize > 100);  // FALCON-512 signatures are ~666 bytes, ECDSA compact is 65 bytes
+    // Determine if this is a quantum signature based on size
+    // ECDSA compact sig = 65 bytes, FALCON-512 sig ~666 bytes
+    if (sigSize > 65) {
+        isQuantumSig = true;
+    }
+
+    if (scriptPubKey.size() < sigDataStart + sigSize) {
+        LogPrintf("CheckHiveProof: scriptPubKey too short for signature (need %d, have %d)\n",
+                  (int)(sigDataStart + sigSize), (int)scriptPubKey.size());
+        return false;
+    }
 
     std::vector<unsigned char> messageSig;
-    if (txCoinbase->vout[0].scriptPubKey.size() < sigDataStart + sigSize) {
-        LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for signature (need %d bytes at offset %d)\n",
-                  (int)sigSize, (int)sigDataStart);
-        return false;
-    }
-    messageSig.assign(&txCoinbase->vout[0].scriptPubKey[sigDataStart],
-                      &txCoinbase->vout[0].scriptPubKey[sigDataStart + sigSize]);
+    messageSig.assign(&scriptPubKey[sigDataStart], &scriptPubKey[sigDataStart + sigSize]);
     if (verbose)
         LogPrintf("CheckHiveProof: messageSig          = %s (size=%d, quantum=%s)\n", 
                   HexStr(&messageSig[0], &messageSig[messageSig.size()]), (int)messageSig.size(), isQuantumSig ? "yes" : "no");
@@ -868,6 +873,13 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
 
     // Verify the message sig
     // Cascoin: Quantum Hive: Support both ECDSA and quantum signature verification
+    // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
+    // Quantum Hive blocks are only valid after quantumActivationHeight to prevent chain splits
+    if (isQuantumSig && pindexPrev->nHeight + 1 < consensusParams.quantumActivationHeight) {
+        LogPrintf("CheckHiveProof: Quantum Hive blocks not allowed before activation height %d\n",
+                  consensusParams.quantumActivationHeight);
+        return false;
+    }
     // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
     CHashWriter ss(SER_GETHASH, 0);
     ss << deterministicRandString;

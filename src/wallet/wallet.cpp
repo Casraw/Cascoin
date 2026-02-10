@@ -3045,45 +3045,10 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
         if (!IsLocked())
             TopUpKeyPool();
 
-        // Cascoin: Quantum Hive: Default to quantum keys post-activation
-        // Requirements: 4.2 (default to quantum keys after activation)
-        bool useQuantumKey = (chainActive.Height() >= consensusParams.quantumActivationHeight);
-        
-        if (useQuantumKey) {
-            // Generate a new quantum key for the honey address
-            CKey quantumKey(CKeyType::KEY_TYPE_QUANTUM);
-            quantumKey.MakeNewQuantumKey();
-            
-            if (!quantumKey.IsValid()) {
-                strFailReason = "Error: Couldn't create a new quantum key";
-                return false;
-            }
-            
-            CPubKey quantumPubKey = quantumKey.GetPubKey();
-            if (!quantumPubKey.IsValid() || !quantumPubKey.IsQuantum()) {
-                strFailReason = "Error: Invalid quantum public key generated";
-                return false;
-            }
-            
-            // Add the quantum key to the wallet
-            if (!AddKeyPubKey(quantumKey, quantumPubKey)) {
-                strFailReason = "Error: Couldn't add quantum key to wallet";
-                return false;
-            }
-            
-            // Get the quantum destination
-            destinationFCA = GetQuantumDestination(quantumPubKey);
-            if (!IsValidDestination(destinationFCA)) {
-                strFailReason = "Error: Couldn't create quantum destination";
-                return false;
-            }
-            
-            std::string strLabel = "Found Cheese (Quantum)";
-            SetAddressBook(destinationFCA, strLabel, "receive");
-            isQuantumHoneyAddress = true;
-            
-            LogPrintf("CreateBeeTransaction: Created quantum honey address\n");
-        } else {
+        // Cascoin: Default to legacy ECDSA keys for auto-generated honey addresses
+        // Quantum honey addresses are only used when explicitly specified by the user
+        // This ensures backward compatibility with all nodes on the network
+        {
             // Use legacy ECDSA key (original behavior)
             CPubKey newKey;
             if (!reservekeyHoney.GetReservedKey(newKey, true)) {

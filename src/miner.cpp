@@ -39,7 +39,6 @@
 #include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
 #include <cvm/mempool_priority.h>  // Cascoin: CVM/EVM reputation-based priority
 #include <cvm/validator_compensation.h>  // Cascoin: HAT v2 validator compensation
-#include <quantum_registry_fwd.h>  // Cascoin: Quantum Hive: Registry lookup for pubkeys
 
 
 static CCriticalSection cs_solution_vars;
@@ -1055,7 +1054,6 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
 
     // Assemble The Labyrinth proof script
     std::vector<unsigned char> messageProofVec;
-    std::vector<unsigned char> quantumPubkeyVec;  // Cascoin: Quantum Hive: FALCON-512 pubkey for quantum proofs
     std::vector<unsigned char> txidVec(solvingRange.txid.begin(), solvingRange.txid.end());
     CScript hiveProofScript;
     uint32_t bctHeight;
@@ -1108,85 +1106,31 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
         ss << deterministicRandString;
         uint256 mhash = ss.GetHash();
 
-        // Cascoin: Quantum Hive: Support both ECDSA and FALCON-512 signing for bee proofs
-        // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
+        // Cascoin: Hive mining only supports ECDSA (Legacy P2PKH) honey addresses for now.
+        // Quantum Hive mining will be enabled later with its own activation height.
         const WitnessV2Quantum *quantumDest = boost::get<WitnessV2Quantum>(&dest);
         if (quantumDest) {
-            // Quantum honey address: find the matching quantum key by scanning wallet keys
-            CKey quantumKey;
-            bool foundKey = false;
-            {
-                std::set<CKeyID> keys = pwallet->GetKeys();
-                // Pre-compute byte-reversed program for legacy (BE) compatibility
-                uint256 programReversed;
-                const unsigned char* src = quantumDest->begin();
-                unsigned char* dst = programReversed.begin();
-                for (size_t i = 0; i < 32; i++) {
-                    dst[i] = src[31 - i];
-                }
-                for (const CKeyID& keyID : keys) {
-                    CKey k;
-                    if (pwallet->GetKey(keyID, k) && k.IsQuantum()) {
-                        CPubKey pub = k.GetPubKey();
-                        if (pub.IsValid() && pub.IsQuantum()) {
-                            uint256 qid = pub.GetQuantumID();
-                            if (qid == *quantumDest || qid == programReversed) {
-                                quantumKey = k;
-                                foundKey = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-            if (!foundKey) {
-                LogPrintf("BusyBees: Wallet doesn't have quantum privkey for honey destination %s\n",
-                          solvingRange.honeyAddress);
-                return false;
-            }
-
-            // Sign with FALCON-512
-            if (!quantumKey.SignQuantum(mhash, messageProofVec)) {
-                LogPrintf("BusyBees: Couldn't sign the bee proof with quantum key!\n");
-                return false;
-            }
-
-            // Check if the pubkey is already in the quantum registry
-            // If so, we don't need to embed the full 897-byte pubkey in the proof
-            CPubKey quantumPub = quantumKey.GetPubKey();
-            uint256 quantumID = quantumPub.GetQuantumID();
-            std::vector<unsigned char> registryPubkey;
-            if (!LookupQuantumPubKey(quantumID, registryPubkey)) {
-                // Pubkey not in registry — embed it in the proof script as fallback
-                quantumPubkeyVec.assign(quantumPub.begin(), quantumPub.end());
-                if (verbose) LogPrintf("BusyBees: Quantum pubkey not in registry, embedding in proof (%d bytes)\n",
-                    (int)quantumPubkeyVec.size());
-            } else {
-                if (verbose) LogPrintf("BusyBees: Quantum pubkey found in registry, compact proof\n");
-            }
-
-            if (verbose) LogPrintf("BusyBees: Quantum messageSig        = %s (size=%d)\n",
-                HexStr(&messageProofVec[0], &messageProofVec[messageProofVec.size()]), (int)messageProofVec.size());
-        } else {
-            // ECDSA honey address (original code path)
-            const CKeyID *keyID = boost::get<CKeyID>(&dest);
-            if (!keyID) {
-                LogPrintf("BusyBees: Unsupported honey destination type\n");
-                return false;
-            }
-
-            CKey key;
-            if (!pwallet->GetKey(*keyID, key)) {
-                LogPrintf("BusyBees: Privkey unavailable\n");
-                return false;
-            }
-
-            if (!key.SignCompact(mhash, messageProofVec)) {
-                LogPrintf("BusyBees: Couldn't sign the bee proof!\n");
-                return false;
-            }
-            if (verbose) LogPrintf("BusyBees: messageSig                = %s\n", HexStr(&messageProofVec[0], &messageProofVec[messageProofVec.size()]));
+            LogPrintf("BusyBees: Quantum honey address detected but quantum Hive mining is not yet supported. Use a legacy (P2PKH) honey address.\n");
+            return false;
         }
+
+        const CKeyID *keyID = boost::get<CKeyID>(&dest);
+        if (!keyID) {
+            LogPrintf("BusyBees: Unsupported honey destination type (must be legacy P2PKH)\n");
+            return false;
+        }
+
+        CKey key;
+        if (!pwallet->GetKey(*keyID, key)) {
+            LogPrintf("BusyBees: Wallet doesn't have privkey for honey destination\n");
+            return false;
+        }
+
+        if (!key.SignCompact(mhash, messageProofVec)) {
+            LogPrintf("BusyBees: Couldn't sign the bee proof!\n");
+            return false;
+        }
+        if (verbose) LogPrintf("BusyBees: messageSig                = %s\n", HexStr(&messageProofVec[0], &messageProofVec[messageProofVec.size()]));
     }
 
     unsigned char beeNonceEncoded[4];
@@ -1199,12 +1143,6 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
 
     opcodetype communityContribFlag = solvingRange.communityContrib ? OP_TRUE : OP_FALSE;
     hiveProofScript << OP_RETURN << OP_BEE << beeNonceVec << bctHeightVec << communityContribFlag << txidVec << messageProofVec;
-
-    // Cascoin: Quantum Hive: Append FALCON-512 public key for quantum bee proofs
-    // CheckHiveProof expects: [sig_size][signature][pubkey_size][pubkey] after the txid
-    if (!quantumPubkeyVec.empty()) {
-        hiveProofScript << quantumPubkeyVec;
-    }
 
     // Create honey script from honey address
     CScript honeyScript = GetScriptForDestination(DecodeDestination(solvingRange.honeyAddress));
