@@ -186,7 +186,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                         }
                     } else {
                         // Fallback to database status if heights not available
-                        bct.beeStatus = record.status;
+                        bct.beeStatus = record.status.empty() ? "expired" : record.status;
                         bct.blocksLeft = 0;
                         bct.creationHeight = 0;
                         bct.maturityHeight = 0;
@@ -302,6 +302,8 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
             case Status:
                 {
                     QString status = QString::fromStdString(rec->beeStatus);
+                    if (status.isEmpty())
+                        return tr("Unknown");
                     status[0] = status[0].toUpper();
                     return status;
                 }

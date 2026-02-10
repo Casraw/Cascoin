@@ -719,7 +719,7 @@ void BeeKeeper(const CChainParams& chainparams) {
                 height = newHeight;
                 try {
                     BusyBees(consensusParams, height);
-                } catch (const std::runtime_error &e) {
+                } catch (const std::exception &e) {
                     LogPrintf("! BeeKeeper: Error: %s\n", e.what());
                 }
             }
@@ -925,8 +925,15 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     int totalBees = 0;
 
     // Original logic to populate potentialBcts and totalBees based on wallet status
+    // Skip quantum BCTs - they can't be used for Hive mining (ECDSA only)
     for (const auto& bctInfoWallet : potentialBctsWallet) {
         if (bctInfoWallet.beeStatus == "mature") { // Filter by mature status from wallet
+            // Skip quantum honey addresses - can't sign Hive proofs with them
+            CTxDestination dest = DecodeDestination(bctInfoWallet.honeyAddress);
+            if (boost::get<WitnessV2Quantum>(&dest)) {
+                LogPrint(BCLog::HIVE, "BusyBees: Skipping quantum BCT %s (honey: %s)\n", bctInfoWallet.txid, bctInfoWallet.honeyAddress);
+                continue;
+            }
             potentialBcts.push_back(bctInfoWallet);
             totalBees += bctInfoWallet.beeCount;
         }

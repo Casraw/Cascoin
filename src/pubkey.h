@@ -330,8 +330,11 @@ public:
     {
         uint256 result;
         if (keyType == CPubKeyType::PUBKEY_TYPE_QUANTUM) {
+            // Safety: return zero hash if quantum pubkey data is empty/corrupt
+            if (vchQuantum.empty()) return result;
             CSHA256().Write(vchQuantum.data(), vchQuantum.size()).Finalize(result.begin());
         } else {
+            if (size() == 0) return result;
             CSHA256().Write(vch, size()).Finalize(result.begin());
         }
         return result;

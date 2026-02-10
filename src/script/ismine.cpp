@@ -45,7 +45,7 @@ static bool HaveQuantumKey(const CKeyStore& keystore, const uint256& witnessProg
         CKey key;
         if (keystore.GetKey(keyID, key) && key.IsQuantum()) {
             CPubKey pubkey = key.GetPubKey();
-            if (pubkey.IsValid() && pubkey.IsQuantum()) {
+            if (pubkey.IsValid() && pubkey.IsQuantum() && pubkey.size() > 0) {
                 uint256 quantumID = pubkey.GetQuantumID();
                 // Match against new (LE) format
                 if (quantumID == witnessProgram) {
