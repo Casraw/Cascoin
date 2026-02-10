@@ -20,6 +20,7 @@
 #include <utilstrencodings.h>   // Cascoin: Hive
 #include <crypto/quantum/falcon.h>  // Cascoin: Quantum Hive support
 #include <address_quantum.h>        // Cascoin: Quantum address support
+#include <quantum_registry_fwd.h>   // Cascoin: Quantum Hive: Registry lookup for pubkeys
 
 BeePopGraphPoint beePopGraph[1024*40];       // Cascoin: Hive
 
@@ -806,28 +807,48 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         }
     }
     
-    // Grab the message sig (bytes 79-end; byte 78 is size)
+    // Grab the message sig (bytes after txid)
     // Cascoin: Quantum Hive: Support both ECDSA (65 bytes) and FALCON-512 (up to 700 bytes) signatures
     // Requirements: 4.1 (accept both ECDSA and FALCON-512 signatures for BCT)
-    uint8_t sigSize = txCoinbase->vout[0].scriptPubKey[78];
-    bool isQuantumSig = (sigSize > 100);  // FALCON-512 signatures are ~666 bytes, ECDSA compact is 65 bytes
-    
-    std::vector<unsigned char> messageSig;
-    if (isQuantumSig) {
-        // Quantum signature: variable size up to 700 bytes
-        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + sigSize) {
-            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum signature\n");
+    // CScript push encoding: size < 76 → 1 byte direct, 76..255 → OP_PUSHDATA1 + 1 byte, 256..65535 → OP_PUSHDATA2 + 2 bytes LE
+    size_t sigOffset = 78;  // Position of the size/opcode byte for the signature push
+    size_t sigSize = 0;
+    size_t sigDataStart = 0;
+    uint8_t sigSizeByte = txCoinbase->vout[0].scriptPubKey[sigOffset];
+
+    if (sigSizeByte < 76) {
+        // Direct push: single byte is the size
+        sigSize = sigSizeByte;
+        sigDataStart = sigOffset + 1;
+    } else if (sigSizeByte == 76) {  // OP_PUSHDATA1
+        if (txCoinbase->vout[0].scriptPubKey.size() < sigOffset + 2) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for OP_PUSHDATA1 sig size\n");
             return false;
         }
-        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + sigSize]);
+        sigSize = txCoinbase->vout[0].scriptPubKey[sigOffset + 1];
+        sigDataStart = sigOffset + 2;
+    } else if (sigSizeByte == 77) {  // OP_PUSHDATA2
+        if (txCoinbase->vout[0].scriptPubKey.size() < sigOffset + 3) {
+            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for OP_PUSHDATA2 sig size\n");
+            return false;
+        }
+        sigSize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[sigOffset + 1]);
+        sigDataStart = sigOffset + 3;
     } else {
-        // ECDSA compact signature: 65 bytes
-        if (txCoinbase->vout[0].scriptPubKey.size() < 79 + 65) {
-            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for ECDSA signature\n");
-            return false;
-        }
-        messageSig.assign(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
+        LogPrintf("CheckHiveProof: Unexpected push opcode 0x%02x at sig position\n", sigSizeByte);
+        return false;
     }
+
+    bool isQuantumSig = (sigSize > 100);  // FALCON-512 signatures are ~666 bytes, ECDSA compact is 65 bytes
+
+    std::vector<unsigned char> messageSig;
+    if (txCoinbase->vout[0].scriptPubKey.size() < sigDataStart + sigSize) {
+        LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for signature (need %d bytes at offset %d)\n",
+                  (int)sigSize, (int)sigDataStart);
+        return false;
+    }
+    messageSig.assign(&txCoinbase->vout[0].scriptPubKey[sigDataStart],
+                      &txCoinbase->vout[0].scriptPubKey[sigDataStart + sigSize]);
     if (verbose)
         LogPrintf("CheckHiveProof: messageSig          = %s (size=%d, quantum=%s)\n", 
                   HexStr(&messageSig[0], &messageSig[messageSig.size()]), (int)messageSig.size(), isQuantumSig ? "yes" : "no");
@@ -861,46 +882,65 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
             return false;
         }
         
-        // The quantum public key should be provided in the coinbase after the signature
-        // Format: [sig_size][signature][pubkey_size][pubkey]
-        size_t pubkeyOffset = 79 + sigSize;
-        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 1) {
-            LogPrintf("CheckHiveProof: Missing quantum pubkey size\n");
-            return false;
-        }
+        // Try to get the quantum public key from the registry first (compact mode)
+        // This avoids embedding the full 897-byte pubkey in every Hive block
+        std::vector<unsigned char> quantumPubkey;
+        bool pubkeyFromRegistry = LookupQuantumPubKey(*quantumDest, quantumPubkey);
         
-        // Read pubkey size (could be 2 bytes for sizes > 255)
-        size_t pubkeySize = 0;
-        size_t pubkeySizeBytes = 1;
-        if (txCoinbase->vout[0].scriptPubKey[pubkeyOffset] == 0xFD) {
-            // 2-byte size follows
-            if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 3) {
-                LogPrintf("CheckHiveProof: Missing quantum pubkey size bytes\n");
+        if (!pubkeyFromRegistry) {
+            // Fallback: read the embedded pubkey from the proof script after the signature
+            size_t pubkeyOffset = sigDataStart + sigSize;
+            if (txCoinbase->vout[0].scriptPubKey.size() <= pubkeyOffset) {
+                LogPrintf("CheckHiveProof: Quantum pubkey not in registry and not embedded in proof\n");
                 return false;
             }
-            pubkeySize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[pubkeyOffset + 1]);
-            pubkeySizeBytes = 3;
-        } else {
-            pubkeySize = txCoinbase->vout[0].scriptPubKey[pubkeyOffset];
+            
+            // Parse CScript push encoding for the pubkey
+            size_t pubkeySize = 0;
+            size_t pubkeyDataStart = 0;
+            uint8_t pubkeySizeByte = txCoinbase->vout[0].scriptPubKey[pubkeyOffset];
+            
+            if (pubkeySizeByte < 76) {
+                pubkeySize = pubkeySizeByte;
+                pubkeyDataStart = pubkeyOffset + 1;
+            } else if (pubkeySizeByte == 76) {  // OP_PUSHDATA1
+                if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 2) {
+                    LogPrintf("CheckHiveProof: Missing quantum pubkey size byte\n");
+                    return false;
+                }
+                pubkeySize = txCoinbase->vout[0].scriptPubKey[pubkeyOffset + 1];
+                pubkeyDataStart = pubkeyOffset + 2;
+            } else if (pubkeySizeByte == 77) {  // OP_PUSHDATA2
+                if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + 3) {
+                    LogPrintf("CheckHiveProof: Missing quantum pubkey size bytes\n");
+                    return false;
+                }
+                pubkeySize = ReadLE16(&txCoinbase->vout[0].scriptPubKey[pubkeyOffset + 1]);
+                pubkeyDataStart = pubkeyOffset + 3;
+            } else {
+                LogPrintf("CheckHiveProof: Unexpected push opcode 0x%02x at pubkey position\n", pubkeySizeByte);
+                return false;
+            }
+            
+            if (pubkeySize != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+                LogPrintf("CheckHiveProof: Invalid quantum pubkey size %d (expected %d)\n", 
+                          (int)pubkeySize, CPubKey::QUANTUM_PUBLIC_KEY_SIZE);
+                return false;
+            }
+            
+            if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyDataStart + pubkeySize) {
+                LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum pubkey\n");
+                return false;
+            }
+            
+            quantumPubkey.assign(
+                &txCoinbase->vout[0].scriptPubKey[pubkeyDataStart],
+                &txCoinbase->vout[0].scriptPubKey[pubkeyDataStart + pubkeySize]);
         }
-        
-        if (pubkeySize != CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
-            LogPrintf("CheckHiveProof: Invalid quantum pubkey size %d (expected %d)\n", 
-                      (int)pubkeySize, CPubKey::QUANTUM_PUBLIC_KEY_SIZE);
-            return false;
-        }
-        
-        if (txCoinbase->vout[0].scriptPubKey.size() < pubkeyOffset + pubkeySizeBytes + pubkeySize) {
-            LogPrintf("CheckHiveProof: vout[0].scriptPubKey too short for quantum pubkey\n");
-            return false;
-        }
-        
-        std::vector<unsigned char> quantumPubkey(
-            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes],
-            &txCoinbase->vout[0].scriptPubKey[pubkeyOffset + pubkeySizeBytes + pubkeySize]);
         
         // Verify the pubkey matches the address (SHA256 hash)
-        uint256 pubkeyHash = Hash(quantumPubkey.begin(), quantumPubkey.end());
+        uint256 pubkeyHash;
+        CSHA256().Write(quantumPubkey.data(), quantumPubkey.size()).Finalize(pubkeyHash.begin());
         if (pubkeyHash != *quantumDest) {
             LogPrintf("CheckHiveProof: Quantum pubkey hash mismatch\n");
             return false;
@@ -913,7 +953,8 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         }
         
         if (verbose)
-            LogPrintf("CheckHiveProof: Quantum signature verified successfully\n");
+            LogPrintf("CheckHiveProof: Quantum signature verified successfully (pubkey from %s)\n",
+                      pubkeyFromRegistry ? "registry" : "embedded");
     } else {
         // ECDSA signature verification (original code)
         // Requirements: 4.5, 4.6 (verify signature matches agent's registered key type)
