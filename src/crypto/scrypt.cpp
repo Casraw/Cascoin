@@ -43,7 +43,7 @@
 #include <cpuid.h>
 #endif
 #endif
-#if !defined(__FreeBSD__) && !defined(__APPLE__)
+#ifndef __FreeBSD__
 static inline uint32_t be32dec(const void *pp)
 {
 	const uint8_t *p = (uint8_t const *)pp;
