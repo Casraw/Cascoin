@@ -289,6 +289,10 @@ BOOST_AUTO_TEST_CASE(query_operations)
     BOOST_CHECK_EQUAL(3, summary.matureCount);
     BOOST_CHECK_EQUAL(3, summary.expiredCount);
     BOOST_CHECK_EQUAL(45, summary.totalBeeCount); // 1+2+3+4+5+6+7+8+9
+    // Mice counts per status: immature(0,3,6)=1+4+7=12, mature(1,4,7)=2+5+8=15, expired(2,5,8)=3+6+9=18
+    BOOST_CHECK_EQUAL(12, summary.immatureBees);
+    BOOST_CHECK_EQUAL(15, summary.matureBees);
+    BOOST_CHECK_EQUAL(18, summary.expiredBees);
     
     // Clean up
     for (const auto& record : records) {

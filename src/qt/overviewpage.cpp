@@ -14,8 +14,9 @@
 #include <qt/transactionfilterproxy.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
-#include <qt/hivetablemodel.h>  // Cascoin: Hive
-#include <qt/hivedialog.h>      // Cascoin: Hive: For formatLargeNoLocale()
+#include <qt/hivetablemodel.h>  // Cascoin: Labyrinth
+#include <qt/hivedialog.h>      // Cascoin: Labyrinth: For formatLargeNoLocale()
+#include <bctdb.h>              // Cascoin: Labyrinth: For BCTDatabaseSQLite summary
 
 #include <QAbstractItemDelegate>
 #include <QPainter>
@@ -144,7 +145,7 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     connect(ui->labelWalletStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
     connect(ui->labelTransactionsStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
 
-    // Cascoin: Hive
+    // Cascoin: Labyrinth
     cost = rewardsPaid = profit = 0;
 }
 
@@ -258,7 +259,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
         updateWatchOnlyLabels(model->haveWatchOnly());
         connect(model, SIGNAL(notifyWatchonlyChanged(bool)), this, SLOT(updateWatchOnlyLabels(bool)));
 
-        // Cascoin: Hive: Connect summary updater
+        // Cascoin: Labyrinth: Connect summary updater
         connect(model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
 
         // Cascoin: Rialto: Connect wallet unlock button
@@ -271,11 +272,25 @@ void OverviewPage::setWalletModel(WalletModel *model)
     updateDisplayUnit();
 }
 
-// Cascoin: Hive: Update The Labyrinth summary
+// Cascoin: Labyrinth: Update The Labyrinth summary
 void OverviewPage::updateHiveSummary() {
     if (walletModel && walletModel->getHiveTableModel()) {
         int immature, mature, dead, blocksFound;
         walletModel->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+
+        // Use database summary for totals that include expired BCTs
+        // The table model may filter out expired BCTs, missing their rewards/blocks
+        BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+        if (bctDb && bctDb->isInitialized()) {
+            BCTSummary dbSummary = bctDb->getSummary();
+            blocksFound = dbSummary.blocksFound;
+            rewardsPaid = dbSummary.totalRewards;
+            cost = dbSummary.totalCost;
+            profit = dbSummary.totalProfit;
+            immature = dbSummary.immatureBees;
+            mature = dbSummary.matureBees;
+            dead = dbSummary.expiredBees;
+        }
 
         ui->rewardsPaidLabel->setText(
             BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rewardsPaid)
@@ -324,7 +339,7 @@ void OverviewPage::updateDisplayUnit()
 
         ui->listTransactions->update();
 
-        // Cascoin: Hive: Update CAmounts in hive summary
+        // Cascoin: Labyrinth: Update CAmounts in labyrinth summary
         ui->rewardsPaidLabel->setText(
             BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rewardsPaid)
             + " "
@@ -355,7 +370,7 @@ void OverviewPage::showOutOfSyncWarning(bool fShow)
     ui->labelTransactionsStatus->setVisible(fShow);
 }
 
-// Cascoin: Hive: Handle bee button click
+// Cascoin: Labyrinth: Handle mice button click
 void OverviewPage::on_beeButton_clicked() {
     Q_EMIT beeButtonClicked();
 }

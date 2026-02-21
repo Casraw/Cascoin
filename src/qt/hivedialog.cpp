@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 
 #include <wallet/wallet.h>
 #include <wallet/fees.h>
@@ -26,7 +26,7 @@
 #include <qt/qcustomplot.h>
 #include <bctdb.h>  // For BCTDatabaseSQLite summary
 
-#include <qt/optionsdialog.h> // Cascoin: Hive: Mining optimisations
+#include <qt/optionsdialog.h> // Cascoin: Labyrinth: Mining optimisations
 
 #include <QAction>
 #include <QCursor>
@@ -251,12 +251,19 @@ void HiveDialog::updateHiveSummary() {
     BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
     if (bctDb && bctDb->isInitialized()) {
         BCTSummary dbSummary = bctDb->getSummary();
-        // Use database totals for rewards-related fields (includes all BCTs)
+        // Use database totals for rewards-related fields (includes all BCTs, even expired)
+        // The table model only loads non-expired BCTs by default, so it would miss
+        // blocksFound/rewards from expired mice without this database query.
+        // Note: With PRAGMA busy_timeout=5000, getSummary() will wait up to 5s
+        // if another thread holds a write lock, instead of returning empty results.
         blocksFound = dbSummary.blocksFound;
         rewardsPaid = dbSummary.totalRewards;
         cost = dbSummary.totalCost;
         profit = dbSummary.totalProfit;
-        dead = dbSummary.expiredCount;
+        // Use mice counts (not transaction counts) for display
+        dead = dbSummary.expiredBees;
+        immature = dbSummary.immatureBees;
+        mature = dbSummary.matureBees;
     }
 
     // Update labels
@@ -434,7 +441,7 @@ void HiveDialog::onBlocksChanged() {
     blockUpdateTimer->start();
 }
 
-// Cascoin: Hive: Mining optimisations: Shortcut to Hive mining options
+// Cascoin: Labyrinth: Mining optimisations: Shortcut to Labyrinth mining options
 void HiveDialog::on_showHiveOptionsButton_clicked() {
     if(!clientModel || !clientModel->getOptionsModel())
         return;

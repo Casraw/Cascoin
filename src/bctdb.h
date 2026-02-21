@@ -70,18 +70,22 @@ struct BCTRecord {
  * BCTSummary - Aggregated statistics for BCT records
  */
 struct BCTSummary {
-    int immatureCount;
-    int matureCount;
-    int expiredCount;
+    int immatureCount;      // Number of immature BCT transactions
+    int matureCount;        // Number of mature BCT transactions
+    int expiredCount;       // Number of expired BCT transactions
     int totalBeeCount;
     int blocksFound;
     int64_t totalCost;
     int64_t totalRewards;
     int64_t totalProfit;
+    int immatureBees;       // Total mice count across immature BCTs
+    int matureBees;         // Total mice count across mature BCTs
+    int expiredBees;        // Total mice count across expired BCTs
 
     BCTSummary() : immatureCount(0), matureCount(0), expiredCount(0),
                    totalBeeCount(0), blocksFound(0), totalCost(0),
-                   totalRewards(0), totalProfit(0) {}
+                   totalRewards(0), totalProfit(0),
+                   immatureBees(0), matureBees(0), expiredBees(0) {}
 };
 
 /**

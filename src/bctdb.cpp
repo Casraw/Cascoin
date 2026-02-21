@@ -125,6 +125,9 @@ bool BCTDatabaseSQLite::initialize(const std::string& dataDir) {
     executeSQL("PRAGMA journal_mode=WAL;");
     executeSQL("PRAGMA synchronous=NORMAL;");
     executeSQL("PRAGMA foreign_keys=ON;");
+    // Set busy timeout to prevent SQLITE_BUSY errors when multiple threads access the database
+    // Without this, concurrent reads during block processing can return empty results
+    executeSQL("PRAGMA busy_timeout=5000;");
 
     // Create or upgrade schema
     int currentVersion = getSchemaVersion();
@@ -583,7 +586,10 @@ BCTSummary BCTDatabaseSQLite::getSummary() {
             SUM(blocks_found) as total_blocks,
             SUM(cost) as total_cost,
             SUM(rewards_paid) as total_rewards,
-            SUM(profit) as total_profit
+            SUM(profit) as total_profit,
+            SUM(CASE WHEN status = 'immature' THEN bee_count ELSE 0 END) as immature_bees,
+            SUM(CASE WHEN status = 'mature' THEN bee_count ELSE 0 END) as mature_bees,
+            SUM(CASE WHEN status = 'expired' THEN bee_count ELSE 0 END) as expired_bees
         FROM bcts;
     )";
 
@@ -601,6 +607,9 @@ BCTSummary BCTDatabaseSQLite::getSummary() {
         summary.totalCost = sqlite3_column_int64(stmt, 5);
         summary.totalRewards = sqlite3_column_int64(stmt, 6);
         summary.totalProfit = sqlite3_column_int64(stmt, 7);
+        summary.immatureBees = sqlite3_column_int(stmt, 8);
+        summary.matureBees = sqlite3_column_int(stmt, 9);
+        summary.expiredBees = sqlite3_column_int(stmt, 10);
     }
 
     sqlite3_finalize(stmt);
@@ -1648,7 +1657,7 @@ void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
     
     LogPrintf("BCTDatabase: Rescanning rewards for existing BCTs...\n");
     
-    LOCK(pwallet->cs_wallet);
+    LOCK2(cs_main, pwallet->cs_wallet);
     
     // Build a set of our BCT txids for quick lookup
     std::set<std::string> myBctIds;

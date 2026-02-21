@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 
 #include <qt/hivetablemodel.h>
 #include <bctdb.h>  // For BCTDatabaseSQLite
@@ -130,13 +130,17 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 beginResetModel();
 
                 list.clear();
-                immature = 0;
-                mature = 0;
-                dead = 0;
-                blocksFound = 0;
-                cost = 0;
-                rewardsPaid = 0;
-                profit = 0;
+
+                // Use local variables to accumulate summary values
+                // Only update member variables AFTER all records are processed
+                // This prevents getSummaryValues() from seeing intermediate 0 values
+                int newImmature = 0;
+                int newMature = 0;
+                int newDead = 0;
+                int newBlocksFound = 0;
+                CAmount newCost = 0;
+                CAmount newRewardsPaid = 0;
+                CAmount newProfit = 0;
 
                 for (const BCTRecord& record : records) {
                     // Convert BCTRecord to CBeeCreationTransactionInfo for display
@@ -186,23 +190,33 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
 
                     // Update summary counts
                     if (bct.beeStatus == "mature") {
-                        mature += bct.beeCount;
+                        newMature += bct.beeCount;
                     } else if (bct.beeStatus == "immature") {
-                        immature += bct.beeCount;
+                        newImmature += bct.beeCount;
                     } else if (bct.beeStatus == "expired") {
-                        dead += bct.beeCount;
+                        newDead += bct.beeCount;
                     }
 
-                    blocksFound += bct.blocksFound;
-                    cost += bct.beeFeePaid;
-                    rewardsPaid += bct.rewardsPaid;
-                    profit += bct.profit;
+                    newBlocksFound += bct.blocksFound;
+                    newCost += bct.beeFeePaid;
+                    newRewardsPaid += bct.rewardsPaid;
+                    newProfit += bct.profit;
 
                     // Prepend to keep most recent on top before sorting
                     list.prepend(bct);
                 }
 
                 endResetModel();
+
+                // Now atomically update summary member variables
+                // This ensures getSummaryValues() never sees intermediate 0 values
+                immature = newImmature;
+                mature = newMature;
+                dead = newDead;
+                blocksFound = newBlocksFound;
+                cost = newCost;
+                rewardsPaid = newRewardsPaid;
+                profit = newProfit;
 
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
@@ -239,9 +253,9 @@ void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadBees) {
     // Get summary from database for immediate display
     BCTSummary summary = bctDb->getSummary();
     
-    immature = summary.immatureCount;
-    mature = summary.matureCount;
-    dead = summary.expiredCount;
+    immature = summary.immatureBees;
+    mature = summary.matureBees;
+    dead = summary.expiredBees;
     blocksFound = summary.blocksFound;
     cost = summary.totalCost;
     rewardsPaid = summary.totalRewards;
