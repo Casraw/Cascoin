@@ -42,6 +42,7 @@
 #include <boost/thread.hpp>
 
 #include <QApplication>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QLibraryInfo>
 #include <QLocale>

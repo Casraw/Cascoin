@@ -591,11 +591,77 @@ jobs:
           if-no-files-found: ignore
 
 
+  build-macos:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Homebrew)
+        run: |
+          brew update
+          brew install autoconf automake libtool pkg-config \
+            boost berkeley-db@5 miniupnpc openssl@3 \
+            qt@6 qrencode zeromq libevent protobuf python
+
+      - name: Autogen
+        run: ./autogen.sh
+
+      - name: Configure (Qt6 GUI, wallet)
+        run: |
+          BOOST_ROOT="$(brew --prefix boost)"
+          BDB_PREFIX="$(brew --prefix berkeley-db@5)"
+          QT_PREFIX="$(brew --prefix qt@6)"
+          QT_HOST_BINS="$QT_PREFIX/share/qt/libexec"
+
+          export CPPFLAGS="-I$BDB_PREFIX/include -I$BOOST_ROOT/include"
+          export LDFLAGS="-L$BDB_PREFIX/lib -L$BOOST_ROOT/lib"
+          export PKG_CONFIG_PATH="$QT_PREFIX/lib/pkgconfig:$PKG_CONFIG_PATH"
+          export PATH="$QT_PREFIX/bin:$PATH"
+
+          ./configure \
+            --with-gui=qt6 \
+            --enable-wallet \
+            --with-incompatible-bdb \
+            --with-boost="$BOOST_ROOT" \
+            MOC="$QT_HOST_BINS/moc" \
+            UIC="$QT_HOST_BINS/uic" \
+            RCC="$QT_HOST_BINS/rcc"
+
+      - name: Build
+        run: make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Strip and collect binaries
+        run: |
+          mkdir -p dist
+          for b in src/qt/cascoin-qt src/cascoind src/cascoin-cli src/cascoin-tx; do
+            if [[ -x "$b" ]]; then
+              strip "$b" || true
+              cp "$b" dist/
+            fi
+          done
+
+      - name: Create macOS distribution archive
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "latest")
+          tar -czf "cascoin-macos-arm64-${VERSION}.tar.gz" dist/
+
+      - name: Upload macOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cascoin-macos-arm64-build
+          path: |
+            cascoin-macos-arm64-*.tar.gz
+          if-no-files-found: warn
+
   release:
     runs-on: self-hosted
     needs:
       - build-linux
       - build-windows
+      - build-macos
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
@@ -643,6 +709,12 @@ jobs:
         with:
           name: cascoin-windows-x86_64-w64-mingw32-build
           path: release/windows
+
+      - name: Download macOS build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cascoin-macos-arm64-build
+          path: release/macos
 
       - name: Package Windows ZIP
         shell: bash
@@ -722,6 +794,27 @@ jobs:
           asset_path: release/cascoin-windows-x86_64-w64-mingw32-${{ steps.tag.outputs.value }}.zip
           asset_name: cascoin-windows-x86_64-w64-mingw32-${{ steps.tag.outputs.value }}.zip
           asset_content_type: application/zip
+
+      - name: Normalize macOS artifact filename
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(release/macos/*.tar.gz)
+          if (( ${#files[@]} )); then
+            mv "${files[0]}" "release/cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz"
+          else
+            echo "Warnung: Kein macOS-Archiv gefunden." >&2
+          fi
+
+      - name: Artefakt hochladen (macOS)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz
+          asset_name: cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz
+          asset_content_type: application/gzip
 
       - name: Release veröffentlichen
         if: ${{ inputs.publish == 'true' }}
