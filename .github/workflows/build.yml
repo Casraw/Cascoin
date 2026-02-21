@@ -645,15 +645,15 @@ jobs:
       - name: Create macOS distribution archive
         run: |
           VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "latest")
-          tar -czf "cascoin-macos-arm64-${VERSION}.tar.gz" dist/
+          tar -czf "cascoin-macos-arm64-distribution-${VERSION}.tar.gz" dist/
 
-      - name: Upload macOS artifacts
+      - name: Upload macOS distribution package
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cascoin-macos-arm64-build
+          name: cascoin-macos-arm64-distribution.tar.gz
           path: |
-            cascoin-macos-arm64-*.tar.gz
+            cascoin-macos-arm64-distribution-*.tar.gz
           if-no-files-found: warn
 
   release:
@@ -713,7 +713,7 @@ jobs:
       - name: Download macOS build artifact
         uses: actions/download-artifact@v4
         with:
-          name: cascoin-macos-arm64-build
+          name: cascoin-macos-arm64-distribution.tar.gz
           path: release/macos
 
       - name: Package Windows ZIP
@@ -801,7 +801,7 @@ jobs:
           shopt -s nullglob
           files=(release/macos/*.tar.gz)
           if (( ${#files[@]} )); then
-            mv "${files[0]}" "release/cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz"
+            mv "${files[0]}" "release/cascoin-macos-arm64-distribution-${{ steps.tag.outputs.value }}.tar.gz"
           else
             echo "Warnung: Kein macOS-Archiv gefunden." >&2
           fi
@@ -812,8 +812,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: release/cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz
-          asset_name: cascoin-macos-arm64-${{ steps.tag.outputs.value }}.tar.gz
+          asset_path: release/cascoin-macos-arm64-distribution-${{ steps.tag.outputs.value }}.tar.gz
+          asset_name: cascoin-macos-arm64-distribution-${{ steps.tag.outputs.value }}.tar.gz
           asset_content_type: application/gzip
 
       - name: Release veröffentlichen
