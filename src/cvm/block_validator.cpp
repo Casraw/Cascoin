@@ -17,6 +17,7 @@
 #include <pubkey.h>
 #include <hash.h>
 #include <net_processing.h>
+#include <quantum_registry_fwd.h>
 #include <cstdlib>
 
 namespace CVM {
@@ -761,6 +762,22 @@ uint160 BlockValidator::GetSenderAddress(const CTransaction& tx, CCoinsViewCache
     
     // Strategy 1: Try to extract from witness data (SegWit / Quantum)
     const auto& scriptWitness = txin.scriptWitness;
+
+    // Strategy 1a: Quantum registry format - single stack element [marker + pubkey + sig]
+    // The quantum signing code (CreateQuantumSig) packs marker(1) + pubkey(897) + signature
+    // into a single witness stack element, so stack.size() == 1.
+    if (scriptWitness.stack.size() >= 1) {
+        QuantumWitnessData qwd = ParseQuantumWitness(scriptWitness.stack);
+        if (qwd.isValid && !qwd.pubkey.empty() &&
+            qwd.pubkey.size() == CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
+            uint160 address = Hash160(qwd.pubkey.begin(), qwd.pubkey.end());
+            LogPrint(BCLog::CVM, "BlockValidator: Extracted address from quantum registry witness: %s\n",
+                     address.ToString());
+            return address;
+        }
+    }
+
+    // Strategy 1b: Standard SegWit witness - two stack elements [signature, pubkey]
     if (scriptWitness.stack.size() >= 2) {
         const std::vector<unsigned char>& pubkeyData = scriptWitness.stack.back();
         // Standard ECDSA compressed/uncompressed pubkey
@@ -772,7 +789,7 @@ uint160 BlockValidator::GetSenderAddress(const CTransaction& tx, CCoinsViewCache
                 return pubkey.GetID();
             }
         }
-        // Quantum FALCON-512 pubkey (897 bytes)
+        // Quantum FALCON-512 pubkey (897 bytes) in two-element format
         if (pubkeyData.size() == CPubKey::QUANTUM_PUBLIC_KEY_SIZE) {
             CPubKey pubkey(pubkeyData.begin(), pubkeyData.end());
             if (pubkey.IsValid() && pubkey.IsQuantum()) {
