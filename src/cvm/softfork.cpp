@@ -106,13 +106,15 @@ int FindCVMOpReturn(const CTransaction& tx) {
     return -1;
 }
 
-// CVMDeployData serialization
+// CVMDeployData serialization - includes bytecode for on-chain storage
 std::vector<uint8_t> CVMDeployData::Serialize() const {
     CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
     ss << codeHash;
     ss << gasLimit;
     ss << static_cast<uint8_t>(format);
     ss << metadata;
+    // Include the actual bytecode so it travels in the OP_RETURN
+    ss << bytecode;
     return std::vector<uint8_t>(ss.begin(), ss.end());
 }
 
@@ -135,6 +137,12 @@ bool CVMDeployData::Deserialize(const std::vector<uint8_t>& data) {
         }
         
         ss >> metadata;
+        
+        // Read bytecode if present (new format includes it after metadata)
+        if (ss.size() > 0) {
+            ss >> bytecode;
+        }
+        
         return true;
     } catch (...) {
         return false;

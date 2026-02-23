@@ -16,6 +16,7 @@
 
 #include <chainparams.h>    // Cascoin: Hive
 #include <base58.h>    // Cascoin: Hive
+#include <cvm/softfork.h>  // Cascoin: CVM OP_RETURN
 
 CAmount GetDustThreshold(const CTxOut& txout, const CFeeRate& dustRelayFeeIn)
 {
@@ -145,6 +146,12 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
                 // Accept Mice NFT transactions as standard
                 return true;
             }
+        }
+        
+        // Special handling for CVM transactions (contract deploy/call/etc.)
+        // CVM OP_RETURN outputs can be larger than standard 80 bytes
+        if (CVM::IsCVMOpReturn(txout)) {
+            return true;
         }
         
         // Standard BCT check

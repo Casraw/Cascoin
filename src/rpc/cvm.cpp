@@ -228,8 +228,8 @@ UniValue callcontract(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
     }
     
-    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
-    uint160 contractAddr(addressBytes);
+    uint160 contractAddr;
+    contractAddr.SetHex(addressStr);
     
     // Get call data
     std::vector<uint8_t> callData;
@@ -327,8 +327,8 @@ UniValue getcontractinfo(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
     }
     
-    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
-    uint160 contractAddr(addressBytes);
+    uint160 contractAddr;
+    contractAddr.SetHex(addressStr);
     
     // Get contract bytecode from database
     std::vector<uint8_t> bytecode;
@@ -5845,8 +5845,8 @@ UniValue getcontractstorage(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
     }
 
-    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
-    uint160 contractAddr(addressBytes);
+    uint160 contractAddr;
+    contractAddr.SetHex(addressStr);
 
     // Check contract exists
     if (!CVM::g_cvmdb->Exists(contractAddr)) {
@@ -5945,8 +5945,8 @@ UniValue getcontractreceipts(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid contract address length (expected 40 hex characters)");
     }
 
-    std::vector<uint8_t> addressBytes = ParseHex(addressStr);
-    uint160 contractAddr(addressBytes);
+    uint160 contractAddr;
+    contractAddr.SetHex(addressStr);
 
     // Check contract exists
     if (!CVM::g_cvmdb->Exists(contractAddr)) {

@@ -38,8 +38,12 @@ void BlockValidator::Initialize(CVMDatabase* db)
 {
     m_db = db;
     
-    // Initialize trust context
-    m_trustContext = std::make_shared<TrustContext>();
+    // Initialize trust context WITH database so reputation lookups work
+    if (db) {
+        m_trustContext = std::make_shared<TrustContext>(db);
+    } else {
+        m_trustContext = std::make_shared<TrustContext>();
+    }
     
     // Initialize VM with database and trust context
     if (db && m_trustContext) {
@@ -336,49 +340,34 @@ bool BlockValidator::DeployContract(
         return false;
     }
     
-    // Log contract deployment access control check
+    // Log contract deployment for auditing purposes (informational only).
+    // Access control is NOT enforced during block validation - the block was
+    // already accepted by the network. Enforcement happens at TX submission time.
     if (g_accessControlAuditor && m_trustContext) {
         int16_t deployerReputation = static_cast<int16_t>(m_trustContext->GetReputation(deployer));
-        int16_t requiredReputation = g_accessControlAuditor->GetMinimumReputation(AccessOperationType::CONTRACT_DEPLOYMENT);
-        
-        AccessDecision decision = g_accessControlAuditor->LogReputationGatedOperation(
-            deployer,
-            AccessOperationType::CONTRACT_DEPLOYMENT,
-            "DeployContract",
-            requiredReputation,
-            deployerReputation,
-            "", // resource ID will be contract address after deployment
-            tx.GetHash());
-        
-        if (decision != AccessDecision::GRANTED) {
-            error = "Contract deployment denied by access control";
-            return false;
-        }
+        LogPrint(BCLog::CVM, "BlockValidator: Deployer %s reputation: %d (audit only)\n",
+                 deployer.ToString(), deployerReputation);
     }
     
-    // The OP_RETURN only contains codeHash, gasLimit, format, and metadata.
-    // The actual bytecode is NOT stored in the OP_RETURN (80-byte limit).
-    // Try to extract bytecode from the transaction's witness data, where
-    // the wallet may have placed it as an additional witness stack element.
+    // The OP_RETURN now contains the full bytecode (serialized in CVMDeployData).
+    // For backward compatibility with old transactions that used witness-based
+    // bytecode delivery, also check witness data as a fallback.
     if (deployData.bytecode.empty()) {
-        // Try extracting bytecode from witness data of the first input
         for (const auto& txin : tx.vin) {
             const auto& wit = txin.scriptWitness;
-            // Convention: if witness stack has 3+ elements, the first element
-            // (before sig and pubkey) may contain the contract bytecode
-            if (wit.stack.size() >= 3) {
-                const auto& candidate = wit.stack[0];
-                // Verify against codeHash from OP_RETURN
+            for (size_t i = 0; i < wit.stack.size(); ++i) {
+                const auto& candidate = wit.stack[i];
                 if (!candidate.empty()) {
                     uint256 candidateHash = Hash(candidate.begin(), candidate.end());
                     if (candidateHash == deployData.codeHash) {
                         deployData.bytecode = candidate;
-                        LogPrint(BCLog::CVM, "BlockValidator: Extracted bytecode (%d bytes) from witness data, hash matches\n",
-                                 candidate.size());
+                        LogPrint(BCLog::CVM, "BlockValidator: Extracted bytecode (%d bytes) from witness stack[%d] (legacy fallback)\n",
+                                 candidate.size(), (int)i);
                         break;
                     }
                 }
             }
+            if (!deployData.bytecode.empty()) break;
         }
     }
     
@@ -421,6 +410,11 @@ bool BlockValidator::DeployContract(
         return false;
     }
     
+    // Let EnhancedVM handle nonce management and contract address generation.
+    // Do NOT call GetNextNonce() here — EnhancedVM::DeployContract() does it
+    // internally, and calling it twice would cause a nonce mismatch where
+    // BlockValidator logs one address but EnhancedVM writes to a different one.
+
     // Execute contract deployment using EnhancedVM
     try {
         EnhancedExecutionResult result = m_vm->DeployContract(
@@ -434,14 +428,34 @@ bool BlockValidator::DeployContract(
             0  // timestamp
         );
         
+        // Get the contract address from the result (set by EnhancedVM)
+        contractAddr = result.contract_address;
+        
         if (!result.success) {
-            error = result.error;
-            return false;
+            // Execution / validation failure of the contract should NOT invalidate the block.
+            // Treat this like an EVM-style failed CREATE: consume gas, do not register code,
+            // but still advance nonce so future deployments remain deterministic.
+            LogPrint(BCLog::CVM, "BlockValidator: Contract deployment failed (tx=%s, deployer=%s, addr=%s): %s\n",
+                     tx.GetHash().ToString(), deployer.ToString(), contractAddr.ToString(), result.error);
+
+            gasUsed = deployData.gasLimit;
+
+            error.clear();
+            return true;
         }
         
         gasUsed = result.gas_used;
-        // Generate contract address from deployer + nonce
-        contractAddr = uint160(Hash160(deployer.begin(), deployer.end()));
+        
+        // Update contract metadata with deployment info (TX hash, block height)
+        // EnhancedVM stores the bytecode but doesn't have access to this context.
+        if (m_db && !contractAddr.IsNull()) {
+            Contract contract;
+            if (m_db->ReadContract(contractAddr, contract)) {
+                contract.deploymentTx = tx.GetHash();
+                contract.deploymentHeight = blockHeight;
+                m_db->WriteContract(contractAddr, contract);
+            }
+        }
         
         LogPrint(BCLog::CVM, "BlockValidator: Contract deployed at %s, gas used: %d, format: %d\n",
                  contractAddr.ToString(), gasUsed, static_cast<int>(deployData.format));
@@ -449,9 +463,14 @@ bool BlockValidator::DeployContract(
         return true;
         
     } catch (const std::exception& e) {
-        error = strprintf("Contract deployment exception: %s", e.what());
-        LogPrint(BCLog::CVM, "BlockValidator: %s\n", error);
-        return false;
+        // Same semantics: a deployment throwing should not invalidate the whole block.
+        LogPrint(BCLog::CVM, "BlockValidator: Contract deployment exception (tx=%s, deployer=%s): %s\n",
+                 tx.GetHash().ToString(), deployer.ToString(), e.what());
+
+        gasUsed = deployData.gasLimit;
+
+        error.clear();
+        return true;
     }
 }
 
@@ -521,8 +540,16 @@ bool BlockValidator::ExecuteContractCall(
         );
         
         if (!result.success) {
-            error = result.error;
-            return false;
+            // Contract call failure should not invalidate the block.
+            LogPrint(BCLog::CVM, "BlockValidator: Contract call failed (tx=%s, caller=%s, contract=%s): %s\n",
+                     tx.GetHash().ToString(), caller.ToString(), callData.contractAddress.ToString(), result.error);
+
+            // Be conservative for gas accounting: if VM couldn't report gas, consume full limit.
+            gasUsed = result.gas_used > 0 ? result.gas_used : callData.gasLimit;
+            if (gasUsed > callData.gasLimit) gasUsed = callData.gasLimit;
+
+            error.clear();
+            return true;
         }
         
         gasUsed = result.gas_used;
@@ -533,9 +560,12 @@ bool BlockValidator::ExecuteContractCall(
         return true;
         
     } catch (const std::exception& e) {
-        error = strprintf("Contract call exception: %s", e.what());
-        LogPrint(BCLog::CVM, "BlockValidator: %s\n", error);
-        return false;
+        LogPrint(BCLog::CVM, "BlockValidator: Contract call exception (tx=%s, caller=%s, contract=%s): %s\n",
+                 tx.GetHash().ToString(), caller.ToString(), callData.contractAddress.ToString(), e.what());
+
+        gasUsed = callData.gasLimit;
+        error.clear();
+        return true;
     }
 }
 

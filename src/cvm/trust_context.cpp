@@ -209,7 +209,10 @@ uint32_t TrustContext::GetCrossChainReputation(const uint160& address, const std
 uint32_t TrustContext::GetAggregatedReputation(const uint160& address) const {
     auto it = cross_chain_attestations.find(address);
     if (it == cross_chain_attestations.end()) {
-        return GetReputation(address);
+        // No cross-chain attestations, just return local reputation score
+        // NOTE: Do NOT call GetReputation() here - it would cause infinite recursion
+        // since GetReputation() calls GetAggregatedReputation().
+        return CalculateReputationScore(address);
     }
     
     std::vector<uint32_t> scores;
@@ -528,21 +531,13 @@ uint32_t TrustContext::CalculateReputationScore(const uint160& address) const {
             return static_cast<uint32_t>(normalized);
         }
         
-        // If no reputation score exists, try HAT v2 system
-        SecureHAT secure_hat(*database);
-        
-        // Use a default viewer address (could be improved with actual viewer context)
-        uint160 default_viewer;
-        int16_t hat_score = secure_hat.CalculateFinalTrust(address, default_viewer);
-        
-        // HAT score is already 0-100
-        if (hat_score >= 0 && hat_score <= 100) {
-            LogPrint(BCLog::CVM, "TrustContext: HAT v2 score for %s: %d\n",
-                     address.ToString(), hat_score);
-            return static_cast<uint32_t>(hat_score);
-        }
-        
-        // Default to medium reputation if no data available
+        // No reputation score in database - return default.
+        // NOTE: Do NOT call SecureHAT here during block validation!
+        // SecureHAT triggers GraphAnalyzer::DetectSuspiciousClusters() which is
+        // O(n^2) on the trust graph and gets called for every GetReputation() call,
+        // causing the node to hang during ConnectBlock().
+        // SecureHAT scoring should only be used via explicit RPC calls, not during
+        // consensus-critical block validation paths.
         LogPrint(BCLog::CVM, "TrustContext: No reputation data for %s, using default 50\n",
                  address.ToString());
         return 50;

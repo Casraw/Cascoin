@@ -35,6 +35,9 @@ struct EnhancedExecutionResult {
     std::string error;
     BytecodeFormat executed_format;
     
+    // Contract address (set by DeployContract)
+    uint160 contract_address;
+    
     // Trust-specific results
     uint32_t caller_reputation_before;
     uint32_t caller_reputation_after;

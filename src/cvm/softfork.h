@@ -27,8 +27,8 @@ namespace CVM {
 // "CVM1" = 0x43564d31
 static const std::vector<uint8_t> CVM_MAGIC = {0x43, 0x56, 0x4d, 0x31};
 
-// Maximum OP_RETURN size (Bitcoin compatible)
-static const size_t MAX_OP_RETURN_SIZE = 80;
+// Maximum OP_RETURN size for CVM transactions (supports contracts up to MAX_CONTRACT_SIZE)
+static const size_t MAX_OP_RETURN_SIZE = 25000;
 
 /**
  * CVM Transaction Types (in OP_RETURN)

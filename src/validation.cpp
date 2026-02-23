@@ -2209,10 +2209,12 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     LogPrint(BCLog::BENCH, "    - Callbacks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime6 - nTime5), nTimeCallbacks * MICRO, nTimeCallbacks * MILLI / nBlocksTotal);
 
     // Cascoin: CVM - Process CVM transactions in block (soft fork)
+    // NOTE: Contract deployment and execution is already handled by BlockValidator::ValidateBlock()
+    // above. CVMBlockProcessor::ProcessBlock() was duplicating this work and creating expensive
+    // TrustContext+SecureHAT calculations that caused the node to hang.
+    // We only run ProcessClusterUpdates() here for wallet trust propagation.
     if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
         if (CVM::g_cvmdb) {
-            CVM::CVMBlockProcessor::ProcessBlock(block, pindex->nHeight, *CVM::g_cvmdb);
-            
             // Process cluster updates for wallet trust propagation (Requirements: 2.4, 16.1)
             CVM::CVMBlockProcessor::ProcessClusterUpdates(block, pindex->nHeight, *CVM::g_cvmdb);
         } else {

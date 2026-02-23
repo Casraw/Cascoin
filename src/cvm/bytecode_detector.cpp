@@ -239,19 +239,20 @@ BytecodeDetectionResult BytecodeDetector::DetectFormat(const uint8_t* data, size
         result.is_valid = ValidateEVMBytecode(ExtractEVMPortion(bytecode)) && 
                          ValidateCVMBytecode(ExtractCVMPortion(bytecode));
     }
+    // Check for CVM bytecode FIRST (CVM opcodes overlap with EVM, so CVM
+    // must be checked before EVM to avoid false positives)
+    else if (IsCVMBytecode(bytecode)) {
+        result.format = BytecodeFormat::CVM_NATIVE;
+        result.confidence = CalculateCVMConfidence(bytecode);
+        result.reason = "CVM register-based opcodes detected";
+        result.is_valid = strict_validation ? ValidateCVMBytecode(bytecode) : true;
+    }
     // Check for EVM bytecode
     else if (IsEVMBytecode(bytecode)) {
         result.format = BytecodeFormat::EVM_BYTECODE;
         result.confidence = CalculateEVMConfidence(bytecode);
         result.reason = "EVM opcodes and patterns detected";
         result.is_valid = strict_validation ? ValidateEVMBytecode(bytecode) : true;
-    }
-    // Check for CVM bytecode
-    else if (IsCVMBytecode(bytecode)) {
-        result.format = BytecodeFormat::CVM_NATIVE;
-        result.confidence = CalculateCVMConfidence(bytecode);
-        result.reason = "CVM register-based opcodes detected";
-        result.is_valid = strict_validation ? ValidateCVMBytecode(bytecode) : true;
     }
     else {
         result.format = BytecodeFormat::UNKNOWN;
@@ -386,28 +387,71 @@ void BytecodeDetector::ResetStats() {
 // Private implementation methods
 
 bool BytecodeDetector::HasEVMOpcodes(const std::vector<uint8_t>& bytecode) const {
-    size_t evm_opcode_count = 0;
-    for (uint8_t byte : bytecode) {
-        if (EVM_OPCODES.find(byte) != EVM_OPCODES.end() || 
-            EVM_PUSH_OPCODES.find(byte) != EVM_PUSH_OPCODES.end()) {
-            evm_opcode_count++;
+    // Parse as an opcode stream (skip PUSH immediate bytes). Counting raw bytes
+    // creates false positives when other VMs embed data containing EVM-like bytes.
+    size_t opcodes = 0;
+    size_t valid = 0;
+
+    for (size_t i = 0; i < bytecode.size(); ) {
+        const uint8_t opcode = bytecode[i];
+        opcodes++;
+
+        if (EVM_PUSH_OPCODES.find(opcode) != EVM_PUSH_OPCODES.end()) {
+            valid++;
+            const uint8_t push_size = opcode - 0x5f; // PUSH1 = 0x60
+            // Skip opcode + immediate bytes (clamp to end).
+            i = std::min(i + 1 + static_cast<size_t>(push_size), bytecode.size());
+            continue;
         }
+
+        if (EVM_OPCODES.find(opcode) != EVM_OPCODES.end()) {
+            valid++;
+        }
+
+        i++;
     }
-    
-    // At least 30% of bytes should be valid EVM opcodes
-    return (double)evm_opcode_count / bytecode.size() >= 0.3;
+
+    if (opcodes == 0) return false;
+
+    // Require a reasonably high fraction of valid opcodes in the parsed stream.
+    return (static_cast<double>(valid) / static_cast<double>(opcodes)) >= 0.60;
 }
 
 bool BytecodeDetector::HasEVMPushPattern(const std::vector<uint8_t>& bytecode) const {
     // Look for common EVM patterns like PUSH1 0x80 PUSH1 0x40 (memory setup)
     return MatchesPattern(bytecode, EVM_CONSTRUCTOR_PATTERN) ||
-           std::any_of(bytecode.begin(), bytecode.end(), 
-                      [](uint8_t b) { return EVM_PUSH_OPCODES.find(b) != EVM_PUSH_OPCODES.end(); });
+           [&]() {
+               // Only consider PUSH opcodes in the opcode stream (skip PUSH immediates).
+               for (size_t i = 0; i < bytecode.size(); ) {
+                   const uint8_t opcode = bytecode[i];
+                   if (EVM_PUSH_OPCODES.find(opcode) != EVM_PUSH_OPCODES.end()) {
+                       return true;
+                   }
+                   if (opcode >= 0x60 && opcode <= 0x7f) {
+                       const uint8_t push_size = opcode - 0x5f;
+                       i = std::min(i + 1 + static_cast<size_t>(push_size), bytecode.size());
+                   } else {
+                       i++;
+                   }
+               }
+               return false;
+           }();
 }
 
 bool BytecodeDetector::HasEVMJumpDestinations(const std::vector<uint8_t>& bytecode) const {
-    return std::any_of(bytecode.begin(), bytecode.end(),
-                      [](uint8_t b) { return b == 0x5b; }); // JUMPDEST
+    // Only consider JUMPDEST opcodes in the parsed opcode stream.
+    for (size_t i = 0; i < bytecode.size(); ) {
+        const uint8_t opcode = bytecode[i];
+        if (opcode == 0x5b) return true; // JUMPDEST
+
+        if (opcode >= 0x60 && opcode <= 0x7f) {
+            const uint8_t push_size = opcode - 0x5f;
+            i = std::min(i + 1 + static_cast<size_t>(push_size), bytecode.size());
+        } else {
+            i++;
+        }
+    }
+    return false;
 }
 
 double BytecodeDetector::CalculateEVMConfidence(const std::vector<uint8_t>& bytecode) const {
@@ -422,15 +466,36 @@ double BytecodeDetector::CalculateEVMConfidence(const std::vector<uint8_t>& byte
 }
 
 bool BytecodeDetector::HasCVMOpcodes(const std::vector<uint8_t>& bytecode) const {
-    size_t cvm_opcode_count = 0;
-    for (uint8_t byte : bytecode) {
-        if (CVM_OPCODES.find(byte) != CVM_OPCODES.end()) {
-            cvm_opcode_count++;
+    // Parse as a CVM opcode stream (skip PUSH size+immediates). Counting raw bytes
+    // creates false positives when bytecode embeds arbitrary data (e.g. zeros).
+    size_t opcodes = 0;
+    size_t valid = 0;
+
+    for (size_t i = 0; i < bytecode.size(); ) {
+        const uint8_t opcode = bytecode[i];
+        opcodes++;
+
+        if (CVM_OPCODES.find(opcode) != CVM_OPCODES.end()) {
+            valid++;
+            if (opcode == 0x01) { // OP_PUSH: [0x01][size][data...]
+                if (i + 1 >= bytecode.size()) break;
+                const uint8_t size = bytecode[i + 1];
+                if (size == 0 || size > 32) {
+                    i++; // treat as malformed push; advance minimally
+                    continue;
+                }
+                i = std::min(i + 2 + static_cast<size_t>(size), bytecode.size());
+                continue;
+            }
         }
+
+        i++;
     }
-    
-    // At least 30% of bytes should be valid CVM opcodes
-    return (double)cvm_opcode_count / bytecode.size() >= 0.3;
+
+    if (opcodes == 0) return false;
+
+    // Require a reasonably high fraction of valid opcodes in the parsed stream.
+    return (static_cast<double>(valid) / static_cast<double>(opcodes)) >= 0.60;
 }
 
 bool BytecodeDetector::HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode) const {

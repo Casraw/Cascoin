@@ -19,28 +19,44 @@
 #include <evmc/evmc.hpp>
 #include <chrono>
 #include <algorithm>
+#include <array>
 
 namespace CVM {
 
 // Static EVM instance loader
 static evmc_vm* LoadEVMOneInstance() {
-    // Try to load evmone library
-    evmc_loader_error_code error_code;
-    evmc_vm* vm = evmc_load_and_create("evmone", &error_code);
-    
-    if (!vm) {
-        LogPrintf("Failed to load evmone: error code %d\n", static_cast<int>(error_code));
-        return nullptr;
+    // evmc_load_and_create() uses dlopen() internally. On some systems,
+    // "evmone" alone won't be found unless the library path is configured
+    // (ld.so.conf / LD_LIBRARY_PATH). Try common names/paths explicitly.
+    constexpr std::array<const char*, 5> candidates = {{
+        "evmone",
+        "libevmone.so",
+        "/usr/local/lib/libevmone.so",
+        "/usr/lib/libevmone.so",
+        "/usr/lib/x86_64-linux-gnu/libevmone.so",
+    }};
+
+    for (const char* candidate : candidates) {
+        evmc_loader_error_code error_code;
+        evmc_vm* vm = evmc_load_and_create(candidate, &error_code);
+
+        if (!vm) {
+            LogPrintf("Failed to load evmone from '%s': error code %d\n",
+                      candidate, static_cast<int>(error_code));
+            continue;
+        }
+
+        if (!evmc_is_abi_compatible(vm)) {
+            LogPrintf("evmone ABI is not compatible for '%s'\n", candidate);
+            evmc_destroy(vm);
+            continue;
+        }
+
+        LogPrintf("Successfully loaded evmone ('%s') version %s\n", candidate, vm->version);
+        return vm;
     }
-    
-    if (!evmc_is_abi_compatible(vm)) {
-        LogPrintf("evmone ABI is not compatible\n");
-        evmc_destroy(vm);
-        return nullptr;
-    }
-    
-    LogPrintf("Successfully loaded evmone version %s\n", vm->version);
-    return vm;
+
+    return nullptr;
 }
 
 EVMEngine::EVMEngine(CVMDatabase* db, std::shared_ptr<TrustContext> trust_ctx)

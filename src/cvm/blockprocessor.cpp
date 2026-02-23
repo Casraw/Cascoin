@@ -220,10 +220,29 @@ void CVMBlockProcessor::ProcessDeploy(
         memcpy(deployer.begin(), hash.begin(), 20);
     }
     
-    // Get bytecode from transaction (stored in OP_RETURN or witness data)
+    // Get bytecode from deployData (now included in OP_RETURN serialization).
+    // Fallback: check witness data for legacy transactions.
     std::vector<uint8_t> bytecode = deployData.bytecode;
     if (bytecode.empty()) {
-        LogPrintf("CVM Warning: Empty bytecode in deployment tx %s\n", tx.GetHash().ToString());
+        for (const auto& txin : tx.vin) {
+            const auto& wit = txin.scriptWitness;
+            for (size_t i = 0; i < wit.stack.size(); ++i) {
+                const auto& candidate = wit.stack[i];
+                if (!candidate.empty()) {
+                    uint256 candidateHash = Hash(candidate.begin(), candidate.end());
+                    if (candidateHash == deployData.codeHash) {
+                        bytecode = candidate;
+                        LogPrint(BCLog::CVM, "CVM BlockProcessor: Extracted bytecode (%d bytes) from witness stack[%d] (legacy fallback)\n",
+                                 candidate.size(), (int)i);
+                        break;
+                    }
+                }
+            }
+            if (!bytecode.empty()) break;
+        }
+    }
+    if (bytecode.empty()) {
+        LogPrintf("CVM Warning: Empty bytecode in deployment tx %s (no witness element matches codeHash)\n", tx.GetHash().ToString());
         return;
     }
     
