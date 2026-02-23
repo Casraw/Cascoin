@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 
 #ifndef BITCOIN_QT_HIVETABLEMODEL_H
 #define BITCOIN_QT_HIVETABLEMODEL_H

@@ -58,6 +58,10 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
             // This is a block from the network that was mined with minimum difficulty during a stall
             // Accept it as valid
             if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Accepting %s block with powLimit (testnet stall recovery block)\n", POW_TYPE_NAMES[powType]);
+            // Cascoin: Added detailed SHA256 logging
+            if (powType == POW_TYPE_SHA256) {
+                LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Testnet stall. Returning powLimit 0x%08x\n", powLimit.GetCompact());
+            }
             return powLimit.GetCompact();
         }
         // For mining templates (nBits == 0) or blocks with real difficulty, proceed with normal LWMA
@@ -69,7 +73,7 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
         if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (short chain)\\n", POW_TYPE_NAMES[powType]);
         // Cascoin: Added detailed SHA256 logging
         if (powType == POW_TYPE_SHA256) {
-            LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Short chain (height %lld < N %lld). Returning powLimit 0x%08x\\n", (long long)height, (long long)N, powLimit.GetCompact());
+            LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Short chain (height %lld < N %lld). Returning powLimit 0x%08x\\n", (long long)height, (long long)N, powLimit.GetCompact());
         }
         return powLimit.GetCompact();
     }
@@ -87,7 +91,7 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
             if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (reached end of chain)\n", POW_TYPE_NAMES[powType]);
             // Cascoin: Added detailed SHA256 logging
             if (powType == POW_TYPE_SHA256) {
-                LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain (null blockPreviousTimestamp). Returning powLimit 0x%08x\n", powLimit.GetCompact());
+                LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain (null blockPreviousTimestamp). Returning powLimit 0x%08x\n", powLimit.GetCompact());
             }
             return powLimit.GetCompact();
         }
@@ -113,7 +117,7 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
                 if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (reached end of chain while skipping blocks)\n", POW_TYPE_NAMES[powType]);
                 // Cascoin: Added detailed SHA256 logging
                 if (powType == POW_TYPE_SHA256) {
-                    LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain while skipping unwanted blocks (effective type %d vs wanted %d). Returning powLimit 0x%08x\n", static_cast<int>(effectivePrevBlockType), static_cast<int>(powType), powLimit.GetCompact());
+                    LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain while skipping unwanted blocks (effective type %d vs wanted %d). Returning powLimit 0x%08x\n", static_cast<int>(effectivePrevBlockType), static_cast<int>(powType), powLimit.GetCompact());
                 }
                 return powLimit.GetCompact();
             }
@@ -131,7 +135,7 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
             if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (reached end of chain while collecting blocks)\n", POW_TYPE_NAMES[powType]);
             // Cascoin: Added detailed SHA256 logging
              if (powType == POW_TYPE_SHA256) {
-                LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain (no pprev) while collecting blocks (found %lld). Returning powLimit 0x%08x\n", (long long)blocksFound, powLimit.GetCompact());
+                LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Reached end of chain (no pprev) while collecting blocks (found %lld). Returning powLimit 0x%08x\n", (long long)blocksFound, powLimit.GetCompact());
             }
             return powLimit.GetCompact();
         }
@@ -143,7 +147,7 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
         if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (no blocks of type %s found in LWMA window)\n", POW_TYPE_NAMES[powType], POW_TYPE_NAMES[powType]);
         // Cascoin: Added detailed SHA256 logging
         if (powType == POW_TYPE_SHA256) {
-            LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: No blocks of type found (blocksFound == 0). Returning powLimit 0x%08x\n", powLimit.GetCompact());
+            LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: No blocks of type found (blocksFound == 0). Returning powLimit 0x%08x\n", powLimit.GetCompact());
         }
         return powLimit.GetCompact();
     }
@@ -182,14 +186,14 @@ unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlock
         if (verbose) LogPrintf("* GetNextWorkRequiredLWMA: Allowing %s pow limit (target %s calculated higher than limit, or zero)\n", POW_TYPE_NAMES[powType], nextTarget.ToString().c_str());
         // Cascoin: Added detailed SHA256 logging
         if (powType == POW_TYPE_SHA256) {
-            LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Calculated nextTarget (%s) is > powLimit (%s) or zero. Returning powLimit 0x%08x\n", nextTarget.ToString().c_str(), powLimit.ToString().c_str(), powLimit.GetCompact());
+            LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Calculated nextTarget (%s) is > powLimit (%s) or zero. Returning powLimit 0x%08x\n", nextTarget.ToString().c_str(), powLimit.ToString().c_str(), powLimit.GetCompact());
         }
         return powLimit.GetCompact();
     }
 
     // Cascoin: Added detailed SHA256 logging
     if (powType == POW_TYPE_SHA256) {
-        LogPrintf("GetNextWorkRequiredLWMA: SHA256 - Path: Successful calculation. Returning nextTarget 0x%08x (Actual: %s)\n", nextTarget.GetCompact(), nextTarget.ToString().c_str());
+        LogPrint(BCLog::MINOTAURX, "GetNextWorkRequiredLWMA: SHA256 - Path: Successful calculation. Returning nextTarget 0x%08x (Actual: %s)\n", nextTarget.GetCompact(), nextTarget.ToString().c_str());
     }
     return nextTarget.GetCompact();
 }
@@ -448,7 +452,7 @@ unsigned int GetNextHive11WorkRequired(const CBlockIndex* pindexLast, const Cons
     }
 
     if (hiveBlockCount == 0) {          // Should only happen when chain is starting
-        LogPrintf("GetNextHive11WorkRequired: No previous hive blocks found.\n");
+        LogPrint(BCLog::HIVE, "GetNextHive11WorkRequired: No previous hive blocks found.\n");
         return bnPowLimit.GetCompact();
     }
 
@@ -487,7 +491,7 @@ unsigned int GetNextHive12WorkRequired(const CBlockIndex* pindexLast, const Cons
     if (hiveBlockCount < 24) {
         // Always return the easiest difficulty during blockchain startup
         // This helps bootstrap The Labyrinth mining system
-        LogPrintf("GetNextHive12WorkRequired: Insufficient hive blocks - using easiest target for bootstrapping.\n");
+        LogPrint(BCLog::HIVE, "GetNextHive12WorkRequired: Insufficient hive blocks - using easiest target for bootstrapping.\n");
         return bnPowLimit.GetCompact();
     }
 
@@ -523,7 +527,7 @@ unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consen
     CBlockHeader block;
     while (true) {
         if (!pindexLast->pprev || pindexLast->nHeight < params.minHiveCheckBlock) {   // Ran out of blocks without finding a Hive block? Return min target
-            LogPrintf("GetNextHiveWorkRequired: No hivemined blocks found in history\n");
+            LogPrint(BCLog::HIVE, "GetNextHiveWorkRequired: No hivemined blocks found in history\n");
             //LogPrintf("GetNextHiveWorkRequired: This target= %s\n", bnPowLimit.ToString());
             return bnPowLimit.GetCompact();
         }
@@ -598,13 +602,13 @@ bool GetNetworkHiveInfo(int& immatureBees, int& immatureBCTs, int& matureBees, i
 
     for (int i = 0; i < totalBeeLifespan; i++) {
         if (fHavePruned && !(pindexPrev->nStatus & BLOCK_HAVE_DATA) && pindexPrev->nTx > 0) {
-            LogPrintf("! GetNetworkHiveInfo: Warn: Block not available (pruned data); can't calculate network bee count.");
+            LogPrint(BCLog::HIVE, "! GetNetworkHiveInfo: Warn: Block not available (pruned data); can't calculate network bee count.");
             return false;
         }
 
         if (!pindexPrev->GetBlockHeader().IsHiveMined(consensusParams)) {                          // Don't check Hivemined blocks (no BCTs will be found in them)
             if (!ReadBlockFromDisk(block, pindexPrev, consensusParams)) {
-                LogPrintf("! GetNetworkHiveInfo: Warn: Block not available (not found on disk); can't calculate network bee count.");
+                LogPrint(BCLog::HIVE, "! GetNetworkHiveInfo: Warn: Block not available (not found on disk); can't calculate network bee count.");
                 return false;
             }
             int blockHeight = pindexPrev->nHeight;
@@ -690,7 +694,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         blockHeight = pindexPrev->nHeight + 1;
     }
     if (!pindexPrev) {
-        LogPrintf("CheckHiveProof: Couldn't get previous block's CBlockIndex!\n");
+        LogPrint(BCLog::HIVE, "CheckHiveProof: Couldn't get previous block's CBlockIndex!\n");
         return false;
     }
     if (verbose)
@@ -698,7 +702,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
 
     // Check hive is enabled on network
     if (!IsHiveEnabled(pindexPrev, consensusParams)) {
-        LogPrintf("CheckHiveProof: Can't accept a Hive block; Hive is not yet enabled on the network.\n");
+        LogPrint(BCLog::HIVE, "CheckHiveProof: Can't accept a Hive block; Hive is not yet enabled on the network.\n");
         return false;
     }
 
@@ -712,7 +716,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
             hiveBlocksAtTip++;
         }
         if (hiveBlocksAtTip >= consensusParams.maxConsecutiveHiveBlocks) {
-            LogPrintf("CheckHiveProof: Too many Hive blocks without a POW block.\n");
+            LogPrint(BCLog::HIVE, "CheckHiveProof: Too many Hive blocks without a POW block.\n");
             return false;
         }
     } else {
@@ -987,7 +991,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
             return false;
         }
         if (pubkey.GetID() != *keyID) {
-            LogPrintf("CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
+            LogPrint(BCLog::HIVE, "CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
             return false;
         }
     }

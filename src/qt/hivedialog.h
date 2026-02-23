@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 
 #ifndef BITCOIN_QT_HIVEDIALOG_H
 #define BITCOIN_QT_HIVEDIALOG_H
@@ -111,7 +111,7 @@ private:
     void setAmountField(QLabel *field, CAmount value);
 
 private Q_SLOTS:
-    void on_showHiveOptionsButton_clicked();    // Cascoin: Hive: Mining optimisations: Shortcut to Hive mining options
+    void on_showHiveOptionsButton_clicked();    // Cascoin: Labyrinth: Mining optimisations: Shortcut to Labyrinth mining options
     void on_createBeesButton_clicked();
     void on_beeCountSpinner_valueChanged(int i);
     void on_includeDeadBeesCheckbox_stateChanged();
