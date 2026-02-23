@@ -34664,10 +34664,9 @@ then :
 if test "x$ac_cv_header_evmone_evmone_h" = xyes
 then :
 
-          EVMC_LIBS="-levmc-loader"
-          # Note: libevmone-standalone contains ethash_keccak256 which libevmone needs
-          # Order matters: evmone-standalone must come after evmone for proper symbol resolution
-          EVMONE_LIBS="-levmone -levmone-standalone -levmc-loader -levmc-instructions"
+          # For Windows cross-compilation, libevmone-standalone contains ethash_keccak256
+          EVMC_LIBS="-levmone -levmone-standalone -levmc-loader -levmc-instructions"
+          EVMONE_LIBS=""
           have_evmc=yes
           have_evmone=yes
 
