@@ -8,6 +8,7 @@
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
 #include <cvm/access_control_audit.h>
+#include <cvm/securehat.h>
 #include <consensus/validation.h>
 #include <validation.h>
 #include <util.h>
@@ -21,6 +22,49 @@
 #include <cstdlib>
 
 namespace CVM {
+
+// Helper: Update behavior + temporal metrics for an address after CVM activity
+static void UpdateActivityMetrics(CVMDatabase& db, const uint160& actor, const uint256& txid, const uint160& partner) {
+    try {
+        SecureHAT hat(db);
+        
+        // Behavior metrics
+        BehaviorMetrics metrics = hat.GetBehaviorMetrics(actor);
+        if (metrics.address.IsNull()) {
+            metrics.address = actor;
+            metrics.account_creation = GetTime();
+        }
+        TradeRecord trade;
+        trade.txid = txid;
+        trade.partner = partner;
+        trade.volume = 0;
+        trade.timestamp = GetTime();
+        trade.success = true;
+        trade.disputed = false;
+        metrics.AddTrade(trade);
+        metrics.AddActivity(GetTime());
+        metrics.UpdateScores();
+        hat.StoreBehaviorMetrics(metrics);
+        
+        // Temporal metrics
+        TemporalMetrics temporal = hat.GetTemporalMetrics(actor);
+        if (temporal.account_creation == 0 || temporal.account_creation >= GetTime()) {
+            temporal.account_creation = GetTime();
+        }
+        temporal.last_activity = GetTime();
+        temporal.activity_timestamps.push_back(GetTime());
+        // Keep last 1000 timestamps to avoid unbounded growth
+        if (temporal.activity_timestamps.size() > 1000) {
+            temporal.activity_timestamps.erase(temporal.activity_timestamps.begin());
+        }
+        hat.StoreTemporalMetrics(actor, temporal);
+        
+        LogPrint(BCLog::CVM, "BlockValidator: Updated HAT metrics for %s (trades=%d)\n",
+                 actor.ToString(), metrics.total_trades);
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::CVM, "BlockValidator: Failed to update HAT metrics: %s\n", e.what());
+    }
+}
 
 BlockValidator::BlockValidator()
     : m_db(nullptr)
@@ -402,6 +446,12 @@ bool BlockValidator::DeployContract(
         gasUsed = 0; // No execution, no gas consumed
         LogPrint(BCLog::CVM, "BlockValidator: Metadata-only contract registered at %s (deployer=%s, nonce=%d)\n",
                  contractAddr.ToString(), deployer.ToString(), nonce);
+        
+        // Update deployer's behavior metrics for HAT v2 scoring
+        if (m_db) {
+            UpdateActivityMetrics(*m_db, deployer, tx.GetHash(), contractAddr);
+        }
+        
         return true;
     }
     
@@ -461,6 +511,11 @@ bool BlockValidator::DeployContract(
         
         LogPrint(BCLog::CVM, "BlockValidator: Contract deployed at %s, gas used: %d, format: %d\n",
                  contractAddr.ToString(), gasUsed, static_cast<int>(deployData.format));
+        
+        // Update deployer's behavior metrics for HAT v2 scoring
+        if (m_db) {
+            UpdateActivityMetrics(*m_db, deployer, tx.GetHash(), contractAddr);
+        }
         
         return true;
         
@@ -558,6 +613,11 @@ bool BlockValidator::ExecuteContractCall(
         
         LogPrint(BCLog::CVM, "BlockValidator: Contract call to %s, gas used: %d, format: %d\n",
                  callData.contractAddress.ToString(), gasUsed, static_cast<int>(callData.format));
+        
+        // Update caller's behavior metrics for HAT v2 scoring
+        if (m_db) {
+            UpdateActivityMetrics(*m_db, caller, tx.GetHash(), callData.contractAddress);
+        }
         
         return true;
         

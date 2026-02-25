@@ -203,6 +203,16 @@ public:
         READWRITE(account_creation);
         READWRITE(last_activity);
         READWRITE(activity_timestamps);
+        // Serialize unique_partners as a vector (std::set not directly serializable)
+        if (ser_action.ForRead()) {
+            std::vector<uint160> partners_vec;
+            READWRITE(partners_vec);
+            unique_partners.clear();
+            for (const auto& p : partners_vec) unique_partners.insert(p);
+        } else {
+            std::vector<uint160> partners_vec(unique_partners.begin(), unique_partners.end());
+            READWRITE(partners_vec);
+        }
         READWRITE(diversity_score);
         READWRITE(volume_score);
         READWRITE(pattern_score);

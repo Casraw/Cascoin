@@ -1263,6 +1263,9 @@ class TrustGraphViz {
             } else if (edgeType === 'negative') {
                 edgeColor = 'rgba(239, 68, 68, 0.6)'; // Red
                 if (!displayLabel) displayLabel = '⚠️ Report';
+            } else if (edgeType === 'deploy') {
+                edgeColor = 'rgba(168, 85, 247, 0.6)'; // Purple
+                if (!displayLabel) displayLabel = '📜 Deploy';
             }
             
             // Show slashed status
@@ -1947,7 +1950,52 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await window.dashboard.rpcCall('listtrustrelations', [100]);
             
             if (!result.edges || result.edges.length === 0) {
-                console.log('No trust relationships found yet');
+                console.log('No trust relationships found, showing contract deployers...');
+                
+                // Fallback: show contract deployers as standalone nodes
+                try {
+                    const contracts = await window.dashboard.rpcCall('listmycontracts', []);
+                    if (contracts && contracts.length > 0) {
+                        const nodes = [];
+                        const links = [];
+                        
+                        // Central "My Wallet" node
+                        nodes.push({
+                            id: 'my-wallet',
+                            rep: 55,
+                            label: '👤 Meine Wallet',
+                            cluster_size: contracts.length
+                        });
+                        
+                        // Add each contract as a node linked to the wallet
+                        contracts.forEach(c => {
+                            const cAddr = c.address;
+                            const shortC = cAddr.substring(0, 8) + '...' + cAddr.substring(cAddr.length - 4);
+                            const fmt = c.format || 'CVM';
+                            const size = c.codeSize || 0;
+                            nodes.push({
+                                id: cAddr,
+                                rep: 30,
+                                label: '📜 ' + shortC,
+                                cluster_size: 0
+                            });
+                            links.push({
+                                source: 'my-wallet',
+                                target: cAddr,
+                                weight: 100,
+                                type: 'deploy',
+                                label: fmt + ' (' + size + 'B)',
+                                count: 1
+                            });
+                        });
+                        
+                        window.trustGraph.setData(nodes, links);
+                        window.trustGraph.render();
+                        setTimeout(() => window.trustGraph.simulate(50), 100);
+                        return;
+                    }
+                } catch (e) { console.log('listmycontracts fallback failed:', e); }
+                
                 const emptyNodes = [{id: 'empty', rep: 50, label: 'No Data Yet', cluster_size: 0}];
                 const emptyLinks = [];
                 window.trustGraph.setData(emptyNodes, emptyLinks);
