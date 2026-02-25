@@ -5740,27 +5740,56 @@ UniValue listmycontracts(const JSONRPCRequest& request)
             continue;  // Skip contracts that can't be read
         }
 
-        // Load the deployment transaction from the blockchain
-        CTransactionRef deployTx;
-        uint256 hashBlock;
-        if (!GetTransaction(contract.deploymentTx, deployTx, Params().GetConsensus(), hashBlock, true)) {
-            continue;  // Skip if deployment tx can't be found
-        }
+        // Use the deployer address stored in the contract metadata.
+        // For contracts deployed before this field was added, fall back
+        // to extracting the deployer from the deployment transaction.
+        uint160 deployerAddr = contract.deployer;
 
-        // Extract the deployer address from the transaction inputs
-        uint160 deployerAddr;
-        if (!CVM::ExtractDeployerAddress(*deployTx, deployerAddr)) {
-            continue;  // Skip if deployer can't be determined
-        }
-
-        // Check if the deployer address belongs to this wallet
-        // Convert uint160 to CTxDestination (CKeyID) and check with IsMine
-        CTxDestination deployerDest = CKeyID(deployerAddr);
-        if (!(IsMine(*pwallet, deployerDest) & ISMINE_SPENDABLE)) {
-            // Also try as watch-only
-            if (!(IsMine(*pwallet, deployerDest) & ISMINE_WATCH_ONLY)) {
-                continue;  // Not our contract
+        if (deployerAddr.IsNull() && !contract.deploymentTx.IsNull()) {
+            // Legacy fallback: try to extract from the raw transaction
+            CTransactionRef deployTx;
+            uint256 hashBlock;
+            if (GetTransaction(contract.deploymentTx, deployTx, Params().GetConsensus(), hashBlock, true)) {
+                CVM::ExtractDeployerAddress(*deployTx, deployerAddr);
             }
+        }
+
+        if (deployerAddr.IsNull()) {
+            continue;  // Cannot determine deployer
+        }
+
+        // Check if the deployer address belongs to this wallet.
+        // The deployer uint160 could be a CKeyID (P2PKH), CScriptID (P2SH),
+        // or WitnessV0KeyHash (P2WPKH). Try all three address types.
+        CTxDestination deployerDest;
+        bool isMine = false;
+
+        // Try P2PKH (CKeyID)
+        deployerDest = CKeyID(deployerAddr);
+        if (IsMine(*pwallet, deployerDest) & (ISMINE_SPENDABLE | ISMINE_WATCH_ONLY)) {
+            isMine = true;
+        }
+
+        // Try P2SH (CScriptID) — common for P2SH-P2WPKH wallets
+        if (!isMine) {
+            deployerDest = CScriptID(deployerAddr);
+            if (IsMine(*pwallet, deployerDest) & (ISMINE_SPENDABLE | ISMINE_WATCH_ONLY)) {
+                isMine = true;
+            }
+        }
+
+        // Try P2WPKH (WitnessV0KeyHash) — native SegWit
+        if (!isMine) {
+            WitnessV0KeyHash witnessHash;
+            memcpy(witnessHash.begin(), deployerAddr.begin(), 20);
+            deployerDest = witnessHash;
+            if (IsMine(*pwallet, deployerDest) & (ISMINE_SPENDABLE | ISMINE_WATCH_ONLY)) {
+                isMine = true;
+            }
+        }
+
+        if (!isMine) {
+            continue;  // Not our contract
         }
 
         // Detect bytecode format

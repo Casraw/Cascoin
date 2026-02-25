@@ -391,6 +391,7 @@ bool BlockValidator::DeployContract(
         if (m_db) {
             Contract contract;
             contract.address = contractAddr;
+            contract.deployer = deployer;
             // code stays empty — bytecode not available in OP_RETURN
             contract.deploymentTx = tx.GetHash();
             contract.deploymentHeight = blockHeight;
@@ -446,13 +447,14 @@ bool BlockValidator::DeployContract(
         
         gasUsed = result.gas_used;
         
-        // Update contract metadata with deployment info (TX hash, block height)
+        // Update contract metadata with deployment info (TX hash, block height, deployer)
         // EnhancedVM stores the bytecode but doesn't have access to this context.
         if (m_db && !contractAddr.IsNull()) {
             Contract contract;
             if (m_db->ReadContract(contractAddr, contract)) {
                 contract.deploymentTx = tx.GetHash();
                 contract.deploymentHeight = blockHeight;
+                contract.deployer = deployer;
                 m_db->WriteContract(contractAddr, contract);
             }
         }

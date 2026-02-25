@@ -19,6 +19,7 @@ namespace CVM {
 class Contract {
 public:
     uint160 address;           // Contract address
+    uint160 deployer;          // Deployer address (who deployed this contract)
     std::vector<uint8_t> code; // Contract bytecode
     int deploymentHeight;      // Block height when deployed
     uint256 deploymentTx;      // Transaction that deployed contract
@@ -30,6 +31,7 @@ public:
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(address);
+        READWRITE(deployer);
         READWRITE(code);
         READWRITE(deploymentHeight);
         READWRITE(deploymentTx);
