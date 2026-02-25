@@ -157,6 +157,27 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "echojson", 9, "arg9" },
     { "rescanblockchain", 0, "start_height"},
     { "rescanblockchain", 1, "stop_height"},
+    // L2 RPC commands
+    { "l2_getchaininfo", 0, "chainid" },
+    { "l2_getbalance", 1, "chainid" },
+    { "l2_getblockbynumber", 0, "blocknumber" },
+    { "l2_getblockbynumber", 1, "chainid" },
+    { "l2_deploy", 1, "blocktime" },
+    { "l2_deploy", 2, "gaslimit" },
+    { "l2_deploy", 3, "challengeperiod" },
+    { "l2_announcesequencer", 0, "stake" },
+    { "l2_announcesequencer", 1, "hatscore" },
+    { "l2_getsequencers", 0, "eligibleonly" },
+    // Task 12: l2_deposit and l2_withdraw removed (Requirements: 11.1, 11.4)
+    // Use the new burn-and-mint model: l2_createburntx, l2_sendburntx, l2_getburnstatus
+    { "l2_getwithdrawalstatus", 1, "chainid" },
+    { "l2_sendtransaction", 1, "amount" },
+    { "l2_sendtransaction", 2, "gas" },
+    { "l2_sendtransaction", 3, "gasprice" },
+    { "l2_sendtransaction", 4, "nonce" },
+    { "l2_sendtransaction", 5, "chainid" },
+    { "l2_getregisteredchains", 0, "activeonly" },
+    { "l2_updatechainstatus", 0, "chainid" },
 };
 
 class CRPCConvertTable

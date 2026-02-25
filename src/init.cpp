@@ -19,6 +19,10 @@
 #include <fs.h>
 #include <httpserver.h>
 #include <httprpc.h>
+#include <httpserver/cvmdashboard.h>
+#include <httpserver/l2_dashboard.h>
+#include <httpserver/l2_websocket.h>
+#include <httpserver/reward_dashboard.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -42,12 +46,21 @@
 #include <ui_interface.h>
 #include <util.h>
 #include <utilmoneystr.h>
+#include <utilstrencodings.h>
 #include <validationinterface.h>
 #include <rialto.h>   // Cascoin: Rialto
+#include <bctdb.h>    // Cascoin: BCT persistent database
 #ifdef ENABLE_WALLET
 #include <wallet/init.h>
+#include <wallet/wallet.h>
 #endif
 #include <warnings.h>
+#include <cvm/cvmdb.h>  // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>  // Cascoin: CVM Block Processor and Trust Propagation
+#include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
+#include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
+#include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
+#include <quantum_registry.h>  // Cascoin: Quantum public key registry
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -170,6 +183,7 @@ void Interrupt()
     InterruptRPC();
     InterruptREST();
     InterruptTorControl();
+    l2::InterruptL2();  // Cascoin: L2 Layer 2
     if (g_connman)
         g_connman->Interrupt();
 }
@@ -253,6 +267,26 @@ void Shutdown()
         pcoinsdbview.reset();
         pblocktree.reset();
     }
+    
+    // Shutdown cross-chain trust bridge
+    CVM::ShutdownCrossChainBridge();
+    
+    // Shutdown contract state sync
+    CVM::ShutdownContractStateSync();
+    
+    // Shutdown trust propagation components (Requirements: 2.4, 16.1)
+    CVM::ShutdownTrustPropagation();
+    
+    // Shutdown CVM database
+    CVM::ShutdownCVMDatabase();
+    
+    // Shutdown quantum public key registry
+    // Requirements: 1.5 - Flush pending writes before closing
+    ShutdownQuantumRegistry();
+    
+    // Cascoin: L2 Layer 2 shutdown
+    l2::StopL2();
+    
 #ifdef ENABLE_WALLET
     StopWallets();
 #endif
@@ -264,6 +298,10 @@ void Shutdown()
         pzmqNotificationInterface = nullptr;
     }
 #endif
+
+    // Cascoin: BCT: Shutdown BCT block handler and database
+    ShutdownBCTBlockHandler();
+    BCTDatabaseSQLite::instance()->shutdown();
 
 #ifndef WIN32
     try {
@@ -374,6 +412,8 @@ std::string HelpMessage(HelpMessageMode mode)
             "(default: 0 = disable pruning blocks, 1 = allow manual pruning via RPC, >%u = automatically prune block files to stay under the specified target size in MiB)"), MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
     strUsage += HelpMessageOpt("-reindex-chainstate", _("Rebuild chain state from the currently indexed blocks"));
     strUsage += HelpMessageOpt("-reindex", _("Rebuild chain state and block index from the blk*.dat files on disk"));
+    strUsage += HelpMessageOpt("-rebuildquantumregistry", _("Rebuild the quantum public key registry by scanning the blockchain from the quantum activation height. Use this to recover from database corruption."));
+    strUsage += HelpMessageOpt("-rescanbct", _("Force a full rescan of BCT (Bee Creation Transaction) data. This will delete the existing bct_database.sqlite and rebuild it"));
 #ifndef WIN32
     strUsage += HelpMessageOpt("-sysperms", _("Create new files with system default permissions, instead of umask 077 (only effective with disabled wallet functionality)"));
 #endif
@@ -519,6 +559,9 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-rpcservertimeout=<n>", strprintf("Timeout during HTTP requests (default: %d)", DEFAULT_HTTP_SERVER_TIMEOUT));
     }
 
+    // Cascoin: L2 Layer 2 options
+    strUsage += l2::GetL2HelpMessage();
+
     // Cascoin: Hive: Mining optimisations
     strUsage += HelpMessageOpt("-hivecheckdelay=<ms>", strprintf(_("Time between Hive checks in ms. This should be left at default unless performance degradation is observed (default: %u)"), DEFAULT_HIVE_CHECK_DELAY));
     strUsage += HelpMessageOpt("-hivecheckthreads=<threads>", strprintf(_("Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores (default: %u)"), DEFAULT_HIVE_THREADS));
@@ -625,7 +668,8 @@ void CleanupBlockRevFiles()
     // start removing block files.
     int nContigCounter = 0;
     for (const std::pair<std::string, fs::path>& item : mapBlockFiles) {
-        if (atoi(item.first) == nContigCounter) {
+        int32_t fileIndex = 0;
+        if (ParseInt32(item.first, &fileIndex) && fileIndex == nContigCounter) {
             nContigCounter++;
             continue;
         }
@@ -743,6 +787,32 @@ bool AppInitServers()
         return false;
     if (!StartHTTPServer())
         return false;
+    
+    // Cascoin: Initialize CVM Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard enabled - handlers registered\n");
+        InitCVMDashboardHandlers();
+    } else {
+        LogPrintf("CVM Dashboard disabled (use -cvmdashboard=1 to enable)\n");
+    }
+    
+    // Cascoin L2: Initialize L2 Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-l2dashboard", false)) {
+        LogPrintf("L2 Dashboard enabled - handlers registered\n");
+        l2::InitL2DashboardHandlers();
+        l2::InitL2WebSocketHandlers();
+    } else {
+        LogPrintf("L2 Dashboard disabled (use -l2dashboard=1 to enable)\n");
+    }
+    
+    // Cascoin: Initialize Reward Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-rewarddashboard", false)) {
+        LogPrintf("Reward Dashboard enabled - handlers registered\n");
+        reward::InitRewardDashboardHandlers();
+    } else {
+        LogPrintf("Reward Dashboard disabled (use -rewarddashboard=1 to enable)\n");
+    }
+    
     return true;
 }
 
@@ -1172,6 +1242,12 @@ bool AppInitParameterInteraction()
             }
         }
     }
+
+    // Cascoin: L2 Layer 2 initialization
+    if (!l2::InitL2Config()) {
+        return InitError(_("Failed to initialize L2 configuration."));
+    }
+
     return true;
 }
 
@@ -1639,6 +1715,70 @@ bool AppInitMain()
     LogPrintf("No wallet support compiled in!\n");
 #endif
 
+    // ********************************************************* Step 8a: initialize CVM (Cascoin Virtual Machine)
+    LogPrintf("Initializing CVM database...\n");
+    if (!CVM::InitCVMDatabase(GetDataDir())) {
+        return InitError(_("Failed to initialize CVM database"));
+    }
+    LogPrintf("CVM database initialized successfully\n");
+    
+    // Initialize trust propagation components (Requirements: 2.4, 16.1)
+    LogPrintf("Initializing trust propagation components...\n");
+    if (!CVM::InitTrustPropagation(*CVM::g_cvmdb)) {
+        LogPrintf("Warning: Failed to initialize trust propagation components\n");
+        // Non-fatal - node can still operate without trust propagation
+    } else {
+        LogPrintf("Trust propagation components initialized successfully\n");
+    }
+    
+    // Initialize cross-chain trust bridge
+    LogPrintf("Initializing cross-chain trust bridge...\n");
+    CVM::InitializeCrossChainBridge(CVM::g_cvmdb.get());
+    LogPrintf("Cross-chain trust bridge initialized successfully\n");
+    
+    // Initialize contract state synchronization
+    LogPrintf("Initializing contract state sync manager...\n");
+    if (!CVM::InitContractStateSync(CVM::g_cvmdb.get())) {
+        LogPrintf("Warning: Failed to initialize contract state sync manager\n");
+        // Non-fatal - node can still operate without state sync
+    } else {
+        LogPrintf("Contract state sync manager initialized successfully\n");
+    }
+
+    // ********************************************************* Step 8b: initialize Quantum Public Key Registry
+    // Requirements: 1.4, 1.6 - Initialize registry, handle failure gracefully
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        // If rebuild or reindex is requested, delete existing database first
+        if (fRebuildQuantumRegistry || fReindexTriggered) {
+            fs::path dbPath = GetDataDir() / "quantum_pubkeys";
+            if (fRebuildQuantumRegistry) {
+                LogPrintf("Quantum: -rebuildquantumregistry specified, deleting existing quantum registry at %s\n", dbPath.string());
+            } else {
+                LogPrintf("Quantum: -reindex specified, deleting existing quantum registry at %s\n", dbPath.string());
+            }
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove_all(dbPath);
+                    LogPrintf("Quantum: Deleted existing quantum registry database\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("Quantum: Warning - could not delete quantum registry database: %s\n", e.what());
+                }
+            }
+        }
+        
+        LogPrintf("Initializing quantum public key registry...\n");
+        if (!InitQuantumRegistry(GetDataDir())) {
+            // Requirements: 1.6 - Log error and continue with compact mode disabled
+            LogPrintf("Warning: Quantum public key registry failed to initialize, compact mode disabled\n");
+            // Non-fatal - node can still operate without compact quantum transactions
+        } else {
+            LogPrintf("Quantum public key registry initialized successfully\n");
+        }
+    }
+
     // ********************************************************* Step 9: data directory maintenance
 
     // if pruning, unset the service bit and perform the initial blockstore prune
@@ -1789,6 +1929,95 @@ bool AppInitMain()
 #ifdef ENABLE_WALLET
     StartWallets(scheduler);
 #endif
+
+    // Cascoin: BCT: Initialize BCT persistent database and block handler
+    {
+        std::string dataDir = GetDataDir().string();
+        BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+        
+        // Check for -rescanbct or -reindex parameter - delete existing database before initialization
+        bool fRescanBCT = gArgs.GetBoolArg("-rescanbct", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if (fRescanBCT || fReindexTriggered) {
+            std::string bctDbPath = dataDir + "/bct_database.sqlite";
+            if (fRescanBCT) {
+                LogPrintf("BCT: -rescanbct specified, deleting existing BCT database at %s\n", bctDbPath);
+            } else {
+                LogPrintf("BCT: -reindex specified, deleting existing BCT database at %s\n", bctDbPath);
+            }
+            fs::path dbPath(bctDbPath);
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove(dbPath);
+                    // Also remove WAL and SHM files if they exist
+                    fs::path walPath(bctDbPath + "-wal");
+                    fs::path shmPath(bctDbPath + "-shm");
+                    if (fs::exists(walPath)) fs::remove(walPath);
+                    if (fs::exists(shmPath)) fs::remove(shmPath);
+                    LogPrintf("BCT: Deleted existing BCT database files\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("BCT: Warning - could not delete BCT database: %s\n", e.what());
+                }
+            }
+        }
+        
+        if (bctDb->initialize(dataDir)) {
+            // Perform startup initialization (load cache or full scan)
+#ifdef ENABLE_WALLET
+            CWallet* pwallet = !vpwallets.empty() ? vpwallets[0] : nullptr;
+            if (!bctDb->initializeOnStartup(pwallet)) {
+                LogPrintf("Warning: BCT database startup initialization failed\n");
+            }
+#else
+            if (!bctDb->initializeOnStartup(nullptr)) {
+                LogPrintf("Warning: BCT database startup initialization failed (no wallet)\n");
+            }
+#endif
+            InitBCTBlockHandler();
+            LogPrintf("BCT database initialized at %s\n", bctDb->getDatabasePath());
+        } else {
+            LogPrintf("Warning: Failed to initialize BCT database\n");
+        }
+    }
+
+    // Cascoin: Quantum Registry rebuild scan (if requested)
+    // Requirements: 8.5 - Rebuild from blockchain data
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if ((fRebuildQuantumRegistry || fReindexTriggered) && g_quantumRegistry && g_quantumRegistry->IsInitialized()) {
+            int activationHeight = chainparams.GetConsensus().quantumActivationHeight;
+            int chainTip = 0;
+            {
+                LOCK(cs_main);
+                chainTip = chainActive.Height();
+            }
+            
+            // Only scan if we're past the activation height
+            if (chainTip >= activationHeight) {
+                LogPrintf("Quantum: Scanning blockchain for quantum public keys from height %d to %d...\n", 
+                          activationHeight, chainTip);
+                uiInterface.InitMessage(_("Rebuilding quantum registry..."));
+                
+                if (!RebuildQuantumRegistry(GetDataDir(), activationHeight, chainTip)) {
+                    LogPrintf("Warning: Quantum registry rebuild failed\n");
+                } else {
+                    QuantumRegistryStats stats = g_quantumRegistry->GetStats();
+                    LogPrintf("Quantum: Registry rebuild complete, %d keys registered\n", stats.totalKeys);
+                }
+            } else {
+                LogPrintf("Quantum: Chain tip (%d) is below activation height (%d), skipping rebuild scan\n",
+                          chainTip, activationHeight);
+            }
+        }
+    }
+
+    // Cascoin: L2 Layer 2 startup
+    if (!l2::StartL2()) {
+        LogPrintf("Warning: Failed to start L2 subsystem\n");
+    }
 
     return true;
 }

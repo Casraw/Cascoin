@@ -7,7 +7,7 @@ $(package)_sha256_hash=$(qt_details_qtbase_sha256_hash)
 ifneq ($(host),$(build))
 $(package)_dependencies := native_qt
 endif
-$(package)_linux_dependencies := freetype fontconfig libxcb libxkbcommon libxcb_util libxcb_util_cursor libxcb_util_render libxcb_util_keysyms libxcb_util_image libxcb_util_wm
+$(package)_linux_dependencies := freetype fontconfig
 $(package)_freebsd_dependencies := $($(package)_linux_dependencies)
 $(package)_patches_path := $(qt_details_patches_path)
 $(package)_patches := dont_hardcode_pwd.patch
@@ -165,8 +165,9 @@ $(package)_config_env_darwin := OBJC="$$($(package)_cc)"
 $(package)_config_env_darwin += OBJCXX="$$($(package)_cxx)"
 
 $(package)_cmake_opts := -DCMAKE_PREFIX_PATH=$(host_prefix)
-$(package)_cmake_opts += -DQT_FEATURE_cxx20=ON
+$(package)_cmake_opts += -DQT_FEATURE_cxx20=OFF
 $(package)_cmake_opts += -DQT_ENABLE_CXX_EXTENSIONS=OFF
+$(package)_cmake_opts += -DQT_GENERATE_SBOM=OFF
 ifneq ($(V),)
 $(package)_cmake_opts += --log-level=STATUS
 endif
@@ -293,5 +294,17 @@ define $(package)_stage_cmds
 endef
 
 define $(package)_postprocess_cmds
-  rm -rf doc/
+  rm -rf doc/ && \
+  mkdir -p native/bin && \
+  cd native/bin && \
+  for tool in moc rcc uic; do \
+    if [ -f ../libexec/"$$tool" ] && [ ! -e "$$tool" ]; then \
+      ln -sf ../libexec/"$$tool" "$$tool"; \
+    fi; \
+  done && \
+  for tool in lrelease lconvert lupdate; do \
+    if [ -f ../../bin/"$$tool" ] && [ ! -e "$$tool" ]; then \
+      ln -sf ../../bin/"$$tool" "$$tool"; \
+    fi; \
+  done
 endef

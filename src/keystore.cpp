@@ -55,7 +55,18 @@ bool CBasicKeyStore::GetPubKey(const CKeyID &address, CPubKey &vchPubKeyOut) con
 bool CBasicKeyStore::AddKeyPubKey(const CKey& key, const CPubKey &pubkey)
 {
     LOCK(cs_KeyStore);
+    LogPrintf("CBasicKeyStore::AddKeyPubKey: Adding key with type %d (quantum=%d), pubkey type %d (quantum=%d)\n",
+              static_cast<int>(key.GetKeyType()), key.IsQuantum(),
+              static_cast<int>(pubkey.GetKeyType()), pubkey.IsQuantum());
     mapKeys[pubkey.GetID()] = key;
+    
+    // Verify the key was stored correctly
+    auto it = mapKeys.find(pubkey.GetID());
+    if (it != mapKeys.end()) {
+        LogPrintf("CBasicKeyStore::AddKeyPubKey: Stored key has type %d (quantum=%d)\n",
+                  static_cast<int>(it->second.GetKeyType()), it->second.IsQuantum());
+    }
+    
     ImplicitlyLearnRelatedKeyScripts(pubkey);
     return true;
 }

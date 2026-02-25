@@ -27,7 +27,8 @@ static int column_alignments[] = {
 BeeNFTTableModel::BeeNFTTableModel(WalletModel *parent) :
     QAbstractTableModel(parent),
     walletModel(parent),
-    includeExpired(false)
+    includeExpired(false),
+    ready(false)
 {
     columns << tr("BCT NFT ID") << tr("Original BCT") << tr("Total Mice") 
             << tr("Status") << tr("Owner") << tr("Blocks Left")
@@ -35,9 +36,9 @@ BeeNFTTableModel::BeeNFTTableModel(WalletModel *parent) :
 
     timer = new QTimer(this);
     connect(timer, SIGNAL(timeout()), this, SLOT(updateBeeNFTs()));
-    timer->start(30000); // Update every 30 seconds
-    
-    updateBeeNFTList();
+    // Don't start the timer or trigger updates in the constructor.
+    // The owning BeeNFTPage will call startUpdates() once the model
+    // is fully wired into the view and signal/slot connections are set up.
 }
 
 BeeNFTTableModel::~BeeNFTTableModel()
@@ -213,8 +214,20 @@ void BeeNFTTableModel::updateBeeNFTs()
     updateBeeNFTList();
 }
 
+void BeeNFTTableModel::startUpdates()
+{
+    ready = true;
+    timer->start(30000); // Update every 30 seconds
+    updateBeeNFTList();
+}
+
 void BeeNFTTableModel::updateBeeNFTListWithData(const QList<BeeNFTRecord>& newRecords)
 {
+    // Guard: only touch the model if it has been fully wired into a view.
+    // Calling beginResetModel() before the model is attached can crash in Qt6
+    // because the internal QObject debug logging dereferences an uninitialised parent.
+    if (!ready) return;
+
     beginResetModel();
     
     // Cascoin: Memory leak fix with intelligent cleanup - keep 4KB NFT data size but manage memory better

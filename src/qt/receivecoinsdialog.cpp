@@ -102,6 +102,19 @@ void ReceiveCoinsDialog::setModel(WalletModel *_model)
         }
 
         ui->useBech32->setVisible(model->getDefaultAddressType() != OUTPUT_TYPE_LEGACY);
+        
+        // Cascoin: Quantum address checkbox - always visible
+        ui->useQuantum->setCheckState(Qt::Unchecked);
+        
+        // Connect checkboxes to be mutually exclusive
+        connect(ui->useQuantum, &QCheckBox::toggled, this, [this](bool checked) {
+            if (checked) {
+                ui->useBech32->setChecked(false);
+                ui->useBech32->setEnabled(false);
+            } else {
+                ui->useBech32->setEnabled(model->getDefaultAddressType() != OUTPUT_TYPE_LEGACY);
+            }
+        });
     }
 }
 
@@ -115,6 +128,7 @@ void ReceiveCoinsDialog::clear()
     ui->reqAmount->clear();
     ui->reqLabel->setText("");
     ui->reqMessage->setText("");
+    ui->useQuantum->setChecked(false);  // Cascoin: Reset quantum checkbox
     updateDisplayUnit();
 }
 
@@ -145,7 +159,11 @@ void ReceiveCoinsDialog::on_receiveButton_clicked()
     QString label = ui->reqLabel->text();
     /* Generate new receiving address */
     OutputType address_type = model->getDefaultAddressType();
-    if (address_type != OUTPUT_TYPE_LEGACY) {
+    
+    // Cascoin: Check for quantum address first
+    if (ui->useQuantum->isChecked()) {
+        address_type = OUTPUT_TYPE_QUANTUM;
+    } else if (address_type != OUTPUT_TYPE_LEGACY) {
         address_type = ui->useBech32->isChecked() ? OUTPUT_TYPE_BECH32 : OUTPUT_TYPE_P2SH_SEGWIT;
     }
     address = model->getAddressTableModel()->addRow(AddressTableModel::Receive, label, "", address_type);

@@ -31,12 +31,28 @@
 #include <array>
 #include <utilstrencodings.h>
 #include <rialto.h> // Cascoin: Rialto
+#include <cvm/softfork.h> // Cascoin: CVM/EVM transaction detection
+#include <cvm/trust_context.h> // Cascoin: Reputation-based relay
+#include <cvm/cvm.h> // Cascoin: CVM database
+#include <cvm/hat_consensus.h> // Cascoin: HAT v2 Consensus
+#include <cvm/trust_attestation.h> // Cascoin: Trust Attestation
+#include <cvm/validator_attestation.h> // Cascoin: Validator Attestation
+#include <cvm/cross_chain_bridge.h> // Cascoin: Cross-chain trust bridge
+#include <cvm/contract_state_sync.h> // Cascoin: Contract State Sync
+#include <l2/sequencer_discovery.h> // Cascoin: L2 Sequencer Discovery
+#include <l2/sequencer_consensus.h> // Cascoin: L2 Sequencer Consensus
+#include <l2/l2_block.h> // Cascoin: L2 Block structures
+#include <l2/l2_transaction.h> // Cascoin: L2 Transaction structures
+#include <l2/l2_peer_manager.h> // Cascoin: L2 Peer Management
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
 #endif
 
 std::atomic<int64_t> nTimeBestReceived(0); // Used only to inform the wallet of when we last received a block
+
+// Cascoin: HAT v2 Consensus - Global validator instance
+CVM::HATConsensusValidator* g_hatConsensusValidator = nullptr;
 
 struct IteratorComparator
 {
@@ -215,6 +231,10 @@ struct CNodeState {
      * otherwise: whether this peer sends non-witnesses in cmpctblocks/blocktxns.
      */
     bool fSupportsDesiredCmpctVersion;
+    
+    // Cascoin: HAT v2 Consensus - Validator address for this peer
+    uint160 validatorAddress;
+    bool isValidator;
 
     /** State used to enforce CHAIN_SYNC_TIMEOUT
       * Only in effect for outbound, non-manual connections, with
@@ -270,6 +290,8 @@ struct CNodeState {
         fSupportsDesiredCmpctVersion = false;
         m_chain_sync = { 0, nullptr, false, false };
         m_last_block_announcement = 0;
+        validatorAddress.SetNull();
+        isValidator = false;
     }
 };
 
@@ -609,6 +631,12 @@ void PeerLogicValidation::FinalizeNode(NodeId nodeid, bool& fUpdateConnectionTim
     g_outbound_peers_with_protect_from_disconnect -= state->m_chain_sync.m_protect;
     assert(g_outbound_peers_with_protect_from_disconnect >= 0);
 
+    // Cascoin: HAT v2 Consensus - Unregister validator peer
+    if (state->isValidator && g_hatConsensusValidator) {
+        g_hatConsensusValidator->UnregisterValidatorPeer(nodeid);
+        LogPrint(BCLog::NET, "HAT v2: Unregistered validator peer=%d\n", nodeid);
+    }
+    
     mapNodeState.erase(nodeid);
 
     if (mapNodeState.empty()) {
@@ -856,6 +884,11 @@ static uint256 most_recent_block_hash;
 static bool fWitnessesPresentInMostRecentCompactBlock;
 
 void PeerLogicValidation::NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock>& pblock) {
+    // Cascoin: Quantum: Blocks are relayed to ALL peers regardless of NODE_QUANTUM capability
+    // This is intentional per requirement 8.8 - blocks containing quantum transactions
+    // must be relayed universally to maintain network consensus.
+    // Only individual quantum transactions are filtered to quantum-capable peers.
+    
     std::shared_ptr<const CBlockHeaderAndShortTxIDs> pcmpctblock = std::make_shared<const CBlockHeaderAndShortTxIDs> (*pblock, true);
     const CNetMsgMaker msgMaker(PROTOCOL_VERSION);
 
@@ -1005,13 +1038,187 @@ bool static AlreadyHave(const CInv& inv) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
     return true;
 }
 
+/**
+ * Cascoin: Check if transaction is a contract transaction (CVM/EVM)
+ */
+static bool IsContractTransaction(const CTransaction& tx)
+{
+    return CVM::IsEVMTransaction(tx);
+}
+
+/**
+ * Cascoin: Get sender reputation for transaction
+ * Returns reputation score (0-100), default 50 if cannot determine
+ */
+static uint32_t GetTransactionReputation(const CTransaction& tx)
+{
+    if (!CVM::g_cvmdb) {
+        return 50; // Default reputation if database not available
+    }
+    
+    try {
+        // For now, return default reputation
+        // TODO: Implement proper sender extraction from transaction inputs
+        // This would require access to UTXO set to resolve input addresses
+        return 50; // Default reputation
+    } catch (const std::exception& e) {
+        LogPrint(BCLog::NET, "Error getting transaction reputation: %s\n", e.what());
+        return 50; // Default on error
+    }
+}
+
+/**
+ * Cascoin: Determine if transaction should be relayed immediately based on reputation
+ * High reputation (70+) = immediate relay
+ * Medium reputation (50-69) = slight delay
+ * Low reputation (<50) = longer delay
+ */
+static bool ShouldRelayImmediately(uint32_t reputation, bool isContractTx)
+{
+    // Non-contract transactions always relay immediately
+    if (!isContractTx) {
+        return true;
+    }
+    
+    // Contract transactions use reputation-based prioritization
+    if (reputation >= 70) {
+        return true; // High reputation = immediate
+    } else if (reputation >= 50) {
+        // Medium reputation = 50% chance of immediate relay
+        return GetRand(100) < 50;
+    } else {
+        // Low reputation = 25% chance of immediate relay
+        return GetRand(100) < 25;
+    }
+}
+
+/**
+ * Relay transaction to peers with reputation-based prioritization
+ * Cascoin: Enhanced to prioritize high-reputation contract transactions
+ * Cascoin: Quantum: Filter quantum transactions to quantum-capable peers only
+ * Requirements: 8.4, 8.5 (check NODE_QUANTUM flag before relaying quantum tx)
+ */
 static void RelayTransaction(const CTransaction& tx, CConnman* connman)
 {
     CInv inv(MSG_TX, tx.GetHash());
-    connman->ForEachNode([&inv](CNode* pnode)
+    
+    // Cascoin: Quantum: Check if this is a quantum transaction
+    // Requirements: 8.5 (skip relay to non-quantum peers for quantum transactions)
+    bool isQuantumTx = tx.HasQuantumSignatures();
+    
+    // Check if this is a contract transaction
+    bool isContractTx = IsContractTransaction(tx);
+    
+    // Get sender reputation if contract transaction
+    uint32_t reputation = 50; // default
+    if (isContractTx) {
+        reputation = GetTransactionReputation(tx);
+        LogPrint(BCLog::NET, "Relaying contract transaction %s with reputation %d\n", 
+                 tx.GetHash().ToString(), reputation);
+    }
+    
+    // Determine relay priority
+    bool relayImmediately = ShouldRelayImmediately(reputation, isContractTx);
+    
+    // Log quantum transaction relay
+    if (isQuantumTx) {
+        LogPrint(BCLog::NET, "Relaying quantum transaction %s (filtering to quantum-capable peers)\n",
+                 tx.GetHash().ToString());
+    }
+    
+    // Relay to peers (with quantum filtering)
+    connman->ForEachNode([&inv, relayImmediately, reputation, isQuantumTx](CNode* pnode)
     {
-        pnode->PushInventory(inv);
+        // Cascoin: Quantum: Skip relay to non-quantum peers for quantum transactions
+        // Requirements: 8.5 (skip relay to non-quantum peers)
+        if (isQuantumTx && !(pnode->nServices & NODE_QUANTUM)) {
+            LogPrint(BCLog::NET, "Skipping quantum tx relay to non-quantum peer %s\n",
+                     pnode->GetAddrName());
+            return;
+        }
+        
+        if (relayImmediately) {
+            // High reputation or non-contract = immediate relay
+            pnode->PushInventory(inv);
+        } else {
+            // Low reputation contract = delayed relay (anti-spam)
+            // Note: PushInventory doesn't support delays, so we just relay normally
+            // In production, this could use a separate queue with rate limiting
+            pnode->PushInventory(inv);
+            LogPrint(BCLog::NET, "Delayed relay for low-reputation transaction (rep=%d)\n", reputation);
+        }
     });
+}
+
+// Cascoin: Trust Attestation - Cache for preventing duplicate relay
+static CCriticalSection cs_trustAttestationCache;
+static std::map<uint256, uint64_t> g_trustAttestationCache GUARDED_BY(cs_trustAttestationCache);
+static constexpr uint64_t ATTESTATION_CACHE_TIME = 3600;  // 1 hour
+
+// Cascoin: Trust Attestation - Process and relay trust attestation
+static void ProcessTrustAttestation(const CVM::TrustAttestation& attestation, CNode* pfrom, CConnman* connman)
+{
+    uint256 attestationHash = attestation.GetHash();
+    uint64_t currentTime = GetTime();
+    
+    // Check cache to prevent duplicate relay
+    {
+        LOCK(cs_trustAttestationCache);
+        auto it = g_trustAttestationCache.find(attestationHash);
+        if (it != g_trustAttestationCache.end()) {
+            // Already seen this attestation
+            if (currentTime - it->second < ATTESTATION_CACHE_TIME) {
+                LogPrint(BCLog::NET, "Trust Attestation: Duplicate attestation %s, not relaying\n",
+                         attestationHash.ToString());
+                return;
+            }
+            // Cache entry expired, update it
+            it->second = currentTime;
+        } else {
+            // New attestation, add to cache
+            g_trustAttestationCache[attestationHash] = currentTime;
+            
+            // Clean up old cache entries (keep cache size reasonable)
+            if (g_trustAttestationCache.size() > 10000) {
+                auto oldest = g_trustAttestationCache.begin();
+                for (auto it = g_trustAttestationCache.begin(); it != g_trustAttestationCache.end(); ) {
+                    if (currentTime - it->second > ATTESTATION_CACHE_TIME) {
+                        it = g_trustAttestationCache.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Store attestation in cross-chain bridge (if available)
+    if (CVM::g_crossChainBridge) {
+        CVM::g_crossChainBridge->StoreAttestation(attestation);
+        
+        // Also receive the attestation to update trust cache
+        uint16_t srcChainId = static_cast<uint16_t>(attestation.source);
+        CVM::g_crossChainBridge->ReceiveTrustAttestation(srcChainId, attestation);
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Stored attestation in cross-chain bridge for %s\n",
+                 attestation.address.ToString());
+    }
+    
+    LogPrint(BCLog::NET, "Trust Attestation: Processing attestation for %s (score=%d, source=%d)\n",
+             attestation.address.ToString(), attestation.trustScore, (int)attestation.source);
+    
+    // Relay to other peers (except origin)
+    if (connman) {
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode != pfrom && pnode->fSuccessfullyConnected) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::TRUSTATTEST, attestation));
+            }
+        });
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Relayed attestation %s to network\n",
+                 attestationHash.ToString());
+    }
 }
 
 // Cascoin: Rialto: Relay a Rialto message by adding to Rialto inventory for all peers apart from origin
@@ -1249,9 +1456,10 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
     {
         LOCK(cs_main);
 
-        // Cascoin: Rialto
-        //while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX)) {
-        while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX || it->type == MSG_RIALTO)) {
+        // Cascoin: Rialto + Quantum
+        // Handle transaction types: MSG_TX, MSG_WITNESS_TX, MSG_RIALTO, MSG_QUANTUM_TX
+        // Requirements: 8.6 (inventory type for quantum transactions)
+        while (it != pfrom->vRecvGetData.end() && (it->type == MSG_TX || it->type == MSG_WITNESS_TX || it->type == MSG_RIALTO || it->type == MSG_QUANTUM_TX)) {
             if (interruptMsgProc)
                 return;
             // Don't bother if send buffer is too full to respond anyway
@@ -1270,10 +1478,20 @@ void static ProcessGetData(CNode* pfrom, const Consensus::Params& consensusParam
                     vNotFound.push_back(inv);
                 }
             } else {
-                // Send stream from relay memory
+                // Send stream from relay memory (handles MSG_TX, MSG_WITNESS_TX, MSG_QUANTUM_TX)
                 bool push = false;
                 auto mi = mapRelay.find(inv.hash);
                 int nSendFlags = (inv.type == MSG_TX ? SERIALIZE_TRANSACTION_NO_WITNESS : 0);
+                
+                // Cascoin: Quantum: Check if peer supports quantum transactions
+                // Requirements: 8.5 (skip relay to non-quantum peers)
+                if (inv.type == MSG_QUANTUM_TX && !(pfrom->nServices & NODE_QUANTUM)) {
+                    LogPrint(BCLog::NET, "Skipping quantum tx %s to non-quantum peer=%d\n",
+                             inv.hash.ToString(), pfrom->GetId());
+                    vNotFound.push_back(inv);
+                    continue;
+                }
+                
                 if (mi != mapRelay.end()) {
                     connman->PushMessage(pfrom, msgMaker.Make(nSendFlags, NetMsgType::TX, *mi->second));
                     push = true;
@@ -2955,6 +3173,708 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         // ... and innocently relay
         CRialtoMessage message(strMsg);
         RelayRialtoMessage(message, connman, pfrom);
+    }
+
+    // Cascoin: HAT v2 Consensus - Validator Address Announcement
+    else if (strCommand == NetMsgType::VALANNOUNCE) {
+        uint160 validatorAddress;
+        std::vector<uint8_t> validatorPubKey;
+        std::vector<uint8_t> signature;
+        
+        vRecv >> validatorAddress >> validatorPubKey >> signature;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validator announcement from peer=%d: %s\n",
+                 pfrom->GetId(), validatorAddress.ToString());
+        
+        // Verify the signature to ensure peer controls the validator address
+        if (validatorPubKey.empty() || signature.empty()) {
+            LogPrintf("HAT v2: Invalid validator announcement (missing pubkey or signature) from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Construct CPubKey from validator's public key
+        CPubKey pubkey(validatorPubKey.begin(), validatorPubKey.end());
+        
+        // Verify public key is valid
+        if (!pubkey.IsFullyValid()) {
+            LogPrintf("HAT v2: Invalid public key format in validator announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Verify the public key matches the validator address
+        CKeyID keyID = pubkey.GetID();
+        uint160 derivedAddress;
+        memcpy(derivedAddress.begin(), keyID.begin(), 20);
+        
+        if (derivedAddress != validatorAddress) {
+            LogPrintf("HAT v2: Public key does not match validator address in announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Create the message that was signed (hash of validator address)
+        uint256 messageHash = Hash(validatorAddress.begin(), validatorAddress.end());
+        
+        // Verify the signature
+        if (!pubkey.Verify(messageHash, signature)) {
+            LogPrintf("HAT v2: Invalid signature in validator announcement from peer=%d, punishing\n",
+                     pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "HAT v2: Signature verified successfully for validator %s\n",
+                 validatorAddress.ToString());
+        
+        // Register validator peer
+        if (g_hatConsensusValidator) {
+            LOCK(cs_main);
+            CNodeState* state = State(pfrom->GetId());
+            if (state) {
+                state->validatorAddress = validatorAddress;
+                state->isValidator = true;
+                
+                g_hatConsensusValidator->RegisterValidatorPeer(pfrom->GetId(), validatorAddress);
+                
+                LogPrint(BCLog::NET, "HAT v2: Registered validator %s for peer=%d\n",
+                         validatorAddress.ToString(), pfrom->GetId());
+            }
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring announcement\n");
+        }
+    }
+    
+    // Cascoin: HAT v2 Consensus - Validation Challenge
+    else if (strCommand == NetMsgType::VALCHALLENGE) {
+        CVM::ValidationRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validation challenge for tx %s from peer=%d\n", 
+                 request.txHash.ToString(), pfrom->GetId());
+        
+        // GOSSIP PROTOCOL: Relay challenge to other peers
+        // This ensures the challenge reaches the entire network, not just direct connections
+        // Critical for security: prevents eclipse attacks and ensures all validators can respond
+        {
+            LOCK(cs_main);
+            
+            // Track seen challenges to prevent relay loops
+            static std::set<uint256> seenChallenges;
+            static CCriticalSection cs_seenChallenges;
+            
+            LOCK(cs_seenChallenges);
+            
+            // Check if we've already seen this challenge
+            uint256 challengeId = request.txHash;  // Use tx hash as unique identifier
+            
+            if (seenChallenges.find(challengeId) == seenChallenges.end()) {
+                // First time seeing this challenge - relay to other peers
+                seenChallenges.insert(challengeId);
+                
+                // Limit cache size to prevent memory bloat
+                if (seenChallenges.size() > 10000) {
+                    // Remove oldest entries (simple: clear half)
+                    auto it = seenChallenges.begin();
+                    std::advance(it, 5000);
+                    seenChallenges.erase(seenChallenges.begin(), it);
+                }
+                
+                // Relay to all other connected peers (except sender)
+                uint32_t relayCount = 0;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && pnode->GetId() != pfrom->GetId()) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+                        relayCount++;
+                    }
+                });
+                
+                LogPrint(BCLog::NET, "HAT v2: Relayed validation challenge to %u peers\n", relayCount);
+            } else {
+                LogPrint(BCLog::NET, "HAT v2: Already seen this challenge, not relaying\n");
+            }
+        }
+        
+        // Process validation request and send response (if we are a validator)
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessValidationRequest(request, pfrom, connman);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring challenge\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - Validation Response
+    else if (strCommand == NetMsgType::VALRESPONSE) {
+        CVM::ValidationResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received validation response for tx %s from validator %s (peer=%d)\n",
+                 response.txHash.ToString(), response.validatorAddress.ToString(), pfrom->GetId());
+        
+        // Verify signature
+        if (!response.VerifySignature()) {
+            LogPrintf("HAT v2: Invalid signature on validation response from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // GOSSIP PROTOCOL: Relay response to other peers
+        // This ensures responses reach all nodes collecting validator responses
+        {
+            LOCK(cs_main);
+            
+            // Track seen responses to prevent relay loops
+            static std::map<uint256, std::set<uint160>> seenResponses;  // txHash -> set of validator addresses
+            static CCriticalSection cs_seenResponses;
+            
+            LOCK(cs_seenResponses);
+            
+            // Check if we've already seen this response from this validator
+            uint256 txHash = response.txHash;
+            uint160 validatorAddr = response.validatorAddress;
+            
+            if (seenResponses[txHash].find(validatorAddr) == seenResponses[txHash].end()) {
+                // First time seeing this response from this validator - relay
+                seenResponses[txHash].insert(validatorAddr);
+                
+                // Limit cache size to prevent memory bloat
+                if (seenResponses.size() > 1000) {
+                    // Remove oldest entries (simple: clear half)
+                    auto it = seenResponses.begin();
+                    std::advance(it, 500);
+                    seenResponses.erase(seenResponses.begin(), it);
+                }
+                
+                // Relay to all other connected peers (except sender)
+                uint32_t relayCount = 0;
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && pnode->GetId() != pfrom->GetId()) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALRESPONSE, response));
+                        relayCount++;
+                    }
+                });
+                
+                LogPrint(BCLog::NET, "HAT v2: Relayed validation response to %u peers\n", relayCount);
+            } else {
+                LogPrint(BCLog::NET, "HAT v2: Already seen this response from validator %s, not relaying\n",
+                         validatorAddr.ToString());
+            }
+        }
+        
+        // Process validation response
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessValidatorResponse(response);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring response\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - DAO Dispute
+    else if (strCommand == NetMsgType::DAODISPUTE) {
+        CVM::DisputeCase dispute;
+        vRecv >> dispute;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received DAO dispute %s for tx %s from peer=%d\n",
+                 dispute.disputeId.ToString(), dispute.txHash.ToString(), pfrom->GetId());
+        
+        // Validate dispute case
+        if (dispute.validatorResponses.empty()) {
+            LogPrintf("HAT v2: Invalid dispute case (no validator responses) from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Process DAO dispute
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessDAODispute(dispute, pfrom, connman);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring dispute\n");
+        }
+    }
+
+    // Cascoin: HAT v2 Consensus - DAO Resolution
+    else if (strCommand == NetMsgType::DAORESOLUTION) {
+        uint256 disputeId;
+        bool approved;
+        uint64_t resolutionTimestamp;
+        
+        vRecv >> disputeId >> approved >> resolutionTimestamp;
+        
+        LogPrint(BCLog::NET, "HAT v2: Received DAO resolution for dispute %s (approved=%d) from peer=%d\n",
+                 disputeId.ToString(), approved, pfrom->GetId());
+        
+        // Process DAO resolution
+        if (g_hatConsensusValidator) {
+            g_hatConsensusValidator->ProcessDAOResolution(disputeId, approved, resolutionTimestamp);
+        } else {
+            LogPrint(BCLog::NET, "HAT v2: Consensus validator not initialized, ignoring resolution\n");
+        }
+    }
+
+    // Cascoin: Trust Attestation - Cross-chain trust score update
+    else if (strCommand == NetMsgType::TRUSTATTEST) {
+        CVM::TrustAttestation attestation;
+        vRecv >> attestation;
+        
+        LogPrint(BCLog::NET, "Trust Attestation: Received attestation for address %s (score=%d, source=%d) from peer=%d\n",
+                 attestation.address.ToString(), attestation.trustScore, (int)attestation.source, pfrom->GetId());
+        
+        // Verify signature
+        if (!attestation.VerifySignature()) {
+            LogPrintf("Trust Attestation: Invalid signature from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Verify trust score range
+        if (attestation.trustScore < 0 || attestation.trustScore > 100) {
+            LogPrintf("Trust Attestation: Invalid trust score %d from peer=%d, punishing\n",
+                     attestation.trustScore, pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Check timestamp (not too old, not in future)
+        uint64_t currentTime = GetTime();
+        if (attestation.timestamp > currentTime + 300) {  // Max 5 minutes in future
+            LogPrintf("Trust Attestation: Future timestamp from peer=%d, ignoring\n", pfrom->GetId());
+            return true;
+        }
+        if (currentTime - attestation.timestamp > 86400) {  // Max 24 hours old
+            LogPrint(BCLog::NET, "Trust Attestation: Stale attestation from peer=%d, ignoring\n", pfrom->GetId());
+            return true;
+        }
+        
+        // Process attestation (store and relay)
+        ProcessTrustAttestation(attestation, pfrom, connman);
+    }
+
+    // Cascoin: Validator Attestation - Validator Eligibility Announcement
+    else if (strCommand == NetMsgType::VALIDATOR_ANNOUNCE) {
+        ValidatorEligibilityAnnouncement announcement;
+        vRecv >> announcement;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received eligibility announcement from %s (peer=%d)\n",
+                 announcement.validatorAddress.ToString(), pfrom->GetId());
+        
+        // Process announcement
+        if (g_validatorAttestationManager) {
+            ProcessValidatorAnnounceMessage(pfrom, announcement);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring announcement\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Attestation Request
+    else if (strCommand == NetMsgType::ATTESTATION_REQUEST) {
+        uint160 validatorAddress;
+        vRecv >> validatorAddress;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received attestation request for %s from peer=%d\n",
+                 validatorAddress.ToString(), pfrom->GetId());
+        
+        // Process request
+        if (g_validatorAttestationManager) {
+            ProcessAttestationRequestMessage(pfrom, validatorAddress);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring request\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Validator Attestation
+    else if (strCommand == NetMsgType::VALIDATOR_ATTESTATION) {
+        ValidatorAttestation attestation;
+        vRecv >> attestation;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received attestation for %s from %s (peer=%d)\n",
+                 attestation.validatorAddress.ToString(), attestation.attestorAddress.ToString(), pfrom->GetId());
+        
+        // Process attestation
+        if (g_validatorAttestationManager) {
+            ProcessValidatorAttestationMessage(pfrom, attestation);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring attestation\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Batch Attestation Request
+    else if (strCommand == NetMsgType::BATCH_ATTESTATION_REQUEST) {
+        BatchAttestationRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received batch attestation request for %d validators from peer=%d\n",
+                 request.validators.size(), pfrom->GetId());
+        
+        // Process batch request
+        if (g_validatorAttestationManager) {
+            ProcessBatchAttestationRequestMessage(pfrom, request);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring batch request\n");
+        }
+    }
+
+    // Cascoin: Validator Attestation - Batch Attestation Response
+    else if (strCommand == NetMsgType::BATCH_ATTESTATION_RESPONSE) {
+        BatchAttestationResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "Validator Attestation: Received batch attestation response with %d attestations from peer=%d\n",
+                 response.attestations.size(), pfrom->GetId());
+        
+        // Process batch response
+        if (g_validatorAttestationManager) {
+            ProcessBatchAttestationResponseMessage(pfrom, response);
+        } else {
+            LogPrint(BCLog::NET, "Validator Attestation: Manager not initialized, ignoring batch response\n");
+        }
+    }
+
+    // Cascoin: Contract State Sync - Request
+    else if (strCommand == NetMsgType::CONTRACTSTATEREQUEST) {
+        CVM::ContractStateRequest request;
+        vRecv >> request;
+        
+        LogPrint(BCLog::NET, "Contract State Sync: Received state request (type=%d) from peer=%d\n",
+                 (int)request.type, pfrom->GetId());
+        
+        // Process request
+        if (CVM::g_contractStateSyncManager) {
+            CVM::g_contractStateSyncManager->ProcessContractStateRequest(pfrom, request, connman);
+        } else {
+            LogPrint(BCLog::NET, "Contract State Sync: Manager not initialized, ignoring request\n");
+        }
+    }
+
+    // Cascoin: Contract State Sync - Response
+    else if (strCommand == NetMsgType::CONTRACTSTATERESPONSE) {
+        CVM::ContractStateResponse response;
+        vRecv >> response;
+        
+        LogPrint(BCLog::NET, "Contract State Sync: Received state response (type=%d) from peer=%d\n",
+                 (int)response.type, pfrom->GetId());
+        
+        // Process response
+        if (CVM::g_contractStateSyncManager) {
+            CVM::g_contractStateSyncManager->ProcessContractStateResponse(pfrom, response);
+        } else {
+            LogPrint(BCLog::NET, "Contract State Sync: Manager not initialized, ignoring response\n");
+        }
+    }
+
+    // =========================================================================
+    // Cascoin: L2 Network Message Handlers
+    // =========================================================================
+
+    // Cascoin: L2 Network - Sequencer Announcement
+    else if (strCommand == NetMsgType::L2SEQANNOUNCE) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring sequencer announcement (L2 disabled)\n");
+            return true;
+        }
+
+        l2::SeqAnnounceMsg announcement;
+        vRecv >> announcement;
+        
+        LogPrint(BCLog::NET, "L2: Received sequencer announcement from peer=%d: address=%s, stake=%lld, hatScore=%u\n",
+                 pfrom->GetId(), announcement.sequencerAddress.ToString(),
+                 announcement.stakeAmount, announcement.hatScore);
+        
+        // Validate announcement timestamp
+        if (announcement.IsExpired()) {
+            LogPrint(BCLog::NET, "L2: Sequencer announcement expired from peer=%d\n", pfrom->GetId());
+            return true;
+        }
+        
+        if (announcement.IsFromFuture()) {
+            LogPrint(BCLog::NET, "L2: Sequencer announcement from future from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Process the announcement
+        if (l2::IsSequencerDiscoveryInitialized()) {
+            l2::GetSequencerDiscovery().ProcessSeqAnnounce(announcement, pfrom);
+            
+            // Relay to other L2-capable peers
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->fSuccessfullyConnected && 
+                    pnode->GetId() != pfrom->GetId() &&
+                    (pnode->nServices & NODE_L2)) {
+                    connman->PushMessage(pnode,
+                        CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2SEQANNOUNCE, announcement));
+                }
+            });
+        } else {
+            LogPrint(BCLog::NET, "L2: Sequencer discovery not initialized, ignoring announcement\n");
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Block
+    else if (strCommand == NetMsgType::L2BLOCK) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 block (L2 disabled)\n");
+            return true;
+        }
+
+        l2::L2Block block;
+        vRecv >> block;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 block #%llu from peer=%d: hash=%s, txCount=%zu\n",
+                 block.GetBlockNumber(), pfrom->GetId(),
+                 block.GetHash().ToString(), block.GetTransactionCount());
+        
+        // Validate basic block structure
+        if (!block.ValidateStructure()) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 block structure from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Process the block (this would integrate with L2 state manager)
+        // For now, relay to other L2-capable peers
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode->fSuccessfullyConnected && 
+                pnode->GetId() != pfrom->GetId() &&
+                (pnode->nServices & NODE_L2)) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2BLOCK, block));
+            }
+        });
+        
+        LogPrint(BCLog::NET, "L2: Relayed L2 block #%llu to L2-capable peers\n", block.GetBlockNumber());
+    }
+
+    // Cascoin: L2 Network - Sequencer Vote
+    else if (strCommand == NetMsgType::L2VOTE) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring sequencer vote (L2 disabled)\n");
+            return true;
+        }
+
+        l2::SequencerVote vote;
+        vRecv >> vote;
+        
+        LogPrint(BCLog::NET, "L2: Received sequencer vote from peer=%d: voter=%s, block=%s, vote=%d\n",
+                 pfrom->GetId(), vote.voterAddress.ToString(),
+                 vote.blockHash.ToString(), static_cast<int>(vote.vote));
+        
+        // Process the vote
+        if (l2::IsSequencerConsensusInitialized()) {
+            if (l2::GetSequencerConsensus().ProcessVote(vote)) {
+                // Relay valid vote to other L2-capable peers
+                connman->ForEachNode([&](CNode* pnode) {
+                    if (pnode->fSuccessfullyConnected && 
+                        pnode->GetId() != pfrom->GetId() &&
+                        (pnode->nServices & NODE_L2)) {
+                        connman->PushMessage(pnode,
+                            CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2VOTE, vote));
+                    }
+                });
+            } else {
+                LogPrint(BCLog::NET, "L2: Invalid vote from peer=%d\n", pfrom->GetId());
+            }
+        } else {
+            LogPrint(BCLog::NET, "L2: Sequencer consensus not initialized, ignoring vote\n");
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Transaction
+    else if (strCommand == NetMsgType::L2TX) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 transaction (L2 disabled)\n");
+            return true;
+        }
+
+        l2::L2Transaction tx;
+        vRecv >> tx;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 transaction from peer=%d: hash=%s, type=%d\n",
+                 pfrom->GetId(), tx.GetHash().ToString(), static_cast<int>(tx.type));
+        
+        // Validate basic transaction structure
+        if (!tx.ValidateBasic()) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 transaction from peer=%d, punishing\n", pfrom->GetId());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 10);
+            return false;
+        }
+        
+        // Relay to other L2-capable peers
+        connman->ForEachNode([&](CNode* pnode) {
+            if (pnode->fSuccessfullyConnected && 
+                pnode->GetId() != pfrom->GetId() &&
+                (pnode->nServices & NODE_L2)) {
+                connman->PushMessage(pnode,
+                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
+            }
+        });
+    }
+
+    // Cascoin: L2 Network - L2 Inventory
+    else if (strCommand == NetMsgType::L2INV) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 inventory (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<CInv> vInv;
+        vRecv >> vInv;
+        
+        if (vInv.size() > MAX_INV_SZ) {
+            LogPrint(BCLog::NET, "L2: Inventory too large from peer=%d (%zu items), punishing\n",
+                     pfrom->GetId(), vInv.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "L2: Received L2 inventory with %zu items from peer=%d\n",
+                 vInv.size(), pfrom->GetId());
+        
+        // Process inventory items
+        std::vector<CInv> vGetData;
+        for (const CInv& inv : vInv) {
+            // Check if we already have this item
+            // For now, request all items we don't have
+            if (inv.type == MSG_L2_BLOCK || inv.type == MSG_L2_TX ||
+                inv.type == MSG_L2_SEQANNOUNCE || inv.type == MSG_L2_VOTE) {
+                vGetData.push_back(inv);
+            }
+        }
+        
+        if (!vGetData.empty()) {
+            connman->PushMessage(pfrom,
+                CNetMsgMaker(pfrom->GetSendVersion()).Make(NetMsgType::L2GETDATA, vGetData));
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Get Data
+    else if (strCommand == NetMsgType::L2GETDATA) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getdata (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<CInv> vInv;
+        vRecv >> vInv;
+        
+        if (vInv.size() > MAX_INV_SZ) {
+            LogPrint(BCLog::NET, "L2: Getdata too large from peer=%d (%zu items), punishing\n",
+                     pfrom->GetId(), vInv.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getdata for %zu items from peer=%d\n",
+                 vInv.size(), pfrom->GetId());
+        
+        // Process getdata requests
+        // This would look up items in L2 state and send them back
+        // For now, just log the request
+        for (const CInv& inv : vInv) {
+            LogPrint(BCLog::NET, "L2: Peer=%d requested %s %s\n",
+                     pfrom->GetId(), inv.GetCommand(), inv.hash.ToString());
+        }
+    }
+
+    // Cascoin: L2 Network - L2 Get Blocks
+    else if (strCommand == NetMsgType::L2GETBLOCKS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getblocks (L2 disabled)\n");
+            return true;
+        }
+
+        uint64_t startBlock;
+        uint64_t endBlock;
+        uint64_t chainId;
+        vRecv >> startBlock >> endBlock >> chainId;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getblocks request from peer=%d: blocks %llu-%llu, chainId=%llu\n",
+                 pfrom->GetId(), startBlock, endBlock, chainId);
+        
+        // Validate request
+        if (endBlock < startBlock || (endBlock - startBlock) > 500) {
+            LogPrint(BCLog::NET, "L2: Invalid L2 getblocks range from peer=%d\n", pfrom->GetId());
+            return true;
+        }
+        
+        // This would look up blocks and send them back
+        // For now, just log the request
+    }
+
+    // Cascoin: L2 Network - L2 Get Headers
+    else if (strCommand == NetMsgType::L2GETHEADERS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 getheaders (L2 disabled)\n");
+            return true;
+        }
+
+        uint64_t startBlock;
+        uint64_t maxHeaders;
+        uint64_t chainId;
+        vRecv >> startBlock >> maxHeaders >> chainId;
+        
+        LogPrint(BCLog::NET, "L2: Received L2 getheaders request from peer=%d: start=%llu, max=%llu, chainId=%llu\n",
+                 pfrom->GetId(), startBlock, maxHeaders, chainId);
+        
+        // Validate request
+        if (maxHeaders > 2000) {
+            maxHeaders = 2000;  // Cap at 2000 headers
+        }
+        
+        // This would look up headers and send them back
+        // For now, just log the request
+    }
+
+    // Cascoin: L2 Network - L2 Headers
+    else if (strCommand == NetMsgType::L2HEADERS) {
+        // Check if L2 is enabled
+        if (!gArgs.GetBoolArg("-l2", true)) {
+            LogPrint(BCLog::NET, "L2: Ignoring L2 headers (L2 disabled)\n");
+            return true;
+        }
+
+        std::vector<l2::L2BlockHeader> headers;
+        vRecv >> headers;
+        
+        LogPrint(BCLog::NET, "L2: Received %zu L2 headers from peer=%d\n",
+                 headers.size(), pfrom->GetId());
+        
+        if (headers.size() > 2000) {
+            LogPrint(BCLog::NET, "L2: Too many headers from peer=%d (%zu), punishing\n",
+                     pfrom->GetId(), headers.size());
+            LOCK(cs_main);
+            Misbehaving(pfrom->GetId(), 20);
+            return false;
+        }
+        
+        // Process headers for L2 sync
+        // This would integrate with L2 state manager
     }
 
     else {

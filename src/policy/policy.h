@@ -39,6 +39,16 @@ static const unsigned int MAX_STANDARD_P2WSH_STACK_ITEMS = 100;
 static const unsigned int MAX_STANDARD_P2WSH_STACK_ITEM_SIZE = 80;
 /** The maximum size of a standard witnessScript */
 static const unsigned int MAX_STANDARD_P2WSH_SCRIPT_SIZE = 3600;
+
+/** Cascoin: Quantum signature size limits (Requirements 9.6, 9.7) */
+/** The maximum size of a quantum (FALCON-512) signature in bytes */
+static const unsigned int MAX_QUANTUM_SIGNATURE_SIZE = 1024;
+/** The maximum size of each witness stack item in a quantum witness program */
+static const unsigned int MAX_STANDARD_QUANTUM_STACK_ITEM_SIZE = 1024;
+/** The typical size of a FALCON-512 signature for fee estimation */
+static const unsigned int TYPICAL_QUANTUM_SIGNATURE_SIZE = 666;
+/** The size of a FALCON-512 public key */
+static const unsigned int QUANTUM_PUBLIC_KEY_SIZE = 897;
 /** Min feerate for defining dust. Historically this has been based on the
  * minRelayTxFee, however changing the dust limit changes which transactions are
  * standard and should be done with care and ideally rarely. It makes sense to
@@ -104,5 +114,14 @@ extern unsigned int nBytesPerSigOp;
 /** Compute the virtual transaction size (weight reinterpreted as bytes). */
 int64_t GetVirtualTransactionSize(int64_t nWeight, int64_t nSigOpCost);
 int64_t GetVirtualTransactionSize(const CTransaction& tx, int64_t nSigOpCost = 0);
+
+/** Cascoin: Check if a transaction contains quantum signatures (Requirements 9.6) */
+bool HasQuantumSignatures(const CTransaction& tx);
+
+/** Cascoin: Get the quantum signature overhead for fee estimation (Requirements 9.6) */
+int64_t GetQuantumSignatureOverhead(const CTransaction& tx);
+
+/** Cascoin: Check if witness standard for quantum transactions (Requirements 9.7) */
+bool IsQuantumWitnessStandard(const CTransaction& tx, const CCoinsViewCache& mapInputs);
 
 #endif // BITCOIN_POLICY_POLICY_H

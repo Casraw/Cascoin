@@ -14,11 +14,19 @@
 #include <qt/transactionfilterproxy.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
-#include <qt/hivetablemodel.h>  // Cascoin: Hive
-#include <qt/hivedialog.h>      // Cascoin: Hive: For formatLargeNoLocale()
+#include <qt/hivetablemodel.h>  // Cascoin: Labyrinth
+#include <qt/hivedialog.h>      // Cascoin: Labyrinth: For formatLargeNoLocale()
+#include <bctdb.h>              // Cascoin: Labyrinth: For BCTDatabaseSQLite summary
+
+#include <util.h>             // Cascoin: CVM: For gArgs
+#include <chainparamsbase.h>  // Cascoin: CVM: For BaseParams()
 
 #include <QAbstractItemDelegate>
 #include <QPainter>
+#include <QMessageBox>        // Cascoin: CVM: For dialogs
+#include <QPushButton>        // Cascoin: CVM: For custom buttons
+#include <QClipboard>         // Cascoin: CVM: For copying URL
+#include <QApplication>       // Cascoin: CVM: For clipboard access
 
 #define DECORATION_SIZE 54
 #define NUM_ITEMS 5
@@ -144,7 +152,7 @@ OverviewPage::OverviewPage(const PlatformStyle *platformStyle, QWidget *parent) 
     connect(ui->labelWalletStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
     connect(ui->labelTransactionsStatus, SIGNAL(clicked()), this, SLOT(handleOutOfSyncWarningClicks()));
 
-    // Cascoin: Hive
+    // Cascoin: Labyrinth
     cost = rewardsPaid = profit = 0;
 }
 
@@ -258,7 +266,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
         updateWatchOnlyLabels(model->haveWatchOnly());
         connect(model, SIGNAL(notifyWatchonlyChanged(bool)), this, SLOT(updateWatchOnlyLabels(bool)));
 
-        // Cascoin: Hive: Connect summary updater
+        // Cascoin: Labyrinth: Connect summary updater
         connect(model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
 
         // Cascoin: Rialto: Connect wallet unlock button
@@ -271,11 +279,25 @@ void OverviewPage::setWalletModel(WalletModel *model)
     updateDisplayUnit();
 }
 
-// Cascoin: Hive: Update The Labyrinth summary
+// Cascoin: Labyrinth: Update The Labyrinth summary
 void OverviewPage::updateHiveSummary() {
     if (walletModel && walletModel->getHiveTableModel()) {
         int immature, mature, dead, blocksFound;
         walletModel->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+
+        // Use database summary for totals that include expired BCTs
+        // The table model may filter out expired BCTs, missing their rewards/blocks
+        BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+        if (bctDb && bctDb->isInitialized()) {
+            BCTSummary dbSummary = bctDb->getSummary();
+            blocksFound = dbSummary.blocksFound;
+            rewardsPaid = dbSummary.totalRewards;
+            cost = dbSummary.totalCost;
+            profit = dbSummary.totalProfit;
+            immature = dbSummary.immatureBees;
+            mature = dbSummary.matureBees;
+            dead = dbSummary.expiredBees;
+        }
 
         ui->rewardsPaidLabel->setText(
             BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rewardsPaid)
@@ -324,7 +346,7 @@ void OverviewPage::updateDisplayUnit()
 
         ui->listTransactions->update();
 
-        // Cascoin: Hive: Update CAmounts in hive summary
+        // Cascoin: Labyrinth: Update CAmounts in labyrinth summary
         ui->rewardsPaidLabel->setText(
             BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rewardsPaid)
             + " "
@@ -355,7 +377,7 @@ void OverviewPage::showOutOfSyncWarning(bool fShow)
     ui->labelTransactionsStatus->setVisible(fShow);
 }
 
-// Cascoin: Hive: Handle bee button click
+// Cascoin: Labyrinth: Handle mice button click
 void OverviewPage::on_beeButton_clicked() {
     Q_EMIT beeButtonClicked();
 }
@@ -364,4 +386,61 @@ void OverviewPage::on_beeButton_clicked() {
 void OverviewPage::on_unlockWalletButton_clicked() {
     if(walletModel)
         walletModel->requestUnlock(true);
+}
+
+// Cascoin: CVM: Handle CVM Dashboard button click
+void OverviewPage::on_cvmDashboardButton_clicked() {
+    // Debug: Log button click
+    LogPrintf("CVM Dashboard button clicked\n");
+    
+    // Check if dashboard is enabled
+    if (!gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard is disabled in config\n");
+        QMessageBox::warning(this, tr("CVM Dashboard"),
+            tr("The CVM Dashboard is currently disabled.\n\n"
+               "To enable it, add the following line to your cascoin.conf:\n"
+               "cvmdashboard=1\n\n"
+               "Then restart the wallet."),
+            QMessageBox::Ok);
+        return;
+    }
+    
+    // Get RPC port from settings
+    int rpcPort = gArgs.GetArg("-rpcport", BaseParams().RPCPort());
+    LogPrintf("Using RPC port: %d\n", rpcPort);
+    
+    // Build dashboard URL
+    QString dashboardUrl = QString("http://localhost:%1/dashboard/").arg(rpcPort);
+    LogPrintf("Dashboard URL: %s\n", dashboardUrl.toStdString());
+    
+    // Show URL in a dialog with copy functionality
+    QMessageBox msgBox(this);
+    msgBox.setWindowTitle(tr("CVM Dashboard"));
+    msgBox.setIcon(QMessageBox::Information);
+    msgBox.setText(tr("CVM Dashboard URL:"));
+    msgBox.setInformativeText(tr("Copy this URL and open it in your browser:\n\n%1").arg(dashboardUrl));
+    msgBox.setDetailedText(tr("The CVM Dashboard provides:\n"
+                             "• Smart contract deployment and management\n"
+                             "• Contract execution and debugging\n"
+                             "• Web-of-Trust reputation system\n"
+                             "• Transaction and block explorer\n"
+                             "• Real-time network statistics"));
+    
+    // Add copy button
+    QPushButton *copyButton = msgBox.addButton(tr("Copy URL"), QMessageBox::ActionRole);
+    msgBox.addButton(QMessageBox::Ok);
+    
+    msgBox.exec();
+    
+    // Handle copy button click
+    if (msgBox.clickedButton() == copyButton) {
+        QClipboard *clipboard = QApplication::clipboard();
+        clipboard->setText(dashboardUrl);
+        LogPrintf("Dashboard URL copied to clipboard\n");
+        
+        // Show confirmation
+        QMessageBox::information(this, tr("CVM Dashboard"), 
+            tr("URL copied to clipboard!\n\nPaste it into your browser address bar."),
+            QMessageBox::Ok);
+    }
 }

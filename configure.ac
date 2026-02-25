@@ -1,8 +1,8 @@
 dnl require autoconf 2.60 (AS_ECHO/AS_ECHO_N)
 AC_PREREQ([2.60])
-define(_CLIENT_VERSION_MAJOR, 3)
+define(_CLIENT_VERSION_MAJOR, 4)
 define(_CLIENT_VERSION_MINOR, 1)
-define(_CLIENT_VERSION_REVISION, 6)
+define(_CLIENT_VERSION_REVISION, 0)
 define(_CLIENT_VERSION_BUILD, 0)
 define(_CLIENT_VERSION_IS_RELEASE, true)
 define(_COPYRIGHT_YEAR, 2025)
@@ -201,6 +201,12 @@ AC_ARG_ENABLE([zmq],
   [disable ZMQ notifications])],
   [use_zmq=$enableval],
   [use_zmq=yes])
+
+AC_ARG_ENABLE([quantum],
+  [AS_HELP_STRING([--disable-quantum],
+  [disable post-quantum cryptography support (enabled by default)])],
+  [use_quantum=$enableval],
+  [use_quantum=yes])
 
 AC_ARG_ENABLE([sse2],
     [AS_HELP_STRING([--enable-sse2],
@@ -958,6 +964,11 @@ if test x$use_pkgconfig = xyes; then
         fi
       fi
 
+      dnl Check for SQLite3 (required for BCT database)
+      if test x$enable_wallet != xno; then
+        PKG_CHECK_MODULES([SQLITE3], [sqlite3 >= 3.7.17],, [AC_MSG_ERROR(sqlite3 >= 3.7.17 not found. Install libsqlite3-dev or use --disable-wallet.)])
+      fi
+
       if test "x$use_zmq" = "xyes"; then
         PKG_CHECK_MODULES([ZMQ],[libzmq >= 4],
           [AC_DEFINE([ENABLE_ZMQ],[1],[Define to 1 to enable ZMQ functions])],
@@ -982,6 +993,12 @@ else
     if test x$TARGET_OS != xwindows; then
       AC_CHECK_LIB([event_pthreads],[main],EVENT_PTHREADS_LIBS=-levent_pthreads,AC_MSG_ERROR(libevent_pthreads missing))
     fi
+  fi
+
+  dnl Check for SQLite3 (required for BCT database)
+  if test x$enable_wallet != xno; then
+    AC_CHECK_HEADER([sqlite3.h],, AC_MSG_ERROR(sqlite3 headers missing. Install libsqlite3-dev or use --disable-wallet.),)
+    AC_CHECK_LIB([sqlite3],[sqlite3_open],SQLITE3_LIBS=-lsqlite3,AC_MSG_ERROR(sqlite3 missing. Install libsqlite3-dev or use --disable-wallet.))
   fi
 
   if test "x$use_zmq" = "xyes"; then
@@ -1013,6 +1030,116 @@ else
     BITCOIN_QT_CHECK([AC_CHECK_HEADER([qrencode.h],, have_qrencode=no)])
   fi
 fi
+
+dnl liboqs (Open Quantum Safe) check for post-quantum cryptography
+if test "x$use_quantum" = "xyes"; then
+  if test x$use_pkgconfig = xyes; then
+    m4_ifdef(
+      [PKG_CHECK_MODULES],
+      [
+        PKG_CHECK_MODULES([LIBOQS], [liboqs >= 0.10.0],
+          [have_liboqs=yes
+           AC_DEFINE([ENABLE_QUANTUM],[1],[Define to 1 to enable post-quantum cryptography])],
+          [have_liboqs=no])
+      ],
+      [have_liboqs=no]
+    )
+  else
+    AC_CHECK_HEADER([oqs/oqs.h], [
+      AC_CHECK_LIB([oqs], [OQS_SIG_new], [
+        LIBOQS_LIBS="-loqs"
+        have_liboqs=yes
+        AC_DEFINE([ENABLE_QUANTUM],[1],[Define to 1 to enable post-quantum cryptography])
+      ], [have_liboqs=no])
+    ], [have_liboqs=no])
+  fi
+
+  if test "x$have_liboqs" = "xyes"; then
+    AC_MSG_NOTICE([liboqs found, enabling post-quantum cryptography support])
+  else
+    if test "x$use_quantum" = "xyes"; then
+      AC_MSG_WARN([liboqs not found, disabling post-quantum cryptography support])
+    fi
+    use_quantum=no
+    AC_DEFINE([ENABLE_QUANTUM],[0],[Define to 1 to enable post-quantum cryptography])
+  fi
+else
+  AC_DEFINE([ENABLE_QUANTUM],[0],[Define to 1 to enable post-quantum cryptography])
+fi
+
+AC_SUBST(LIBOQS_CFLAGS)
+AC_SUBST(LIBOQS_LIBS)
+
+dnl EVMC (Ethereum Virtual Machine C API) check
+AC_ARG_ENABLE([evmc],
+  [AS_HELP_STRING([--disable-evmc],
+  [disable EVMC support for EVM compatibility (enabled by default)])],
+  [use_evmc=$enableval],
+  [use_evmc=yes])
+
+dnl Option to specify additional evmone precompiles libraries (used by depends system)
+AC_ARG_VAR([EVMONE_PRECOMPILES_LIBS], [Additional libraries for evmone precompiles (e.g., -levmone_precompiles -lblst)])
+
+if test "x$use_evmc" = "xyes"; then
+  if test x$use_pkgconfig = xyes; then
+    m4_ifdef(
+      [PKG_CHECK_MODULES],
+      [
+        PKG_CHECK_MODULES([EVMC], [evmc >= 10.0.0], [have_evmc=yes], [have_evmc=no])
+        if test "x$have_evmc" = "xyes"; then
+          PKG_CHECK_MODULES([EVMONE], [evmone >= 0.10.0], [have_evmone=yes], [have_evmone=no])
+        fi
+      ],
+      [have_evmc=no]
+    )
+  else
+    AC_CHECK_HEADER([evmc/evmc.h], [
+      # For cross-compilation, AC_CHECK_LIB doesn't work well
+      # Check if we're cross-compiling and just verify headers exist
+      if test "x$cross_compiling" = "xyes"; then
+        AC_CHECK_HEADER([evmone/evmone.h], [
+          # For Windows cross-compilation, libevmone-standalone contains ethash_keccak256
+          EVMC_LIBS="-levmone -levmone-standalone -levmc-loader -levmc-instructions"
+          EVMONE_LIBS=""
+          have_evmc=yes
+          have_evmone=yes
+        ], [
+          have_evmc=no
+          have_evmone=no
+        ])
+      else
+        AC_CHECK_LIB([evmc-loader], [evmc_load], [
+          EVMC_LIBS="-levmc-loader"
+          have_evmc=yes
+          AC_CHECK_HEADER([evmone/evmone.h], [
+            AC_CHECK_LIB([evmone], [evmc_create_evmone], [
+              EVMONE_LIBS="-levmone -levmc-loader"
+              have_evmone=yes
+            ], [have_evmone=no], [-levmc-loader])
+          ], [have_evmone=no])
+        ], [have_evmc=no])
+      fi
+    ], [have_evmc=no])
+  fi
+
+  if test "x$have_evmc" = "xyes" && test "x$have_evmone" = "xyes"; then
+    AC_DEFINE([ENABLE_EVMC], [1], [Define to 1 to enable EVMC support])
+    EVMC_CFLAGS="$EVMC_CFLAGS $EVMONE_CFLAGS"
+    EVMC_LIBS="$EVMC_LIBS $EVMONE_LIBS"
+  else
+    if test "x$use_evmc" = "xyes"; then
+      AC_MSG_ERROR([EVMC or evmone libraries not found. Install EVMC >= 10.0.0 and evmone >= 0.10.0, or use --disable-evmc])
+    fi
+    use_evmc=no
+    AC_DEFINE([ENABLE_EVMC], [0], [Define to 1 to enable EVMC support])
+  fi
+else
+  AC_DEFINE([ENABLE_EVMC], [0], [Define to 1 to enable EVMC support])
+fi
+
+AC_SUBST(EVMC_CFLAGS)
+AC_SUBST(EVMC_LIBS)
+AC_SUBST(EVMONE_PRECOMPILES_LIBS)
 
 save_CXXFLAGS="${CXXFLAGS}"
 CXXFLAGS="${CXXFLAGS} ${CRYPTO_CFLAGS} ${SSL_CFLAGS}"
@@ -1186,6 +1313,7 @@ if test x$bitcoin_enable_qt != xno; then
 fi
 
 AM_CONDITIONAL([ENABLE_ZMQ], [test "x$use_zmq" = "xyes"])
+AM_CONDITIONAL([ENABLE_QUANTUM], [test "x$use_quantum" = "xyes"])
 
 AC_MSG_CHECKING([whether to build test_cascoin])
 if test x$use_tests = xyes; then
@@ -1225,6 +1353,7 @@ AM_CONDITIONAL([ENABLE_TESTS],[test x$BUILD_TEST = xyes])
 AM_CONDITIONAL([ENABLE_QT],[test x$bitcoin_enable_qt = xyes])
 AM_CONDITIONAL([ENABLE_QT_TESTS],[test x$BUILD_TEST_QT = xyes])
 AM_CONDITIONAL([ENABLE_BENCH],[test x$use_bench = xyes])
+AM_CONDITIONAL([ENABLE_EVMC],[test x$use_evmc = xyes])
 AM_CONDITIONAL([USE_QRCODE], [test x$use_qr = xyes])
 AM_CONDITIONAL([USE_SSE2], [test x$use_sse2 = xyes])
 AM_CONDITIONAL([USE_LCOV],[test x$use_lcov = xyes])
@@ -1279,6 +1408,8 @@ AC_SUBST(SSL_LIBS)
 AC_SUBST(EVENT_LIBS)
 AC_SUBST(EVENT_PTHREADS_LIBS)
 AC_SUBST(ZMQ_LIBS)
+AC_SUBST(SQLITE3_CFLAGS)
+AC_SUBST(SQLITE3_LIBS)
 AC_SUBST(PROTOBUF_LIBS)
 AC_SUBST(QR_LIBS)
 AC_CONFIG_FILES([Makefile src/Makefile doc/man/Makefile share/setup.nsi share/qt/Info.plist test/config.ini])
@@ -1348,6 +1479,8 @@ if test x$bitcoin_enable_qt != xno; then
     echo "    with qr     = $use_qr"
 fi
 echo "  with zmq      = $use_zmq"
+echo "  with quantum  = $use_quantum"
+echo "  with evmc     = $use_evmc"
 echo "  with test     = $use_tests"
 echo "  with bench    = $use_bench"
 echo "  with upnp     = $use_upnp"

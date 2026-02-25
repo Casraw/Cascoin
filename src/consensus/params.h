@@ -25,6 +25,8 @@ enum DeploymentPos
     DEPLOYMENT_HIVE_1_1,    // Cascoin: Hive: 1.1 Deployment
     DEPLOYMENT_MINOTAURX,   // Cascoin: MinotaurX+Hive1.2: Deployment
     DEPLOYMENT_RIALTO,      // Cascoin: Rialto: Deployment
+    DEPLOYMENT_CVM_EVM,     // Cascoin: CVM-EVM: Deployment of enhanced CVM with EVM compatibility and trust-aware features
+    DEPLOYMENT_QUANTUM,     // Cascoin: Quantum: Deployment of FALCON-512 post-quantum cryptography (witness version 2)
 
     // NOTE: Also add new deployments to VersionBitsDeploymentInfo in versionbits.cpp
     MAX_VERSION_BITS_DEPLOYMENTS
@@ -130,6 +132,24 @@ struct Params {
     CAmount nickCreationCostStandard;
     CAmount nickCreationAntiDust;       // Portion of creation cost burnt in 2nd output
     //uint256 firstRialtoBlock;         // First block to consider for Rialto registrations (only required if launching without a UASF)
+
+    // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
+    int cvmActivationHeight;            // Block height at which CVM activates
+    uint64_t cvmMaxGasPerBlock;         // Maximum gas allowed per block
+    uint64_t cvmMaxGasPerTx;            // Maximum gas allowed per transaction
+    uint64_t cvmMaxCodeSize;            // Maximum contract bytecode size
+    
+    // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
+    int asrsActivationHeight;           // Block height at which ASRS activates
+    int64_t asrsMinVotingPower;         // Minimum voting power required to vote
+    int64_t asrsMaxScoreChange;         // Maximum reputation score change per vote
+    
+    // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+    // Requirements: 6.1, 6.2, 6.3, 6.6 (soft fork activation heights)
+    int quantumActivationHeight;        // Block height at which quantum features activate (mainnet: 350000)
+    size_t maxQuantumSignatureSize;     // Maximum FALCON-512 signature size (700 bytes)
+    size_t maxQuantumPubKeySize;        // Maximum FALCON-512 public key size (897 bytes)
+    uint64_t cvmQuantumVerifyGas;       // Gas cost for VERIFY_SIG_QUANTUM in CVM (3000)
 };
 } // namespace Consensus
 

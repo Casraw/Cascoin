@@ -100,6 +100,7 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
     overviewAction(0),
     hiveAction(0),              // Cascoin: Hive page
     beeNFTAction(0),            // Cascoin: Bee NFT page
+    l2Action(0),                // Cascoin: L2 page
     importPrivateKeyAction(0),  // Cascoin: Key import helper
     historyAction(0),
     quitAction(0),
@@ -371,6 +372,14 @@ void BitcoinGUI::createActions()
     beeNFTAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
     tabGroup->addAction(beeNFTAction);
 
+    // Cascoin: L2 page
+    l2Action = new QAction(platformStyle->SingleColorIcon(":/icons/send"), tr("&Layer 2"), this);
+    l2Action->setStatusTip(tr("Layer 2 operations: deposit, withdraw, and view L2 transactions"));
+    l2Action->setToolTip(l2Action->statusTip());
+    l2Action->setCheckable(true);
+    l2Action->setShortcut(QKeySequence(Qt::ALT | Qt::Key_7));
+    tabGroup->addAction(l2Action);
+
 #ifdef ENABLE_WALLET
     // These showNormalIfMinimized are needed because Send Coins and Receive Coins
     // can be triggered from the tray menu, and need to show the GUI to be useful.
@@ -380,6 +389,8 @@ void BitcoinGUI::createActions()
     connect(hiveAction, SIGNAL(triggered()), this, SLOT(gotoHivePage()));           // Cascoin: Hive page
     connect(beeNFTAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized())); // Cascoin: Bee NFT page
     connect(beeNFTAction, SIGNAL(triggered()), this, SLOT(gotoBeeNFTPage()));        // Cascoin: Bee NFT page
+    connect(l2Action, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));     // Cascoin: L2 page
+    connect(l2Action, SIGNAL(triggered()), this, SLOT(gotoL2Page()));                // Cascoin: L2 page
     connect(sendCoinsAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(sendCoinsAction, SIGNAL(triggered()), this, SLOT(gotoSendCoinsPage()));
     connect(sendCoinsMenuAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
@@ -533,6 +544,7 @@ void BitcoinGUI::createToolBars()
         toolbar->addAction(historyAction);
         toolbar->addAction(hiveAction);     // Cascoin: Hive page
         toolbar->addAction(beeNFTAction);   // Cascoin: Bee NFT page
+        toolbar->addAction(l2Action);       // Cascoin: L2 page
         overviewAction->setChecked(true);
     }
 }
@@ -654,6 +666,7 @@ void BitcoinGUI::setWalletActionsEnabled(bool enabled)
     openAction->setEnabled(enabled);
     hiveAction->setEnabled(enabled);                // Cascoin: Hive page
     beeNFTAction->setEnabled(enabled);              // Cascoin: Bee NFT page
+    l2Action->setEnabled(enabled);                  // Cascoin: L2 page
     importPrivateKeyAction->setEnabled(enabled);    // Cascoin: Key import helper
 }
 
@@ -788,6 +801,13 @@ void BitcoinGUI::gotoBeeNFTPage()
         // If BCT view is disabled, go to overview page instead
         gotoOverviewPage();
     }
+}
+
+// Cascoin: L2: Switch to L2 page
+void BitcoinGUI::gotoL2Page()
+{
+    l2Action->setChecked(true);
+    if (walletFrame) walletFrame->gotoL2Page();
 }
 
 void BitcoinGUI::gotoHistoryPage()

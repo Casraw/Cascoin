@@ -137,6 +137,17 @@ public:
         return obj;
     }
 
+    UniValue operator()(const WitnessV2Quantum& id) const
+    {
+        UniValue obj(UniValue::VOBJ);
+        obj.push_back(Pair("isscript", false));
+        obj.push_back(Pair("iswitness", true));
+        obj.push_back(Pair("isquantum", true));
+        obj.push_back(Pair("witness_version", 2));
+        obj.push_back(Pair("witness_program", HexStr(id.begin(), id.end())));
+        return obj;
+    }
+
     UniValue operator()(const WitnessUnknown& id) const
     {
         UniValue obj(UniValue::VOBJ);

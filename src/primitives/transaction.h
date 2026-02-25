@@ -373,6 +373,33 @@ public:
         }
         return false;
     }
+    
+    /**
+     * Check if this transaction contains quantum (FALCON-512) signatures.
+     * A transaction is considered quantum if any of its witness stacks contain
+     * signatures larger than 100 bytes (ECDSA signatures are max 72 bytes).
+     * 
+     * Requirements: 8.1 (support signatures up to 700 bytes)
+     * 
+     * @return true if the transaction contains quantum signatures
+     */
+    bool HasQuantumSignatures() const
+    {
+        // Quantum signatures are 600-700 bytes, ECDSA signatures are 64-72 bytes
+        // We use 100 bytes as the threshold to distinguish between them
+        static const size_t QUANTUM_SIGNATURE_THRESHOLD = 100;
+        
+        for (size_t i = 0; i < vin.size(); i++) {
+            if (!vin[i].scriptWitness.IsNull()) {
+                for (const auto& item : vin[i].scriptWitness.stack) {
+                    if (item.size() > QUANTUM_SIGNATURE_THRESHOLD) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 };
 
 /** A mutable version of CTransaction. */
@@ -417,6 +444,33 @@ struct CMutableTransaction
         for (size_t i = 0; i < vin.size(); i++) {
             if (!vin[i].scriptWitness.IsNull()) {
                 return true;
+            }
+        }
+        return false;
+    }
+    
+    /**
+     * Check if this transaction contains quantum (FALCON-512) signatures.
+     * A transaction is considered quantum if any of its witness stacks contain
+     * signatures larger than 100 bytes (ECDSA signatures are max 72 bytes).
+     * 
+     * Requirements: 8.1 (support signatures up to 700 bytes)
+     * 
+     * @return true if the transaction contains quantum signatures
+     */
+    bool HasQuantumSignatures() const
+    {
+        // Quantum signatures are 600-700 bytes, ECDSA signatures are 64-72 bytes
+        // We use 100 bytes as the threshold to distinguish between them
+        static const size_t QUANTUM_SIGNATURE_THRESHOLD = 100;
+        
+        for (size_t i = 0; i < vin.size(); i++) {
+            if (!vin[i].scriptWitness.IsNull()) {
+                for (const auto& item : vin[i].scriptWitness.stack) {
+                    if (item.size() > QUANTUM_SIGNATURE_THRESHOLD) {
+                        return true;
+                    }
+                }
             }
         }
         return false;

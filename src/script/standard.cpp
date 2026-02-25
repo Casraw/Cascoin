@@ -30,6 +30,7 @@ const char* GetTxnOutputType(txnouttype t)
     case TX_NULL_DATA: return "nulldata";
     case TX_WITNESS_V0_KEYHASH: return "witness_v0_keyhash";
     case TX_WITNESS_V0_SCRIPTHASH: return "witness_v0_scripthash";
+    case TX_WITNESS_V2_QUANTUM: return "witness_v2_quantum";
     case TX_WITNESS_UNKNOWN: return "witness_unknown";
     }
     return nullptr;
@@ -73,6 +74,12 @@ bool Solver(const CScript& scriptPubKey, txnouttype& typeRet, std::vector<std::v
         }
         if (witnessversion == 0 && witnessprogram.size() == 32) {
             typeRet = TX_WITNESS_V0_SCRIPTHASH;
+            vSolutionsRet.push_back(witnessprogram);
+            return true;
+        }
+        // Cascoin: Quantum witness version 2 with 32-byte program
+        if (witnessversion == 2 && witnessprogram.size() == 32) {
+            typeRet = TX_WITNESS_V2_QUANTUM;
             vSolutionsRet.push_back(witnessprogram);
             return true;
         }
@@ -215,9 +222,25 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         std::copy(vSolutions[0].begin(), vSolutions[0].end(), hash.begin());
         addressRet = hash;
         return true;
+    } else if (whichType == TX_WITNESS_V2_QUANTUM) {
+        // Cascoin: Quantum address (witness version 2)
+        WitnessV2Quantum quantum;
+        std::copy(vSolutions[0].begin(), vSolutions[0].end(), quantum.begin());
+        addressRet = quantum;
+        return true;
     } else if (whichType == TX_WITNESS_UNKNOWN) {
+        // Check for witness version 2 with 32-byte program (quantum address)
+        unsigned int version = vSolutions[0][0];
+        if (version == 2 && vSolutions[1].size() == 32) {
+            // This is a quantum address (WitnessV2Quantum)
+            WitnessV2Quantum quantum;
+            std::copy(vSolutions[1].begin(), vSolutions[1].end(), quantum.begin());
+            addressRet = quantum;
+            return true;
+        }
+        // Other unknown witness versions
         WitnessUnknown unk;
-        unk.version = vSolutions[0][0];
+        unk.version = version;
         std::copy(vSolutions[1].begin(), vSolutions[1].end(), unk.program);
         unk.length = vSolutions[1].size();
         addressRet = unk;
@@ -304,6 +327,14 @@ public:
     {
         script->clear();
         *script << OP_0 << ToByteVector(id);
+        return true;
+    }
+
+    bool operator()(const WitnessV2Quantum& id) const
+    {
+        script->clear();
+        // Witness version 2 for quantum addresses
+        *script << CScript::EncodeOP_N(2) << ToByteVector(id);
         return true;
     }
 
