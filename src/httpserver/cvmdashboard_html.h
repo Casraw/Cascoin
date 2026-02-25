@@ -68,6 +68,9 @@ body {
 .activity-vote-pos { border-left-color: rgba(34, 197, 94, 0.8); }
 .activity-vote { border-left-color: rgba(59, 130, 246, 0.8); }
 .activity-report { border-left-color: rgba(239, 68, 68, 0.8); }
+.activity-deploy { border-left-color: rgba(168, 85, 247, 0.8); }
+.activity-call { border-left-color: rgba(59, 130, 246, 0.8); }
+.activity-call-fail { border-left-color: rgba(239, 68, 68, 0.8); }
 .activity-placeholder { text-align: center; padding: 40px; color: var(--text-secondary); }
 .badge { padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
 .badge-danger { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
@@ -730,76 +733,105 @@ class CVMDashboard {
     }
     
     async loadRecentActivity() {
+        const activityDiv = document.getElementById('recentActivity');
         try {
-            const result = await this.rpcCall('listtrustrelations', [20]);
-            console.log('Recent activity:', result);
-            
-            const activityDiv = document.getElementById('recentActivity');
-            if (!result || !result.edges || result.edges.length === 0) {
+            let activities = [];
+
+            // 1) Load contract deployments from listmycontracts
+            try {
+                const contracts = await this.rpcCall('listmycontracts', []);
+                if (contracts && Array.isArray(contracts)) {
+                    for (const c of contracts) {
+                        activities.push({
+                            type: 'deploy',
+                            icon: '📜',
+                            label: 'Contract Deployed',
+                            css: 'activity-deploy',
+                            desc: `<strong>${c.address.substring(0,10)}...${c.address.substring(c.address.length-6)}</strong><br>Format: ${c.format || 'CVM'} &middot; ${c.codeSize || 0} bytes`,
+                            sortKey: c.deploymentHeight || 0,
+                            time: `Block #${c.deploymentHeight || '?'}`
+                        });
+
+                        // 2) Load receipts for each contract (calls + deploy receipt)
+                        try {
+                            const receipts = await this.rpcCall('getcontractreceipts', [c.address, 10]);
+                            if (receipts && Array.isArray(receipts)) {
+                                for (const r of receipts) {
+                                    // Skip the deployment receipt itself (from == to for deploy)
+                                    if (r.blockNumber === c.deploymentHeight && r.from === r.to) continue;
+                                    const ok = r.status === 1;
+                                    const fromShort = r.from.substring(0,8) + '...' + r.from.substring(r.from.length-6);
+                                    const toShort = r.to.substring(0,8) + '...' + r.to.substring(r.to.length-6);
+                                    activities.push({
+                                        type: 'call',
+                                        icon: ok ? '⚡' : '❌',
+                                        label: ok ? 'Contract Call' : 'Contract Call (Failed)',
+                                        css: ok ? 'activity-call' : 'activity-call-fail',
+                                        desc: `<strong>${fromShort}</strong> → <strong>${toShort}</strong><br>Gas: ${r.gasUsed}${r.revertReason ? ' &middot; ' + r.revertReason : ''}`,
+                                        sortKey: r.blockNumber || 0,
+                                        time: `Block #${r.blockNumber || '?'}`
+                                    });
+                                }
+                            }
+                        } catch (e) { /* receipts not available for this contract */ }
+                    }
+                }
+            } catch (e) { console.log('listmycontracts not available:', e); }
+
+            // 3) Load trust relations
+            try {
+                const trust = await this.rpcCall('listtrustrelations', [20]);
+                if (trust && trust.edges && trust.edges.length > 0) {
+                    for (const edge of trust.edges) {
+                        let typeLabel, typeIcon, typeClass;
+                        if (edge.weight >= 80) { typeLabel = 'Trust Relation'; typeIcon = '🤝'; typeClass = 'activity-trust'; }
+                        else if (edge.weight >= 50) { typeLabel = 'Positive Vote'; typeIcon = '✅'; typeClass = 'activity-vote-pos'; }
+                        else if (edge.weight > 0) { typeLabel = 'Reputation Vote'; typeIcon = '⭐'; typeClass = 'activity-vote'; }
+                        else { typeLabel = 'Negative Report'; typeIcon = '⚠️'; typeClass = 'activity-report'; }
+                        const fromShort = edge.from.substring(0,8) + '...' + edge.from.substring(edge.from.length-6);
+                        const toShort = edge.to.substring(0,8) + '...' + edge.to.substring(edge.to.length-6);
+                        const reason = edge.reason ? `<br><span class="activity-reason">"${edge.reason}"</span>` : '';
+                        const slashed = edge.slashed ? ' <span class="badge badge-danger">SLASHED</span>' : '';
+                        activities.push({
+                            type: 'trust',
+                            icon: typeIcon,
+                            label: typeLabel + slashed,
+                            css: typeClass,
+                            desc: `<strong>${fromShort}</strong> → <strong>${toShort}</strong> (Weight: ${edge.weight})${reason}`,
+                            sortKey: edge.timestamp || 0,
+                            time: new Date(edge.timestamp * 1000).toLocaleString()
+                        });
+                    }
+                }
+            } catch (e) { console.log('listtrustrelations not available:', e); }
+
+            // Sort by block height / timestamp descending
+            activities.sort((a, b) => b.sortKey - a.sortKey);
+
+            // Limit to 20 entries
+            activities = activities.slice(0, 20);
+
+            if (activities.length === 0) {
                 activityDiv.innerHTML = '<div class="activity-placeholder">No recent activity</div>';
                 return;
             }
-            
-            // Sort by timestamp descending (newest first)
-            const edges = result.edges.sort((a, b) => b.timestamp - a.timestamp);
-            
+
             let html = '';
-            edges.forEach(edge => {
-                const date = new Date(edge.timestamp * 1000);
-                const timeStr = date.toLocaleString();
-                
-                // Determine type and icon
-                let typeLabel = '';
-                let typeIcon = '';
-                let typeClass = '';
-                
-                if (edge.weight >= 80) {
-                    typeLabel = 'Trust Relation';
-                    typeIcon = '🤝';
-                    typeClass = 'activity-trust';
-                } else if (edge.weight >= 50) {
-                    typeLabel = 'Positive Vote';
-                    typeIcon = '✅';
-                    typeClass = 'activity-vote-pos';
-                } else if (edge.weight > 0) {
-                    typeLabel = 'Reputation Vote';
-                    typeIcon = '⭐';
-                    typeClass = 'activity-vote';
-                } else {
-                    typeLabel = 'Negative Report';
-                    typeIcon = '⚠️';
-                    typeClass = 'activity-report';
-                }
-                
-                // Truncate addresses
-                const fromShort = edge.from.substring(0, 8) + '...' + edge.from.substring(edge.from.length - 6);
-                const toShort = edge.to.substring(0, 8) + '...' + edge.to.substring(edge.to.length - 6);
-                
-                // Show reason if available
-                const reason = edge.reason ? `<br><span class="activity-reason">"${edge.reason}"</span>` : '';
-                const slashed = edge.slashed ? ' <span class="badge badge-danger">SLASHED</span>' : '';
-                
+            for (const a of activities) {
                 html += `
-                    <div class="activity-item ${typeClass}">
-                        <div class="activity-icon">${typeIcon}</div>
+                    <div class="activity-item ${a.css}">
+                        <div class="activity-icon">${a.icon}</div>
                         <div class="activity-content">
-                            <div class="activity-type">${typeLabel}${slashed}</div>
-                            <div class="activity-desc">
-                                <strong>${fromShort}</strong> → <strong>${toShort}</strong>
-                                (Weight: ${edge.weight})
-                                ${reason}
-                            </div>
-                            <div class="activity-time">${timeStr}</div>
+                            <div class="activity-type">${a.label}</div>
+                            <div class="activity-desc">${a.desc}</div>
+                            <div class="activity-time">${a.time}</div>
                         </div>
-                    </div>
-                `;
-            });
-            
+                    </div>`;
+            }
             activityDiv.innerHTML = html;
         } catch (error) {
             console.error('Failed to load recent activity:', error);
-            document.getElementById('recentActivity').innerHTML = 
-                '<div class="activity-placeholder">Failed to load activity</div>';
+            activityDiv.innerHTML = '<div class="activity-placeholder">Failed to load activity</div>';
         }
     }
     
