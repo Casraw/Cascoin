@@ -86,10 +86,11 @@ SSTORE          # 0x51 - Store totalSupply
 
 # --- Store Deployer Balance ---
 # balance_key = 0x10 + CALLER
-CALLER          # 0x72 - Push deployer address
-PUSH 1 0x10     # 0x01 0x01 0x10 - Push balance prefix
-ADD             # 0x10 - Calculate balance key
-SWAP            # 0x04 - Swap: [key, totalSupply] -> [totalSupply, key]
+# Stack before: [totalSupply] (from DUP above)
+CALLER          # 0x72 - Push deployer address → [ts, D]
+PUSH 1 0x10     # 0x01 0x01 0x10 - Push balance prefix → [ts, D, 0x10]
+ADD             # 0x10 - Calculate balance key → [ts, D+0x10]
+                # SSTORE pops key (top) then value, so no SWAP needed
 SSTORE          # 0x51 - Store balance[deployer] = totalSupply
 
 # --- Emit Transfer Event (0x0 -> deployer, totalSupply) ---
@@ -238,11 +239,18 @@ RETURN          # 0x43 - Return totalSupply
 # COMPILED BYTECODE (Hex)
 # ============================================================
 #
-# Constructor Bytecode (deploy this):
+# Constructor Bytecode (deploy this, 60 bytes):
 # 72 01 01 01 51 01 01 12 01 01 03 51 01 08 00 00
 # 00 00 00 0F 42 40 01 08 0D E0 B6 B3 A7 64 00 00
-# 12 03 01 01 00 51 72 01 01 10 10 04 51 01 01 00
+# 12 03 01 01 00 51 72 01 01 10 10 51 01 01 00
 # 72 01 08 00 00 00 00 00 0F 42 40 90 44
+#
+# As single hex string:
+# 720101015101011201010351010800000000000f424001080de0b6b3a764000012030101005172010110105101010072010800000000000f42409044
+#
+# Note: SSTORE pops key first (top of stack), then value.
+# No SWAP needed before the balance SSTORE — after CALLER+PUSH 0x10+ADD,
+# the balance key is already on top with totalSupply underneath.
 #
 # Runtime Bytecode (stored at contract address):
 # [Function dispatcher + all function implementations]
