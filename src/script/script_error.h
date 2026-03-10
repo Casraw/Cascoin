@@ -67,6 +67,13 @@ typedef enum ScriptError_t
     // Cascoin: Replay attack prevention
     SCRIPT_ERR_ILLEGAL_FORKID,
     SCRIPT_ERR_MUST_USE_FORKID,
+    
+    // Cascoin: Post-Quantum Cryptography (PQC) errors
+    // Requirements: 2.4 (quantum signature verification errors)
+    SCRIPT_ERR_SIG_QUANTUM_VERIFY,          // FALCON-512 signature verification failed
+    SCRIPT_ERR_QUANTUM_NOT_ACTIVE,          // Quantum features not yet activated at this height
+    SCRIPT_ERR_QUANTUM_PUBKEY_SIZE,         // Quantum public key size is not exactly 897 bytes
+    SCRIPT_ERR_QUANTUM_SIG_SIZE,            // Quantum signature exceeds maximum size (700 bytes)
 
     SCRIPT_ERR_ERROR_COUNT
 } ScriptError;

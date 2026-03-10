@@ -64,6 +64,7 @@ enum txnouttype
     TX_NULL_DATA, //!< unspendable OP_RETURN script that carries data
     TX_WITNESS_V0_SCRIPTHASH,
     TX_WITNESS_V0_KEYHASH,
+    TX_WITNESS_V2_QUANTUM, //!< Cascoin: Quantum-resistant witness version 2 (FALCON-512)
     TX_WITNESS_UNKNOWN, //!< Only for Witness versions not already defined above
 };
 
@@ -110,16 +111,31 @@ struct WitnessUnknown
 };
 
 /**
+ * Witness version 2 quantum address destination.
+ * Contains the SHA256 hash of a FALCON-512 public key (32 bytes).
+ * Used for quantum-resistant transactions.
+ *
+ * Requirements: 3.7, 3.8 (quantum address routing to FALCON-512 verification)
+ */
+struct WitnessV2Quantum : public uint256
+{
+    WitnessV2Quantum() : uint256() {}
+    explicit WitnessV2Quantum(const uint256& hash) : uint256(hash) {}
+    using uint256::uint256;
+};
+
+/**
  * A txout script template with a specific destination. It is either:
  *  * CNoDestination: no destination set
  *  * CKeyID: TX_PUBKEYHASH destination (P2PKH)
  *  * CScriptID: TX_SCRIPTHASH destination (P2SH)
  *  * WitnessV0ScriptHash: TX_WITNESS_V0_SCRIPTHASH destination (P2WSH)
  *  * WitnessV0KeyHash: TX_WITNESS_V0_KEYHASH destination (P2WPKH)
+ *  * WitnessV2Quantum: TX_WITNESS_V2_QUANTUM destination (P2WQH - quantum)
  *  * WitnessUnknown: TX_WITNESS_UNKNOWN destination (P2W???)
  *  A CTxDestination is the internal data type encoded in a bitcoin address
  */
-typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessUnknown> CTxDestination;
+typedef boost::variant<CNoDestination, CKeyID, CScriptID, WitnessV0ScriptHash, WitnessV0KeyHash, WitnessV2Quantum, WitnessUnknown> CTxDestination;
 
 /** Check whether a CTxDestination is a CNoDestination. */
 bool IsValidDestination(const CTxDestination& dest);

@@ -180,6 +180,8 @@ private:
     void AddToBlock(CTxMemPool::txiter iter);
 
     // Methods for how to add transactions to a block.
+    /** Add guaranteed inclusion transactions (90+ reputation CVM/EVM transactions) */
+    void addGuaranteedInclusionTxs();
     /** Add transactions based on feerate including unconfirmed ancestors
       * Increments nPackagesSelected / nDescendantsUpdated with corresponding
       * statistics from the package selection (for logging statistics). */

@@ -1,0 +1,567 @@
+// Copyright (c) 2025 The Cascoin Core developers
+// Distributed under the MIT software license, see the accompanying
+// file COPYING or http://www.opensource.org/licenses/mit-license.php.
+
+#include <cvm/cvmdb.h>
+#include <cvm/validator_attestation.h>
+#include <util.h>
+#include <clientversion.h>
+
+namespace CVM {
+
+std::unique_ptr<CVMDatabase> g_cvmdb;
+
+CVMDatabase::CVMDatabase(const fs::path& dbPath, size_t nCacheSize, 
+                         bool fMemory, bool fWipe) {
+    db = std::make_unique<CDBWrapper>(dbPath, nCacheSize, fMemory, fWipe);
+}
+
+CVMDatabase::~CVMDatabase() {
+    Flush();
+}
+
+bool CVMDatabase::Load(const uint160& contractAddr, const uint256& key, uint256& value) {
+    // Check cache first
+    auto cacheKey = std::make_pair(contractAddr, key);
+    auto it = storageCache.find(cacheKey);
+    if (it != storageCache.end()) {
+        value = it->second;
+        return true;
+    }
+    
+    // Read from database
+    std::string dbKey = std::string(1, DB_STORAGE) + 
+                       std::string((char*)contractAddr.begin(), 20) + 
+                       std::string((char*)key.begin(), 32);
+    
+    bool result = db->Read(dbKey, value);
+    
+    // Cache the result
+    if (result) {
+        storageCache[cacheKey] = value;
+    }
+    
+    return result;
+}
+
+bool CVMDatabase::Store(const uint160& contractAddr, const uint256& key, const uint256& value) {
+    // Update cache
+    auto cacheKey = std::make_pair(contractAddr, key);
+    storageCache[cacheKey] = value;
+    
+    // Write to database
+    std::string dbKey = std::string(1, DB_STORAGE) + 
+                       std::string((char*)contractAddr.begin(), 20) + 
+                       std::string((char*)key.begin(), 32);
+    
+    return db->Write(dbKey, value);
+}
+
+bool CVMDatabase::Exists(const uint160& contractAddr) {
+    Contract contract;
+    return ReadContract(contractAddr, contract);
+}
+
+bool CVMDatabase::WriteContract(const uint160& address, const Contract& contract) {
+    std::string dbKey = std::string(1, DB_CONTRACT) + 
+                       std::string((char*)address.begin(), 20);
+    
+    if (!db->Write(dbKey, contract)) {
+        return false;
+    }
+    
+    // Add to contract list
+    std::string listKey = std::string(1, DB_CONTRACT_LIST);
+    std::vector<uint160> contracts = ListContracts();
+    
+    // Check if already in list
+    bool found = false;
+    for (const auto& addr : contracts) {
+        if (addr == address) {
+            found = true;
+            break;
+        }
+    }
+    
+    if (!found) {
+        contracts.push_back(address);
+        db->Write(listKey, contracts);
+    }
+    
+    return true;
+}
+
+bool CVMDatabase::ReadContract(const uint160& address, Contract& contract) {
+    std::string dbKey = std::string(1, DB_CONTRACT) + 
+                       std::string((char*)address.begin(), 20);
+    
+    return db->Read(dbKey, contract);
+}
+
+bool CVMDatabase::LoadContract(const uint160& address, std::vector<uint8_t>& code) {
+    Contract contract;
+    if (ReadContract(address, contract)) {
+        code = contract.code;
+        return true;
+    }
+    return false;
+}
+
+bool CVMDatabase::DeleteContract(const uint160& address) {
+    std::string dbKey = std::string(1, DB_CONTRACT) + 
+                       std::string((char*)address.begin(), 20);
+    
+    return db->Erase(dbKey);
+}
+
+std::vector<uint160> CVMDatabase::ListContracts() {
+    std::string listKey = std::string(1, DB_CONTRACT_LIST);
+    std::vector<uint160> contracts;
+    
+    db->Read(listKey, contracts);
+    
+    return contracts;
+}
+
+bool CVMDatabase::WriteNonce(const uint160& address, uint64_t nonce) {
+    nonceCache[address] = nonce;
+    
+    std::string dbKey = std::string(1, DB_NONCE) + 
+                       std::string((char*)address.begin(), 20);
+    
+    return db->Write(dbKey, nonce);
+}
+
+bool CVMDatabase::ReadNonce(const uint160& address, uint64_t& nonce) {
+    // Check cache
+    auto it = nonceCache.find(address);
+    if (it != nonceCache.end()) {
+        nonce = it->second;
+        return true;
+    }
+    
+    std::string dbKey = std::string(1, DB_NONCE) + 
+                       std::string((char*)address.begin(), 20);
+    
+    bool result = db->Read(dbKey, nonce);
+    
+    if (result) {
+        nonceCache[address] = nonce;
+    } else {
+        nonce = 0;
+    }
+    
+    return result;
+}
+
+uint64_t CVMDatabase::GetNextNonce(const uint160& address) {
+    uint64_t nonce;
+    if (!ReadNonce(address, nonce)) {
+        nonce = 0;
+    }
+    
+    nonce++;
+    WriteNonce(address, nonce);
+    
+    return nonce;
+}
+
+bool CVMDatabase::WriteBalance(const uint160& address, uint64_t balance) {
+    std::string dbKey = std::string(1, DB_BALANCE) + 
+                       std::string((char*)address.begin(), 20);
+    
+    return db->Write(dbKey, balance);
+}
+
+bool CVMDatabase::ReadBalance(const uint160& address, uint64_t& balance) {
+    std::string dbKey = std::string(1, DB_BALANCE) + 
+                       std::string((char*)address.begin(), 20);
+    
+    if (!db->Read(dbKey, balance)) {
+        balance = 0;
+        return false;
+    }
+    
+    return true;
+}
+
+// Generic key-value storage for extensions (Web-of-Trust, etc.)
+bool CVMDatabase::WriteGeneric(const std::string& key, const std::vector<uint8_t>& value) {
+    return db->Write(key, value);
+}
+
+bool CVMDatabase::ReadGeneric(const std::string& key, std::vector<uint8_t>& value) {
+    return db->Read(key, value);
+}
+
+bool CVMDatabase::ExistsGeneric(const std::string& key) {
+    return db->Exists(key);
+}
+
+bool CVMDatabase::EraseGeneric(const std::string& key) {
+    return db->Erase(key);
+}
+
+std::vector<std::string> CVMDatabase::ListKeysWithPrefix(const std::string& prefix) {
+    std::vector<std::string> keys;
+    
+    // Create iterator
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    
+    // Start from the beginning since string serialization adds length prefix
+    // which makes direct prefix seeking unreliable
+    pcursor->SeekToFirst();
+    
+    // Iterate through all keys and filter by prefix
+    while (pcursor->Valid()) {
+        std::string key;
+        // Try to deserialize as string
+        if (pcursor->GetKey(key)) {
+            // Check if this key matches our prefix
+            if (key.compare(0, prefix.size(), prefix) == 0) {
+                keys.push_back(key);
+            }
+        }
+        pcursor->Next();
+    }
+    
+    return keys;
+}
+
+bool CVMDatabase::Flush() {
+    return db->Flush();
+}
+
+// Batch operations
+CVMDatabase::Batch::Batch(CVMDatabase& db) 
+    : database(db), batch(db.GetDB()) {
+}
+
+CVMDatabase::Batch::~Batch() {
+}
+
+void CVMDatabase::Batch::WriteContract(const uint160& address, const Contract& contract) {
+    std::string dbKey = std::string(1, DB_CONTRACT) + 
+                       std::string((char*)address.begin(), 20);
+    batch.Write(dbKey, contract);
+}
+
+void CVMDatabase::Batch::WriteStorage(const uint160& contractAddr, 
+                                      const uint256& key, const uint256& value) {
+    std::string dbKey = std::string(1, DB_STORAGE) + 
+                       std::string((char*)contractAddr.begin(), 20) + 
+                       std::string((char*)key.begin(), 32);
+    batch.Write(dbKey, value);
+    
+    // Update cache
+    auto cacheKey = std::make_pair(contractAddr, key);
+    database.storageCache[cacheKey] = value;
+}
+
+void CVMDatabase::Batch::WriteNonce(const uint160& address, uint64_t nonce) {
+    std::string dbKey = std::string(1, DB_NONCE) + 
+                       std::string((char*)address.begin(), 20);
+    batch.Write(dbKey, nonce);
+    
+    // Update cache
+    database.nonceCache[address] = nonce;
+}
+
+void CVMDatabase::Batch::WriteBalance(const uint160& address, uint64_t balance) {
+    std::string dbKey = std::string(1, DB_BALANCE) + 
+                       std::string((char*)address.begin(), 20);
+    batch.Write(dbKey, balance);
+}
+
+bool CVMDatabase::Batch::Commit() {
+    return database.GetDB().WriteBatch(batch);
+}
+
+void CVMDatabase::GetAllKeys(const std::string& prefix, std::vector<std::string>& keys) {
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    pcursor->Seek(prefix);
+    
+    while (pcursor->Valid()) {
+        std::string key;
+        if (!pcursor->GetKey(key)) {
+            break;
+        }
+        
+        // Check if key starts with prefix
+        if (key.compare(0, prefix.length(), prefix) != 0) {
+            break;  // No more keys with this prefix
+        }
+        
+        keys.push_back(key);
+        pcursor->Next();
+    }
+}
+
+// Global functions
+bool InitCVMDatabase(const fs::path& datadir, size_t nCacheSize) {
+    try {
+        fs::path cvmDbPath = datadir / "cvm";
+        g_cvmdb = std::make_unique<CVMDatabase>(cvmDbPath, nCacheSize);
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("Error initializing CVM database: %s\n", e.what());
+        return false;
+    }
+}
+
+void ShutdownCVMDatabase() {
+    if (g_cvmdb) {
+        g_cvmdb->Flush();
+        g_cvmdb.reset();
+    }
+}
+
+// Receipt management
+bool CVMDatabase::WriteReceipt(const uint256& txHash, const TransactionReceipt& receipt) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    if (!db->Write(key, receipt)) {
+        return false;
+    }
+
+    // Update contract receipt index
+    // Use contractAddress for contract creation, otherwise use 'to'
+    uint160 contractAddr = receipt.IsContractCreation() ? receipt.contractAddress : receipt.to;
+    if (!contractAddr.IsNull()) {
+        AppendContractReceiptIndex(contractAddr, txHash);
+    }
+
+    return true;
+}
+
+bool CVMDatabase::ReadReceipt(const uint256& txHash, TransactionReceipt& receipt) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Read(key, receipt);
+}
+
+bool CVMDatabase::HasReceipt(const uint256& txHash) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Exists(key);
+}
+
+bool CVMDatabase::DeleteReceipt(const uint256& txHash) {
+    std::string key = std::string(1, DB_RECEIPT) + txHash.ToString();
+    return db->Erase(key);
+}
+
+bool CVMDatabase::WriteBlockReceipts(const uint256& blockHash, const std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_RECEIPT_BLOCK) + blockHash.ToString();
+    return db->Write(key, txHashes);
+}
+
+bool CVMDatabase::ReadBlockReceipts(const uint256& blockHash, std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_RECEIPT_BLOCK) + blockHash.ToString();
+    return db->Read(key, txHashes);
+}
+
+bool CVMDatabase::WriteContractReceiptIndex(const uint160& contractAddr, const std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_CONTRACT_RECEIPTS) +
+                     std::string((char*)contractAddr.begin(), 20);
+    return db->Write(key, txHashes);
+}
+
+bool CVMDatabase::ReadContractReceiptIndex(const uint160& contractAddr, std::vector<uint256>& txHashes) {
+    std::string key = std::string(1, DB_CONTRACT_RECEIPTS) +
+                     std::string((char*)contractAddr.begin(), 20);
+    return db->Read(key, txHashes);
+}
+
+bool CVMDatabase::AppendContractReceiptIndex(const uint160& contractAddr, const uint256& txHash) {
+    std::vector<uint256> txHashes;
+    ReadContractReceiptIndex(contractAddr, txHashes);
+
+    // Check if already present to avoid duplicates
+    for (const auto& hash : txHashes) {
+        if (hash == txHash) {
+            return true;
+        }
+    }
+
+    txHashes.push_back(txHash);
+    return WriteContractReceiptIndex(contractAddr, txHashes);
+}
+
+bool CVMDatabase::PruneReceipts(uint32_t beforeBlockNumber) {
+    // This is a simplified implementation
+    // In production, you'd want to iterate through receipts and check block numbers
+    // For now, we'll just log that pruning was requested
+    LogPrintf("CVM: Receipt pruning requested for blocks before %d\n", beforeBlockNumber);
+    
+    // Implement actual pruning logic
+    int prunedCount = 0;
+    std::vector<uint256> receiptsToDelete;
+    
+    // Iterate through all receipts
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    pcursor->Seek(std::string(1, DB_RECEIPT));
+    
+    while (pcursor->Valid()) {
+        std::pair<char, uint256> key;
+        if (!pcursor->GetKey(key) || key.first != DB_RECEIPT) {
+            break;
+        }
+        
+        // Read receipt
+        TransactionReceipt receipt;
+        if (pcursor->GetValue(receipt)) {
+            // Check if receipt is old enough to prune
+            if (receipt.blockNumber < beforeBlockNumber) {
+                receiptsToDelete.push_back(key.second);
+            }
+        }
+        
+        pcursor->Next();
+    }
+    
+    // Delete old receipts
+    for (const auto& txHash : receiptsToDelete) {
+        std::string dbKey = std::string(1, DB_RECEIPT) + txHash.ToString();
+        if (db->Erase(dbKey)) {
+            prunedCount++;
+        }
+    }
+    
+    LogPrintf("CVM: Pruned %d receipts from blocks before %d\n", prunedCount, beforeBlockNumber);
+    
+    // This would involve:
+    // 1. Iterating through all receipts (DONE)
+    // 2. Checking their block numbers
+    // 3. Deleting receipts older than beforeBlockNumber
+    // 4. Updating block receipt indices
+    
+    return true;
+}
+
+// Validator participation tracking
+bool CVMDatabase::WriteValidatorParticipation(const uint256& txHash, const TransactionValidationRecord& record) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_PARTICIPATION) + 
+                       std::string((char*)txHash.begin(), 32);
+    
+    return db->Write(dbKey, record);
+}
+
+bool CVMDatabase::ReadValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_PARTICIPATION) + 
+                       std::string((char*)txHash.begin(), 32);
+    
+    return db->Read(dbKey, record);
+}
+
+bool CVMDatabase::GetValidatorParticipation(const uint256& txHash, TransactionValidationRecord& record) {
+    return ReadValidatorParticipation(txHash, record);
+}
+
+bool CVMDatabase::HasValidatorParticipation(const uint256& txHash) {
+    TransactionValidationRecord record;
+    return ReadValidatorParticipation(txHash, record);
+}
+
+// Validator eligibility record persistence
+bool CVMDatabase::WriteValidatorRecord(const ValidatorEligibilityRecord& record) {
+    // Key format: DB_VALIDATOR_RECORD + "validator_" + address.ToString()
+    // This matches the key format used in AutomaticValidatorManager::StoreEligibilityRecord
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + record.validatorAddress.ToString();
+    
+    // Serialize using CDataStream with SER_DISK
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << record;
+    
+    // Convert to vector for storage
+    std::vector<uint8_t> data(ss.begin(), ss.end());
+    
+    bool result = db->Write(dbKey, data);
+    
+    if (result) {
+        LogPrint(BCLog::CVM, "CVMDatabase: Wrote validator record for %s\n",
+                 record.validatorAddress.ToString());
+    } else {
+        LogPrintf("CVMDatabase: Failed to write validator record for %s\n",
+                  record.validatorAddress.ToString());
+    }
+    
+    return result;
+}
+
+bool CVMDatabase::ReadValidatorRecord(const uint160& address, ValidatorEligibilityRecord& record) {
+    // Key format: DB_VALIDATOR_RECORD + "validator_" + address.ToString()
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + address.ToString();
+    
+    std::vector<uint8_t> data;
+    if (!db->Read(dbKey, data)) {
+        return false;
+    }
+    
+    // Deserialize using CDataStream with SER_DISK
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> record;
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("CVMDatabase: Failed to deserialize validator record for %s: %s\n",
+                  address.ToString(), e.what());
+        return false;
+    }
+}
+
+bool CVMDatabase::IterateValidatorRecords(std::function<bool(const ValidatorEligibilityRecord&)> callback) {
+    // Create iterator
+    std::unique_ptr<CDBIterator> pcursor(db->NewIterator());
+    
+    // Seek to the first validator record key
+    // Key prefix: DB_VALIDATOR_RECORD + "validator_"
+    std::string prefix = std::string(1, DB_VALIDATOR_RECORD) + "validator_";
+    pcursor->Seek(prefix);
+    
+    int count = 0;
+    int errors = 0;
+    
+    while (pcursor->Valid()) {
+        // Get the key
+        std::string key;
+        if (!pcursor->GetKey(key)) {
+            break;
+        }
+        
+        // Check if key starts with our prefix
+        if (key.compare(0, prefix.length(), prefix) != 0) {
+            break;  // No more validator records
+        }
+        
+        // Get the value
+        std::vector<uint8_t> data;
+        if (pcursor->GetValue(data)) {
+            try {
+                // Deserialize the record
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ValidatorEligibilityRecord record;
+                ss >> record;
+                
+                // Call the callback
+                if (!callback(record)) {
+                    // Callback returned false, stop iteration
+                    break;
+                }
+                count++;
+            } catch (const std::exception& e) {
+                LogPrintf("CVMDatabase: Failed to deserialize validator record: %s\n", e.what());
+                errors++;
+            }
+        }
+        
+        pcursor->Next();
+    }
+    
+    LogPrint(BCLog::CVM, "CVMDatabase: Iterated %d validator records (%d errors)\n", count, errors);
+    return errors == 0;
+}
+
+bool CVMDatabase::DeleteValidatorRecord(const uint160& address) {
+    std::string dbKey = std::string(1, DB_VALIDATOR_RECORD) + "validator_" + address.ToString();
+    return db->Erase(dbKey);
+}
+
+} // namespace CVM
