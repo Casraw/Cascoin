@@ -2469,6 +2469,41 @@ fi
 
 } # ac_fn_c_try_cpp
 
+# ac_fn_cxx_check_header_compile LINENO HEADER VAR INCLUDES
+# ---------------------------------------------------------
+# Tests whether HEADER exists and can be compiled using the include files in
+# INCLUDES, setting the cache variable VAR accordingly.
+ac_fn_cxx_check_header_compile ()
+{
+  as_lineno=${as_lineno-"$1"} as_lineno_stack=as_lineno_stack=$as_lineno_stack
+  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $2" >&5
+printf %s "checking for $2... " >&6; }
+if eval test \${$3+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e) cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+$4
+#include <$2>
+_ACEOF
+if ac_fn_cxx_try_compile "$LINENO"
+then :
+  eval "$3=yes"
+else case e in #(
+  e) eval "$3=no" ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext ;;
+esac
+fi
+eval ac_res=\$$3
+	       { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
+printf "%s\n" "$ac_res" >&6; }
+  eval $as_lineno_stack; ${as_lineno_stack:+:} unset as_lineno
+
+} # ac_fn_cxx_check_header_compile
+
 # ac_fn_check_decl LINENO SYMBOL VAR INCLUDES EXTRA-OPTIONS FLAG-VAR
 # ------------------------------------------------------------------
 # Tests whether SYMBOL is declared in INCLUDES, setting cache variable VAR
@@ -2522,41 +2557,6 @@ printf "%s\n" "$ac_res" >&6; }
   eval $as_lineno_stack; ${as_lineno_stack:+:} unset as_lineno
 
 } # ac_fn_check_decl
-
-# ac_fn_cxx_check_header_compile LINENO HEADER VAR INCLUDES
-# ---------------------------------------------------------
-# Tests whether HEADER exists and can be compiled using the include files in
-# INCLUDES, setting the cache variable VAR accordingly.
-ac_fn_cxx_check_header_compile ()
-{
-  as_lineno=${as_lineno-"$1"} as_lineno_stack=as_lineno_stack=$as_lineno_stack
-  { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for $2" >&5
-printf %s "checking for $2... " >&6; }
-if eval test \${$3+y}
-then :
-  printf %s "(cached) " >&6
-else case e in #(
-  e) cat confdefs.h - <<_ACEOF >conftest.$ac_ext
-/* end confdefs.h.  */
-$4
-#include <$2>
-_ACEOF
-if ac_fn_cxx_try_compile "$LINENO"
-then :
-  eval "$3=yes"
-else case e in #(
-  e) eval "$3=no" ;;
-esac
-fi
-rm -f core conftest.err conftest.$ac_objext conftest.beam conftest.$ac_ext ;;
-esac
-fi
-eval ac_res=\$$3
-	       { printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_res" >&5
-printf "%s\n" "$ac_res" >&6; }
-  eval $as_lineno_stack; ${as_lineno_stack:+:} unset as_lineno
-
-} # ac_fn_cxx_check_header_compile
 ac_configure_args_raw=
 for ac_arg
 do
@@ -24964,6 +24964,92 @@ ac_compiler_gnu=$ac_cv_cxx_compiler_gnu
 
 
 
+ac_fn_cxx_check_header_compile "$LINENO" "endian.h" "ac_cv_header_endian_h" "$ac_includes_default"
+if test "x$ac_cv_header_endian_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_ENDIAN_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "sys/endian.h" "ac_cv_header_sys_endian_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_endian_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_SYS_ENDIAN_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "byteswap.h" "ac_cv_header_byteswap_h" "$ac_includes_default"
+if test "x$ac_cv_header_byteswap_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_BYTESWAP_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "stdio.h" "ac_cv_header_stdio_h" "$ac_includes_default"
+if test "x$ac_cv_header_stdio_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_STDIO_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "stdlib.h" "ac_cv_header_stdlib_h" "$ac_includes_default"
+if test "x$ac_cv_header_stdlib_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_STDLIB_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "string.h" "ac_cv_header_string_h" "$ac_includes_default"
+if test "x$ac_cv_header_string_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_STRING_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "unistd.h" "ac_cv_header_unistd_h" "$ac_includes_default"
+if test "x$ac_cv_header_unistd_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_UNISTD_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "strings.h" "ac_cv_header_strings_h" "$ac_includes_default"
+if test "x$ac_cv_header_strings_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_STRINGS_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "sys/types.h" "ac_cv_header_sys_types_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_types_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_SYS_TYPES_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "sys/stat.h" "ac_cv_header_sys_stat_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_stat_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_SYS_STAT_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "sys/select.h" "ac_cv_header_sys_select_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_select_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_SYS_SELECT_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "sys/prctl.h" "ac_cv_header_sys_prctl_h" "$ac_includes_default"
+if test "x$ac_cv_header_sys_prctl_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_SYS_PRCTL_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "inttypes.h" "ac_cv_header_inttypes_h" "$ac_includes_default"
+if test "x$ac_cv_header_inttypes_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_INTTYPES_H 1" >>confdefs.h
+
+fi
+ac_fn_cxx_check_header_compile "$LINENO" "stdint.h" "ac_cv_header_stdint_h" "$ac_includes_default"
+if test "x$ac_cv_header_stdint_h" = xyes
+then :
+  printf "%s\n" "#define HAVE_STDINT_H 1" >>confdefs.h
+
+fi
+
+
 # The following macro will add the necessary defines to bitcoin-config.h, but
 # they also need to be passed down to any subprojects. Pull the results out of
 # the cache and add them to CPPFLAGS.
@@ -26271,74 +26357,6 @@ esac
 fi
 
 fi
-
-ac_fn_cxx_check_header_compile "$LINENO" "endian.h" "ac_cv_header_endian_h" "$ac_includes_default"
-if test "x$ac_cv_header_endian_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_ENDIAN_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "sys/endian.h" "ac_cv_header_sys_endian_h" "$ac_includes_default"
-if test "x$ac_cv_header_sys_endian_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_SYS_ENDIAN_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "byteswap.h" "ac_cv_header_byteswap_h" "$ac_includes_default"
-if test "x$ac_cv_header_byteswap_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_BYTESWAP_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "stdio.h" "ac_cv_header_stdio_h" "$ac_includes_default"
-if test "x$ac_cv_header_stdio_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_STDIO_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "stdlib.h" "ac_cv_header_stdlib_h" "$ac_includes_default"
-if test "x$ac_cv_header_stdlib_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_STDLIB_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "unistd.h" "ac_cv_header_unistd_h" "$ac_includes_default"
-if test "x$ac_cv_header_unistd_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_UNISTD_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "strings.h" "ac_cv_header_strings_h" "$ac_includes_default"
-if test "x$ac_cv_header_strings_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_STRINGS_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "sys/types.h" "ac_cv_header_sys_types_h" "$ac_includes_default"
-if test "x$ac_cv_header_sys_types_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_SYS_TYPES_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "sys/stat.h" "ac_cv_header_sys_stat_h" "$ac_includes_default"
-if test "x$ac_cv_header_sys_stat_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_SYS_STAT_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "sys/select.h" "ac_cv_header_sys_select_h" "$ac_includes_default"
-if test "x$ac_cv_header_sys_select_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_SYS_SELECT_H 1" >>confdefs.h
-
-fi
-ac_fn_cxx_check_header_compile "$LINENO" "sys/prctl.h" "ac_cv_header_sys_prctl_h" "$ac_includes_default"
-if test "x$ac_cv_header_sys_prctl_h" = xyes
-then :
-  printf "%s\n" "#define HAVE_SYS_PRCTL_H 1" >>confdefs.h
-
-fi
-
 
 ac_fn_check_decl "$LINENO" "strnlen" "ac_cv_have_decl_strnlen" "$ac_includes_default" "$ac_cxx_undeclared_builtin_options" "CXXFLAGS"
 if test "x$ac_cv_have_decl_strnlen" = xyes
@@ -31703,7 +31721,10 @@ fi
 
             fi
             if test "x$ax_lib" = "x"; then
-                as_fn_error $? "Could not find a version of the boost_system library!" "$LINENO" 5
+                { printf "%s\n" "$as_me:${as_lineno-$LINENO}: WARNING: boost_system library not found; assuming header-only Boost.System. Continuing without -lboost_system" >&5
+printf "%s\n" "$as_me: WARNING: boost_system library not found; assuming header-only Boost.System. Continuing without -lboost_system" >&2;}
+                ax_cv_boost_system=no
+                BOOST_SYSTEM_LIB=""
             fi
 			if test "x$link_system" = "xno"; then
 				as_fn_error $? "Could not link against $ax_lib !" "$LINENO" 5

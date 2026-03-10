@@ -522,6 +522,8 @@ AC_C_BIGENDIAN
 dnl Check for pthread compile/link requirements
 AX_PTHREAD
 
+AC_CHECK_HEADERS([endian.h sys/endian.h byteswap.h stdio.h stdlib.h string.h unistd.h strings.h sys/types.h sys/stat.h sys/select.h sys/prctl.h inttypes.h stdint.h])
+
 # The following macro will add the necessary defines to bitcoin-config.h, but
 # they also need to be passed down to any subprojects. Pull the results out of
 # the cache and add them to CPPFLAGS.
@@ -608,8 +610,6 @@ dnl this flag screws up non-darwin gcc even when the check fails. special-case i
 if test x$TARGET_OS = xdarwin; then
   AX_CHECK_LINK_FLAG([[-Wl,-dead_strip]], [LDFLAGS="$LDFLAGS -Wl,-dead_strip"])
 fi
-
-AC_CHECK_HEADERS([endian.h sys/endian.h byteswap.h stdio.h stdlib.h unistd.h strings.h sys/types.h sys/stat.h sys/select.h sys/prctl.h])
 
 AC_CHECK_DECLS([strnlen])
 
