@@ -685,7 +685,7 @@ void WalletModel::loadReceiveRequests(std::vector<std::string>& vReceiveRequests
 }
 
 // Cascoin: Hive
-void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreationTransactions, bool includeDeadBees) {
+void WalletModel::getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCreationTransactions, bool includeDeadMice) {
     if (wallet) {
         // Try multiple times with short waits to avoid showing empty results when wallet is temporarily busy
         int retries = 10;
@@ -694,7 +694,7 @@ void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreation
         for (int i = 0; i < retries && !success; i++) {
             TRY_LOCK(wallet->cs_wallet, lockWallet);
             if (lockWallet) {
-                vBeeCreationTransactions = wallet->GetBCTs(includeDeadBees, true, Params().GetConsensus());
+                vMouseCreationTransactions = wallet->GetBCTs(includeDeadMice, true, Params().GetConsensus());
                 success = true;
             } else {
                 // Short delay before retry to allow other operations to complete
@@ -706,24 +706,24 @@ void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreation
             // Only clear and log after all retries failed
             LogPrint(BCLog::QT, "Warning: Could not acquire wallet lock for BCT update after %d retries, showing previous results\n", retries);
             // Don't clear the vector - keep previous results instead of showing empty
-            // vBeeCreationTransactions.clear();
+            // vMouseCreationTransactions.clear();
         }
     }
 }
 
 // Cascoin: Hive
-bool WalletModel::createBees(int beeCount, bool communityContrib, QWidget *parent, double beePopIndex) {
+bool WalletModel::createMice(int mouseCount, bool communityContrib, QWidget *parent, double mousePopIndex) {
     wallet->BlockUntilSyncedToCurrentChain();
 
     LOCK2(cs_main, wallet->cs_wallet);
 
     CWalletTx wtxNew;
     std::string strError;
-    std::string honeyAddress;
+    std::string cheeseAddress;
 	std::string changeAddress;
     CReserveKey reservekeyChange(wallet);
-    CReserveKey reservekeyHoney(wallet);
-    if (!wallet->CreateBeeTransaction(beeCount, wtxNew, reservekeyChange, reservekeyHoney, honeyAddress, changeAddress, communityContrib, strError, Params().GetConsensus())) {
+    CReserveKey reservekeyCheese(wallet);
+    if (!wallet->CreateMouseTransaction(mouseCount, wtxNew, reservekeyChange, reservekeyCheese, cheeseAddress, changeAddress, communityContrib, strError, Params().GetConsensus())) {
         QMessageBox::critical(parent, tr("Error"), "Mouse creation error: " + QString::fromStdString(strError));
         return false;
     }
@@ -734,12 +734,12 @@ bool WalletModel::createBees(int beeCount, bool communityContrib, QWidget *paren
 
     QString questionString = tr("Are you sure you want to create mice?<br />");
 
-    if (beePopIndex > 90)
+    if (mousePopIndex > 90)
         questionString.append("<br /><span style='color:#aa0000;'><b>WARNING:</b> Global Index is high and mice may not be profitable. Please ensure you understand the consequences before proceeding.</span><br />");
 
     questionString.append("<br />");
     questionString.append("<b>" + BitcoinUnits::formatHtmlWithUnit(optionsModel->getDisplayUnit(), amountWithoutFees) + "</b>");
-    questionString.append(" " + tr("to create %1 mice").arg(beeCount));
+    questionString.append(" " + tr("to create %1 mice").arg(mouseCount));
 
     questionString.append("<hr /><span style='color:#aa0000;'>");
     questionString.append(BitcoinUnits::formatHtmlWithUnit(optionsModel->getDisplayUnit(), txFee));
@@ -763,7 +763,7 @@ bool WalletModel::createBees(int beeCount, bool communityContrib, QWidget *paren
     if (retval != QMessageBox::Yes)
         return false;
 
-    reservekeyHoney.KeepKey();  // Keep the cheese key (always needed; UI doesn't expose custom honey address)
+    reservekeyCheese.KeepKey();  // Keep the cheese key (always needed; UI doesn't expose custom cheese address)
 
     CValidationState state;
     if (!wallet->CommitTransaction(wtxNew, reservekeyChange, g_connman.get(), state)) {

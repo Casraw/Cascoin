@@ -93,7 +93,7 @@ private:
     QMenuBar *appMenuBar;
     QAction *overviewAction;
     QAction *hiveAction;                // Cascoin: Hive page
-    QAction *beeNFTAction;              // Cascoin: Mice NFT page
+    QAction *mouseNFTAction;              // Cascoin: Mice NFT page
     QAction *importPrivateKeyAction;    // Cascoin: Key import helper
     QAction *historyAction;
     QAction *quitAction;
@@ -213,7 +213,7 @@ private Q_SLOTS:
     void gotoHivePage();
     
     // Cascoin: Mice NFT: Switch to mice NFT page
-    void gotoBeeNFTPage();
+    void gotoMouseNFTPage();
 
     /** Show Sign/Verify Message dialog and switch to sign message tab */
     void gotoSignMessageTab(QString addr = "");

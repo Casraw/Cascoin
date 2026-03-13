@@ -287,9 +287,9 @@ void OverviewPage::updateHiveSummary() {
             rewardsPaid = dbSummary.totalRewards;
             cost = dbSummary.totalCost;
             profit = dbSummary.totalProfit;
-            immature = dbSummary.immatureBees;
-            mature = dbSummary.matureBees;
-            dead = dbSummary.expiredBees;
+            immature = dbSummary.immatureMice;
+            mature = dbSummary.matureMice;
+            dead = dbSummary.expiredMice;
         }
 
         ui->rewardsPaidLabel->setText(
@@ -371,8 +371,8 @@ void OverviewPage::showOutOfSyncWarning(bool fShow)
 }
 
 // Cascoin: Labyrinth: Handle mice button click
-void OverviewPage::on_beeButton_clicked() {
-    Q_EMIT beeButtonClicked();
+void OverviewPage::on_mouseButton_clicked() {
+    Q_EMIT mouseButtonClicked();
 }
 
 // Cascoin: Rialto: Handle unlock wallet button click

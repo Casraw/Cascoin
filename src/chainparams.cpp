@@ -133,16 +133,16 @@ public:
         consensus.totalMoneySupplyHeight = 6215968;         // Height at which TMS is reached, do not issue rewards past this point
 
         // Cascoin: Hive: Consensus Fields
-        consensus.minBeeCost = 10000;                       // Minimum cost of a bee, used when no more block rewards
-        consensus.beeCostFactor = 2500;                     // Bee cost is block_reward/beeCostFactor
-        consensus.beeCreationAddress = "HiveCascoinBurnAddressXXXXXXXXXXkTBcG";        // Properly formatted unspendable address for bee creation
+        consensus.minMouseCost = 10000;                       // Minimum cost of a mouse, used when no more block rewards
+        consensus.mouseCostFactor = 2500;                     // Mouse cost is block_reward/mouseCostFactor
+        consensus.mouseCreationAddress = "HiveCascoinBurnAddressXXXXXXXXXXkTBcG";        // Properly formatted unspendable address for mouse creation
         consensus.hiveCommunityAddress = "HF2sgFXX5NgDojHhTPCTFknc6bqh3xCd8u";      // Community fund address
         consensus.communityContribFactor = 10;              // Optionally, donate bct_value/maxCommunityContribFactor to community fund
-        consensus.beeGestationBlocks = 48*24;               // The number of blocks for a new bee to mature
-        consensus.beeLifespanBlocks = 48*24*14;             // The number of blocks a bee lives for after maturation
+        consensus.mouseGestationBlocks = 48*24;               // The number of blocks for a new mouse to mature
+        consensus.mouseLifespanBlocks = 48*24*14;             // The number of blocks a mouse lives for after maturation
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");  // Target for ~2^20 work, good for CPU bootstrap
         consensus.minHiveCheckBlock = 0;              // Allow checking for Hive blocks from the start (was 1537566)
-        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for bee hash target adjustment EMA
+        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for mouse hash target adjustment EMA
         consensus.hiveBlockSpacingTarget = 2;               // Target Hive block frequency (1 out of this many blocks should be Hivemined)
         consensus.hiveBlockSpacingTargetTypical = 3;        // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
         consensus.hiveBlockSpacingTargetTypical_1_1 = 2;    // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)
@@ -294,16 +294,16 @@ public:
         consensus.totalMoneySupplyHeight = 6215968;         // Height at which TMS is reached, do not issue rewards past this point (Note, not accurate value for testnet)
 
         // Cascoin: Hive: Consensus Fields
-        consensus.minBeeCost = 10000;                       // Minimum cost of a bee, used when no more block rewards
-        consensus.beeCostFactor = 2500;                     // Bee cost is block_reward/beeCostFactor
-        consensus.beeCreationAddress = "tEstNetCreateCASWorkerBeeXXXYq6T3r";        // Unspendable address for bee creation
+        consensus.minMouseCost = 10000;                       // Minimum cost of a mouse, used when no more block rewards
+        consensus.mouseCostFactor = 2500;                     // Mouse cost is block_reward/mouseCostFactor
+        consensus.mouseCreationAddress = "tEstNetCreateCASWorkerBeeXXXYq6T3r";        // Unspendable address for mouse creation
         consensus.hiveCommunityAddress = "tCY5JWV4LYe64ivrAE2rD6P3bYxYtcoTsz";      // Community fund address
         consensus.communityContribFactor = 10;              // Optionally, donate bct_value/maxCommunityContribFactor to community fund
-        consensus.beeGestationBlocks = 40;                  // The number of blocks for a new bee to mature
-        consensus.beeLifespanBlocks = 48*24*14;             // The number of blocks a bee lives for after maturation
+        consensus.mouseGestationBlocks = 40;                  // The number of blocks for a new mouse to mature
+        consensus.mouseLifespanBlocks = 48*24*14;             // The number of blocks a mouse lives for after maturation
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");  // Target for ~2^20 work, good for CPU bootstrap
         consensus.minHiveCheckBlock = 50;                   // Don't bother checking below this height for Hive blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
-        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for bee hash target adjustment EMA
+        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for mouse hash target adjustment EMA
         consensus.hiveBlockSpacingTarget = 2;               // Target Hive block frequency (1 out of this many blocks should be Hivemined)
         consensus.hiveBlockSpacingTargetTypical = 3;        // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
         consensus.hiveBlockSpacingTargetTypical_1_1 = 2;    // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)

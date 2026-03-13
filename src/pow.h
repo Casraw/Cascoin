@@ -17,7 +17,7 @@ class uint256;
 class CBlock;
 
 // Cascoin: Hive
-struct BeePopGraphPoint {
+struct MousePopGraphPoint {
     int immaturePop;
     int maturePop;
 };
@@ -26,10 +26,10 @@ unsigned int GetNextWorkRequired(const CBlockIndex* pindexLast, const CBlockHead
 unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nFirstBlockTime, const Consensus::Params&);
 unsigned int DarkGravityWave(const CBlockIndex* pindexLast, const Consensus::Params& params);                               // Cascoin: CAS (DGW) diff adjust implementation
 unsigned int GetNextWorkRequiredLTC(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params&);   // Cascoin: LTC diff adjust implementation
-unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params);                       // Cascoin: Hive: Get the current Bee Hash Target
+unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params);                       // Cascoin: Hive: Get the current Mouse Hash Target
 unsigned int GetNextWorkRequiredLWMA(const CBlockIndex* pindexLast, const CBlockHeader *pblock, const Consensus::Params& params, const POW_TYPE powType); // Cascoin: MinotaurX+Hive1.2: LWMA difficulty adjustment for all pow types
 bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& params);                                                 // Cascoin: Hive: Check The Labyrinth proof for given block
-bool GetNetworkHiveInfo(int& immatureBees, int& immatureBCTs, int& matureBees, int& matureBCTs, CAmount& potentialLifespanRewards, const Consensus::Params& consensusParams, bool recalcGraph = false); // Cascoin: Hive: Get count of all live and gestating BCTs on the network
+bool GetNetworkHiveInfo(int& immatureMice, int& immatureBCTs, int& matureMice, int& matureBCTs, CAmount& potentialLifespanRewards, const Consensus::Params& consensusParams, bool recalcGraph = false); // Cascoin: Hive: Get count of all live and gestating BCTs on the network
 
 /** Check whether a block hash satisfies the proof-of-work requirement specified by nBits */
 bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&);

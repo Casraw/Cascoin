@@ -90,9 +90,9 @@ TransactionView::TransactionView(const PlatformStyle *platformStyle, QWidget *pa
                                   TransactionFilterProxy::TYPE(TransactionRecord::SendToOther));
     typeWidget->addItem(tr("To yourself"), TransactionFilterProxy::TYPE(TransactionRecord::SendToSelf));
     typeWidget->addItem(tr("Mined"), TransactionFilterProxy::TYPE(TransactionRecord::Generated));
-    typeWidget->addItem(tr("Labyrinth mouse creation"), TransactionFilterProxy::TYPE(TransactionRecord::HiveBeeCreation));         // Cascoin: Hive
+    typeWidget->addItem(tr("Labyrinth mouse creation"), TransactionFilterProxy::TYPE(TransactionRecord::HiveMouseCreation));         // Cascoin: Hive
     typeWidget->addItem(tr("Labyrinth community fund"), TransactionFilterProxy::TYPE(TransactionRecord::HiveCommunityFund));     // Cascoin: Hive
-    typeWidget->addItem(tr("Labyrinth-mined cheese"), TransactionFilterProxy::TYPE(TransactionRecord::HiveHoney));                 // Cascoin: Hive
+    typeWidget->addItem(tr("Labyrinth-mined cheese"), TransactionFilterProxy::TYPE(TransactionRecord::HiveCheese));                 // Cascoin: Hive
     typeWidget->addItem(tr("Other"), TransactionFilterProxy::TYPE(TransactionRecord::Other));
 
     hlayout->addWidget(typeWidget);

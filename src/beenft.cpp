@@ -19,10 +19,10 @@ std::map<uint256, std::shared_ptr<std::vector<unsigned char>>> NFTMemoryManager:
 std::mutex NFTMemoryManager::poolMutex;
 size_t NFTMemoryManager::currentPoolSize = 0;
 
-// Validate a bee NFT token transaction
-bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
+// Validate a mouse NFT token transaction
+bool IsValidMouseNFTTokenTransaction(const CTransaction& tx, std::string& error) {
     // Must have at least one OP_RETURN output with CASTOK magic bytes
-    bool foundBeeToken = false;
+    bool foundMouseToken = false;
     
     for (const CTxOut& txout : tx.vout) {
         // Check for NFT token magic bytes "CASTOK"
@@ -34,25 +34,25 @@ bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
             std::vector<unsigned char> magicBytes(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
             std::vector<unsigned char> expectedMagic = {'C', 'A', 'S', 'T', 'O', 'K'};
             if (magicBytes == expectedMagic) {
-                foundBeeToken = true;
+                foundMouseToken = true;
                 
                 // Validate OP_RETURN data size
-                if (txout.scriptPubKey.size() > BEE_NFT_MAX_DATA_SIZE + 10) {
-                    error = "Bee NFT token data exceeds maximum size";
+                if (txout.scriptPubKey.size() > MOUSE_NFT_MAX_DATA_SIZE + 10) {
+                    error = "Mouse NFT token data exceeds maximum size";
                     LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
             }
             
             // Parse and validate token data
-            std::vector<BeeNFTToken> tokens;
-            if (!ParseBeeNFTTokenTransaction(tx, tokens, error)) {
+            std::vector<MouseNFTToken> tokens;
+            if (!ParseMouseNFTTokenTransaction(tx, tokens, error)) {
                 LogPrintf("NFT Validation Error (TX %s): Parse failed - %s\n", tx.GetHash().ToString(), error);
                 return false;
             }
             
             // Validate each token
-            for (const BeeNFTToken& token : tokens) {
+            for (const MouseNFTToken& token : tokens) {
                 // Check original BCT exists and is valid
                 if (token.originalBCT.IsNull()) {
                     error = "Invalid original BCT hash";
@@ -62,14 +62,14 @@ bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
                 
                 // Check maturity and expiry heights make sense
                 if (token.maturityHeight >= token.expiryHeight) {
-                    error = strprintf("Invalid bee lifecycle: maturity (%d) >= expiry (%d)", token.maturityHeight, token.expiryHeight);
+                    error = strprintf("Invalid mouse lifecycle: maturity (%d) >= expiry (%d)", token.maturityHeight, token.expiryHeight);
                     LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
                 
-                // Check bee index is reasonable (max 1 million bees per BCT to be future-proof)
+                // Check mouse index is reasonable (max 1 million mice per BCT to be future-proof)
                 if (token.beeIndex >= 1000000) {
-                    error = strprintf("Bee index too high: %d", token.beeIndex);
+                    error = strprintf("Mouse index too high: %d", token.beeIndex);
                     LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }
@@ -91,18 +91,18 @@ bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error) {
         }
     }
     
-    if (!foundBeeToken) {
-        error = "No bee NFT token marker found";
+    if (!foundMouseToken) {
+        error = "No mouse NFT token marker found";
         return false;
     }
     
     return true;
 }
 
-// Validate a bee NFT transfer transaction
-bool IsValidBeeNFTTransferTransaction(const CTransaction& tx, std::string& error) {
+// Validate a mouse NFT transfer transaction
+bool IsValidMouseNFTTransferTransaction(const CTransaction& tx, std::string& error) {
     // Must have at least one OP_RETURN output with OP_BEE_TRANSFER
-    bool foundBeeTransfer = false;
+    bool foundMouseTransfer = false;
     
     for (const CTxOut& txout : tx.vout) {
         // Check for NFT transfer magic bytes "BEEXFR" instead of opcode
@@ -111,26 +111,26 @@ bool IsValidBeeNFTTransferTransaction(const CTransaction& tx, std::string& error
             std::vector<unsigned char> transferMagic(txout.scriptPubKey.begin() + 1, txout.scriptPubKey.begin() + 7);
             std::vector<unsigned char> expectedTransfer = {'C', 'A', 'S', 'X', 'F', 'R'};
             if (transferMagic == expectedTransfer) {
-                foundBeeTransfer = true;
+                foundMouseTransfer = true;
                 
                 // Validate OP_RETURN data size (magic bytes + data)
-                if (txout.scriptPubKey.size() > BEE_NFT_MAX_DATA_SIZE + 7) {
-                    error = "Bee NFT transfer data exceeds maximum size";
+                if (txout.scriptPubKey.size() > MOUSE_NFT_MAX_DATA_SIZE + 7) {
+                    error = "Mouse NFT transfer data exceeds maximum size";
                     return false;
                 }
             }
             
             // Parse and validate transfer data
-            std::vector<BeeNFTTransfer> transfers;
-            if (!ParseBeeNFTTransferTransaction(tx, transfers, error)) {
+            std::vector<MouseNFTTransfer> transfers;
+            if (!ParseMouseNFTTransferTransaction(tx, transfers, error)) {
                 return false;
             }
             
             // Validate each transfer
-            for (const BeeNFTTransfer& transfer : transfers) {
-                // Check bee NFT ID is valid
-                if (transfer.beeNFTId.IsNull()) {
-                    error = "Invalid bee NFT ID";
+            for (const MouseNFTTransfer& transfer : transfers) {
+                // Check mouse NFT ID is valid
+                if (transfer.mouseNFTId.IsNull()) {
+                    error = "Invalid mouse NFT ID";
                     return false;
                 }
                 
@@ -157,7 +157,7 @@ bool IsValidBeeNFTTransferTransaction(const CTransaction& tx, std::string& error
                 
                 // Check transfer is not to self
                 if (transfer.fromOwner == transfer.toOwner) {
-                    error = "Cannot transfer bee NFT to same address";
+                    error = "Cannot transfer mouse NFT to same address";
                     return false;
                 }
             }
@@ -165,16 +165,16 @@ bool IsValidBeeNFTTransferTransaction(const CTransaction& tx, std::string& error
         }
     }
     
-    if (!foundBeeTransfer) {
-        error = "No bee NFT transfer marker found";
+    if (!foundMouseTransfer) {
+        error = "No mouse NFT transfer marker found";
         return false;
     }
     
     return true;
 }
 
-// Parse bee NFT token transaction data
-bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken>& tokens, std::string& error) {
+// Parse mouse NFT token transaction data
+bool ParseMouseNFTTokenTransaction(const CTransaction& tx, std::vector<MouseNFTToken>& tokens, std::string& error) {
     tokens.clear();
     
     for (const CTxOut& txout : tx.vout) {
@@ -196,7 +196,7 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
                 // Get data length (byte after OP_PUSHDATA1)
                 unsigned char dataLen = txout.scriptPubKey[9];
                 if (static_cast<size_t>(dataLen + 10) > txout.scriptPubKey.size()) {
-                    error = "Invalid bee NFT token data length";
+                    error = "Invalid mouse NFT token data length";
                     return false;
                 }
                 
@@ -208,23 +208,23 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
             
             // Parse token data (simplified format for MVP)
             if (rawData.size() < 32 + 4 + 4 + 4 + 4) { // BCT hash + 4 x uint32
-                error = "Bee NFT token data too short for required fields";
+                error = "Mouse NFT token data too short for required fields";
                 return false;
             }
             
-            BeeNFTToken token;
+            MouseNFTToken token;
             
             // Parse original BCT hash (32 bytes)
             std::copy(rawData.begin(), rawData.begin() + 32, token.originalBCT.begin());
             
             // Parse uint32 fields (4 bytes each)
-            token.beeIndex = ReadLE32(&rawData[32]);
+            token.mouseIndex = ReadLE32(&rawData[32]);
             token.maturityHeight = ReadLE32(&rawData[36]);
             token.expiryHeight = ReadLE32(&rawData[40]);
             token.tokenizedHeight = ReadLE32(&rawData[44]);
             
-            LogPrintf("Parsed NFT Token: beeIndex=%u, maturity=%u, expiry=%u, tokenized=%u\n",
-                      token.beeIndex, token.maturityHeight, token.expiryHeight, token.tokenizedHeight);
+            LogPrintf("Parsed NFT Token: mouseIndex=%u, maturity=%u, expiry=%u, tokenized=%u\n",
+                      token.mouseIndex, token.maturityHeight, token.expiryHeight, token.tokenizedHeight);
             
             // Parse owner address (remaining bytes as string)
             if (rawData.size() > 48) {
@@ -232,7 +232,7 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
             }
             
             tokens.push_back(token);
-            break; // Only process first bee token output
+            break; // Only process first mouse token output
             }
         }
     }
@@ -240,8 +240,8 @@ bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken
     return !tokens.empty();
 }
 
-// Parse bee NFT transfer transaction data
-bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTransfer>& transfers, std::string& error) {
+// Parse mouse NFT transfer transaction data
+bool ParseMouseNFTTransferTransaction(const CTransaction& tx, std::vector<MouseNFTTransfer>& transfers, std::string& error) {
     transfers.clear();
     
     for (const CTxOut& txout : tx.vout) {
@@ -254,14 +254,14 @@ bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTr
             
                 // Extract data after OP_RETURN + magic bytes
                 if (txout.scriptPubKey.size() < 9) {
-                    error = "Bee NFT transfer data too short";
+                    error = "Mouse NFT transfer data too short";
                     return false;
                 }
             
                 // Get data length (after magic bytes)
                 unsigned char dataLen = txout.scriptPubKey[7];
                 if (static_cast<size_t>(dataLen + 8) > txout.scriptPubKey.size()) {
-                    error = "Invalid bee NFT transfer data length";
+                    error = "Invalid mouse NFT transfer data length";
                     return false;
                 }
                 
@@ -272,15 +272,15 @@ bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTr
                 );
             
                 // Parse transfer data
-                if (rawData.size() < 32 + 4 + 32 + 8) { // Bee NFT ID + height + tx ID + fee
-                    error = "Bee NFT transfer data too short for required fields";
+                if (rawData.size() < 32 + 4 + 32 + 8) { // Mouse NFT ID + height + tx ID + fee
+                    error = "Mouse NFT transfer data too short for required fields";
                     return false;
                 }
                 
-                BeeNFTTransfer transfer;
+                MouseNFTTransfer transfer;
                 
-                // Parse bee NFT ID (32 bytes)
-                std::copy(rawData.begin(), rawData.begin() + 32, transfer.beeNFTId.begin());
+                // Parse mouse NFT ID (32 bytes)
+                std::copy(rawData.begin(), rawData.begin() + 32, transfer.mouseNFTId.begin());
                 
                 // Parse transfer height (4 bytes)
                 transfer.transferHeight = ReadLE32(&rawData[32]);
@@ -305,7 +305,7 @@ bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTr
                 }
                 
                 transfers.push_back(transfer);
-                break; // Only process first bee transfer output
+                break; // Only process first mouse transfer output
             }
         }
     }
@@ -313,8 +313,8 @@ bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTr
     return !transfers.empty();
 }
 
-// Serialize bee NFT token for transaction
-std::vector<unsigned char> SerializeBeeNFTToken(const BeeNFTToken& token) {
+// Serialize mouse NFT token for transaction
+std::vector<unsigned char> SerializeMouseNFTToken(const MouseNFTToken& token) {
     std::vector<unsigned char> data;
     data.reserve(80); // Reserve space for efficiency
     
@@ -322,9 +322,9 @@ std::vector<unsigned char> SerializeBeeNFTToken(const BeeNFTToken& token) {
     data.insert(data.end(), token.originalBCT.begin(), token.originalBCT.end());
     
     // Add uint32 fields (4 bytes each)
-    unsigned char beeIndexBytes[4];
-    WriteLE32(beeIndexBytes, token.beeIndex);
-    data.insert(data.end(), beeIndexBytes, beeIndexBytes + 4);
+    unsigned char mouseIndexBytes[4];
+    WriteLE32(mouseIndexBytes, token.mouseIndex);
+    data.insert(data.end(), mouseIndexBytes, mouseIndexBytes + 4);
     
     unsigned char maturityBytes[4];
     WriteLE32(maturityBytes, token.maturityHeight);
@@ -344,8 +344,8 @@ std::vector<unsigned char> SerializeBeeNFTToken(const BeeNFTToken& token) {
     return data;
 }
 
-// Deserialize bee NFT token from data
-bool DeserializeBeeNFTToken(const std::vector<unsigned char>& data, BeeNFTToken& token) {
+// Deserialize mouse NFT token from data
+bool DeserializeMouseNFTToken(const std::vector<unsigned char>& data, MouseNFTToken& token) {
     if (data.size() < 48) { // Minimum size for required fields
         return false;
     }
@@ -354,7 +354,7 @@ bool DeserializeBeeNFTToken(const std::vector<unsigned char>& data, BeeNFTToken&
     std::copy(data.begin(), data.begin() + 32, token.originalBCT.begin());
     
     // Parse uint32 fields
-    token.beeIndex = ReadLE32(&data[32]);
+    token.mouseIndex = ReadLE32(&data[32]);
     token.maturityHeight = ReadLE32(&data[36]);
     token.expiryHeight = ReadLE32(&data[40]);
     token.tokenizedHeight = ReadLE32(&data[44]);
@@ -367,13 +367,13 @@ bool DeserializeBeeNFTToken(const std::vector<unsigned char>& data, BeeNFTToken&
     return true;
 }
 
-// Serialize bee NFT transfer for transaction
-std::vector<unsigned char> SerializeBeeNFTTransfer(const BeeNFTTransfer& transfer) {
+// Serialize mouse NFT transfer for transaction
+std::vector<unsigned char> SerializeMouseNFTTransfer(const MouseNFTTransfer& transfer) {
     std::vector<unsigned char> data;
     data.reserve(80); // Reserve space for efficiency
     
-    // Add bee NFT ID (32 bytes)
-    data.insert(data.end(), transfer.beeNFTId.begin(), transfer.beeNFTId.end());
+    // Add mouse NFT ID (32 bytes)
+    data.insert(data.end(), transfer.mouseNFTId.begin(), transfer.mouseNFTId.end());
     
     // Add transfer height (4 bytes)
     unsigned char heightBytes[4];
@@ -396,14 +396,14 @@ std::vector<unsigned char> SerializeBeeNFTTransfer(const BeeNFTTransfer& transfe
     return data;
 }
 
-// Deserialize bee NFT transfer from data
-bool DeserializeBeeNFTTransfer(const std::vector<unsigned char>& data, BeeNFTTransfer& transfer) {
+// Deserialize mouse NFT transfer from data
+bool DeserializeMouseNFTTransfer(const std::vector<unsigned char>& data, MouseNFTTransfer& transfer) {
     if (data.size() < 76) { // Minimum size for required fields
         return false;
     }
     
-    // Parse bee NFT ID
-    std::copy(data.begin(), data.begin() + 32, transfer.beeNFTId.begin());
+    // Parse mouse NFT ID
+    std::copy(data.begin(), data.begin() + 32, transfer.mouseNFTId.begin());
     
     // Parse transfer height
     transfer.transferHeight = ReadLE32(&data[32]);
@@ -429,8 +429,8 @@ bool DeserializeBeeNFTTransfer(const std::vector<unsigned char>& data, BeeNFTTra
     return true;
 }
 
-// Create bee NFT token transaction script
-CScript CreateBeeNFTTokenScript(const std::vector<BeeNFTToken>& tokens) {
+// Create mouse NFT token transaction script
+CScript CreateMouseNFTTokenScript(const std::vector<MouseNFTToken>& tokens) {
     CScript script;
     
     if (tokens.empty()) {
@@ -438,8 +438,8 @@ CScript CreateBeeNFTTokenScript(const std::vector<BeeNFTToken>& tokens) {
     }
     
     // For MVP, only support single token per transaction
-    const BeeNFTToken& token = tokens[0];
-    std::vector<unsigned char> tokenData = SerializeBeeNFTToken(token);
+    const MouseNFTToken& token = tokens[0];
+    std::vector<unsigned char> tokenData = SerializeMouseNFTToken(token);
     
     // Soft Fork: Use magic bytes instead of new opcodes for old node compatibility
     std::vector<unsigned char> nftMagic = {'C', 'A', 'S', 'T', 'O', 'K'};  // "CASTOK"
@@ -448,8 +448,8 @@ CScript CreateBeeNFTTokenScript(const std::vector<BeeNFTToken>& tokens) {
     return script;
 }
 
-// Create bee NFT transfer transaction script
-CScript CreateBeeNFTTransferScript(const std::vector<BeeNFTTransfer>& transfers) {
+// Create mouse NFT transfer transaction script
+CScript CreateMouseNFTTransferScript(const std::vector<MouseNFTTransfer>& transfers) {
     CScript script;
     
     if (transfers.empty()) {
@@ -457,8 +457,8 @@ CScript CreateBeeNFTTransferScript(const std::vector<BeeNFTTransfer>& transfers)
     }
     
     // For MVP, only support single transfer per transaction
-    const BeeNFTTransfer& transfer = transfers[0];
-    std::vector<unsigned char> transferData = SerializeBeeNFTTransfer(transfer);
+    const MouseNFTTransfer& transfer = transfers[0];
+    std::vector<unsigned char> transferData = SerializeMouseNFTTransfer(transfer);
     
     // Soft Fork: Use magic bytes instead of new opcodes for old node compatibility  
     std::vector<unsigned char> transferMagic = {'C', 'A', 'S', 'X', 'F', 'R'};  // "CASXFR"

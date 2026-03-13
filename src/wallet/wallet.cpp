@@ -2708,62 +2708,62 @@ OutputType CWallet::TransactionChangeType(OutputType change_type, const std::vec
 // Cascoin: Rialto: Renamed from fWalletUnlockHiveOnly to reflect usage.
 bool fWalletUnlockWithoutTransactions = false;
 
-// Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by bees from this BCT
-CBeeCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations) {
-    CBeeCreationTransactionInfo bct;
+// Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
+CMouseCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations) {
+    CMouseCreationTransactionInfo bct;
 
     if (chainActive.Height() == 0)  // Don't continue if chainActive is invalid; we may be reindexing
         return bct;
 
-    int maxDepth = consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+    int maxDepth = consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
 
     // Make sure it's really a BCT
-    CAmount beeFeePaid;
-    CScript scriptPubKeyHoney;
-    if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney))
+    CAmount mouseFeePaid;
+    CScript scriptPubKeyCheese;
+    if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese))
         return bct;
 
-    // Grab honey address
-    CTxDestination honeyDestination;
+    // Grab cheese address
+    CTxDestination cheeseDestination;
     if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
         LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyHoney));
         return bct;
     }
-    std::string honeyAddress = EncodeDestination(honeyDestination);
+    std::string cheeseAddress = EncodeDestination(cheeseDestination);
 
     // Check lifespan & maturity
     int depth = wtx.GetDepthInMainChain();
     int blocksLeft = maxDepth - depth;
-    blocksLeft++;   // Bee life starts at zero immediately AFTER the BCT appears in a block.
+    blocksLeft++;   // Mouse life starts at zero immediately AFTER the BCT appears in a block.
     bool isMature = false;
     std::string status = "immature";
     if (blocksLeft < 1) {
-        if (!includeDead)   // Skip dead bees unless explicitly including them
+        if (!includeDead)   // Skip dead mice unless explicitly including them
             return bct;
         blocksLeft = 0;
         status = "expired";
         isMature = true;    // We still want to calc rewards
     } else {
-        if (depth > consensusParams.beeGestationBlocks) {
+        if (depth > consensusParams.mouseGestationBlocks) {
             status = "mature";
             isMature = true;
         }
     }
 
-    // Find bee count & community donation status
+    // Find mouse count & community donation status
     int height = chainActive.Height() - depth;
-    CAmount beeCost = GetBeeCost(height, consensusParams);
+    CAmount mouseCost = GetMouseCost(height, consensusParams);
     bool communityContrib = false;
     if (wtx.tx->vout.size() > 1 && wtx.tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-        beeFeePaid += wtx.tx->vout[1].nValue;            // Add any community fund contribution back to the total paid
+        mouseFeePaid += wtx.tx->vout[1].nValue;            // Add any community fund contribution back to the total paid
         communityContrib = true;
     }
-    int beeCount = beeFeePaid / beeCost;
+    int mouseCount = mouseFeePaid / mouseCost;
 
-    // If mature, check for coinbase transactions from blocks minted by a bee from this BCT
+    // If mature, check for coinbase transactions from blocks minted by a mouse from this BCT
     std::string bctTxid = wtx.GetHash().GetHex();
     int blocksFound = 0;
     CAmount rewardsPaid = 0;
@@ -2776,7 +2776,7 @@ CBeeCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDe
                 continue;
 
             // Skip unconfirmed transactions and orphans
-            if (wtx2.GetDepthInMainChain() < minHoneyConfirmations)
+            if (wtx2.GetDepthInMainChain() < minCheeseConfirmations)
                 continue;
 
             // Grab the txid (bytes 14-78)
@@ -2798,78 +2798,78 @@ CBeeCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDe
 
     bct.txid = bctTxid;
     bct.time = time;
-    bct.beeCount = beeCount;
-    bct.beeFeePaid = beeFeePaid;
+    bct.mouseCount = mouseCount;
+    bct.mouseFeePaid = mouseFeePaid;
     bct.communityContrib = communityContrib;
-    bct.beeStatus = status;
-    bct.honeyAddress = honeyAddress;
+    bct.mouseStatus = status;
+    bct.cheeseAddress = cheeseAddress;
     bct.rewardsPaid = rewardsPaid;
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
-    bct.profit = rewardsPaid - beeFeePaid;
+    bct.profit = rewardsPaid - mouseFeePaid;
     
     // Set height information for UI calculations
     bct.creationHeight = height;
-    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
-    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+    bct.maturityHeight = height + consensusParams.mouseGestationBlocks;
+    bct.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
     return bct;
 }
 
 // Cascoin: Hive: Optimized version of GetBCT that uses pre-built lookup map for rewards
-CBeeCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap) {
-    CBeeCreationTransactionInfo bct;
+CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap) {
+    CMouseCreationTransactionInfo bct;
 
     if (chainActive.Height() == 0)  // Don't continue if chainActive is invalid; we may be reindexing
         return bct;
 
-    int maxDepth = consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+    int maxDepth = consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
 
     // Make sure it's really a BCT
-    CAmount beeFeePaid;
-    CScript scriptPubKeyHoney;
-    if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney))
+    CAmount mouseFeePaid;
+    CScript scriptPubKeyCheese;
+    if (!wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese))
         return bct;
 
-    // Grab honey address
-    CTxDestination honeyDestination;
+    // Grab cheese address
+    CTxDestination cheeseDestination;
     if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
         LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyHoney));
         return bct;
     }
-    std::string honeyAddress = EncodeDestination(honeyDestination);
+    std::string cheeseAddress = EncodeDestination(cheeseDestination);
 
     // Check lifespan & maturity
     int depth = wtx.GetDepthInMainChain();
     int blocksLeft = maxDepth - depth;
-    blocksLeft++;   // Bee life starts at zero immediately AFTER the BCT appears in a block.
+    blocksLeft++;   // Mouse life starts at zero immediately AFTER the BCT appears in a block.
     bool isMature = false;
     std::string status = "immature";
     if (blocksLeft < 1) {
-        if (!includeDead)   // Skip dead bees unless explicitly including them
+        if (!includeDead)   // Skip dead mice unless explicitly including them
             return bct;
         blocksLeft = 0;
         status = "expired";
         isMature = true;    // We still want to calc rewards
     } else {
-        if (depth > consensusParams.beeGestationBlocks) {
+        if (depth > consensusParams.mouseGestationBlocks) {
             status = "mature";
             isMature = true;
         }
     }
 
-    // Find bee count & community donation status
+    // Find mouse count & community donation status
     int height = chainActive.Height() - depth;
-    CAmount beeCost = GetBeeCost(height, consensusParams);
+    CAmount mouseCost = GetMouseCost(height, consensusParams);
     bool communityContrib = false;
     if (wtx.tx->vout.size() > 1 && wtx.tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-        beeFeePaid += wtx.tx->vout[1].nValue;            // Add any community fund contribution back to the total paid
+        mouseFeePaid += wtx.tx->vout[1].nValue;            // Add any community fund contribution back to the total paid
         communityContrib = true;
     }
-    int beeCount = beeFeePaid / beeCost;
+    int mouseCount = mouseFeePaid / mouseCost;
 
     // Use pre-built lookup map for rewards instead of scanning entire mapWallet
     std::string bctTxid = wtx.GetHash().GetHex();
@@ -2889,38 +2889,38 @@ CBeeCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool 
 
     bct.txid = bctTxid;
     bct.time = time;
-    bct.beeCount = beeCount;
-    bct.beeFeePaid = beeFeePaid;
+    bct.mouseCount = mouseCount;
+    bct.mouseFeePaid = mouseFeePaid;
     bct.communityContrib = communityContrib;
-    bct.beeStatus = status;
-    bct.honeyAddress = honeyAddress;
+    bct.mouseStatus = status;
+    bct.cheeseAddress = cheeseAddress;
     bct.rewardsPaid = rewardsPaid;
     bct.blocksFound = blocksFound;
     bct.blocksLeft = blocksLeft;
-    bct.profit = rewardsPaid - beeFeePaid;
+    bct.profit = rewardsPaid - mouseFeePaid;
     
     // Set height information for UI calculations
     bct.creationHeight = height;
-    bct.maturityHeight = height + consensusParams.beeGestationBlocks;
-    bct.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+    bct.maturityHeight = height + consensusParams.mouseGestationBlocks;
+    bct.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
     return bct;
 }
 
-// Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead bees and optionally scanning for blocks minted by bees from each BCT
-std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations) {
-    std::vector<CBeeCreationTransactionInfo> bcts;
+// Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
+std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations) {
+    std::vector<CMouseCreationTransactionInfo> bcts;
 
     if (chainActive.Height() == 0)  // Don't continue if chainActive is invalid; we may be reindexing
         return bcts;
 
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
     CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
 
     // Pre-compute our BCT txids to restrict reward aggregation only to relevant coinbases
     std::set<std::string> myBctIds;
     {
-        CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+        CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
         for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
             const CWalletTx& wtx = pairWtx.second;
             if (wtx.IsCoinBase()) continue;
@@ -2940,7 +2940,7 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
             if (!wtx.IsHiveCoinBase()) continue;
 
             // Skip unconfirmed transactions
-            if (wtx.GetDepthInMainChain() < minHoneyConfirmations) continue;
+            if (wtx.GetDepthInMainChain() < minCheeseConfirmations) continue;
 
             // Extract the BCT txid from the coinbase transaction
             if (wtx.tx->vout.size() > 0 && wtx.tx->vout[0].scriptPubKey.size() >= 78) {
@@ -2980,7 +2980,7 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
             continue;
 
         // Get its info if it's a BCT - use optimized version with pre-built lookup
-        CBeeCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minHoneyConfirmations, hiveCoinbaseMap);
+        CMouseCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minCheeseConfirmations, hiveCoinbaseMap);
         if (bct.txid != "") {
             bcts.push_back(bct);
         }
@@ -2990,8 +2990,8 @@ std::vector<CBeeCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool
     return bcts;
 }
 
-// Cascoin: Hive: Create a BCT to gestate given number of bees
-bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyHoney, std::string honeyAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams) {
+// Cascoin: Hive: Create a BCT to gestate given number of mice
+bool CWallet::CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyCheese, std::string cheeseAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams) {
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
 
@@ -3000,18 +3000,18 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
         return false;
     }
 	
-    // Sanity check beeCount
-    if (beeCount < 1) {
-        strFailReason = "Error: At least 1 bee must be created";
+    // Sanity check mouseCount
+    if (mouseCount < 1) {
+        strFailReason = "Error: At least 1 mouse must be created";
         return false;
     }
 	
     // Check available balance (note: can't check fee at this point because we don't know the tx size)
-    CAmount beeCost = GetBeeCost(chainActive.Height(), consensusParams);
+    CAmount mouseCost = GetMouseCost(chainActive.Height(), consensusParams);
     CAmount curBalance = GetAvailableBalance();
-    CAmount totalBeeCost = beeCost * beeCount;
-    if (totalBeeCost > curBalance) {
-        strFailReason = "Error: Insufficient balance to pay bee creation fee";
+    CAmount totalMouseCost = mouseCost * mouseCount;
+    if (totalMouseCost > curBalance) {
+        strFailReason = "Error: Insufficient balance to pay mouse creation fee";
         return false;
     }
 
@@ -3024,23 +3024,23 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
 
     CAmount totalPotentialReward;
     if (IsHive11Enabled(pindexPrev, consensusParams))
-        totalPotentialReward = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
+        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
     else
-        totalPotentialReward = (consensusParams.beeLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
+        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
 
-    if (totalPotentialReward < beeCost) {
-        strFailReason = "Error: Bee creation would cost more than possible rewards";
+    if (totalPotentialReward < mouseCost) {
+        strFailReason = "Error: Mouse creation would cost more than possible rewards";
         return false;
     }
 
-    // Create a new honey address for future coinbase rewards if needed
+    // Create a new cheese address for future coinbase rewards if needed
     CTxDestination destinationFCA;
-    if (honeyAddress.empty()) {
+    if (cheeseAddress.empty()) {
         if (!IsLocked())
             TopUpKeyPool();
 
         CPubKey newKey;
-        if (!reservekeyHoney.GetReservedKey(newKey, true)) {
+        if (!reservekeyCheese.GetReservedKey(newKey, true)) {
             strFailReason = "Error: Couldn't create a new pubkey";
             return false;
         }
@@ -3051,10 +3051,10 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
         destinationFCA = GetDestinationForKey(newKey, output_type);
         SetAddressBook(destinationFCA, strLabel, "receive");
     } else {
-        // If a honey address was passed in, make sure it decodes
-        destinationFCA = DecodeDestination(honeyAddress);
+        // If a cheese address was passed in, make sure it decodes
+        destinationFCA = DecodeDestination(cheeseAddress);
         if (!IsValidDestination(destinationFCA)) {
-            strFailReason = "Error: Invalid honey address specified";
+            strFailReason = "Error: Invalid cheese address specified";
             return false;
         }
 
@@ -3062,18 +3062,18 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
         std::vector<std::vector<unsigned char>> vSolutions;
         txnouttype whichType;
         if (!Solver(GetScriptForDestination(destinationFCA), whichType, vSolutions)) {
-            strFailReason = "Error: Couldn't solve scriptPubKey for honey address";
+            strFailReason = "Error: Couldn't solve scriptPubKey for cheese address";
             return false;
         }
         if (whichType != TX_PUBKEYHASH) {
-            strFailReason = "Error: If specifying a honey address, it must be legacy format (TX_PUBKEYHASH)";
+            strFailReason = "Error: If specifying a cheese address, it must be legacy format (TX_PUBKEYHASH)";
             return false;
         }
 
-        // Make sure it's a wallet address (otherwise bees won't be able to mint)
+        // Make sure it's a wallet address (otherwise mice won't be able to mint)
         isminetype isMine = ::IsMine((const CKeyStore&)*this, (const CTxDestination&)destinationFCA, SIGVERSION_BASE);
         if (isMine != ISMINE_SPENDABLE) {
-            strFailReason = "Error: Wallet doesn't contain the private key for the honey address specified";
+            strFailReason = "Error: Wallet doesn't contain the private key for the cheese address specified";
             return false;
         }
     }
@@ -3095,23 +3095,23 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
         }
 	}
 
-    // Create the unspendable bee creation fee output (vout[0])
+    // Create the unspendable mouse creation fee output (vout[0])
     std::vector<CRecipient> vecSend;
-    CTxDestination destinationBCF = DecodeDestination(consensusParams.beeCreationAddress);
+    CTxDestination destinationBCF = DecodeDestination(consensusParams.mouseCreationAddress);
     CScript scriptPubKeyBCF = GetScriptForDestination(destinationBCF);
     CScript scriptPubKeyFCA = GetScriptForDestination(destinationFCA);
-    scriptPubKeyBCF << OP_RETURN << OP_BEE;
+    scriptPubKeyBCF << OP_RETURN << OP_MOUSE;
     scriptPubKeyBCF += scriptPubKeyFCA;
-    CAmount beeCreationValue = totalBeeCost;
-    CAmount donationValue = (CAmount)(totalBeeCost / consensusParams.communityContribFactor);
+    CAmount mouseCreationValue = totalMouseCost;
+    CAmount donationValue = (CAmount)(totalMouseCost / consensusParams.communityContribFactor);
     
     // Cascoin: MinotaurX+Hive1.2
     if (IsMinotaurXEnabled(pindexPrev, consensusParams))
         donationValue += donationValue >> 1;
 
     if(communityContrib)
-        beeCreationValue -= donationValue;
-    CRecipient recipientBCF = {scriptPubKeyBCF, beeCreationValue, false};
+        mouseCreationValue -= donationValue;
+    CRecipient recipientBCF = {scriptPubKeyBCF, mouseCreationValue, false};
     vecSend.push_back(recipientBCF);
 
     // Add optional community fund output (vout[1] if present)
@@ -3130,8 +3130,8 @@ bool CWallet::CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey&
 	if (!changeAddress.empty()) 
 		coinControl.destChange = destinationChange;
     if (!CreateTransaction(vecSend, wtxNew, reservekeyChange, feeRequired, changePos, strError, coinControl, true)) {
-        if (totalBeeCost + feeRequired > curBalance)   // Now we know fee requirement, check balance fail again
-            strFailReason = "Error: Insufficient balance to cover bee creation fee and transaction fee";
+        if (totalMouseCost + feeRequired > curBalance)   // Now we know fee requirement, check balance fail again
+            strFailReason = "Error: Insufficient balance to cover mouse creation fee and transaction fee";
         else
             strFailReason = "Error: Couldn't create BCT: " + strError;
         return false;

@@ -99,7 +99,7 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
     appMenuBar(0),
     overviewAction(0),
     hiveAction(0),              // Cascoin: Hive page
-    beeNFTAction(0),            // Cascoin: Bee NFT page
+    mouseNFTAction(0),            // Cascoin: Mouse NFT page
     importPrivateKeyAction(0),  // Cascoin: Key import helper
     historyAction(0),
     quitAction(0),
@@ -356,7 +356,7 @@ void BitcoinGUI::createActions()
     tabGroup->addAction(historyAction);
 
     // Cascoin: Hive page
-    hiveAction = new QAction(platformStyle->SingleColorIcon(":/icons/bee"), tr("The &Labyrinth"), this);
+    hiveAction = new QAction(platformStyle->SingleColorIcon(":/icons/mouse"), tr("The &Labyrinth"), this);
     hiveAction->setStatusTip(tr("Labyrinth mining center"));
     hiveAction->setToolTip(hiveAction->statusTip());
     hiveAction->setCheckable(true);
@@ -364,12 +364,12 @@ void BitcoinGUI::createActions()
     tabGroup->addAction(hiveAction);
 
     // Cascoin: Mice NFT page
-    beeNFTAction = new QAction(platformStyle->SingleColorIcon(":/icons/bee"), tr("&Mice NFTs"), this);
-    beeNFTAction->setStatusTip(tr("Manage and transfer mice NFTs"));
-    beeNFTAction->setToolTip(beeNFTAction->statusTip());
-    beeNFTAction->setCheckable(true);
-    beeNFTAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
-    tabGroup->addAction(beeNFTAction);
+    mouseNFTAction = new QAction(platformStyle->SingleColorIcon(":/icons/mouse"), tr("&Mice NFTs"), this);
+    mouseNFTAction->setStatusTip(tr("Manage and transfer mice NFTs"));
+    mouseNFTAction->setToolTip(mouseNFTAction->statusTip());
+    mouseNFTAction->setCheckable(true);
+    mouseNFTAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_6));
+    tabGroup->addAction(mouseNFTAction);
 
 #ifdef ENABLE_WALLET
     // These showNormalIfMinimized are needed because Send Coins and Receive Coins
@@ -378,8 +378,8 @@ void BitcoinGUI::createActions()
     connect(overviewAction, SIGNAL(triggered()), this, SLOT(gotoOverviewPage()));
     connect(hiveAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));  // Cascoin: Hive page
     connect(hiveAction, SIGNAL(triggered()), this, SLOT(gotoHivePage()));           // Cascoin: Hive page
-    connect(beeNFTAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized())); // Cascoin: Bee NFT page
-    connect(beeNFTAction, SIGNAL(triggered()), this, SLOT(gotoBeeNFTPage()));        // Cascoin: Bee NFT page
+    connect(mouseNFTAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized())); // Cascoin: Mouse NFT page
+    connect(mouseNFTAction, SIGNAL(triggered()), this, SLOT(gotoMouseNFTPage()));    // Cascoin: Mouse NFT page
     connect(sendCoinsAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
     connect(sendCoinsAction, SIGNAL(triggered()), this, SLOT(gotoSendCoinsPage()));
     connect(sendCoinsMenuAction, SIGNAL(triggered()), this, SLOT(showNormalIfMinimized()));
@@ -532,7 +532,7 @@ void BitcoinGUI::createToolBars()
         toolbar->addAction(receiveCoinsAction);
         toolbar->addAction(historyAction);
         toolbar->addAction(hiveAction);     // Cascoin: Hive page
-        toolbar->addAction(beeNFTAction);   // Cascoin: Bee NFT page
+        toolbar->addAction(mouseNFTAction);   // Cascoin: Mouse NFT page
         overviewAction->setChecked(true);
     }
 }
@@ -653,7 +653,7 @@ void BitcoinGUI::setWalletActionsEnabled(bool enabled)
     usedReceivingAddressesAction->setEnabled(enabled);
     openAction->setEnabled(enabled);
     hiveAction->setEnabled(enabled);                // Cascoin: Hive page
-    beeNFTAction->setEnabled(enabled);              // Cascoin: Bee NFT page
+    mouseNFTAction->setEnabled(enabled);              // Cascoin: Mouse NFT page
     importPrivateKeyAction->setEnabled(enabled);    // Cascoin: Key import helper
 }
 
@@ -778,12 +778,12 @@ void BitcoinGUI::gotoHivePage()
     if (walletFrame) walletFrame->gotoHivePage();
 }
 
-void BitcoinGUI::gotoBeeNFTPage()
+void BitcoinGUI::gotoMouseNFTPage()
 {
     // Only navigate to BCT page if it's enabled in settings
     if (clientModel && clientModel->getOptionsModel() && clientModel->getOptionsModel()->getShowBCTView()) {
-        beeNFTAction->setChecked(true);
-        if (walletFrame) walletFrame->gotoBeeNFTPage();
+        mouseNFTAction->setChecked(true);
+        if (walletFrame) walletFrame->gotoMouseNFTPage();
     } else {
         // If BCT view is disabled, go to overview page instead
         gotoOverviewPage();
@@ -1286,9 +1286,9 @@ void BitcoinGUI::setTrayIconVisible(bool fHideTrayIcon)
 
 void BitcoinGUI::setBCTViewVisible(bool fShowBCTView)
 {
-    if (beeNFTAction)
+    if (mouseNFTAction)
     {
-        beeNFTAction->setVisible(fShowBCTView);
+        mouseNFTAction->setVisible(fShowBCTView);
     }
 }
 

@@ -29,7 +29,7 @@
    <item>
     <layout class="QHBoxLayout" name="horizontalLayout_9">
      <item>
-      <widget class="QLabel" name="createBeesTitleLabel">
+      <widget class="QLabel" name="createMiceTitleLabel">
        <property name="font">
         <font>
          
@@ -97,7 +97,7 @@
     </layout>
    </item>
    <item>
-    <widget class="QFrame" name="createBeesForm">
+    <widget class="QFrame" name="createMiceForm">
      <property name="sizePolicy">
       <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
        <horstretch>0</horstretch>
@@ -111,7 +111,7 @@
       </size>
      </property>
      <property name="styleSheet">
-      <string notr="true">#createBeesForm{background:url(:/icons/hive_background_flash);
+      <string notr="true">#createMiceForm{background:url(:/icons/hive_background_flash);
 background-repeat:no-repeat;
 background-position:bottom right;
 background-color:#2d3748; color:#ffffff;}</string>
@@ -127,7 +127,7 @@ background-color:#2d3748; color:#ffffff;}</string>
        <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
       </property>
       <item row="0" column="0">
-       <widget class="QLabel" name="currentBeeCostLabel_2">
+       <widget class="QLabel" name="currentMouseCostLabel_2">
         <property name="font">
          <font>
           <pointsize>9</pointsize>
@@ -145,7 +145,7 @@ background-color:#2d3748; color:#ffffff;}</string>
        </widget>
       </item>
       <item row="1" column="0">
-       <widget class="QLabel" name="currentBeeCostLabel_21">
+       <widget class="QLabel" name="currentMouseCostLabel_21">
         <property name="font">
          <font>
           <pointsize>9</pointsize>
@@ -190,7 +190,7 @@ background-color:#2d3748; color:#ffffff;}</string>
        </layout>
       </item>
       <item row="2" column="0">
-       <widget class="QLabel" name="beesToCreateLabel_2">
+       <widget class="QLabel" name="micesToCreateLabel_2">
         <property name="font">
          <font>
           <pointsize>9</pointsize>
@@ -210,7 +210,7 @@ background-color:#2d3748; color:#ffffff;}</string>
       <item row="2" column="1">
        <layout class="QHBoxLayout" name="horizontalLayout_8">
         <item>
-         <widget class="QSpinBox" name="beeCountSpinner">
+         <widget class="QSpinBox" name="mouseCountSpinner">
           <property name="minimumSize">
            <size>
             <width>100</width>
@@ -345,7 +345,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
       <item row="4" column="1">
        <layout class="QHBoxLayout" name="horizontalLayout_3">
         <item>
-         <widget class="QPushButton" name="createBeesButton">
+         <widget class="QPushButton" name="createMiceButton">
           <property name="minimumSize">
            <size>
             <width>120</width>
@@ -360,7 +360,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
           </property>
           <property name="icon">
            <iconset>
-            <normaloff>:/icons/bee</normaloff>:/icons/bee</iconset>
+            <normaloff>:/icons/mouse</normaloff>:/icons/mouse</iconset>
           </property>
          </widget>
         </item>
@@ -432,7 +432,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
       <item row="0" column="1">
        <layout class="QHBoxLayout" name="horizontalLayout_10">
         <item>
-         <widget class="QLabel" name="beeCostLabel">
+         <widget class="QLabel" name="mouseCostLabel">
           <property name="font">
            <font>
             <weight>50</weight>
@@ -714,7 +714,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
           </widget>
          </item>
          <item>
-          <widget class="QLabel" name="beePopIndexLabel">
+          <widget class="QLabel" name="mousePopIndexLabel">
            <property name="toolTip">
             <string>The Global Index is a measure of network mouse population. At a value of 100,
  the network is saturated with the maximum number of mice that are expected
@@ -742,7 +742,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
           </spacer>
          </item>
          <item>
-          <widget class="TinyPie" name="beePopIndexPie" native="true">
+          <widget class="TinyPie" name="mousePopIndexPie" native="true">
            <property name="sizePolicy">
             <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
              <horstretch>0</horstretch>
@@ -835,7 +835,7 @@ QSpinBox::up-arrow, QSpinBox::down-arrow {
        </widget>
       </item>
       <item>
-       <widget class="QCustomPlot" name="beePopGraph" native="true">
+       <widget class="QCustomPlot" name="mousePopGraph" native="true">
         <property name="sizePolicy">
          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
           <horstretch>0</horstretch>
@@ -981,7 +981,7 @@ background-color:#2d3748; color:#ffffff;
          </spacer>
         </item>
         <item>
-         <widget class="QCheckBox" name="includeDeadBeesCheckbox">
+         <widget class="QCheckBox" name="includeDeadMiceCheckbox">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
             <horstretch>0</horstretch>

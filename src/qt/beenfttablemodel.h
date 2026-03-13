@@ -15,11 +15,11 @@ QT_BEGIN_NAMESPACE
 class QTimer;
 QT_END_NAMESPACE
 
-struct BeeNFTRecord
+struct MouseNFTRecord
 {
-    QString beeNFTId;
+    QString mouseNFTId;
     QString originalBCT;
-    int beeIndex;
+    int mouseIndex;
     QString currentOwner;
     QString status;
     int maturityHeight;
@@ -27,24 +27,24 @@ struct BeeNFTRecord
     int tokenizedHeight;
     int blocksLeft;
     
-    BeeNFTRecord():
-        beeIndex(0), maturityHeight(0), expiryHeight(0), 
+    MouseNFTRecord():
+        mouseIndex(0), maturityHeight(0), expiryHeight(0), 
         tokenizedHeight(0), blocksLeft(0) {}
 };
 
-/** Model for the bee NFT table in the GUI */
-class BeeNFTTableModel : public QAbstractTableModel
+/** Model for the mouse NFT table in the GUI */
+class MouseNFTTableModel : public QAbstractTableModel
 {
     Q_OBJECT
 
 public:
-    explicit BeeNFTTableModel(WalletModel *parent = 0);
-    ~BeeNFTTableModel();
+    explicit MouseNFTTableModel(WalletModel *parent = 0);
+    ~MouseNFTTableModel();
 
     enum ColumnIndex {
-        BeeNFTId = 0,
+        MouseNFTId = 0,
         OriginalBCT = 1,
-        BeeIndex = 2,
+        MouseIndex = 2,
         Status = 3,
         Owner = 4,
         BlocksLeft = 5,
@@ -67,19 +67,19 @@ public:
 private:
     WalletModel *walletModel;
     QStringList columns;
-    QList<BeeNFTRecord> cachedBeeNFTList;
+    QList<MouseNFTRecord> cachedMouseNFTList;
     bool includeExpired;
     QTimer *timer;
 
-    /** Update cached bee NFT list from wallet */
-    void updateBeeNFTList();
+    /** Update cached mouse NFT list from wallet */
+    void updateMouseNFTList();
 
 public Q_SLOTS:
-    void updateBeeNFTs();
-    void updateBeeNFTListWithData(const QList<BeeNFTRecord>& newRecords);
+    void updateMouseNFTs();
+    void updateMouseNFTListWithData(const QList<MouseNFTRecord>& newRecords);
 
 Q_SIGNALS:
-    void beeNFTsChanged();
+    void mouseNFTsChanged();
 };
 
 #endif // CASCOIN_QT_BEENFTTABLEMODEL_H

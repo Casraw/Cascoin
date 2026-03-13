@@ -121,15 +121,15 @@ bool IsStandardTx(const CTransaction& tx, std::string& reason, const bool witnes
     txnouttype whichType;
 
     const Consensus::Params& consensusParams = Params().GetConsensus();     // Cascoin: Hive
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));   // Cascoin: Hive
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));   // Cascoin: Hive
 
-    // Check if this transaction might be a bee creation transaction by looking at all outputs
+    // Check if this transaction might be a mouse creation transaction by looking at all outputs
     for (const CTxOut& txout : tx.vout) {
-        // Special handling for bee creation transactions
+        // Special handling for mouse creation transactions
         if (txout.scriptPubKey.size() >= 2 && 
             txout.scriptPubKey[0] == OP_RETURN && 
-            txout.scriptPubKey[1] == OP_BEE) {
-            // Accept any transaction with OP_RETURN OP_BEE marker as standard
+            txout.scriptPubKey[1] == OP_MOUSE) {
+            // Accept any transaction with OP_RETURN OP_MOUSE marker as standard
             // This helps bootstrap The Labyrinth mining system
             return true;
         }

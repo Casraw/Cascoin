@@ -19,7 +19,7 @@ class CChainParams;
 class CScript;
 
 class arith_uint256;    // Cascoin: Hive: Mining optimisations
-struct CBeeRange;       // Cascoin: Hive: Mining optimisations
+struct CMouseRange;       // Cascoin: Hive: Mining optimisations
 
 namespace Consensus { struct Params; };
 
@@ -210,10 +210,10 @@ private:
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);
 
-void BeeKeeper(const CChainParams& chainparams);                        // Cascoin: Hive: Bee management thread
-bool BusyBees(const Consensus::Params& consensusParams, int height);    // Cascoin: Hive: Attempt to mint the next block
-void CheckBin(int threadID, std::vector<CBeeRange> bin, std::string deterministicRandString, arith_uint256 beeHashTarget); // Cascoin: Hive: Mining optimisations: Thread to process a bin of beeranges
-void CheckBinMinotaurX(int threadID, std::vector<CBeeRange> bin, std::string deterministicRandString, arith_uint256 beeHashTarget); // Cascoin: MinotaurX+Hive1.2: Use minotaur inner hash for hive
+void MouseKeeper(const CChainParams& chainparams);                        // Cascoin: Hive: Mouse management thread
+bool BusyMice(const Consensus::Params& consensusParams, int height);    // Cascoin: Hive: Attempt to mint the next block
+void CheckBin(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget); // Cascoin: Hive: Mining optimisations: Thread to process a bin of mouseranges
+void CheckBinMinotaurX(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget); // Cascoin: MinotaurX+Hive1.2: Use minotaur inner hash for hive
 void AbortWatchThread(int height);                                      // Cascoin: Hive: Mining optimisations: Thread to watch for abort conditions
 
 #endif // BITCOIN_MINER_H

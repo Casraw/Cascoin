@@ -475,7 +475,7 @@ border-radius: 8px;
              </widget>
             </item>
             <item>
-             <widget class="QPushButton" name="beeButton">
+             <widget class="QPushButton" name="mouseButton">
               <property name="enabled">
                <bool>true</bool>
               </property>
@@ -493,7 +493,7 @@ border-radius: 8px;
               </property>
               <property name="icon">
                <iconset resource="../bitcoin.qrc">
-                <normaloff>:/icons/bee</normaloff>:/icons/bee</iconset>
+                <normaloff>:/icons/mouse</normaloff>:/icons/mouse</iconset>
               </property>
               <property name="iconSize">
                <size>

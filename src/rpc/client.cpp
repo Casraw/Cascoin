@@ -95,12 +95,12 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createrawbct", 1, "mice_count" },             // Cascoin: Hive: Create a Raw BCT
     { "createrawbct", 3, "community_contrib" },     // Cascoin: Hive: Create a Raw BCT
     { "createrawbct", 4, "locktime" },              // Cascoin: Hive: Create a Raw BCT
-    { "createmice", 0, "beecount" },                // Cascoin: Hive: Create a BCT
+    { "createmice", 0, "mousecount" },                // Cascoin: Hive: Create a BCT
     { "createmice", 1, "community_contrib" },       // Cascoin: Hive: Create a BCT
-    { "getbeecost", 0, "height" },                  // Cascoin: Hive: Get cost of a single bee
+    { "getmousecost", 0, "height" },                  // Cascoin: Hive: Get cost of a single mouse
     { "gethiveinfo", 0, "include_dead" },           // Cascoin: Hive: Get hive info
-    { "gethiveinfo", 1, "min_honey_confirms" },     // Cascoin: Hive: Get hive info
-    { "getbctinfo", 1, "min_honey_confirms" },      // Cascoin: Hive: Get single BCT info
+    { "gethiveinfo", 1, "min_cheese_confirms" },     // Cascoin: Hive: Get hive info
+    { "getbctinfo", 1, "min_cheese_confirms" },      // Cascoin: Hive: Get single BCT info
     { "getnetworkhiveinfo", 0, "include_graph" },   // Cascoin: Hive: Get network hive info
     { "sethiveparams", 0, "hivecheckdelay"},        // Cascoin: Hive: Mining optimisations: Set hive mining params
     { "sethiveparams", 1, "hivecheckthreads"},      // Cascoin: Hive: Mining optimisations: Set hive mining params

@@ -342,12 +342,12 @@ public:
         return (IsCoinBase() && vout[0].nValue == 0 
             && vout[0].scriptPubKey.size() > 1 
             && vout[0].scriptPubKey[0] == OP_RETURN
-            && vout[0].scriptPubKey[1] == OP_BEE
+            && vout[0].scriptPubKey[1] == OP_MOUSE
         );
     }
 
-    // Cascoin: Hive: Check if this transaction is a Bee Creation Transaction, and if so return the total bee fee paid via beeFeePaid and honey scriptPubKey via scriptPubKeyHoney
-    bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* beeFeePaid = nullptr, CScript* scriptPubKeyHoney = nullptr) const;
+    // Cascoin: Hive: Check if this transaction is a Mouse Creation Transaction, and if so return the total mouse fee paid via mouseFeePaid and cheese scriptPubKey via scriptPubKeyCheese
+    bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* mouseFeePaid = nullptr, CScript* scriptPubKeyCheese = nullptr) const;
 
     // Cascoin: Rialto: Check if this transaction is a valid nick creation transaction, and optionally extract the nick and pubkey
     bool IsNCT(const Consensus::Params& consensusParams, CScript scriptPubKeyNCF, std::string* pubKey = nullptr, std::string* nickname = nullptr) const;

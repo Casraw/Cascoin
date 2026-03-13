@@ -67,7 +67,7 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
                 {
                     // Cascoin: Hive: Check for a Hivemined coinbase transaction
                     if (wtx.IsHiveCoinBase())   // Hivemined
-                        sub.type = TransactionRecord::HiveHoney;
+                        sub.type = TransactionRecord::HiveCheese;
                     else // Generated
                         sub.type = TransactionRecord::Generated;
                 }
@@ -127,8 +127,8 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
 
                 CTxDestination address;
                 // Cascoin: Hive: Check for a BCT
-                if (CScript::IsBCTScript(txout.scriptPubKey, GetScriptForDestination(DecodeDestination(Params().GetConsensus().beeCreationAddress)))) {
-                    sub.type = TransactionRecord::HiveBeeCreation;
+                if (CScript::IsBCTScript(txout.scriptPubKey, GetScriptForDestination(DecodeDestination(Params().GetConsensus().mouseCreationAddress)))) {
+                    sub.type = TransactionRecord::HiveMouseCreation;
                 }
                 else if (ExtractDestination(txout.scriptPubKey, address))
                 {
@@ -208,7 +208,7 @@ void TransactionRecord::updateStatus(const CWalletTx &wtx)
     }
     // For generated transactions, determine maturity
     // Cascoin: Hive: Do the same for hivemined transactions
-    else if(type == TransactionRecord::Generated || type == TransactionRecord::HiveHoney)
+    else if(type == TransactionRecord::Generated || type == TransactionRecord::HiveCheese)
     {
         if (wtx.GetBlocksToMaturity() > 0)
         {

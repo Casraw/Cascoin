@@ -14,9 +14,9 @@
 
 // Column alignments for the table
 static int column_alignments[] = {
-    Qt::AlignLeft|Qt::AlignVCenter,   /* BeeNFTId */
+    Qt::AlignLeft|Qt::AlignVCenter,   /* MouseNFTId */
     Qt::AlignLeft|Qt::AlignVCenter,   /* OriginalBCT */
-    Qt::AlignRight|Qt::AlignVCenter,  /* BeeIndex */
+    Qt::AlignRight|Qt::AlignVCenter,  /* MouseIndex */
     Qt::AlignLeft|Qt::AlignVCenter,   /* Status */
     Qt::AlignLeft|Qt::AlignVCenter,   /* Owner */
     Qt::AlignRight|Qt::AlignVCenter,  /* BlocksLeft */
@@ -24,7 +24,7 @@ static int column_alignments[] = {
     Qt::AlignRight|Qt::AlignVCenter   /* ExpiryHeight */
 };
 
-BeeNFTTableModel::BeeNFTTableModel(WalletModel *parent) :
+MouseNFTTableModel::MouseNFTTableModel(WalletModel *parent) :
     QAbstractTableModel(parent),
     walletModel(parent),
     includeExpired(false)
@@ -40,44 +40,44 @@ BeeNFTTableModel::BeeNFTTableModel(WalletModel *parent) :
     updateBeeNFTList();
 }
 
-BeeNFTTableModel::~BeeNFTTableModel()
+MouseNFTTableModel::~MouseNFTTableModel()
 {
     if (timer) {
         timer->stop();
     }
 }
 
-int BeeNFTTableModel::rowCount(const QModelIndex &parent) const
+int MouseNFTTableModel::rowCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
     // Cascoin: Memory leak fix - Limit cached NFT list size to prevent memory overflow
-    return std::min(cachedBeeNFTList.size(), static_cast<qsizetype>(100)); // Reduced to 100 entries for better memory usage
+    return std::min(cachedMouseNFTList.size(), static_cast<qsizetype>(100)); // Reduced to 100 entries for better memory usage
 }
 
-int BeeNFTTableModel::columnCount(const QModelIndex &parent) const
+int MouseNFTTableModel::columnCount(const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
     return columns.length();
 }
 
-QVariant BeeNFTTableModel::data(const QModelIndex &index, int role) const
+QVariant MouseNFTTableModel::data(const QModelIndex &index, int role) const
 {
-    if (!index.isValid() || index.row() >= cachedBeeNFTList.size()) {
+    if (!index.isValid() || index.row() >= cachedMouseNFTList.size()) {
         return QVariant();
     }
 
-    const BeeNFTRecord &rec = cachedBeeNFTList[index.row()];
+    const MouseNFTRecord &rec = cachedMouseNFTList[index.row()];
 
     if (role == Qt::DisplayRole || role == Qt::EditRole) {
         switch(index.column()) {
-        case BeeNFTId:
-            return rec.beeNFTId.left(16) + "..."; // Truncate for display
+        case MouseNFTId:
+            return rec.mouseNFTId.left(16) + "..."; // Truncate for display
         case OriginalBCT:
             return rec.originalBCT.left(16) + "..."; // Truncate for display
-        case BeeIndex: // Now "Total Mice"
+        case MouseIndex: // Now "Total Mice"
             {
                 // Format number with thousands separators
-                QString numStr = QString::number(rec.beeIndex);
+                QString numStr = QString::number(rec.mouseIndex);
                 int len = numStr.length();
                 for (int i = len - 3; i > 0; i -= 3) {
                     numStr.insert(i, ',');
@@ -99,8 +99,8 @@ QVariant BeeNFTTableModel::data(const QModelIndex &index, int role) const
         return column_alignments[index.column()];
     } else if (role == Qt::ToolTipRole) {
         switch(index.column()) {
-        case BeeNFTId:
-            return tr("Unique mice NFT identifier: %1").arg(rec.beeNFTId);
+        case MouseNFTId:
+            return tr("Unique mice NFT identifier: %1").arg(rec.mouseNFTId);
         case OriginalBCT:
             return tr("Original BCT transaction: %1").arg(rec.originalBCT);
         case Owner:
@@ -138,7 +138,7 @@ QVariant BeeNFTTableModel::data(const QModelIndex &index, int role) const
     return QVariant();
 }
 
-QVariant BeeNFTTableModel::headerData(int section, Qt::Orientation orientation, int role) const
+QVariant MouseNFTTableModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
     if (orientation == Qt::Horizontal) {
         if (role == Qt::DisplayRole && section < columns.size()) {
@@ -146,11 +146,11 @@ QVariant BeeNFTTableModel::headerData(int section, Qt::Orientation orientation, 
         }
         if (role == Qt::ToolTipRole) {
             switch(section) {
-            case BeeNFTId:
+            case MouseNFTId:
                 return tr("Unique identifier for this mice NFT");
             case OriginalBCT:
                 return tr("Transaction ID of the original BCT that created this mouse");
-            case BeeIndex:
+            case MouseIndex:
                 return tr("Index of this mouse within the original BCT");
             case Status:
                 return tr("Current status of the mouse (immature/mature/expired)");
@@ -168,16 +168,16 @@ QVariant BeeNFTTableModel::headerData(int section, Qt::Orientation orientation, 
     return QVariant();
 }
 
-QModelIndex BeeNFTTableModel::index(int row, int column, const QModelIndex &parent) const
+QModelIndex MouseNFTTableModel::index(int row, int column, const QModelIndex &parent) const
 {
     Q_UNUSED(parent);
-    if (row >= 0 && row < cachedBeeNFTList.size() && column >= 0 && column < columns.size()) {
+    if (row >= 0 && row < cachedMouseNFTList.size() && column >= 0 && column < columns.size()) {
         return createIndex(row, column);
     }
     return QModelIndex();
 }
 
-Qt::ItemFlags BeeNFTTableModel::flags(const QModelIndex &index) const
+Qt::ItemFlags MouseNFTTableModel::flags(const QModelIndex &index) const
 {
     if (!index.isValid()) {
         return Qt::NoItemFlags;
@@ -186,7 +186,7 @@ Qt::ItemFlags BeeNFTTableModel::flags(const QModelIndex &index) const
     return Qt::ItemIsEnabled | Qt::ItemIsSelectable;
 }
 
-void BeeNFTTableModel::setIncludeExpired(bool _includeExpired)
+void MouseNFTTableModel::setIncludeExpired(bool _includeExpired)
 {
     if (includeExpired != _includeExpired) {
         includeExpired = _includeExpired;
@@ -194,7 +194,7 @@ void BeeNFTTableModel::setIncludeExpired(bool _includeExpired)
     }
 }
 
-void BeeNFTTableModel::updateBeeNFTList()
+void MouseNFTTableModel::updateMouseNFTList()
 {
     if (!walletModel) {
         return;
@@ -205,15 +205,15 @@ void BeeNFTTableModel::updateBeeNFTList()
     // The list will be updated when updateBeeNFTListWithData() is called with fresh data
     
     // Just emit the signal to notify listeners that an update was requested
-    Q_EMIT beeNFTsChanged();
+    Q_EMIT mouseNFTsChanged();
 }
 
-void BeeNFTTableModel::updateBeeNFTs()
+void MouseNFTTableModel::updateMouseNFTs()
 {
     updateBeeNFTList();
 }
 
-void BeeNFTTableModel::updateBeeNFTListWithData(const QList<BeeNFTRecord>& newRecords)
+void MouseNFTTableModel::updateMouseNFTListWithData(const QList<MouseNFTRecord>& newRecords)
 {
     beginResetModel();
     
@@ -222,8 +222,8 @@ void BeeNFTTableModel::updateBeeNFTListWithData(const QList<BeeNFTRecord>& newRe
         qDebug() << "NFT list size (" << newRecords.size() << ") exceeded 500 entries, using smart truncation to prevent memory leak";
         
         // Sort by priority: active NFTs first, then by blocks left (descending)
-        QList<BeeNFTRecord> sortedRecords = newRecords;
-        std::sort(sortedRecords.begin(), sortedRecords.end(), [](const BeeNFTRecord& a, const BeeNFTRecord& b) {
+        QList<MouseNFTRecord> sortedRecords = newRecords;
+        std::sort(sortedRecords.begin(), sortedRecords.end(), [](const MouseNFTRecord& a, const MouseNFTRecord& b) {
             // Active NFTs have priority
             if (a.status == "mature" && b.status != "mature") return true;
             if (a.status != "mature" && b.status == "mature") return false;
@@ -232,12 +232,12 @@ void BeeNFTTableModel::updateBeeNFTListWithData(const QList<BeeNFTRecord>& newRe
             return a.blocksLeft > b.blocksLeft;
         });
         
-        cachedBeeNFTList = sortedRecords.mid(0, 500); // Keep only top 500 entries
+        cachedMouseNFTList = sortedRecords.mid(0, 500); // Keep only top 500 entries
     } else {
-        cachedBeeNFTList = newRecords;
+        cachedMouseNFTList = newRecords;
     }
     
     endResetModel();
     
-    Q_EMIT beeNFTsChanged();
+    Q_EMIT mouseNFTsChanged();
 }

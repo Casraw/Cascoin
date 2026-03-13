@@ -143,7 +143,7 @@ UniValue sethiveparams(const JSONRPCRequest& request)
             "\nSet hivemining optimisation parameters.\n"
             "\nArguments:\n"
             "1. hivecheckdelay     (numeric, required, default=1) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "2. hivecheckthreads   (numeric, required, default=-2) Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "2. hivecheckthreads   (numeric, required, default=-2) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
             "3. hiveearlyout       (boolean, required, default=true) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "\nExamples:\n"
             + HelpExampleCli("sethiveparams", "500 -1 false")
@@ -167,7 +167,7 @@ UniValue gethiveparams(const JSONRPCRequest& request)
             "\nResult:\n"
             "{\n"
             "  \"hivecheckdelay\" : n,             (numeric) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "  \"hivecheckthreads\" : n,           (numeric) Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "  \"hivecheckthreads\" : n,           (numeric) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
             "  \"hiveearlyout\" : true|false,      (boolean) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "}\n"
             "\nExamples:\n"

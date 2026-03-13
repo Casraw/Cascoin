@@ -44,7 +44,7 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
-    void beeButtonClicked();                    // Cascoin: Labyrinth
+    void mouseButtonClicked();                    // Cascoin: Labyrinth
     void outOfSyncWarningClicked();
 
 private:
@@ -68,7 +68,7 @@ private Q_SLOTS:
     void updateAlerts(const QString &warnings);
     void updateWatchOnlyLabels(bool showWatchOnly);
     void handleOutOfSyncWarningClicks();
-    void on_beeButton_clicked();                // Cascoin: Labyrinth: Mice button handler
+    void on_mouseButton_clicked();                // Cascoin: Labyrinth: Mice button handler
     void updateHiveSummary();                   // Cascoin: Labyrinth: Update labyrinth summary
     void on_unlockWalletButton_clicked();       // Cascoin: Rialto: Unlock wallet button handler
 };

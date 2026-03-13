@@ -35,20 +35,20 @@ HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wal
     immature = mature = dead = blocksFound = 0;
     updateInProgress = false;
     pendingUpdate = false;
-    lastIncludeDeadBees = false;
+    lastIncludeDeadMice = false;
 }
 
 HiveTableModel::~HiveTableModel() {
     // Empty destructor
 }
 
-void HiveTableModel::updateBCTs(bool includeDeadBees) {
+void HiveTableModel::updateBCTs(bool includeDeadMice) {
     if (!walletModel) {
         return;
     }
 
     // Remember the filter setting for refresh
-    lastIncludeDeadBees = includeDeadBees;
+    lastIncludeDeadMice = includeDeadMice;
 
     // Prevent concurrent updates: coalesce into a single follow-up run
     if (updateInProgress) {
@@ -65,20 +65,20 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             std::vector<BCTRecord> records;
             
             // Helper lambda to convert wallet BCTs to BCTRecords
-            auto convertWalletBCTs = [](const std::vector<CBeeCreationTransactionInfo>& walletBCTs) {
+            auto convertWalletBCTs = [](const std::vector<CMouseCreationTransactionInfo>& walletBCTs) {
                 std::vector<BCTRecord> result;
                 result.reserve(walletBCTs.size());
                 for (const auto& bct : walletBCTs) {
                     BCTRecord record;
                     record.txid = bct.txid;
-                    record.honeyAddress = bct.honeyAddress;
-                    record.status = bct.beeStatus;
-                    record.beeCount = bct.beeCount;
+                    record.cheeseAddress = bct.cheeseAddress;
+                    record.status = bct.mouseStatus;
+                    record.mouseCount = bct.mouseCount;
                     record.creationHeight = bct.creationHeight;
                     record.maturityHeight = bct.maturityHeight;
                     record.expirationHeight = bct.expirationHeight;
                     record.timestamp = bct.time;
-                    record.cost = bct.beeFeePaid;
+                    record.cost = bct.mouseFeePaid;
                     record.blocksFound = bct.blocksFound;
                     record.rewardsPaid = bct.rewardsPaid;
                     record.profit = bct.profit;
@@ -89,8 +89,8 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
             
             if (bctDb && bctDb->isInitialized()) {
                 // Use SQLite database for fast queries
-                records = bctDb->getAllBCTs(includeDeadBees);
-                LogPrintf("HiveTableModel: Loaded %zu BCT records from SQLite database (includeDeadBees=%d)\n", records.size(), includeDeadBees);
+                records = bctDb->getAllBCTs(includeDeadMice);
+                LogPrintf("HiveTableModel: Loaded %zu BCT records from SQLite database (includeDeadMice=%d)\n", records.size(), includeDeadMice);
                 
                 // Debug: Count records with rewards
                 int recordsWithRewards = 0;
@@ -102,18 +102,18 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 // If database is empty, fall back to wallet scan
                 if (records.empty()) {
                     LogPrintf("HiveTableModel: SQLite database is empty, falling back to wallet scan\n");
-                    std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
-                    walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
-                    records = convertWalletBCTs(vBeeCreationTransactions);
+                    std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
+                    walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                    records = convertWalletBCTs(vMouseCreationTransactions);
                     LogPrintf("HiveTableModel: Loaded %zu BCT records from wallet scan\n", records.size());
                 }
             } else {
                 // Fallback to wallet scan if database not initialized
                 LogPrintf("HiveTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n", 
                           bctDb, bctDb ? bctDb->isInitialized() : false);
-                std::vector<CBeeCreationTransactionInfo> vBeeCreationTransactions;
-                walletModel->getBCTs(vBeeCreationTransactions, includeDeadBees);
-                records = convertWalletBCTs(vBeeCreationTransactions);
+                std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
+                walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                records = convertWalletBCTs(vMouseCreationTransactions);
             }
             
             // Get current chain height for blocks left calculation
@@ -143,13 +143,13 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 CAmount newProfit = 0;
 
                 for (const BCTRecord& record : records) {
-                    // Convert BCTRecord to CBeeCreationTransactionInfo for display
-                    CBeeCreationTransactionInfo bct;
+                    // Convert BCTRecord to CMouseCreationTransactionInfo for display
+                    CMouseCreationTransactionInfo bct;
                     bct.txid = record.txid;
-                    bct.honeyAddress = record.honeyAddress;
-                    bct.beeCount = record.beeCount;
+                    bct.cheeseAddress = record.cheeseAddress;
+                    bct.mouseCount = record.mouseCount;
                     bct.time = record.timestamp;
-                    bct.beeFeePaid = record.cost;
+                    bct.mouseFeePaid = record.cost;
                     bct.blocksFound = record.blocksFound;
                     bct.rewardsPaid = record.rewardsPaid;
                     bct.profit = record.profit;
@@ -173,15 +173,15 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                         
                         // Recalculate status based on current height
                         if (currentHeight >= record.expirationHeight) {
-                            bct.beeStatus = "expired";
+                            bct.mouseStatus = "expired";
                         } else if (currentHeight >= record.maturityHeight) {
-                            bct.beeStatus = "mature";
+                            bct.mouseStatus = "mature";
                         } else {
-                            bct.beeStatus = "immature";
+                            bct.mouseStatus = "immature";
                         }
                     } else {
                         // Fallback to database status if heights not available
-                        bct.beeStatus = record.status;
+                        bct.mouseStatus = record.status;
                         bct.blocksLeft = 0;
                         bct.creationHeight = 0;
                         bct.maturityHeight = 0;
@@ -189,16 +189,16 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                     }
 
                     // Update summary counts
-                    if (bct.beeStatus == "mature") {
-                        newMature += bct.beeCount;
-                    } else if (bct.beeStatus == "immature") {
-                        newImmature += bct.beeCount;
-                    } else if (bct.beeStatus == "expired") {
-                        newDead += bct.beeCount;
+                    if (bct.mouseStatus == "mature") {
+                        newMature += bct.mouseCount;
+                    } else if (bct.mouseStatus == "immature") {
+                        newImmature += bct.mouseCount;
+                    } else if (bct.mouseStatus == "expired") {
+                        newDead += bct.mouseCount;
                     }
 
                     newBlocksFound += bct.blocksFound;
-                    newCost += bct.beeFeePaid;
+                    newCost += bct.mouseFeePaid;
                     newRewardsPaid += bct.rewardsPaid;
                     newProfit += bct.profit;
 
@@ -228,8 +228,8 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
                 updateInProgress = false;
                 if (pendingUpdate) {
                     pendingUpdate = false;
-                    // Re-run with the same includeDeadBees value requested last
-                    updateBCTs(lastIncludeDeadBees);
+                    // Re-run with the same includeDeadMice value requested last
+                    updateBCTs(lastIncludeDeadMice);
                 }
             }, Qt::QueuedConnection);
             
@@ -243,7 +243,7 @@ void HiveTableModel::updateBCTs(bool includeDeadBees) {
     }).detach();
 }
 
-void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadBees) {
+void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadMice) {
     // This method is called from the main thread for immediate cache access
     BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
     if (!bctDb || !bctDb->isInitialized()) {
@@ -253,9 +253,9 @@ void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadBees) {
     // Get summary from database for immediate display
     BCTSummary summary = bctDb->getSummary();
     
-    immature = summary.immatureBees;
-    mature = summary.matureBees;
-    dead = summary.expiredBees;
+    immature = summary.immatureMice;
+    mature = summary.matureMice;
+    dead = summary.expiredMice;
     blocksFound = summary.blocksFound;
     cost = summary.totalCost;
     rewardsPaid = summary.totalRewards;
@@ -265,7 +265,7 @@ void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadBees) {
 void HiveTableModel::onDatabaseUpdated() {
     // Called when BCTDatabaseSQLite signals an update
     // Refresh the model with the last filter setting
-    updateBCTs(lastIncludeDeadBees);
+    updateBCTs(lastIncludeDeadMice);
 }
 
 void HiveTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit) {
@@ -294,23 +294,23 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
     if(!index.isValid() || index.row() >= list.length())
         return QVariant();
 
-    const CBeeCreationTransactionInfo *rec = &list[index.row()];
+    const CMouseCreationTransactionInfo *rec = &list[index.row()];
     if(role == Qt::DisplayRole || role == Qt::EditRole) {        
         switch(index.column()) {
             case Created:
                 return (rec->time == 0) ? "Not in chain yet" : GUIUtil::dateTimeStr(rec->time);
             case Count:
-                return HiveDialog::formatLargeNoLocale(rec->beeCount);
+                return HiveDialog::formatLargeNoLocale(rec->mouseCount);
             case Status:
                 {
-                    QString status = QString::fromStdString(rec->beeStatus);
+                    QString status = QString::fromStdString(rec->mouseStatus);
                     status[0] = status[0].toUpper();
                     return status;
                 }
             case EstimatedTime:
                 {
                     QString status = "";
-                    if (rec->beeStatus == "immature" && rec->maturityHeight > 0) {
+                    if (rec->mouseStatus == "immature" && rec->maturityHeight > 0) {
                         // Calculate blocks until maturity using the stored maturity height
                         LOCK(cs_main);
                         int currentHeight = chainActive.Height();
@@ -320,7 +320,7 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
                         } else {
                             status = "Maturing...";
                         }
-                    } else if (rec->beeStatus == "mature" && rec->expirationHeight > 0) {
+                    } else if (rec->mouseStatus == "mature" && rec->expirationHeight > 0) {
                         // Calculate blocks until expiration using the stored expiration height
                         LOCK(cs_main);
                         int currentHeight = chainActive.Height();
@@ -330,13 +330,13 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
                         } else {
                             status = "Expiring...";
                         }
-                    } else if (rec->beeStatus == "expired") {
+                    } else if (rec->mouseStatus == "expired") {
                         status = "Expired";
                     }
                     return status;
                 }
             case Cost:
-                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->beeFeePaid) + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit());
+                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->mouseFeePaid) + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit());
             case Rewards:
                 if (rec->blocksFound == 0)
                     return "No blocks mined";
@@ -352,7 +352,7 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
         else
             return (int)(Qt::AlignCenter|Qt::AlignVCenter);
     } else if (role == Qt::ForegroundRole) {
-        const CBeeCreationTransactionInfo *rec = &list[index.row()];
+        const CMouseCreationTransactionInfo *rec = &list[index.row()];
 
         if (index.column() == Rewards) {
             if (rec->blocksFound == 0)
@@ -363,22 +363,22 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
         }
         
         if (index.column() == Status) {
-            if (rec->beeStatus == "expired")
+            if (rec->mouseStatus == "expired")
                 return QColor(200, 0, 0);
-            if (rec->beeStatus == "immature")
+            if (rec->mouseStatus == "immature")
                 return QColor(170, 70, 0);
             return QColor(27, 170, 45);
         }
 
         return QColor(0, 0, 0);
     } else if (role == Qt::DecorationRole) {
-        const CBeeCreationTransactionInfo *rec = &list[index.row()];
+        const CMouseCreationTransactionInfo *rec = &list[index.row()];
         if (index.column() == Status) {
-            QString iconStr = ":/icons/beestatus_dead";    // Dead
-            if (rec->beeStatus == "mature")
-                iconStr = ":/icons/beestatus_mature";
-            else if (rec->beeStatus == "immature")
-                iconStr = ":/icons/beestatus_immature";                
+            QString iconStr = ":/icons/mousestatus_dead";    // Dead
+            if (rec->mouseStatus == "mature")
+                iconStr = ":/icons/mousestatus_mature";
+            else if (rec->mouseStatus == "immature")
+                iconStr = ":/icons/mousestatus_immature";                
             return platformStyle->SingleColorIcon(iconStr);
         }
     }
@@ -400,24 +400,24 @@ QVariant HiveTableModel::headerData(int section, Qt::Orientation orientation, in
 void HiveTableModel::sort(int column, Qt::SortOrder order) {
     sortColumn = column;
     sortOrder = order;
-    std::sort(list.begin(), list.end(), CBeeCreationTransactionInfoLessThan(column, order));
+    std::sort(list.begin(), list.end(), CMouseCreationTransactionInfoLessThan(column, order));
     Q_EMIT dataChanged(index(0, 0, QModelIndex()), index(list.size() - 1, NUMBER_OF_COLUMNS - 1, QModelIndex()));
 }
 
-bool CBeeCreationTransactionInfoLessThan::operator()(CBeeCreationTransactionInfo &left, CBeeCreationTransactionInfo &right) const {
-    CBeeCreationTransactionInfo *pLeft = &left;
-    CBeeCreationTransactionInfo *pRight = &right;
+bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransactionInfo &left, CMouseCreationTransactionInfo &right) const {
+    CMouseCreationTransactionInfo *pLeft = &left;
+    CMouseCreationTransactionInfo *pRight = &right;
     if (order == Qt::DescendingOrder)
         std::swap(pLeft, pRight);
 
     switch(column) {
         case HiveTableModel::Count:
-            return pLeft->beeCount < pRight->beeCount;
+            return pLeft->mouseCount < pRight->mouseCount;
         case HiveTableModel::Status:
         case HiveTableModel::EstimatedTime:
             return pLeft->blocksLeft < pRight->blocksLeft;
         case HiveTableModel::Cost:
-            return pLeft->beeFeePaid < pRight->beeFeePaid;
+            return pLeft->mouseFeePaid < pRight->mouseFeePaid;
         case HiveTableModel::Rewards:
             return pLeft->rewardsPaid < pRight->rewardsPaid;
         case HiveTableModel::Created:

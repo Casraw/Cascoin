@@ -80,11 +80,11 @@ public:
         RecvWithAddress,
         RecvFromOther,
         SendToSelf,
-        HiveBeeCreation,    // Cascoin: Hive
+        HiveMouseCreation,  // Cascoin: Hive
         HiveCommunityFund,  // Cascoin: Hive
-        HiveHoney,          // Cascoin: Hive
-        BeeNFTTokenize,     // Cascoin: Mice NFT System - Tokenize mice from BCT
-        BeeNFTTransfer      // Cascoin: Mice NFT System - Transfer mice NFTs
+        HiveCheese,         // Cascoin: Hive
+        MouseNFTTokenize,     // Cascoin: Mice NFT System - Tokenize mice from BCT
+        MouseNFTTransfer      // Cascoin: Mice NFT System - Transfer mice NFTs
     };
 
     /** Number of confirmation recommended for accepting a transaction */

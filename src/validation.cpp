@@ -1177,16 +1177,16 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     return nSubsidy;
 }
 
-// Cascoin: Hive: Return the current cost for a single worker bee
-CAmount GetBeeCost(int nHeight, const Consensus::Params& consensusParams)
+// Cascoin: Hive: Return the current cost for a single worker mouse
+CAmount GetMouseCost(int nHeight, const Consensus::Params& consensusParams)
 {
     if(nHeight >= consensusParams.totalMoneySupplyHeight)
-        return consensusParams.minBeeCost;
+        return consensusParams.minMouseCost;
 
-    // Cascoin: MinotaurX+Hive1.2: Note that this doesn't change; bee cost remains calculated against the base subsidy. Great!
+    // Cascoin: MinotaurX+Hive1.2: Note that this doesn't change; mouse cost remains calculated against the base subsidy. Great!
     CAmount blockReward = GetBlockSubsidy(nHeight, consensusParams);
-    CAmount beeCost = blockReward / consensusParams.beeCostFactor;
-    return beeCost <= consensusParams.minBeeCost ? consensusParams.minBeeCost : beeCost;
+    CAmount mouseCost = blockReward / consensusParams.mouseCostFactor;
+    return mouseCost <= consensusParams.minMouseCost ? consensusParams.minMouseCost : mouseCost;
 }
 
 bool IsInitialBlockDownload()

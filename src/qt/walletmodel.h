@@ -211,8 +211,8 @@ public:
     void loadReceiveRequests(std::vector<std::string>& vReceiveRequests);
     bool saveReceiveRequest(const std::string &sAddress, const int64_t nId, const std::string &sRequest);
 
-    void getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreationTransactions, bool includeDeadBees);     // Cascoin: Hive
-    bool createBees(int beeCount, bool communityContrib, QWidget *parent, double beePopIndex);                  // Cascoin: Hive
+    void getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCreationTransactions, bool includeDeadMice);     // Cascoin: Hive
+    bool createMice(int mouseCount, bool communityContrib, QWidget *parent, double mousePopIndex);                  // Cascoin: Hive
     bool isHiveEnabled();                                                                                       // Cascoin: Hive
 
     bool transactionCanBeAbandoned(uint256 hash) const;

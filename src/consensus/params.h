@@ -94,17 +94,17 @@ struct Params {
     CScript premineOutputScript;        // Premine output script
 
     // Cascoin: Hive-related consensus params
-    CAmount minBeeCost;                 // Minimum cost of a bee, used when no more block rewards
-    int beeCostFactor;                  // Bee cost is block_reward/beeCostFactor
-    std::string beeCreationAddress;     // Unspendable address for bee creation
+    CAmount minMouseCost;                 // Minimum cost of a mouse, used when no more block rewards
+    int mouseCostFactor;                  // Mouse cost is block_reward/mouseCostFactor
+    std::string mouseCreationAddress;     // Unspendable address for mouse creation
     std::string hiveCommunityAddress;   // Community fund address
     int communityContribFactor;         // Optionally, donate bct_value/maxCommunityContribFactor to community fund
-    int beeGestationBlocks;             // The number of blocks for a new bee to mature
-    int beeLifespanBlocks;              // The number of blocks a bee lives for after maturation
-    uint256 powLimitHive;               // Highest (easiest) bee hash target
+    int mouseGestationBlocks;             // The number of blocks for a new mouse to mature
+    int mouseLifespanBlocks;              // The number of blocks a mouse lives for after maturation
+    uint256 powLimitHive;               // Highest (easiest) mouse hash target
     uint32_t hiveNonceMarker;           // Nonce marker for hivemined blocks
     int minHiveCheckBlock;              // Don't bother checking below this height for Hive blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
-    int hiveTargetAdjustAggression;     // Snap speed for bee hash target adjustment EMA
+    int hiveTargetAdjustAggression;     // Snap speed for mouse hash target adjustment EMA
     int hiveBlockSpacingTarget;         // Target Hive block frequency (1 out of this many blocks should be Hive)
     int hiveBlockSpacingTargetTypical;  // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
     int hiveBlockSpacingTargetTypical_1_1; // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)

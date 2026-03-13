@@ -271,9 +271,9 @@ public:
     bool IsCoinBase() const { return tx->IsCoinBase(); }
     bool IsHiveCoinBase() const { return tx->IsHiveCoinBase(); }    // Cascoin: Hive
 
-    // Cascoin: Hive: Check if this transaction is a Bee Creation Transaction
-    bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* beeFeePaid = nullptr, CScript* scriptPubKeyHoney = nullptr) const {
-        return tx->IsBCT(consensusParams, scriptPubKeyBCF, beeFeePaid, scriptPubKeyHoney);
+    // Cascoin: Hive: Check if this transaction is a Mouse Creation Transaction
+    bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* mouseFeePaid = nullptr, CScript* scriptPubKeyCheese = nullptr) const {
+        return tx->IsBCT(consensusParams, scriptPubKeyBCF, mouseFeePaid, scriptPubKeyCheese);
     }
 };
 
@@ -667,15 +667,15 @@ private:
 };
 
 // Cascoin: Hive: BCT results struct
-struct CBeeCreationTransactionInfo
+struct CMouseCreationTransactionInfo
 {
     std::string txid;
     int64_t time;
-    int beeCount;
-    CAmount beeFeePaid;
+    int mouseCount;
+    CAmount mouseFeePaid;
     bool communityContrib;
-    std::string beeStatus;
-    std::string honeyAddress;
+    std::string mouseStatus;
+    std::string cheeseAddress;
     CAmount rewardsPaid;
     CAmount profit;
     int blocksFound;
@@ -685,11 +685,11 @@ struct CBeeCreationTransactionInfo
     int expirationHeight;    // Block height when BCT expires
 };
 
-// Cascoin: Hive: Mining optimisations: Bee range structure
-struct CBeeRange
+// Cascoin: Hive: Mining optimisations: Mouse range structure
+struct CMouseRange
 {
     std::string txid;
-    std::string honeyAddress;
+    std::string cheeseAddress;
     bool communityContrib;
     int offset;
     int count;
@@ -1003,17 +1003,17 @@ public:
 
     OutputType TransactionChangeType(OutputType change_type, const std::vector<CRecipient>& vecSend);
 
-    // Cascoin: Hive: Create a BCT to gestate given number of bees
-    bool CreateBeeTransaction(int beeCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyHoney, std::string honeyAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams);
+    // Cascoin: Hive: Create a BCT to gestate given number of mice
+    bool CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyCheese, std::string cheeseAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams);
 
-    // Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by bees from this BCT
-    CBeeCreationTransactionInfo GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations);
+    // Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
+    CMouseCreationTransactionInfo GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations);
 
     // Cascoin: Hive: Optimized version of GetBCT that uses pre-built lookup map for rewards to avoid O(n²) complexity
-    CBeeCreationTransactionInfo GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap);
+    CMouseCreationTransactionInfo GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap);
 
-    // Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead bees and optionally scanning for blocks minted by bees from each BCT
-    std::vector<CBeeCreationTransactionInfo> GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minHoneyConfirmations = 1);
+    // Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
+    std::vector<CMouseCreationTransactionInfo> GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations = 1);
 
     // Cascoin: Rialto: Create an NCT to register a given nickname
     bool CreateNickRegistrationTransaction(std::string nickname, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyNickAddress, std::string nickAddress, std::string changeAddress, std::string& strFailReason, const Consensus::Params& consensusParams);
