@@ -18,7 +18,7 @@
 #include <wallet/crypter.h>
 #include <wallet/walletdb.h>
 #include <wallet/rpcwallet.h>
-#include <consensus/params.h>   // Cascoin: Hive
+#include <consensus/params.h>   // Cascoin: Labyrinth
 
 #include <algorithm>
 #include <atomic>
@@ -40,7 +40,7 @@ extern CFeeRate payTxFee;
 extern unsigned int nTxConfirmTarget;
 extern bool bSpendZeroConfChange;
 extern bool fWalletRbf;
-extern bool fWalletUnlockWithoutTransactions;  // Cascoin: Hive: Unlock for hive mining purposes only.
+extern bool fWalletUnlockWithoutTransactions;  // Cascoin: Labyrinth: Unlock for labyrinth mining purposes only.
 
 static const unsigned int DEFAULT_KEYPOOL_SIZE = 1000;
 //! -paytxfee default
@@ -269,9 +269,9 @@ public:
 
     const uint256& GetHash() const { return tx->GetHash(); }
     bool IsCoinBase() const { return tx->IsCoinBase(); }
-    bool IsHiveCoinBase() const { return tx->IsHiveCoinBase(); }    // Cascoin: Hive
+    bool IsHiveCoinBase() const { return tx->IsHiveCoinBase(); }    // Cascoin: Labyrinth
 
-    // Cascoin: Hive: Check if this transaction is a Mouse Creation Transaction
+    // Cascoin: Labyrinth: Check if this transaction is a Mouse Creation Transaction
     bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* mouseFeePaid = nullptr, CScript* scriptPubKeyCheese = nullptr) const {
         return tx->IsBCT(consensusParams, scriptPubKeyBCF, mouseFeePaid, scriptPubKeyCheese);
     }
@@ -666,7 +666,7 @@ private:
     std::vector<char> _ssExtra;
 };
 
-// Cascoin: Hive: BCT results struct
+// Cascoin: Labyrinth: BCT results struct
 struct CMouseCreationTransactionInfo
 {
     std::string txid;
@@ -685,7 +685,7 @@ struct CMouseCreationTransactionInfo
     int expirationHeight;    // Block height when BCT expires
 };
 
-// Cascoin: Hive: Mining optimisations: Mouse range structure
+// Cascoin: Labyrinth: Mining optimisations: Mouse range structure
 struct CMouseRange
 {
     std::string txid;
@@ -1003,16 +1003,16 @@ public:
 
     OutputType TransactionChangeType(OutputType change_type, const std::vector<CRecipient>& vecSend);
 
-    // Cascoin: Hive: Create a BCT to gestate given number of mice
+    // Cascoin: Labyrinth: Create a BCT to gestate given number of mice
     bool CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyCheese, std::string cheeseAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams);
 
-    // Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
+    // Cascoin: Labyrinth: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
     CMouseCreationTransactionInfo GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations);
 
-    // Cascoin: Hive: Optimized version of GetBCT that uses pre-built lookup map for rewards to avoid O(n²) complexity
-    CMouseCreationTransactionInfo GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap);
+    // Cascoin: Labyrinth: Optimized version of GetBCT that uses pre-built lookup map for rewards to avoid O(n²) complexity
+    CMouseCreationTransactionInfo GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& labyrinthCoinbaseMap);
 
-    // Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
+    // Cascoin: Labyrinth: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
     std::vector<CMouseCreationTransactionInfo> GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations = 1);
 
     // Cascoin: Rialto: Create an NCT to register a given nickname

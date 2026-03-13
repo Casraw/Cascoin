@@ -260,7 +260,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
         connect(model, SIGNAL(notifyWatchonlyChanged(bool)), this, SLOT(updateWatchOnlyLabels(bool)));
 
         // Cascoin: Labyrinth: Connect summary updater
-        connect(model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
+        connect(model, SIGNAL(newLabyrinthSummaryAvailable()), this, SLOT(updateHiveSummary()));
 
         // Cascoin: Rialto: Connect wallet unlock button
         if (model->getEncryptionStatus() != WalletModel::Locked)
@@ -274,9 +274,9 @@ void OverviewPage::setWalletModel(WalletModel *model)
 
 // Cascoin: Labyrinth: Update The Labyrinth summary
 void OverviewPage::updateHiveSummary() {
-    if (walletModel && walletModel->getHiveTableModel()) {
+    if (walletModel && walletModel->getLabyrinthTableModel()) {
         int immature, mature, dead, blocksFound;
-        walletModel->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+        walletModel->getLabyrinthTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
 
         // Use database summary for totals that include expired BCTs
         // The table model may filter out expired BCTs, missing their rewards/blocks

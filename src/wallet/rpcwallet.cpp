@@ -91,9 +91,9 @@ void EnsureWalletIsUnlocked(CWallet * const pwallet)
     if (pwallet->IsLocked()) {
         throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
     }
-    // Cascoin: Hive
+    // Cascoin: Labyrinth
     if (fWalletUnlockWithoutTransactions) {
-        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Wallet is unlocked for Hive Mining and Rialto Messaging only, please fully unlock it first.");
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Wallet is unlocked for Labyrinth Mining and Rialto Messaging only, please fully unlock it first.");
     }
 }
 
@@ -543,7 +543,7 @@ UniValue sendtoaddress(const JSONRPCRequest& request)
     return wtx.GetHash().GetHex();
 }
 
-// Cascoin: Hive: Get current mouse cost
+// Cascoin: Labyrinth: Get current mouse cost
 UniValue getmousecost(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 1)
@@ -563,7 +563,7 @@ UniValue getmousecost(const JSONRPCRequest& request)
 
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
-    if (!IsHiveEnabled(pindexPrev, consensusParams))
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams))
         throw std::runtime_error(
             "Error: The Labyrinth is not yet enabled on the network"
         );
@@ -573,7 +573,7 @@ UniValue getmousecost(const JSONRPCRequest& request)
         return NullUniValue;
 
     int height = !request.params[0].isNull() ? request.params[0].get_int() : chainActive.Height();
-    if(!IsHiveEnabled(chainActive[height], consensusParams))
+    if(!IsLabyrinthEnabled(chainActive[height], consensusParams))
         throw std::runtime_error(
             "Error: The Labyrinth is not enabled at the requested height"
         );
@@ -583,7 +583,7 @@ UniValue getmousecost(const JSONRPCRequest& request)
     return ValueFromAmount(mouseCost);
 }
 
-// Cascoin: Hive: Create mouse/mice
+// Cascoin: Labyrinth: Create mouse/mice
 UniValue createbees(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -1416,7 +1416,7 @@ UniValue bctnftokenize(const JSONRPCRequest& request) {
     // Create BCT NFT token with real data
     MouseNFTToken token;
     token.originalBCT = bctTxid;
-    token.beeIndex = 0; // 0 for complete BCT
+    token.mouseIndex = 0; // 0 for complete BCT
     token.currentOwner = ownerAddress;
     token.maturityHeight = currentHeight; // Mature immediately
     token.expiryHeight = currentHeight + 525600; // Expire in ~1 year (blocks)
@@ -2223,12 +2223,12 @@ UniValue miceavailable(const JSONRPCRequest& request)
     return result;
 }
 
-// Cascoin: Hive: Get network hive info
-UniValue getnetworkhiveinfo(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Get network labyrinth info
+UniValue getnetworklabyrinthinfo(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 1)
         throw std::runtime_error(
-            "getnetworkhiveinfo ( include_graph )\n"
+            "getnetworklabyrinthinfo ( include_graph )\n"
             "\nLists the Adventure and Resting mice populations across the entire network. Optionally returns values to plot the future mouse population.\n"
             "\nArguments:\n"
             "1. include_graph                  (boolean, optional, default=false) Include mouse population graph\n"
@@ -2243,15 +2243,15 @@ UniValue getnetworkhiveinfo(const JSONRPCRequest& request)
             "  immature_mouse_pop_graph: [ ... ] (numeric array) Graph points for Resting mice population over upcoming gestation span\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("getnetworkhiveinfo", "")
-            + HelpExampleRpc("getnetworkhiveinfo", "")
+            + HelpExampleCli("getnetworklabyrinthinfo", "")
+            + HelpExampleRpc("getnetworklabyrinthinfo", "")
         );
 
     const Consensus::Params& consensusParams = Params().GetConsensus();
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
 
-    if (!IsHiveEnabled(pindexPrev, consensusParams))
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams))
         throw std::runtime_error("Error: The Labyrinth is not yet enabled on the network");
 
     bool includeGraph = false;
@@ -2262,7 +2262,7 @@ UniValue getnetworkhiveinfo(const JSONRPCRequest& request)
 
     int globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs;
     CAmount potentialRewards;
-    if (!GetNetworkHiveInfo(globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs, potentialRewards, consensusParams, includeGraph))
+    if (!GetNetworkLabyrinthInfo(globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs, potentialRewards, consensusParams, includeGraph))
         throw std::runtime_error("Error: A block required to calculate network mouse population was not available (pruned data / not found on disk)");
 
     UniValue jsonResults(UniValue::VOBJ);
@@ -2276,18 +2276,18 @@ UniValue getnetworkhiveinfo(const JSONRPCRequest& request)
         int totalBeeLifespan = consensusParams.mouseLifespanBlocks + consensusParams.mouseGestationBlocks;
         UniValue maturePopJSON(UniValue::VARR);
         for (int i = 1; i < totalBeeLifespan; i++)
-            maturePopJSON.push_back(beePopGraph[i].maturePop);
+            maturePopJSON.push_back(mousePopGraph[i].maturePop);
         jsonResults.push_back(Pair("mature_mouse_pop_graph", maturePopJSON));
 
         UniValue immaturePopJSON(UniValue::VARR);
         for (int i = 1; i < consensusParams.mouseGestationBlocks; i++)
-            immaturePopJSON.push_back(beePopGraph[i].immaturePop);
+            immaturePopJSON.push_back(mousePopGraph[i].immaturePop);
         jsonResults.push_back(Pair("immature_mouse_pop_graph", immaturePopJSON));
     }
     return jsonResults;
 }
 
-// Cascoin: Hive: Return BCT tx id for a cheese transaction in this wallet
+// Cascoin: Labyrinth: Return BCT tx id for a cheese transaction in this wallet
 UniValue getmousecreationtxid(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -2337,7 +2337,7 @@ UniValue getmousecreationtxid(const JSONRPCRequest& request)
     return bctTxIdStr;
 }
             
-// Cascoin: Hive: Return hive info for a single BCT
+// Cascoin: Labyrinth: Return labyrinth info for a single BCT
 UniValue getbctinfo(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
@@ -2410,8 +2410,8 @@ UniValue getbctinfo(const JSONRPCRequest& request)
     return jsonResults;
 }
 
-// Cascoin: Hive: Get wallet's own hive info
-UniValue gethiveinfo(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Get wallet's own labyrinth info
+UniValue getlabyrinthinfo(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp))
@@ -2419,7 +2419,7 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() > 2)
         throw std::runtime_error(
-            "gethiveinfo ( include_dead, min_honey_confirms )\n"
+            "getlabyrinthinfo ( include_dead, min_honey_confirms )\n"
             "\nLists the status of your current labyrinth, broken down by mouse creation transaction.\n"
             "\nArguments:\n"
             "1. include_dead           (boolean, optional, default=false) Include mice whose lifespans have expired\n"
@@ -2453,15 +2453,15 @@ UniValue gethiveinfo(const JSONRPCRequest& request)
             "    ]\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("gethiveinfo", "")
-            + HelpExampleCli("gethiveinfo", "true")
-            + HelpExampleRpc("gethiveinfo", "false, 10")
+            + HelpExampleCli("getlabyrinthinfo", "")
+            + HelpExampleCli("getlabyrinthinfo", "true")
+            + HelpExampleRpc("getlabyrinthinfo", "false, 10")
         );
 
     const Consensus::Params& consensusParams = Params().GetConsensus();
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
-    if (!IsHiveEnabled(pindexPrev, consensusParams))
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams))
         throw std::runtime_error(
             "Error: The Labyrinth is not yet enabled on the network"
         );
@@ -3655,7 +3655,7 @@ void ListTransactions(CWallet* const pwallet, const CWalletTx& wtx, const std::s
             entry.push_back(Pair("account", strSentAccount));
             MaybePushAddress(entry, s.destination);
             
-            // Cascoin: Hive: Sent transactions are never cheese
+            // Cascoin: Labyrinth: Sent transactions are never cheese
             entry.push_back(Pair("ischeese", false));
 
             entry.push_back(Pair("category", "send"));
@@ -3690,7 +3690,7 @@ void ListTransactions(CWallet* const pwallet, const CWalletTx& wtx, const std::s
                 entry.push_back(Pair("account", account));
                 MaybePushAddress(entry, r.destination);
 
-                // Cascoin: Hive: Indicate whether this is cheese (hive block coinbase tx)
+                // Cascoin: Labyrinth: Indicate whether this is cheese (labyrinth block coinbase tx)
                 entry.push_back(Pair("ischeese", wtx.IsHiveCoinBase()));
                 
                 if (wtx.IsCoinBase())
@@ -3743,7 +3743,7 @@ UniValue listtransactions(const JSONRPCRequest& request)
         return NullUniValue;
     }
 
-    // Cascoin: Hive: Include ischeese in documentation
+    // Cascoin: Labyrinth: Include ischeese in documentation
     if (request.fHelp || request.params.size() > 4)
         throw std::runtime_error(
             "listtransactions ( \"account\" count skip include_watchonly )\n"
@@ -3760,7 +3760,7 @@ UniValue listtransactions(const JSONRPCRequest& request)
             "                                                It will be \"\" for the default account.\n"
             "    \"address\":\"address\",    (string) The cascoin address of the transaction. Not present for \n"
             "                                                move transactions (category = move).\n"
-            "    \"ischeese\": xxx,          (bool) Whether this transaction is cheese (hive block coinbase transaction)\n"
+            "    \"ischeese\": xxx,          (bool) Whether this transaction is cheese (labyrinth block coinbase transaction)\n"
             "    \"category\":\"send|receive|move\", (string) The transaction category. 'move' is a local (off blockchain)\n"
             "                                                transaction between accounts, and not associated with an address,\n"
             "                                                transaction id or block. 'send' and 'receive' transactions are \n"
@@ -4325,7 +4325,7 @@ static void LockWallet(CWallet* pWallet)
     pWallet->Lock();
 }
 
-// Cascoin: Hive: Callback to set the wallet back to unlocked only for hive on walletpassphrase timeout
+// Cascoin: Labyrinth: Callback to set the wallet back to unlocked only for labyrinth on walletpassphrase timeout
 static void SetHiveOnly()
 {
 	fWalletUnlockWithoutTransactions = true;
@@ -4386,7 +4386,7 @@ UniValue walletpassphrase(const JSONRPCRequest& request)
         nSleepTime = (int64_t)1 << 30;
     }
 
-	// Cascoin: Hive: Support locked wallets
+	// Cascoin: Labyrinth: Support locked wallets
 	bool wasUnLockedHiveOnly = false;
 	if (!pwallet->IsLocked() && fWalletUnlockWithoutTransactions) {
 		pwallet->Lock();
@@ -4408,7 +4408,7 @@ UniValue walletpassphrase(const JSONRPCRequest& request)
 	
 	fWalletUnlockWithoutTransactions = false;
 	
-	// Cascoin: Hive: Support locked wallets
+	// Cascoin: Labyrinth: Support locked wallets
 	if (!wasUnLockedHiveOnly) {
 		pwallet->nRelockTime = GetTime() + nSleepTime;
 		RPCRunLater(strprintf("lockwallet(%s)", pwallet->GetName()), boost::bind(LockWallet, pwallet), nSleepTime);
@@ -4419,10 +4419,10 @@ UniValue walletpassphrase(const JSONRPCRequest& request)
     return NullUniValue;
 }
 
-// Cascoin: Hive: Unlock wallet for hiving only (Prevent trivial sendmoney attack if user OS account compromised)
-// Cascoin: Rialto: Change name to walletpassphrase_hive_rialto, and update description.
-// Leave walletpassphrasehiveonly as a synonym for backwards compatibility.
-UniValue walletpassphrase_hive_rialto(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Unlock wallet for labyrinth only (Prevent trivial sendmoney attack if user OS account compromised)
+// Cascoin: Rialto: Change name to walletpassphrase_labyrinth_rialto, and update description.
+// Leave walletpassphraselabyrinthonly as a synonym for backwards compatibility.
+UniValue walletpassphrase_labyrinth_rialto(const JSONRPCRequest& request)
 {
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
     if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
@@ -4431,20 +4431,20 @@ UniValue walletpassphrase_hive_rialto(const JSONRPCRequest& request)
 
     if (request.fHelp || request.params.size() != 1) {
         throw std::runtime_error(
-            "walletpassphrase_hive_rialto \"passphrase\"\n"
-            "\nStores the wallet decryption key in memory indefinitely for hive mining and Rialto use only.\n"
+            "walletpassphrase_labyrinth_rialto \"passphrase\"\n"
+            "\nStores the wallet decryption key in memory indefinitely for labyrinth mining and Rialto use only.\n"
             "This is needed to enable The Labyrinth mining thread to run, and to decrypt Rialto messages.\n"
             "\n"
             "Performing other transactions related to private keys, such as sending " + CURRENCY_UNIT + ", is not enabled\n"
             "and will require you to run walletpassphrase separately.\n"
             "\nArguments:\n"
             "1. \"passphrase\"       (string, required) The wallet passphrase\n"
-            
+
             "\nExamples:\n"
-            "\nUnlock the wallet for hive mining and Rialto only\n"
-            + HelpExampleCli("walletpassphrase_hive_rialto", "\"my pass phrase\"") +
+            "\nUnlock the wallet for labyrinth mining and Rialto only\n"
+            + HelpExampleCli("walletpassphrase_labyrinth_rialto", "\"my pass phrase\"") +
             "\nAs json rpc call\n"
-            + HelpExampleRpc("walletpassphrase_hive_rialto", "\"my pass phrase\"")
+            + HelpExampleRpc("walletpassphrase_labyrinth_rialto", "\"my pass phrase\"")
         );
     }
 
@@ -4453,7 +4453,7 @@ UniValue walletpassphrase_hive_rialto(const JSONRPCRequest& request)
     if (request.fHelp)
         return true;
     if (!pwallet->IsCrypted()) {
-        throw JSONRPCError(RPC_WALLET_WRONG_ENC_STATE, "Error: running with an unencrypted wallet, but walletpassphrase_hive_rialto was called.");
+        throw JSONRPCError(RPC_WALLET_WRONG_ENC_STATE, "Error: running with an unencrypted wallet, but walletpassphrase_labyrinth_rialto was called.");
     }
 
     // Note that the walletpassphrase is stored in request.params[0] which is not mlock()ed
@@ -4471,8 +4471,8 @@ UniValue walletpassphrase_hive_rialto(const JSONRPCRequest& request)
     }
     else
         throw std::runtime_error(
-            "walletpassphrase_hive_rialto <passphrase>\n"
-            "Stores the wallet decryption key in memory indefinitely for hive mining and Rialto use only.");
+            "walletpassphrase_labyrinth_rialto <passphrase>\n"
+            "Stores the wallet decryption key in memory indefinitely for labyrinth mining and Rialto use only.");
 
     pwallet->TopUpKeyPool();
 	fWalletUnlockWithoutTransactions = true;
@@ -4544,7 +4544,7 @@ UniValue walletcandecryptrialto(const JSONRPCRequest& request)
             "walletcandecryptrialto\n"
             "\nChecks if the wallet can decrypt Rialto messages (is\n"
             "unencrypted, or is fully unlocked, or is unlocked\n"
-            "for Hive Mining and Rialto only).\n"
+            "for Labyrinth Mining and Rialto only).\n"
             "\nResult:\n"
             "true|false                  (boolean) Whether the command was successful or not\n"
 
@@ -5753,12 +5753,12 @@ extern UniValue rescanblockchain(const JSONRPCRequest& request);
 static const CRPCCommand commands[] =
 { //  category              name                        actor (function)           argNames
     //  --------------------- ------------------------    -----------------------  ----------
-    { "wallet",             "getmousecost",               &getmousecost,               {"height"} },                                            // Cascoin: Hive: Get mouse cost for given height (defaults to tipheight)
-    { "wallet",             "createmice",               &createbees,               {"mice_count","community_contrib","cheese_address"} },     // Cascoin: Hive: Create mouse/mice
-    { "wallet",             "gethiveinfo",              &gethiveinfo,              {"include_dead","min_cheese_confirms"} },                 // Cascoin: Hive: Get current hive info
-    { "wallet",             "getnetworkhiveinfo",       &getnetworkhiveinfo,       {"include_graph"} },                                     // Cascoin: Hive: Get current mouse populations across whole network
-    { "wallet",             "getmousecreationtxid",       &getmousecreationtxid,       {"cheese_txid"} },                                        // Cascoin: Hive: Return BCT tx id for a cheese transaction in this wallet
-    { "wallet",             "getbctinfo",               &getbctinfo,               {"bct_txid","min_cheese_confirms"} },                     // Cascoin: Hive: Return hive info for a single BCT
+    { "wallet",             "getmousecost",               &getmousecost,               {"height"} },                                            // Cascoin: Labyrinth: Get mouse cost for given height (defaults to tipheight)
+    { "wallet",             "createmice",               &createbees,               {"mice_count","community_contrib","cheese_address"} },     // Cascoin: Labyrinth: Create mouse/mice
+    { "wallet",             "getlabyrinthinfo",          &getlabyrinthinfo,         {"include_dead","min_cheese_confirms"} },                 // Cascoin: Labyrinth: Get current labyrinth info
+    { "wallet",             "getnetworklabyrinthinfo",  &getnetworklabyrinthinfo,  {"include_graph"} },                                     // Cascoin: Labyrinth: Get current mouse populations across whole network
+    { "wallet",             "getmousecreationtxid",       &getmousecreationtxid,       {"cheese_txid"} },                                        // Cascoin: Labyrinth: Return BCT tx id for a cheese transaction in this wallet
+    { "wallet",             "getbctinfo",               &getbctinfo,               {"bct_txid","min_cheese_confirms"} },                     // Cascoin: Labyrinth: Return labyrinth info for a single BCT
     { "wallet",             "rialtoregisternick",       &rialtoregisternick,       {"nickname","nick_address","change_address"} },          // Cascoin: Rialto: Register a nick
 //    { "wallet",             "rialtogetpubkey",          &rialtogetpubkey,          {"nickname"} },                                          // Cascoin: Rialto: Get a Rialto pubkey
     { "wallet",             "rialtoisnickregistered",   &rialtoisnickregistered,   {"nickname"} },                                          // Cascoin: Rialto: Check if given nick is registered
@@ -5832,8 +5832,8 @@ static const CRPCCommand commands[] =
     { "wallet",             "walletlock",               &walletlock,               {} },
     { "wallet",             "walletpassphrasechange",   &walletpassphrasechange,   {"oldpassphrase","newpassphrase"} },
     { "wallet",             "walletpassphrase",         &walletpassphrase,         {"passphrase","timeout"} },
-	{ "wallet",             "walletpassphrasehiveonly", &walletpassphrase_hive_rialto, {"passphrase"} },            // Cascoin: Rialto: Renamed for hive and rialto
-	{ "wallet",             "walletpassphrase_hive_rialto", &walletpassphrase_hive_rialto, {"passphrase"} },        // Cascoin: Rialto: Leaving old synonym for backwards compat
+	{ "wallet",             "walletpassphraselabyrinthonly", &walletpassphrase_labyrinth_rialto, {"passphrase"} },            // Cascoin: Rialto: Renamed for labyrinth and rialto
+	{ "wallet",             "walletpassphrase_labyrinth_rialto", &walletpassphrase_labyrinth_rialto, {"passphrase"} },        // Cascoin: Rialto: Leaving old synonym for backwards compat
     { "wallet",             "removeprunedfunds",        &removeprunedfunds,        {"txid"} },
     { "wallet",             "rescanblockchain",         &rescanblockchain,         {"start_height", "stop_height"} },
     { "wallet",             "rescanbctdatabase",        &rescanbctdatabase,        {"start_height", "stop_height"} },  // Cascoin: BCT database rescan

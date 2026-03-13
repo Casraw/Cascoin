@@ -10,7 +10,7 @@
 
 #include <support/allocators/secure.h>
 
-#include <wallet/wallet.h>  // Cascoin: Hive
+#include <wallet/wallet.h>  // Cascoin: Labyrinth
 
 #include <map>
 #include <vector>
@@ -23,7 +23,7 @@ class AddressTableModel;
 class OptionsModel;
 class PlatformStyle;
 class RecentRequestsTableModel;
-class HiveTableModel;               // Cascoin: Hive
+class LabyrinthTableModel;               // Cascoin: Labyrinth
 class TransactionTableModel;
 class WalletModelTransaction;
 
@@ -133,7 +133,7 @@ public:
     AddressTableModel *getAddressTableModel();
     TransactionTableModel *getTransactionTableModel();
     RecentRequestsTableModel *getRecentRequestsTableModel();
-    HiveTableModel *getHiveTableModel();    // Cascoin: Hive
+    LabyrinthTableModel *getLabyrinthTableModel();    // Cascoin: Labyrinth
 
     CAmount getBalance(const CCoinControl *coinControl = nullptr) const;
     CAmount getUnconfirmedBalance() const;
@@ -193,8 +193,8 @@ public:
         void CopyFrom(const UnlockContext& rhs);
     };
 
-    // Cascoin: Hive: Locked wallet support
-    UnlockContext requestUnlock(bool hiveOnly=false);
+    // Cascoin: Labyrinth: Locked wallet support
+    UnlockContext requestUnlock(bool labyrinthOnly=false);
 
     bool getPubKey(const CKeyID &address, CPubKey& vchPubKeyOut) const;
     bool IsSpendable(const CTxDestination& dest) const;
@@ -211,9 +211,9 @@ public:
     void loadReceiveRequests(std::vector<std::string>& vReceiveRequests);
     bool saveReceiveRequest(const std::string &sAddress, const int64_t nId, const std::string &sRequest);
 
-    void getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCreationTransactions, bool includeDeadMice);     // Cascoin: Hive
-    bool createMice(int mouseCount, bool communityContrib, QWidget *parent, double mousePopIndex);                  // Cascoin: Hive
-    bool isHiveEnabled();                                                                                       // Cascoin: Hive
+    void getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCreationTransactions, bool includeDeadMice);     // Cascoin: Labyrinth
+    bool createMice(int mouseCount, bool communityContrib, QWidget *parent, double mousePopIndex);                  // Cascoin: Labyrinth
+    bool isLabyrinthEnabled();                                                                                       // Cascoin: Labyrinth
 
     bool transactionCanBeAbandoned(uint256 hash) const;
     bool abandonTransaction(uint256 hash) const;
@@ -241,7 +241,7 @@ private:
     AddressTableModel *addressTableModel;
     TransactionTableModel *transactionTableModel;
     RecentRequestsTableModel *recentRequestsTableModel;
-    HiveTableModel *hiveTableModel; // Cascoin: Hive
+    LabyrinthTableModel *labyrinthTableModel; // Cascoin: Labyrinth
 
     // Cache some values to be able to detect changes
     CAmount cachedBalance;
@@ -272,7 +272,7 @@ Q_SIGNALS:
     // this means that the unlocking failed or was cancelled.
     void requireUnlock();
 
-	// Cascoin: Hive: Signal emitted when a wallet needs to be unlocked for hive only
+	// Cascoin: Labyrinth: Signal emitted when a wallet needs to be unlocked for labyrinth only
 	void requireUnlockHive();
 
     // Fired when a message should be reported to the user
@@ -287,8 +287,8 @@ Q_SIGNALS:
     // Watch-only address added
     void notifyWatchonlyChanged(bool fHaveWatchonly);
 
-    // Cascoin: Fired when new hive summary available
-    void newHiveSummaryAvailable();
+    // Cascoin: Fired when new labyrinth summary available
+    void newLabyrinthSummaryAvailable();
 
 public Q_SLOTS:
     /* Wallet status might have changed */

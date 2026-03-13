@@ -18,14 +18,14 @@ class CBlockIndex;
 class CChainParams;
 class CScript;
 
-class arith_uint256;    // Cascoin: Hive: Mining optimisations
-struct CMouseRange;       // Cascoin: Hive: Mining optimisations
+class arith_uint256;    // Cascoin: Labyrinth: Mining optimisations
+struct CMouseRange;       // Cascoin: Labyrinth: Mining optimisations
 
 namespace Consensus { struct Params; };
 
 static const bool DEFAULT_PRINTPRIORITY = false;
 
-// Cascoin: Hive: Mining optimisations: Defaults for new hive check parameters
+// Cascoin: Labyrinth: Mining optimisations: Defaults for new labyrinth check parameters
 static const int DEFAULT_HIVE_CHECK_DELAY = 1;
 static const int DEFAULT_HIVE_THREADS = -2;
 static const bool DEFAULT_HIVE_EARLY_OUT = true;
@@ -141,7 +141,7 @@ private:
 
     // Configuration parameters for the block size
     bool fIncludeWitness;
-    bool fIncludeBCTs;              // Cascoin: Hive: Allow BCTs in block?
+    bool fIncludeBCTs;              // Cascoin: Labyrinth: Allow BCTs in block?
     unsigned int nBlockMaxWeight;
     CFeeRate blockMinFeeRate;
     
@@ -168,7 +168,7 @@ public:
     BlockAssembler(const CChainParams& params, const Options& options);
 
     /** Construct a new block template with coinbase to scriptPubKeyIn */
-    // Cascoin: Hive: If hiveProofScript is passed, create a Hive block instead of a PoW block
+    // Cascoin: Labyrinth: If labyrinthProofScript is passed, create a Labyrinth block instead of a PoW block
     // Cascoin: MinotaurX+Hive1.2: Accept POW_TYPE arg
     std::unique_ptr<CBlockTemplate> CreateNewBlock(const CScript& scriptPubKeyIn, bool fMineWitnessTx=true, const CScript* hiveProofScript=nullptr, const POW_TYPE powType=POW_TYPE_SHA256);
 
@@ -210,10 +210,10 @@ private:
 void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned int& nExtraNonce);
 int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParams, const CBlockIndex* pindexPrev);
 
-void MouseKeeper(const CChainParams& chainparams);                        // Cascoin: Hive: Mouse management thread
-bool BusyMice(const Consensus::Params& consensusParams, int height);    // Cascoin: Hive: Attempt to mint the next block
-void CheckBin(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget); // Cascoin: Hive: Mining optimisations: Thread to process a bin of mouseranges
+void MouseKeeper(const CChainParams& chainparams);                        // Cascoin: Labyrinth: Mouse management thread
+bool BusyMice(const Consensus::Params& consensusParams, int height);    // Cascoin: Labyrinth: Attempt to mint the next block
+void CheckBin(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget); // Cascoin: Labyrinth: Mining optimisations: Thread to process a bin of mouseranges
 void CheckBinMinotaurX(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget); // Cascoin: MinotaurX+Hive1.2: Use minotaur inner hash for hive
-void AbortWatchThread(int height);                                      // Cascoin: Hive: Mining optimisations: Thread to watch for abort conditions
+void AbortWatchThread(int height);                                      // Cascoin: Labyrinth: Mining optimisations: Thread to watch for abort conditions
 
 #endif // BITCOIN_MINER_H

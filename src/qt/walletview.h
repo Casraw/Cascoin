@@ -13,7 +13,7 @@
 class BitcoinGUI;
 class ClientModel;
 class OverviewPage;
-class HiveDialog;     // Cascoin: Hive page
+class HiveDialog;     // Cascoin: Labyrinth page
 class MouseNFTPage;     // Cascoin: Mouse NFT page
 class PlatformStyle;
 class ReceiveCoinsDialog;
@@ -64,7 +64,7 @@ private:
     WalletModel *walletModel;
 
     OverviewPage *overviewPage;
-    HiveDialog *hivePage;     // Cascoin: Hive page
+    HiveDialog *labyrinthPage;     // Cascoin: Labyrinth page
     MouseNFTPage *mouseNFTPage;   // Cascoin: Mouse NFT page
     QWidget *transactionsPage;
     ReceiveCoinsDialog *receiveCoinsPage;
@@ -87,7 +87,7 @@ public Q_SLOTS:
     /** Switch to send coins page */
     void gotoSendCoinsPage(QString addr = "");
 
-    // Cascoin: Hive: Switch to hive page
+    // Cascoin: Labyrinth: Switch to labyrinth page
     void gotoHivePage();
     
     // Cascoin: Mouse NFT: Switch to mouse NFT page
@@ -112,7 +112,7 @@ public Q_SLOTS:
     /** Ask for passphrase to unlock wallet temporarily */
     void unlockWallet();
 	
-	// Cascoin: Hive: Unlock wallet just for hive
+	// Cascoin: Labyrinth: Unlock wallet just for labyrinth
 	void unlockWalletHive();
 
     // Cascoin: Key import helper

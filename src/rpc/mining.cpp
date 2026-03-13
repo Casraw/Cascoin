@@ -44,7 +44,7 @@ unsigned int ParseConfirmTarget(const UniValue& value)
  * or from the last difficulty change if 'lookup' is nonpositive.
  * If 'height' is nonnegative, compute the estimate at the time when a given block was found.
  */
-// Cascoin: Hive: count hashes with dedicated function, dont use chainwork. GetNumHashes is Hive Aware.
+// Cascoin: Labyrinth: count hashes with dedicated function, dont use chainwork. GetNumHashes is Labyrinth Aware.
 // Cascoin: MinotaurX+Hive1.2: Only consider the correct powType when counting hashes
 UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
     CBlockIndex *pb = chainActive.Tip();
@@ -57,7 +57,7 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
 
     // If lookup is -1, then use blocks since last difficulty change.
     if (lookup <= 0)
-        lookup = IsHive11Enabled(pb, Params().GetConsensus()) ? 1 : pb->nHeight % Params().GetConsensus().DifficultyAdjustmentInterval() + 1;   // Cascoin: Hive 1.1: Taking the opportunity to provide a more sensible default.
+        lookup = IsLabyrinth11Enabled(pb, Params().GetConsensus()) ? 1 : pb->nHeight % Params().GetConsensus().DifficultyAdjustmentInterval() + 1;   // Cascoin: Labyrinth 1.1: Taking the opportunity to provide a more sensible default.
 
     // If lookup is larger than chain, then set it to chain length.
     if (lookup > pb->nHeight)
@@ -97,9 +97,9 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
 
         // Cascoin: MinotaurX+Hive1.2: Skip incorrect powType
 
-        // TODO: Strictly speaking we may also went to step over hive blocks in here!
-        // However, it is not a major problem as GetNumHashes is Hive aware, and since
-        // hive blocks almost immediately follow pow blocks, the contribution to timing
+        // TODO: Strictly speaking we may also went to step over labyrinth blocks in here!
+        // However, it is not a major problem as GetNumHashes is Labyrinth aware, and since
+        // labyrinth blocks almost immediately follow pow blocks, the contribution to timing
         // inaccuracies are most likely fairly insignificant.
 
         while(pb && IsMinotaurXEnabled(pb, Params().GetConsensus()) && pb->GetBlockHeader().GetPoWType() != powType) {
@@ -134,51 +134,51 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
 	return workDiff.getdouble() / timeDiff;
 }
 
-// Cascoin: Hive: Mining optimisations: Set hive mining params
-UniValue sethiveparams(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+UniValue setlabyrinthparams(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 3)
         throw std::runtime_error(
-            "sethiveparams ( hivecheckdelay, hivecheckthreads, hiveearlyout )\n"
-            "\nSet hivemining optimisation parameters.\n"
+            "setlabyrinthparams ( labyrinthcheckdelay, labyrinthcheckthreads, labyrinthearlyout )\n"
+            "\nSet Labyrinth mining optimisation parameters.\n"
             "\nArguments:\n"
-            "1. hivecheckdelay     (numeric, required, default=1) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "2. hivecheckthreads   (numeric, required, default=-2) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
-            "3. hiveearlyout       (boolean, required, default=true) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
+            "1. labyrinthcheckdelay     (numeric, required, default=1) Time between Labyrinth checks in ms. This should be left at default unless performance degradation is observed.\n"
+            "2. labyrinthcheckthreads   (numeric, required, default=-2) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "3. labyrinthearlyout       (boolean, required, default=true) Abort Labyrinth checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "\nExamples:\n"
-            + HelpExampleCli("sethiveparams", "500 -1 false")
-            + HelpExampleRpc("sethiveparams", "2000 8 true")
+            + HelpExampleCli("setlabyrinthparams", "500 -1 false")
+            + HelpExampleRpc("setlabyrinthparams", "2000 8 true")
        );
 
-    gArgs.ForceSetArg("-hivecheckdelay", std::to_string(request.params[0].get_int()));
-    gArgs.ForceSetArg("-hivecheckthreads", std::to_string(request.params[1].get_int()));
-    gArgs.ForceSetArg("-hiveearlyout", std::to_string(request.params[2].get_bool()));
+    gArgs.ForceSetArg("-labyrinthcheckdelay", std::to_string(request.params[0].get_int()));
+    gArgs.ForceSetArg("-labyrinthcheckthreads", std::to_string(request.params[1].get_int()));
+    gArgs.ForceSetArg("-labyrinthearlyout", std::to_string(request.params[2].get_bool()));
 
     return NullUniValue;
 }
 
-// Cascoin: Hive: Mining optimisations: Get hive mining params
-UniValue gethiveparams(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Mining optimisations: Get labyrinth mining params
+UniValue getlabyrinthparams(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
         throw std::runtime_error(
-            "gethiveparams\n"
-            "\nGet hivemining optimisation parameters.\n"
+            "getlabyrinthparams\n"
+            "\nGet Labyrinth mining optimisation parameters.\n"
             "\nResult:\n"
             "{\n"
-            "  \"hivecheckdelay\" : n,             (numeric) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "  \"hivecheckthreads\" : n,           (numeric) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
-            "  \"hiveearlyout\" : true|false,      (boolean) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
+            "  \"labyrinthcheckdelay\" : n,             (numeric) Time between Labyrinth checks in ms. This should be left at default unless performance degradation is observed.\n"
+            "  \"labyrinthcheckthreads\" : n,           (numeric) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "  \"labyrinthearlyout\" : true|false,      (boolean) Abort Labyrinth checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("gethiveparams", "")
-            + HelpExampleRpc("gethiveparams", "")
+            + HelpExampleCli("getlabyrinthparams", "")
+            + HelpExampleRpc("getlabyrinthparams", "")
        );
 
     UniValue obj(UniValue::VOBJ);
-    obj.push_back(Pair("hivecheckdelay", gArgs.GetArg("-hivecheckdelay", DEFAULT_HIVE_CHECK_DELAY)));
-    obj.push_back(Pair("hivecheckthreads", gArgs.GetArg("-hivecheckthreads", DEFAULT_HIVE_THREADS)));
-    obj.push_back(Pair("hiveearlyout", gArgs.GetBoolArg("-hiveearlyout", DEFAULT_HIVE_EARLY_OUT) ? "true" : "false"));
+    obj.push_back(Pair("labyrinthcheckdelay", gArgs.GetArg("-labyrinthcheckdelay", DEFAULT_HIVE_CHECK_DELAY)));
+    obj.push_back(Pair("labyrinthcheckthreads", gArgs.GetArg("-labyrinthcheckthreads", DEFAULT_HIVE_THREADS)));
+    obj.push_back(Pair("labyrinthearlyout", gArgs.GetBoolArg("-labyrinthearlyout", DEFAULT_HIVE_EARLY_OUT) ? "true" : "false"));
 
     return obj;
 }
@@ -1139,8 +1139,8 @@ static const CRPCCommand commands[] =
 
     { "hidden",             "estimaterawfee",         &estimaterawfee,         {"conf_target", "threshold"} },
 
-    { "mining",             "sethiveparams",          &sethiveparams,          {"hivecheckdelay", "hivecheckthreads", "hiveearlyout"} },  // Cascoin: Hive: Mining optimisations: Set hive mining params
-    { "mining",             "gethiveparams",          &gethiveparams,          {} },  // Cascoin: Hive: Mining optimisations: Get hive mining params
+    { "mining",             "setlabyrinthparams",      &setlabyrinthparams,     {"labyrinthcheckdelay", "labyrinthcheckthreads", "labyrinthearlyout"} },  // Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+    { "mining",             "getlabyrinthparams",      &getlabyrinthparams,     {} },  // Cascoin: Labyrinth: Mining optimisations: Get labyrinth mining params
 };
 
 void RegisterMiningRPCCommands(CRPCTable &t)

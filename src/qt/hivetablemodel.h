@@ -28,13 +28,13 @@ private:
     Qt::SortOrder order;
 };
 
-class HiveTableModel: public QAbstractTableModel
+class LabyrinthTableModel: public QAbstractTableModel
 {
     Q_OBJECT
 
 public:
-    explicit HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent);
-    ~HiveTableModel();
+    explicit LabyrinthTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent);
+    ~LabyrinthTableModel();
 
     enum ColumnIndex {
         Created = 0,

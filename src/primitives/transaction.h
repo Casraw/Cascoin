@@ -11,7 +11,7 @@
 #include <script/script.h>
 #include <serialize.h>
 #include <uint256.h>
-#include <consensus/params.h>   // Cascoin: Hive
+#include <consensus/params.h>   // Cascoin: Labyrinth
 
 static const int SERIALIZE_TRANSACTION_NO_WITNESS = 0x40000000;
 
@@ -336,7 +336,7 @@ public:
         return (vin.size() == 1 && vin[0].prevout.IsNull());
     }
 
-    // Cascoin: Hive: Check if this transaction is a Hivemined coinbase transaction
+    // Cascoin: Labyrinth: Check if this transaction is a Labyrinth mined coinbase transaction
     // Helper for QT wallet; not used for validation
     bool IsHiveCoinBase() const {
         return (IsCoinBase() && vout[0].nValue == 0 
@@ -346,7 +346,7 @@ public:
         );
     }
 
-    // Cascoin: Hive: Check if this transaction is a Mouse Creation Transaction, and if so return the total mouse fee paid via mouseFeePaid and cheese scriptPubKey via scriptPubKeyCheese
+    // Cascoin: Labyrinth: Check if this transaction is a Mouse Creation Transaction, and if so return the total mouse fee paid via mouseFeePaid and cheese scriptPubKey via scriptPubKeyCheese
     bool IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* mouseFeePaid = nullptr, CScript* scriptPubKeyCheese = nullptr) const;
 
     // Cascoin: Rialto: Check if this transaction is a valid nick creation transaction, and optionally extract the nick and pubkey

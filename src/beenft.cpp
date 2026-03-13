@@ -68,8 +68,8 @@ bool IsValidMouseNFTTokenTransaction(const CTransaction& tx, std::string& error)
                 }
                 
                 // Check mouse index is reasonable (max 1 million mice per BCT to be future-proof)
-                if (token.beeIndex >= 1000000) {
-                    error = strprintf("Mouse index too high: %d", token.beeIndex);
+                if (token.mouseIndex >= 1000000) {
+                    error = strprintf("Mouse index too high: %d", token.mouseIndex);
                     LogPrintf("NFT Validation Error (TX %s): %s\n", tx.GetHash().ToString(), error);
                     return false;
                 }

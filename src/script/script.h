@@ -181,7 +181,7 @@ enum opcodetype
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
 
-    // Cascoin: Hive
+    // Cascoin: Labyrinth
     OP_MOUSE = 0xbe,
 
     // Cascoin: Rialto
@@ -677,7 +677,7 @@ public:
         shrink_to_fit();
     }
 
-    // Cascoin: Hive: Check if script is a Mouse Creation script and optionally get the cheese scriptPubKey in scriptPubKeyCheese
+    // Cascoin: Labyrinth: Check if script is a Mouse Creation script and optionally get the cheese scriptPubKey in scriptPubKeyCheese
     static bool IsBCTScript(CScript scriptPubKey, CScript scriptPubKeyBCF, CScript* scriptPubKeyCheese = nullptr) {
         // More flexible mouse creation transaction validation
         // There are two formats that are valid:

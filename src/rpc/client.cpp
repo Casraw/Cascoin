@@ -91,20 +91,20 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "createrawtransaction", 1, "outputs" },
     { "createrawtransaction", 2, "locktime" },
     { "createrawtransaction", 3, "replaceable" },
-    { "createrawbct", 0, "inputs" },                // Cascoin: Hive: Create a Raw BCT
-    { "createrawbct", 1, "mice_count" },             // Cascoin: Hive: Create a Raw BCT
-    { "createrawbct", 3, "community_contrib" },     // Cascoin: Hive: Create a Raw BCT
-    { "createrawbct", 4, "locktime" },              // Cascoin: Hive: Create a Raw BCT
-    { "createmice", 0, "mousecount" },                // Cascoin: Hive: Create a BCT
-    { "createmice", 1, "community_contrib" },       // Cascoin: Hive: Create a BCT
-    { "getmousecost", 0, "height" },                  // Cascoin: Hive: Get cost of a single mouse
-    { "gethiveinfo", 0, "include_dead" },           // Cascoin: Hive: Get hive info
-    { "gethiveinfo", 1, "min_cheese_confirms" },     // Cascoin: Hive: Get hive info
-    { "getbctinfo", 1, "min_cheese_confirms" },      // Cascoin: Hive: Get single BCT info
-    { "getnetworkhiveinfo", 0, "include_graph" },   // Cascoin: Hive: Get network hive info
-    { "sethiveparams", 0, "hivecheckdelay"},        // Cascoin: Hive: Mining optimisations: Set hive mining params
-    { "sethiveparams", 1, "hivecheckthreads"},      // Cascoin: Hive: Mining optimisations: Set hive mining params
-    { "sethiveparams", 2, "hiveearlyabort"},        // Cascoin: Hive: Mining optimisations: Set hive mining params
+    { "createrawbct", 0, "inputs" },                // Cascoin: Labyrinth: Create a Raw BCT
+    { "createrawbct", 1, "mice_count" },             // Cascoin: Labyrinth: Create a Raw BCT
+    { "createrawbct", 3, "community_contrib" },     // Cascoin: Labyrinth: Create a Raw BCT
+    { "createrawbct", 4, "locktime" },              // Cascoin: Labyrinth: Create a Raw BCT
+    { "createmice", 0, "mousecount" },                // Cascoin: Labyrinth: Create a BCT
+    { "createmice", 1, "community_contrib" },       // Cascoin: Labyrinth: Create a BCT
+    { "getmousecost", 0, "height" },                  // Cascoin: Labyrinth: Get cost of a single mouse
+    { "getlabyrinthinfo", 0, "include_dead" },           // Cascoin: Labyrinth: Get labyrinth info
+    { "getlabyrinthinfo", 1, "min_cheese_confirms" },     // Cascoin: Labyrinth: Get labyrinth info
+    { "getbctinfo", 1, "min_cheese_confirms" },      // Cascoin: Labyrinth: Get single BCT info
+    { "getnetworklabyrinthinfo", 0, "include_graph" },   // Cascoin: Labyrinth: Get network labyrinth info
+    { "setlabyrinthparams", 0, "labyrinthcheckdelay"},        // Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+    { "setlabyrinthparams", 1, "labyrinthcheckthreads"},      // Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+    { "setlabyrinthparams", 2, "labyrinthearlyabort"},        // Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
     { "decoderawtransaction", 1, "iswitness" },
     { "signrawtransaction", 1, "prevtxs" },
     { "signrawtransaction", 2, "privkeys" },

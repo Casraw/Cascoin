@@ -65,10 +65,10 @@ HiveDialog::HiveDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     ui->mousePopIndexPie->foregroundCol = Qt::red;
 
     // Swap cols for labyrinth weight pie
-    QColor temp = ui->hiveWeightPie->foregroundCol;
-    ui->hiveWeightPie->foregroundCol = ui->hiveWeightPie->backgroundCol;
-    ui->hiveWeightPie->backgroundCol = temp;
-    ui->hiveWeightPie->borderCol = palette().color(backgroundRole());
+    QColor temp = ui->labyrinthWeightPie->foregroundCol;
+    ui->labyrinthWeightPie->foregroundCol = ui->labyrinthWeightPie->backgroundCol;
+    ui->labyrinthWeightPie->backgroundCol = temp;
+    ui->labyrinthWeightPie->borderCol = palette().color(backgroundRole());
 
     // Initialize debouncing timer for checkbox state changes
     updateTimer = new QTimer(this);
@@ -102,7 +102,7 @@ void HiveDialog::setModel(WalletModel *_model) {
 
     if(_model && _model->getOptionsModel())
     {
-        _model->getHiveTableModel()->sort(HiveTableModel::Created, Qt::DescendingOrder);
+        _model->getLabyrinthTableModel()->sort(LabyrinthTableModel::Created, Qt::DescendingOrder);
         connect(_model->getOptionsModel(), SIGNAL(displayUnitChanged(int)), this, SLOT(updateDisplayUnit()));
         updateDisplayUnit();
 
@@ -117,28 +117,28 @@ void HiveDialog::setModel(WalletModel *_model) {
 
         tableView->verticalHeader()->hide();
         tableView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        tableView->setModel(_model->getHiveTableModel());
+        tableView->setModel(_model->getLabyrinthTableModel());
         tableView->setAlternatingRowColors(true);
         tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         tableView->setSelectionMode(QAbstractItemView::ContiguousSelection);
-        tableView->setColumnWidth(HiveTableModel::Created, CREATED_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Count, COUNT_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Status, STATUS_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::EstimatedTime, TIME_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Cost, COST_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Rewards, REWARDS_COLUMN_WIDTH);
-        //tableView->setColumnWidth(HiveTableModel::Profit, PROFIT_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Created, CREATED_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Count, COUNT_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Status, STATUS_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::EstimatedTime, TIME_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Cost, COST_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Rewards, REWARDS_COLUMN_WIDTH);
+        //tableView->setColumnWidth(LabyrinthTableModel::Profit, PROFIT_COLUMN_WIDTH);
 
         // Last 2 columns are set by the columnResizingFixer, when the table geometry is ready.
         //columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, PROFIT_COLUMN_WIDTH, HIVE_COL_MIN_WIDTH, this);
         columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, REWARDS_COLUMN_WIDTH, HIVE_COL_MIN_WIDTH, this);
 
         // Connect signal to update local summary like OverviewPage
-        connect(_model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
+        connect(_model, SIGNAL(newLabyrinthSummaryAvailable()), this, SLOT(updateHiveSummary()));
 
         // Populate initial data: trigger background load
-        if (_model->getHiveTableModel()) {
-            _model->getHiveTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
+        if (_model->getLabyrinthTableModel()) {
+            _model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
         }
     }
 }
@@ -205,7 +205,7 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
 
     if (forceGlobalSummaryUpdate || chainActive.Tip()->nHeight >= lastGlobalCheckHeight + 10) { // Don't update global summary every block
         int globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs;
-        if (!GetNetworkHiveInfo(globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs, potentialRewards, consensusParams, true)) {
+        if (!GetNetworkLabyrinthInfo(globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs, potentialRewards, consensusParams, true)) {
             ui->globalHiveSummary->hide();
             ui->globalHiveSummaryError->show();
         } else {
@@ -227,8 +227,8 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
         setAmountField(ui->potentialRewardsLabel, potentialRewards);
 
         double hiveWeight = (globalMatureMice == 0) ? 0.0 : mature / (double)globalMatureMice;
-        ui->localHiveWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
-        ui->hiveWeightPie->setValue(hiveWeight);
+        ui->localLabyrinthWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
+        ui->labyrinthWeightPie->setValue(hiveWeight);
 
         mousePopIndex = ((mouseCost * globalMatureMice) / (double)potentialRewards) * 100.0;
         if (mousePopIndex > 200) mousePopIndex = 200;
@@ -242,9 +242,9 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
 }
 
 void HiveDialog::updateHiveSummary() {
-    if(!(model && model->getHiveTableModel())) return;
+    if(!(model && model->getLabyrinthTableModel())) return;
 
-    model->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+    model->getLabyrinthTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
 
     // IMPORTANT: Always get total rewards from database (including expired BCTs)
     // This ensures the summary shows all rewards even when expired BCTs are hidden in the table
@@ -290,7 +290,7 @@ void HiveDialog::updateHiveSummary() {
     if (clientModel && clientModel->getNumConnections() == 0) {
         tooltip = tr("Cascoin is not connected");
         icon = ":/icons/hivestatus_disabled";
-    } else if (!model->isHiveEnabled()) {
+    } else if (!model->isLabyrinthEnabled()) {
         tooltip = tr("The Labyrinth is not enabled on the network");
         icon = ":/icons/hivestatus_disabled";
     } else {
@@ -310,7 +310,7 @@ void HiveDialog::updateHiveSummary() {
             }
         }
     }
-    Q_EMIT hiveStatusIconChanged(icon, tooltip);
+    Q_EMIT labyrinthStatusIconChanged(icon, tooltip);
 }
 
 void HiveDialog::updateDisplayUnit() {
@@ -355,8 +355,8 @@ void HiveDialog::onUpdateTimerTimeout() {
     ui->includeDeadMiceCheckbox->setEnabled(false);
     ui->includeDeadMiceCheckbox->setText(tr("Include expired mice (updating...)"));
 
-    if(model && model->getHiveTableModel()) {
-        model->getHiveTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
+    if(model && model->getLabyrinthTableModel()) {
+        model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
     }
 
     // Re-enable checkbox after update
@@ -371,8 +371,8 @@ void HiveDialog::onPeriodicRefresh() {
     }
     
     // Periodic refresh to ensure labyrinth stays current even if some notifications are missed
-    if (model && model->getHiveTableModel()) {
-        model->getHiveTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
+    if (model && model->getLabyrinthTableModel()) {
+        model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
     }
     
     // Also update the global summary
@@ -432,9 +432,9 @@ void HiveDialog::onBlocksChanged() {
             // Update global summary (lightweight)
             updateData();
             
-            // Refresh hive table in background (already threaded in updateBCTs)
-            if (model && model->getHiveTableModel()) {
-                model->getHiveTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
+            // Refresh labyrinth table in background (already threaded in updateBCTs)
+            if (model && model->getLabyrinthTableModel()) {
+                model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
             }
         });
     }
@@ -580,7 +580,7 @@ void HiveDialog::onMouseMove(QMouseEvent *event) {
 
 void HiveDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
-    columnResizingFixer->stretchColumnWidth(HiveTableModel::Rewards);
+    columnResizingFixer->stretchColumnWidth(LabyrinthTableModel::Rewards);
 }
 
 void HiveDialog::showEvent(QShowEvent *event) {

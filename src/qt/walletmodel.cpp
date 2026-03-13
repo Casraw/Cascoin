@@ -11,11 +11,11 @@
 #include <qt/optionsmodel.h>
 #include <qt/paymentserver.h>
 #include <qt/recentrequeststablemodel.h>
-#include <qt/hivetablemodel.h>  // Cascoin: Hive
+#include <qt/hivetablemodel.h>  // Cascoin: Labyrinth
 #include <qt/sendcoinsdialog.h>
 #include <qt/transactiontablemodel.h>
 
-#include <QTimer>  // Cascoin: For hive update debouncing
+#include <QTimer>  // Cascoin: For labyrinth update debouncing
 #include <QThread>  // Cascoin: For wallet lock retry delays
 
 #include <base58.h>
@@ -40,13 +40,13 @@
 #include <QSet>
 #include <QTimer>
 
-#include <policy/policy.h>  // Cascoin: Hive: For GetVirtualTransactionSize
+#include <policy/policy.h>  // Cascoin: Labyrinth: For GetVirtualTransactionSize
 
 WalletModel::WalletModel(const PlatformStyle *platformStyle, CWallet *_wallet, OptionsModel *_optionsModel, QObject *parent) :
     QObject(parent), wallet(_wallet), optionsModel(_optionsModel), addressTableModel(0),
     transactionTableModel(0),
     recentRequestsTableModel(0),
-    hiveTableModel(0),  // Cascoin: Hive
+    labyrinthTableModel(0),  // Cascoin: Labyrinth
     cachedBalance(0), cachedUnconfirmedBalance(0), cachedImmatureBalance(0),
     cachedEncryptionStatus(Unencrypted),
     cachedNumBlocks(0)
@@ -57,7 +57,7 @@ WalletModel::WalletModel(const PlatformStyle *platformStyle, CWallet *_wallet, O
     addressTableModel = new AddressTableModel(wallet, this);
     transactionTableModel = new TransactionTableModel(platformStyle, wallet, this);
     recentRequestsTableModel = new RecentRequestsTableModel(wallet, this);
-    hiveTableModel = new HiveTableModel(platformStyle, wallet, this);  // Cascoin: Hive
+    labyrinthTableModel = new LabyrinthTableModel(platformStyle, wallet, this);  // Cascoin: Labyrinth
 
     // This timer will be fired repeatedly to update the balance
     pollTimer = new QTimer(this);
@@ -179,24 +179,24 @@ void WalletModel::updateTransaction()
     // Balance and number of transactions might have changed
     fForceCheckBalanceChanged = true;
     
-    // Cascoin: Also update hive table when transactions change as this might affect 
+    // Cascoin: Also update labyrinth table when transactions change as this might affect
     // mice status (new creations, maturation, rewards, etc.)
-    if (hiveTableModel) {
+    if (labyrinthTableModel) {
         // Use a timer to debounce frequent transaction updates
-        static QTimer* hiveUpdateTimer = nullptr;
-        if (!hiveUpdateTimer) {
-            hiveUpdateTimer = new QTimer();
-            hiveUpdateTimer->setSingleShot(true);
-            hiveUpdateTimer->setInterval(1000); // 1 second debounce
-            connect(hiveUpdateTimer, &QTimer::timeout, [this]() {
-                if (hiveTableModel) {
+        static QTimer* labyrinthUpdateTimer = nullptr;
+        if (!labyrinthUpdateTimer) {
+            labyrinthUpdateTimer = new QTimer();
+            labyrinthUpdateTimer->setSingleShot(true);
+            labyrinthUpdateTimer->setInterval(1000); // 1 second debounce
+            connect(labyrinthUpdateTimer, &QTimer::timeout, [this]() {
+                if (labyrinthTableModel) {
                     // Get current checkbox state from preferences or use a reasonable default
                     bool includeExpired = false; // Default to not include expired mice
-                    hiveTableModel->updateBCTs(includeExpired);
+                    labyrinthTableModel->updateBCTs(includeExpired);
                 }
             });
         }
-        hiveUpdateTimer->start(); // Restart the timer
+        labyrinthUpdateTimer->start(); // Restart the timer
     }
 }
 
@@ -419,19 +419,19 @@ RecentRequestsTableModel *WalletModel::getRecentRequestsTableModel()
     return recentRequestsTableModel;
 }
 
-// Cascoin: Hive
-HiveTableModel *WalletModel::getHiveTableModel()
+// Cascoin: Labyrinth
+LabyrinthTableModel *WalletModel::getLabyrinthTableModel()
 {
-    return hiveTableModel;
+    return labyrinthTableModel;
 }
 
-// Cascoin: Hive
-bool WalletModel::isHiveEnabled()
+// Cascoin: Labyrinth
+bool WalletModel::isLabyrinthEnabled()
 {
     if (!wallet)
         return false;
 
-    return IsHiveEnabled(chainActive.Tip(), Params().GetConsensus());
+    return IsLabyrinthEnabled(chainActive.Tip(), Params().GetConsensus());
 }
 
 WalletModel::EncryptionStatus WalletModel::getEncryptionStatus() const
@@ -561,11 +561,11 @@ void WalletModel::unsubscribeFromCoreSignals()
 }
 
 // WalletModel::UnlockContext implementation
-WalletModel::UnlockContext WalletModel::requestUnlock(bool hiveOnly)
+WalletModel::UnlockContext WalletModel::requestUnlock(bool labyrinthOnly)
 {
     bool was_locked = getEncryptionStatus() == Locked;
 
-    // Cascoin: Hive: Support unlock for hive mining only
+    // Cascoin: Labyrinth: Support unlock for labyrinth mining only
     if ((!was_locked) && fWalletUnlockWithoutTransactions)
     {
        setWalletLocked(true);
@@ -575,7 +575,7 @@ WalletModel::UnlockContext WalletModel::requestUnlock(bool hiveOnly)
     if(was_locked)
     {
         // Request UI to unlock wallet
-		if (hiveOnly)
+		if (labyrinthOnly)
 			Q_EMIT requireUnlockHive();
 		else
 			Q_EMIT requireUnlock();
@@ -583,7 +583,7 @@ WalletModel::UnlockContext WalletModel::requestUnlock(bool hiveOnly)
     // If wallet is still locked, unlock was failed or cancelled, mark context as invalid
     bool valid = getEncryptionStatus() != Locked;
 
-    return UnlockContext(this, valid, was_locked && !fWalletUnlockWithoutTransactions); // Cascoin: Hive: Support unlock for hive mining only
+    return UnlockContext(this, valid, was_locked && !fWalletUnlockWithoutTransactions); // Cascoin: Labyrinth: Support unlock for labyrinth mining only
 }
 
 WalletModel::UnlockContext::UnlockContext(WalletModel *_wallet, bool _valid, bool _relock):
@@ -684,7 +684,7 @@ void WalletModel::loadReceiveRequests(std::vector<std::string>& vReceiveRequests
     vReceiveRequests = wallet->GetDestValues("rr"); // receive request
 }
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 void WalletModel::getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCreationTransactions, bool includeDeadMice) {
     if (wallet) {
         // Try multiple times with short waits to avoid showing empty results when wallet is temporarily busy
@@ -711,7 +711,7 @@ void WalletModel::getBCTs(std::vector<CMouseCreationTransactionInfo>& vMouseCrea
     }
 }
 
-// Cascoin: Hive
+// Cascoin: Labyrinth
 bool WalletModel::createMice(int mouseCount, bool communityContrib, QWidget *parent, double mousePopIndex) {
     wallet->BlockUntilSyncedToCurrentChain();
 

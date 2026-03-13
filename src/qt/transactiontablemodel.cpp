@@ -383,7 +383,7 @@ QString TransactionTableModel::formatTxType(const TransactionRecord *wtx) const
     case TransactionRecord::Generated:
         return tr("Mined");
 
-    // Cascoin: Hive: Handle additional TransactionRecord types
+    // Cascoin: Labyrinth: Handle additional TransactionRecord types
     case TransactionRecord::HiveMouseCreation:
         return tr("Labyrinth mouse creation");
     case TransactionRecord::HiveCommunityFund:
@@ -409,7 +409,7 @@ QVariant TransactionTableModel::txAddressDecoration(const TransactionRecord *wtx
     case TransactionRecord::SendToOther:
         return QIcon(":/icons/tx_output");
 
-    // Cascoin: Hive: Handle additional TransactionRecord types
+    // Cascoin: Labyrinth: Handle additional TransactionRecord types
     case TransactionRecord::HiveMouseCreation:
         return QIcon(":/icons/tx_hive_bct");
     case TransactionRecord::HiveCommunityFund:
@@ -441,7 +441,7 @@ QString TransactionTableModel::formatTxToAddress(const TransactionRecord *wtx, b
     case TransactionRecord::SendToOther:
         return QString::fromStdString(wtx->address) + watchAddress;
 
-    // Cascoin: Hive: Handle additional TransactionRecord types
+    // Cascoin: Labyrinth: Handle additional TransactionRecord types
     case TransactionRecord::HiveMouseCreation:
         return "Labyrinth mouse creation";
     case TransactionRecord::HiveCheese:

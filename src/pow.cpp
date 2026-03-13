@@ -10,16 +10,16 @@
 #include <primitives/block.h>
 #include <uint256.h>
 #include <util.h>
-#include <core_io.h>            // Cascoin: Hive
-#include <script/standard.h>    // Cascoin: Hive
-#include <base58.h>             // Cascoin: Hive
-#include <pubkey.h>             // Cascoin: Hive
-#include <hash.h>               // Cascoin: Hive
-#include <sync.h>               // Cascoin: Hive
-#include <validation.h>         // Cascoin: Hive
-#include <utilstrencodings.h>   // Cascoin: Hive
+#include <core_io.h>            // Cascoin: Labyrinth
+#include <script/standard.h>    // Cascoin: Labyrinth
+#include <base58.h>             // Cascoin: Labyrinth
+#include <pubkey.h>             // Cascoin: Labyrinth
+#include <hash.h>               // Cascoin: Labyrinth
+#include <sync.h>               // Cascoin: Labyrinth
+#include <validation.h>         // Cascoin: Labyrinth
+#include <utilstrencodings.h>   // Cascoin: Labyrinth
 
-MousePopGraphPoint mousePopGraph[1024*40];       // Cascoin: Hive
+MousePopGraphPoint mousePopGraph[1024*40];       // Cascoin: Labyrinth
 
 // Cascoin: MinotaurX+Hive1.2: Diff adjustment for pow algos (post-MinotaurX activation)
 // Modified LWMA-3
@@ -190,8 +190,8 @@ unsigned int DarkGravityWave(const CBlockIndex* pindexLast, const CBlockHeader *
     if (params.fPowAllowMinDifficultyBlocks && pblock->GetBlockTime() > pindexLast->GetBlockTime() + params.nPowTargetSpacing * 10)
         return bnPowLimit.GetCompact();
 
-    // Cascoin: Hive 1.1: Skip over Hivemined blocks at tip
-    if (IsHive11Enabled(pindexLast, params)) {
+    // Cascoin: Labyrinth 1.1: Skip over Labyrinth mined blocks at tip
+    if (IsLabyrinth11Enabled(pindexLast, params)) {
         while (pindexLast->GetBlockHeader().IsHiveMined(params)) {
             //LogPrintf("DarkGravityWave: Skipping hivemined block at %i\n", pindex->nHeight);
             assert(pindexLast->pprev); // should never fail
@@ -207,7 +207,7 @@ unsigned int DarkGravityWave(const CBlockIndex* pindexLast, const CBlockHeader *
     arith_uint256 bnPastTargetAvg;
 
     for (unsigned int nCountBlocks = 1; nCountBlocks <= nPastBlocks; nCountBlocks++) {
-        // Cascoin: Hive: Skip over Hivemined blocks; we only want to consider PoW blocks
+        // Cascoin: Labyrinth: Skip over Labyrinth mined blocks; we only want to consider PoW blocks
         while (pindex->GetBlockHeader().IsHiveMined(params)) {
             //LogPrintf("DarkGravityWave: Skipping hivemined block at %i\n", pindex->nHeight);
             assert(pindex->pprev); // should never fail
@@ -403,7 +403,7 @@ bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params&
     return true;
 }
 
-// Cascoin: Hive 1.1: SMA Hive Difficulty Adjust
+// Cascoin: Labyrinth 1.1: SMA Labyrinth Difficulty Adjust
 unsigned int GetNextHive11WorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params) {
     const arith_uint256 bnPowLimit = UintToArith256(params.powLimitHive);
 
@@ -411,8 +411,8 @@ unsigned int GetNextHive11WorkRequired(const CBlockIndex* pindexLast, const Cons
     int hiveBlockCount = 0;
     int totalBlockCount = 0;
 
-    // Step back till we have found 24 hive blocks, or we ran out...
-    while (hiveBlockCount < params.hiveDifficultyWindow && pindexLast->pprev && pindexLast->nHeight >= params.minHiveCheckBlock) {
+    // Step back till we have found 24 labyrinth blocks, or we ran out...
+    while (hiveBlockCount < params.labyrinthDifficultyWindow && pindexLast->pprev && pindexLast->nHeight >= params.minLabyrinthCheckBlock) {
         if (pindexLast->GetBlockHeader().IsHiveMined(params)) {
             mouseHashTarget += arith_uint256().SetCompact(pindexLast->nBits);
             hiveBlockCount++;
@@ -422,14 +422,14 @@ unsigned int GetNextHive11WorkRequired(const CBlockIndex* pindexLast, const Cons
     }
 
     if (hiveBlockCount == 0) {          // Should only happen when chain is starting
-        LogPrint(BCLog::HIVE, "GetNextHive11WorkRequired: No previous hive blocks found.\n");
+        LogPrint(BCLog::LABYRINTH, "GetNextHive11WorkRequired: No previous labyrinth blocks found.\n");
         return bnPowLimit.GetCompact();
     }
 
     mouseHashTarget /= hiveBlockCount;    // Average the mouse hash targets in window
 
     // Retarget based on totalBlockCount
-    int targetTotalBlockCount = hiveBlockCount * params.hiveBlockSpacingTarget;
+    int targetTotalBlockCount = hiveBlockCount * params.labyrinthBlockSpacingTarget;
     mouseHashTarget *= totalBlockCount;
     mouseHashTarget /= targetTotalBlockCount;
 
@@ -447,8 +447,8 @@ unsigned int GetNextHive12WorkRequired(const CBlockIndex* pindexLast, const Cons
     int hiveBlockCount = 0;
     int totalBlockCount = 0;
 
-    // Step back till we have found 24 hive blocks, or we ran out...
-    while (hiveBlockCount < params.hiveDifficultyWindow && pindexLast->pprev && IsMinotaurXEnabled(pindexLast, params)) {        
+    // Step back till we have found 24 labyrinth blocks, or we ran out...
+    while (hiveBlockCount < params.labyrinthDifficultyWindow && pindexLast->pprev && IsMinotaurXEnabled(pindexLast, params)) {        
         if (pindexLast->GetBlockHeader().IsHiveMined(params)) {
             mouseHashTarget += arith_uint256().SetCompact(pindexLast->nBits);
             hiveBlockCount++;
@@ -461,14 +461,14 @@ unsigned int GetNextHive12WorkRequired(const CBlockIndex* pindexLast, const Cons
     if (hiveBlockCount < 24) {
         // Always return the easiest difficulty during blockchain startup
         // This helps bootstrap The Labyrinth mining system
-        LogPrint(BCLog::HIVE, "GetNextHive12WorkRequired: Insufficient hive blocks - using easiest target for bootstrapping.\n");
+        LogPrint(BCLog::LABYRINTH, "GetNextHive12WorkRequired: Insufficient labyrinth blocks - using easiest target for bootstrapping.\n");
         return bnPowLimit.GetCompact();
     }
 
     mouseHashTarget /= hiveBlockCount;    // Average the mouse hash targets in window
 
     // Retarget based on totalBlockCount
-    int targetTotalBlockCount = hiveBlockCount * params.hiveBlockSpacingTarget;
+    int targetTotalBlockCount = hiveBlockCount * params.labyrinthBlockSpacingTarget;
     mouseHashTarget *= totalBlockCount;
     mouseHashTarget /= targetTotalBlockCount;
 
@@ -478,13 +478,13 @@ unsigned int GetNextHive12WorkRequired(const CBlockIndex* pindexLast, const Cons
     return mouseHashTarget.GetCompact();
 }
 
-// Cascoin: Hive: Get the current Mouse Hash Target (Hive 1.0)
+// Cascoin: Labyrinth: Get the current Mouse Hash Target (Labyrinth 1.0)
 unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consensus::Params& params) {
     // Cascoin: MinotaurX+Hive1.2
     if (IsMinotaurXEnabled(pindexLast, params))
         return GetNextHive12WorkRequired(pindexLast, params);
-    // Cascoin: Hive 1.1: Use SMA diff adjust
-    if (IsHive11Enabled(pindexLast, params))
+    // Cascoin: Labyrinth 1.1: Use SMA diff adjust
+    if (IsLabyrinth11Enabled(pindexLast, params))
         return GetNextHive11WorkRequired(pindexLast, params);
 
     const arith_uint256 bnPowLimit = UintToArith256(params.powLimitHive);
@@ -496,14 +496,14 @@ unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consen
     int numPowBlocks = 0;
     CBlockHeader block;
     while (true) {
-        if (!pindexLast->pprev || pindexLast->nHeight < params.minHiveCheckBlock) {   // Ran out of blocks without finding a Hive block? Return min target
-            LogPrint(BCLog::HIVE, "GetNextHiveWorkRequired: No hivemined blocks found in history\n");
+        if (!pindexLast->pprev || pindexLast->nHeight < params.minLabyrinthCheckBlock) {   // Ran out of blocks without finding a Labyrinth block? Return min target
+            LogPrint(BCLog::LABYRINTH, "GetNextHiveWorkRequired: No labyrinth mined blocks found in history\n");
             //LogPrintf("GetNextHiveWorkRequired: This target= %s\n", bnPowLimit.ToString());
             return bnPowLimit.GetCompact();
         }
 
         block = pindexLast->GetBlockHeader();
-        if (block.IsHiveMined(params)) {  // Found the last Hive block; pick up its mouse hash target
+        if (block.IsHiveMined(params)) {  // Found the last Labyrinth block; pick up its mouse hash target
             mouseHashTarget.SetCompact(block.nBits);
             break;
         }
@@ -519,9 +519,9 @@ unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consen
     //LogPrintf("GetNextHiveWorkRequired: Last target= %s\n", mouseHashTarget.ToString());
 
 	// Apply EMA
-	int interval = params.hiveTargetAdjustAggression / params.hiveBlockSpacingTarget;
-	mouseHashTarget *= (interval - 1) * params.hiveBlockSpacingTarget + numPowBlocks + numPowBlocks;
-	mouseHashTarget /= (interval + 1) * params.hiveBlockSpacingTarget;
+	int interval = params.hiveTargetAdjustAggression / params.labyrinthBlockSpacingTarget;
+	mouseHashTarget *= (interval - 1) * params.labyrinthBlockSpacingTarget + numPowBlocks + numPowBlocks;
+	mouseHashTarget /= (interval + 1) * params.labyrinthBlockSpacingTarget;
 
 	// Clamp to min difficulty
 	if (mouseHashTarget > bnPowLimit)
@@ -532,8 +532,8 @@ unsigned int GetNextHiveWorkRequired(const CBlockIndex* pindexLast, const Consen
     return mouseHashTarget.GetCompact();
 }
 
-// Cascoin: Hive: Get count of all live and gestating BCTs on the network
-bool GetNetworkHiveInfo(int& immatureMice, int& immatureBCTs, int& matureMice, int& matureBCTs, CAmount& potentialLifespanRewards, const Consensus::Params& consensusParams, bool recalcGraph) {
+// Cascoin: Labyrinth: Get count of all live and gestating BCTs on the network
+bool GetNetworkLabyrinthInfo(int& immatureMice, int& immatureBCTs, int& matureMice, int& matureBCTs, CAmount& potentialLifespanRewards, const Consensus::Params& consensusParams, bool recalcGraph) {
     int totalMouseLifespan = consensusParams.mouseLifespanBlocks + consensusParams.mouseGestationBlocks;
     immatureMice = immatureBCTs = matureMice = matureBCTs = 0;
     
@@ -546,11 +546,11 @@ bool GetNetworkHiveInfo(int& immatureMice, int& immatureBCTs, int& matureMice, i
     if (IsMinotaurXEnabled(pindexPrev, consensusParams))
         blockReward += blockReward >> 1;
 
-    // Cascoin: Hive 1.1: Use correct typical spacing
-    if (IsHive11Enabled(pindexPrev, consensusParams))
-        potentialLifespanRewards = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
+    // Cascoin: Labyrinth 1.1: Use correct typical spacing
+    if (IsLabyrinth11Enabled(pindexPrev, consensusParams))
+        potentialLifespanRewards = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.labyrinthBlockSpacingTargetTypical_1_1;
     else
-        potentialLifespanRewards = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
+        potentialLifespanRewards = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.labyrinthBlockSpacingTargetTypical;
 
     if (recalcGraph) {
         for (int i = 0; i < totalMouseLifespan; i++) {
@@ -565,17 +565,17 @@ bool GetNetworkHiveInfo(int& immatureMice, int& immatureBCTs, int& matureMice, i
     // Count mice in next blockCount blocks
     CBlock block;
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     for (int i = 0; i < totalMouseLifespan; i++) {
         if (fHavePruned && !(pindexPrev->nStatus & BLOCK_HAVE_DATA) && pindexPrev->nTx > 0) {
-            LogPrint(BCLog::HIVE, "! GetNetworkHiveInfo: Warn: Block not available (pruned data); can't calculate network mouse count.");
+            LogPrint(BCLog::LABYRINTH, "! GetNetworkLabyrinthInfo: Warn: Block not available (pruned data); can't calculate network mouse count.");
             return false;
         }
 
         if (!pindexPrev->GetBlockHeader().IsHiveMined(consensusParams)) {                          // Don't check Hivemined blocks (no BCTs will be found in them)
             if (!ReadBlockFromDisk(block, pindexPrev, consensusParams)) {
-                LogPrint(BCLog::HIVE, "! GetNetworkHiveInfo: Warn: Block not available (not found on disk); can't calculate network mouse count.");
+                LogPrint(BCLog::LABYRINTH, "! GetNetworkLabyrinthInfo: Warn: Block not available (not found on disk); can't calculate network mouse count.");
                 return false;
             }
             int blockHeight = pindexPrev->nHeight;
@@ -645,12 +645,12 @@ bool GetNetworkHiveInfo(int& immatureMice, int& immatureBCTs, int& matureMice, i
     return true;
 }
 
-// Cascoin: Hive: Check The Labyrinth proof for given block
+// Cascoin: Labyrinth: Check The Labyrinth proof for given block
 bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusParams) {
-    bool verbose = LogAcceptCategory(BCLog::HIVE);
+    bool verbose = LogAcceptCategory(BCLog::LABYRINTH);
 
     if (verbose)
-        LogPrintf("********************* Hive: CheckHiveProof *********************\n");
+        LogPrintf("********************* Labyrinth: CheckHiveProof *********************\n");
 
     // Get height (a CBlockIndex isn't always available when this func is called, eg in reads from disk)
     int blockHeight;
@@ -661,20 +661,20 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         blockHeight = pindexPrev->nHeight + 1;
     }
     if (!pindexPrev) {
-        LogPrint(BCLog::HIVE, "CheckHiveProof: Couldn't get previous block's CBlockIndex!\n");
+        LogPrint(BCLog::LABYRINTH, "CheckHiveProof: Couldn't get previous block's CBlockIndex!\n");
         return false;
     }
     if (verbose)
         LogPrintf("CheckHiveProof: nHeight             = %i\n", blockHeight);
 
-    // Check hive is enabled on network
-    if (!IsHiveEnabled(pindexPrev, consensusParams)) {
-        LogPrint(BCLog::HIVE, "CheckHiveProof: Can't accept a Hive block; Hive is not yet enabled on the network.\n");
+    // Check labyrinth is enabled on network
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams)) {
+        LogPrint(BCLog::LABYRINTH, "CheckHiveProof: Can't accept a Labyrinth block; Labyrinth is not yet enabled on the network.\n");
         return false;
     }
 
-    // Cascoin: Hive 1.1: Check that there aren't too many consecutive Hive blocks
-    if (IsHive11Enabled(pindexPrev, consensusParams)) {
+    // Cascoin: Labyrinth 1.1: Check that there aren't too many consecutive Labyrinth blocks
+    if (IsLabyrinth11Enabled(pindexPrev, consensusParams)) {
         int hiveBlocksAtTip = 0;
         CBlockIndex* pindexTemp = pindexPrev;
         while (pindexTemp->GetBlockHeader().IsHiveMined(consensusParams)) {
@@ -682,13 +682,13 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
             pindexTemp = pindexTemp->pprev;
             hiveBlocksAtTip++;
         }
-        if (hiveBlocksAtTip >= consensusParams.maxConsecutiveHiveBlocks) {
-            LogPrint(BCLog::HIVE, "CheckHiveProof: Too many Hive blocks without a POW block.\n");
+        if (hiveBlocksAtTip >= consensusParams.maxConsecutiveLabyrinthBlocks) {
+            LogPrint(BCLog::LABYRINTH, "CheckHiveProof: Too many Labyrinth blocks without a POW block.\n");
             return false;
         }
     } else {
         if (pindexPrev->GetBlockHeader().IsHiveMined(consensusParams)) {
-            LogPrint(BCLog::HIVE, "CheckHiveProof: Hive block must follow a POW block.\n");
+            LogPrint(BCLog::LABYRINTH, "CheckHiveProof: Labyrinth block must follow a POW block.\n");
             return false;
         }
     }
@@ -718,7 +718,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
 
     // vout[0] must be long enough to contain all encodings
     if (txCoinbase->vout[0].scriptPubKey.size() < 144) {
-        LogPrintf("CheckHiveProof: vout[0].scriptPubKey isn't long enough to contain hive proof encodings\n");
+        LogPrintf("CheckHiveProof: vout[0].scriptPubKey isn't long enough to contain labyrinth proof encodings\n");
         return false;
     }
 
@@ -811,7 +811,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         return false;
     }
     if (pubkey.GetID() != *keyID) {
-        LogPrint(BCLog::HIVE, "CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
+        LogPrint(BCLog::LABYRINTH, "CheckHiveProof: Signature mismatch! GetID() = %s, *keyID = %s\n", pubkey.GetID().ToString(), (*keyID).ToString());
         return false;
     }
 
@@ -852,7 +852,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
         }
 
         if (communityContrib) {
-            CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+            CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
             CAmount donationAmount;
 
             if(bct == nullptr) {                                                                // If we dont have a ref to the BCT

@@ -4,10 +4,10 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chain.h>
-#include <chainparams.h>        // Cascoin: Hive
-#include <util.h>               // Cascoin: Hive
-#include <rpc/blockchain.h>     // Cascoin: Hive 1.1
-#include <validation.h>         // Cascoin: Hive 1.1
+#include <chainparams.h>        // Cascoin: Labyrinth
+#include <util.h>               // Cascoin: Labyrinth
+#include <rpc/blockchain.h>     // Cascoin: Labyrinth 1.1
+#include <validation.h>         // Cascoin: Labyrinth 1.1
 
 /**
  * CChain implementation
@@ -122,7 +122,7 @@ void CBlockIndex::BuildSkip()
         pskip = pprev->GetAncestor(GetSkipHeight(nHeight));
 }
 
-// Cascoin: Hive: Grant hive-mined blocks bonus work value - they get the work value of
+// Cascoin: Labyrinth: Grant labyrinth-mined blocks bonus work value - they get the work value of
 // their own block plus that of the PoW block behind them
 // In chain.cpp
 
@@ -146,7 +146,7 @@ arith_uint256 GetBlockProof(const CBlockIndex& block)
     // Proof = ~target/(target+1) + 1
     arith_uint256 bnTargetScaled = (~bnTarget / (bnTarget + 1)) + 1;
 
-    // --- 3) Hive-Bonus, nur wenn Block tatsächlich als Hive-Block gemined ist ---
+    // --- 3) Labyrinth-Bonus, nur wenn Block tatsächlich als Labyrinth-Block gemined ist ---
     CBlockHeader header = block.GetBlockHeader();
     if (header.IsHiveMined(consensusParams)) {
         // Suche zurück nach dem letzten POW-Block
@@ -155,7 +155,7 @@ arith_uint256 GetBlockProof(const CBlockIndex& block)
             p = p->pprev;
         }
         if (p) {
-            // p ist jetzt der letzte POW-Block vor einer Hive-Kette
+            // p ist jetzt der letzte POW-Block vor einer Labyrinth-Kette
             arith_uint256 bnPrev;
             bool neg2=false, ovf2=false;
             bnPrev.SetCompact(p->nBits, &neg2, &ovf2);
@@ -163,26 +163,26 @@ arith_uint256 GetBlockProof(const CBlockIndex& block)
                 bnTargetScaled += (~bnPrev / (bnPrev + 1)) + 1;
             }
         }
-        // (Hier kannst Du dein Hive 1.1-Bonus-Scaling integrieren,
+        // (Hier kannst Du dein Labyrinth 1.1-Bonus-Scaling integrieren,
         //  achte aber darauf, p niemals derefenzierst, wenn es nullptr ist.)
     }
-    // --- 4) Optional: POW-Bonus für Hive 1.1 nur, wenn aktiv ---
-    else if (IsHive11Enabled(&block, consensusParams)) {
-        // Finde letzten Hive-Block
+    // --- 4) Optional: POW-Bonus für Labyrinth 1.1 nur, wenn aktiv ---
+    else if (IsLabyrinth11Enabled(&block, consensusParams)) {
+        // Finde letzten Labyrinth-Block
         const CBlockIndex* q = block.pprev;
-        int blocksSinceHive = 0;
-        double lastHiveDiff = 0.0;
-        for (; q && blocksSinceHive < consensusParams.maxKPow; ++blocksSinceHive) {
+        int blocksSinceLabyrinth = 0;
+        double lastLabyrinthDiff = 0.0;
+        for (; q && blocksSinceLabyrinth < consensusParams.maxKPow; ++blocksSinceLabyrinth) {
             if (q->GetBlockHeader().IsHiveMined(consensusParams)) {
-                lastHiveDiff = GetDifficulty(q, true);
+                lastLabyrinthDiff = GetDifficulty(q, true);
                 break;
             }
             q = q->pprev;
         }
-        // Apply k-Scaling, auch hier q kann nullptr sein, aber wir verwenden nur lastHiveDiff
-        unsigned int k = consensusParams.maxKPow - blocksSinceHive;
-        if (lastHiveDiff < consensusParams.powSplit1) k >>= 1;
-        if (lastHiveDiff < consensusParams.powSplit2) k >>= 1;
+        // Apply k-Scaling, auch hier q kann nullptr sein, aber wir verwenden nur lastLabyrinthDiff
+        unsigned int k = consensusParams.maxKPow - blocksSinceLabyrinth;
+        if (lastLabyrinthDiff < consensusParams.powSplit1) k >>= 1;
+        if (lastLabyrinthDiff < consensusParams.powSplit2) k >>= 1;
         if (k < 1) k = 1;
         bnTargetScaled *= k;
     }
@@ -191,7 +191,7 @@ arith_uint256 GetBlockProof(const CBlockIndex& block)
 }
 
 
-// Cascoin: Hive: Use this to compute estimated hashes for GetNetworkHashPS()
+// Cascoin: Labyrinth: Use this to compute estimated hashes for GetNetworkHashPS()
 // Cascoin: MinotaurX+Hive1.2: Only consider the requested powType
 arith_uint256 GetNumHashes(const CBlockIndex& block, POW_TYPE powType)
 {

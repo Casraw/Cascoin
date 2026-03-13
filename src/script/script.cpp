@@ -139,7 +139,7 @@ const char* GetOpName(opcodetype opcode)
     case OP_NOP9                   : return "OP_NOP9";
     case OP_NOP10                  : return "OP_NOP10";
 
-    // Cascoin: Hive
+    // Cascoin: Labyrinth
     case OP_MOUSE                  : return "OP_MOUSE";
 
     // Cascoin: Rialto

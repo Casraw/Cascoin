@@ -107,7 +107,7 @@ void MouseNFTPage::setupUI()
     mouseNFTView->setContextMenuPolicy(Qt::CustomContextMenu);
     mouseNFTView->setSortingEnabled(true);
     
-    listLayout->addWidget(beeNFTView);
+    listLayout->addWidget(mouseNFTView);
     
     tabWidget->addTab(listTab, tr("My Mice NFTs"));
     
@@ -171,7 +171,7 @@ void MouseNFTPage::setupUI()
     transferGridLayout->addWidget(new QLabel(tr("Select Mice NFT:")), 0, 0);
     mouseNFTCombo = new QComboBox();
     mouseNFTCombo->setToolTip(tr("Select the mice NFT to transfer"));
-    transferGridLayout->addWidget(beeNFTCombo, 0, 1, 1, 2);
+    transferGridLayout->addWidget(mouseNFTCombo, 0, 1, 1, 2);
     
     // Recipient Address
     transferGridLayout->addWidget(new QLabel(tr("Recipient Address:")), 1, 0);

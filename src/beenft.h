@@ -69,7 +69,7 @@ struct MouseNFTToken {
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(originalBCT);
-        READWRITE(beeIndex);
+        READWRITE(mouseIndex);
         READWRITE(maturityHeight);
         READWRITE(expiryHeight);
         READWRITE(tokenizedHeight);
@@ -225,8 +225,8 @@ bool IsValidMouseNFTTokenTransaction(const CTransaction& tx, std::string& error)
 bool IsValidMouseNFTTransferTransaction(const CTransaction& tx, std::string& error);
 
 // Parsing functions for mouse NFT transactions
-bool ParseMouseNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken>& tokens, std::string& error);
-bool ParseMouseNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTransfer>& transfers, std::string& error);
+bool ParseMouseNFTTokenTransaction(const CTransaction& tx, std::vector<MouseNFTToken>& tokens, std::string& error);
+bool ParseMouseNFTTransferTransaction(const CTransaction& tx, std::vector<MouseNFTTransfer>& transfers, std::string& error);
 
 // Utility functions
 std::vector<unsigned char> SerializeMouseNFTToken(const MouseNFTToken& token);

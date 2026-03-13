@@ -527,10 +527,10 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-rpcservertimeout=<n>", strprintf("Timeout during HTTP requests (default: %d)", DEFAULT_HTTP_SERVER_TIMEOUT));
     }
 
-    // Cascoin: Hive: Mining optimisations
-    strUsage += HelpMessageOpt("-hivecheckdelay=<ms>", strprintf(_("Time between Hive checks in ms. This should be left at default unless performance degradation is observed (default: %u)"), DEFAULT_HIVE_CHECK_DELAY));
-    strUsage += HelpMessageOpt("-hivecheckthreads=<threads>", strprintf(_("Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores (default: %u)"), DEFAULT_HIVE_THREADS));
-    strUsage += HelpMessageOpt("-hiveearlyabort", strprintf(_("Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed. (default: %u)"), DEFAULT_HIVE_EARLY_OUT));
+    // Cascoin: Labyrinth: Mining optimisations
+    strUsage += HelpMessageOpt("-labyrinthcheckdelay=<ms>", strprintf(_("Time between Labyrinth checks in ms. This should be left at default unless performance degradation is observed (default: %u)"), DEFAULT_HIVE_CHECK_DELAY));
+    strUsage += HelpMessageOpt("-labyrinthcheckthreads=<threads>", strprintf(_("Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores (default: %u)"), DEFAULT_HIVE_THREADS));
+    strUsage += HelpMessageOpt("-labyrinthearlyabort", strprintf(_("Abort Labyrinth checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed. (default: %u)"), DEFAULT_HIVE_EARLY_OUT));
 
     // Cascoin: MinotaurX+Hive1.2: Allow switching of default pow algo via conf / command line, for miners that can't easily adjust their getblocktemplate calls
     strUsage += HelpMessageOpt("-powalgo=sha256d|minotaurx", strprintf(_("Default pow mining algorithm. Miners who can't easily adjust their getblocktemplate calls should use this argument to set their preferred mining algorithm. (default: %s)"), DEFAULT_POW_TYPE));
@@ -1787,7 +1787,7 @@ bool AppInitMain()
 
     // ********************************************************* Step 12: finished
 
-    // Cascoin: Hive: Start the mining thread
+    // Cascoin: Labyrinth: Start the mining thread
 #ifdef ENABLE_WALLET
     threadGroup.create_thread(boost::bind(&MouseKeeper, boost::cref(chainparams)));
 #endif

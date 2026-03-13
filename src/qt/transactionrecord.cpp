@@ -65,8 +65,8 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
                 }
                 if (wtx.IsCoinBase())
                 {
-                    // Cascoin: Hive: Check for a Hivemined coinbase transaction
-                    if (wtx.IsHiveCoinBase())   // Hivemined
+                    // Cascoin: Labyrinth: Check for a labyrinth mined coinbase transaction
+                    if (wtx.IsHiveCoinBase())   // Labyrinth mined
                         sub.type = TransactionRecord::HiveCheese;
                     else // Generated
                         sub.type = TransactionRecord::Generated;
@@ -126,7 +126,7 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
                 }
 
                 CTxDestination address;
-                // Cascoin: Hive: Check for a BCT
+                // Cascoin: Labyrinth: Check for a BCT
                 if (CScript::IsBCTScript(txout.scriptPubKey, GetScriptForDestination(DecodeDestination(Params().GetConsensus().mouseCreationAddress)))) {
                     sub.type = TransactionRecord::HiveMouseCreation;
                 }
@@ -136,8 +136,8 @@ QList<TransactionRecord> TransactionRecord::decomposeTransaction(const CWallet *
                     sub.type = TransactionRecord::SendToAddress;
                     sub.address = EncodeDestination(address);
 
-                    // Cascoin: Hive: Check for additional hive-related send types
-                    if (sub.address == Params().GetConsensus().hiveCommunityAddress)
+                    // Cascoin: Labyrinth: Check for additional labyrinth-related send types
+                    if (sub.address == Params().GetConsensus().labyrinthCommunityAddress)
                         sub.type = TransactionRecord::HiveCommunityFund;
                 }
                 else
@@ -207,7 +207,7 @@ void TransactionRecord::updateStatus(const CWalletTx &wtx)
         }
     }
     // For generated transactions, determine maturity
-    // Cascoin: Hive: Do the same for hivemined transactions
+    // Cascoin: Labyrinth: Do the same for labyrinth mined transactions
     else if(type == TransactionRecord::Generated || type == TransactionRecord::HiveCheese)
     {
         if (wtx.GetBlocksToMaturity() > 0)

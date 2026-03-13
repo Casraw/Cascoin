@@ -37,7 +37,7 @@ MouseNFTTableModel::MouseNFTTableModel(WalletModel *parent) :
     connect(timer, SIGNAL(timeout()), this, SLOT(updateBeeNFTs()));
     timer->start(30000); // Update every 30 seconds
     
-    updateBeeNFTList();
+    updateMouseNFTList();
 }
 
 MouseNFTTableModel::~MouseNFTTableModel()
@@ -190,7 +190,7 @@ void MouseNFTTableModel::setIncludeExpired(bool _includeExpired)
 {
     if (includeExpired != _includeExpired) {
         includeExpired = _includeExpired;
-        updateBeeNFTList();
+        updateMouseNFTList();
     }
 }
 
@@ -202,7 +202,7 @@ void MouseNFTTableModel::updateMouseNFTList()
 
     // Don't clear the list here - keep existing NFTs visible until new data arrives
     // This prevents the "flickering" effect where NFTs appear and disappear
-    // The list will be updated when updateBeeNFTListWithData() is called with fresh data
+    // The list will be updated when updateMouseNFTListWithData() is called with fresh data
     
     // Just emit the signal to notify listeners that an update was requested
     Q_EMIT mouseNFTsChanged();
@@ -210,7 +210,7 @@ void MouseNFTTableModel::updateMouseNFTList()
 
 void MouseNFTTableModel::updateMouseNFTs()
 {
-    updateBeeNFTList();
+    updateMouseNFTList();
 }
 
 void MouseNFTTableModel::updateMouseNFTListWithData(const QList<MouseNFTRecord>& newRecords)

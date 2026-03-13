@@ -80,9 +80,9 @@ public:
         RecvWithAddress,
         RecvFromOther,
         SendToSelf,
-        HiveMouseCreation,  // Cascoin: Hive
-        HiveCommunityFund,  // Cascoin: Hive
-        HiveCheese,         // Cascoin: Hive
+        HiveMouseCreation,  // Cascoin: Labyrinth
+        HiveCommunityFund,  // Cascoin: Labyrinth
+        HiveCheese,         // Cascoin: Labyrinth
         MouseNFTTokenize,     // Cascoin: Mice NFT System - Tokenize mice from BCT
         MouseNFTTransfer      // Cascoin: Mice NFT System - Transfer mice NFTs
     };

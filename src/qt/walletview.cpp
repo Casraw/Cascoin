@@ -11,7 +11,7 @@
 #include <qt/guiutil.h>
 #include <qt/optionsmodel.h>
 #include <qt/overviewpage.h>
-#include <qt/hivedialog.h>      // Cascoin: Hive page
+#include <qt/hivedialog.h>      // Cascoin: Labyrinth page
 #include <qt/beenftpage.h>      // Cascoin: Mouse NFT page
 #include <qt/platformstyle.h>
 #include <qt/receivecoinsdialog.h>
@@ -45,7 +45,7 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
 {
     // Create tabs
     overviewPage = new OverviewPage(platformStyle);
-    hivePage = new HiveDialog(platformStyle); // Cascoin: Hive page
+    labyrinthPage = new HiveDialog(platformStyle); // Cascoin: Labyrinth page
     mouseNFTPage = new MouseNFTPage(platformStyle); // Cascoin: Mouse NFT page
 
     transactionsPage = new QWidget(this);
@@ -73,7 +73,7 @@ WalletView::WalletView(const PlatformStyle *_platformStyle, QWidget *parent):
     addWidget(transactionsPage);
     addWidget(receiveCoinsPage);
     addWidget(sendCoinsPage);
-    addWidget(hivePage);   // Cascoin: Hive page
+    addWidget(labyrinthPage);   // Cascoin: Labyrinth page
     addWidget(mouseNFTPage); // Cascoin: Mouse NFT page
 
     // Clicking on a transaction on the overview pre-selects the transaction on the transaction history page
@@ -103,7 +103,7 @@ void WalletView::setBitcoinGUI(BitcoinGUI *gui)
         // Clicking on a transaction on the overview page simply sends you to transaction history page
         connect(overviewPage, SIGNAL(transactionClicked(QModelIndex)), gui, SLOT(gotoHistoryPage()));
 
-        // Cascoin: Hive: Go to hive page if mouse button on overview clicked
+        // Cascoin: Labyrinth: Go to labyrinth page if mouse button on overview clicked
         connect(overviewPage, SIGNAL(mouseButtonClicked()), gui, SLOT(gotoHivePage()));
 
         // Receive and report messages
@@ -118,8 +118,8 @@ void WalletView::setBitcoinGUI(BitcoinGUI *gui)
         // Connect HD enabled state signal 
         connect(this, SIGNAL(hdEnabledStatusChanged(int)), gui, SLOT(setHDStatus(int)));
 
-        // Cascoin: Hive: Connect hive status update signal
-        connect(hivePage, SIGNAL(hiveStatusIconChanged(QString, QString)), gui, SLOT(updateHiveStatusIcon(QString, QString)));
+        // Cascoin: Labyrinth: Connect labyrinth status update signal
+        connect(labyrinthPage, SIGNAL(labyrinthStatusIconChanged(QString, QString)), gui, SLOT(updateLabyrinthStatusIcon(QString, QString)));
     }
 }
 
@@ -129,7 +129,7 @@ void WalletView::setClientModel(ClientModel *_clientModel)
 
     overviewPage->setClientModel(_clientModel);
     sendCoinsPage->setClientModel(_clientModel);
-    hivePage->setClientModel(_clientModel); // Cascoin: Hive page
+    labyrinthPage->setClientModel(_clientModel); // Cascoin: Labyrinth page
 }
 
 void WalletView::setWalletModel(WalletModel *_walletModel)
@@ -139,7 +139,7 @@ void WalletView::setWalletModel(WalletModel *_walletModel)
     // Put transaction list in tabs
     transactionView->setModel(_walletModel);
     overviewPage->setWalletModel(_walletModel);
-    hivePage->setModel(_walletModel);         // Cascoin: Hive page
+    labyrinthPage->setModel(_walletModel);         // Cascoin: Labyrinth page
     mouseNFTPage->setModel(_walletModel);       // Cascoin: Mouse NFT page
     receiveCoinsPage->setModel(_walletModel);
     sendCoinsPage->setModel(_walletModel);
@@ -165,7 +165,7 @@ void WalletView::setWalletModel(WalletModel *_walletModel)
         // Ask for passphrase if needed
         connect(_walletModel, SIGNAL(requireUnlock()), this, SLOT(unlockWallet()));
 		
-		// Cascoin: Hive: Ask for passphrase if needed hive only
+		// Cascoin: Labyrinth: Ask for passphrase if needed labyrinth only
         connect(_walletModel, SIGNAL(requireUnlockHive()), this, SLOT(unlockWalletHive()));
 
         // Show progress dialog
@@ -206,13 +206,13 @@ void WalletView::gotoOverviewPage()
     setCurrentWidget(overviewPage);
 }
 
-// Cascoin: Hive page
+// Cascoin: Labyrinth page
 void WalletView::gotoHivePage()
 {
-    setCurrentWidget(hivePage);
+    setCurrentWidget(labyrinthPage);
     // Defer updateData() to allow the UI to render first, preventing perceived lag
-    QTimer::singleShot(50, hivePage, [this]() {
-        hivePage->updateData();
+    QTimer::singleShot(50, labyrinthPage, [this]() {
+        labyrinthPage->updateData();
     });
 }
 
@@ -329,7 +329,7 @@ void WalletView::unlockWallet()
     }
 }
 
-// Cascoin: Hive: Unlock wallet just for hive
+// Cascoin: Labyrinth: Unlock wallet just for labyrinth
 void WalletView::unlockWalletHive()
 {
     if(!walletModel)

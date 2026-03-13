@@ -115,7 +115,7 @@ std::string CTransaction::ToString() const
     return str;
 }
 
-// Cascoin: Hive: Check if this transaction is a Mouse Creation Transaction, and if so return the total mouse fee paid via mouseFeePaid and cheese scriptPubKey via scriptPubKeyCheese
+// Cascoin: Labyrinth: Check if this transaction is a Mouse Creation Transaction, and if so return the total mouse fee paid via mouseFeePaid and cheese scriptPubKey via scriptPubKeyCheese
 bool CTransaction::IsBCT(const Consensus::Params& consensusParams, CScript scriptPubKeyBCF, CAmount* mouseFeePaid, CScript* scriptPubKeyCheese) const {
     bool isBCT = CScript::IsBCTScript(vout[0].scriptPubKey, scriptPubKeyBCF, scriptPubKeyCheese);
 

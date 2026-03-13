@@ -20,7 +20,7 @@
 
 #include <boost/thread.hpp>
 
-extern bool fWalletUnlockWithoutTransactions;   // Cascoin: Hive: Support unlock for hive mining only
+extern bool fWalletUnlockWithoutTransactions;   // Cascoin: Labyrinth: Support unlock for labyrinth mining only
 
 //
 // CWalletDB

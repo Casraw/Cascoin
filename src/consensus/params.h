@@ -21,8 +21,8 @@ enum DeploymentPos
     DEPLOYMENT_TESTDUMMY,
     DEPLOYMENT_CSV, // Deployment of BIP68, BIP112, and BIP113.
     DEPLOYMENT_SEGWIT, // Deployment of BIP141, BIP143, and BIP147.
-    DEPLOYMENT_HIVE,        // Cascoin: Hive: Deployment
-    DEPLOYMENT_HIVE_1_1,    // Cascoin: Hive: 1.1 Deployment
+    DEPLOYMENT_LABYRINTH,        // Cascoin: Labyrinth: Deployment
+    DEPLOYMENT_LABYRINTH_1_1,    // Cascoin: Labyrinth: 1.1 Deployment
     DEPLOYMENT_MINOTAURX,   // Cascoin: MinotaurX+Hive1.2: Deployment
     DEPLOYMENT_RIALTO,      // Cascoin: Rialto: Deployment
 
@@ -93,31 +93,31 @@ struct Params {
     CAmount premineAmount;              // Premine amount
     CScript premineOutputScript;        // Premine output script
 
-    // Cascoin: Hive-related consensus params
+    // Cascoin: Labyrinth-related consensus params
     CAmount minMouseCost;                 // Minimum cost of a mouse, used when no more block rewards
     int mouseCostFactor;                  // Mouse cost is block_reward/mouseCostFactor
     std::string mouseCreationAddress;     // Unspendable address for mouse creation
-    std::string hiveCommunityAddress;   // Community fund address
+    std::string labyrinthCommunityAddress;   // Community fund address
     int communityContribFactor;         // Optionally, donate bct_value/maxCommunityContribFactor to community fund
     int mouseGestationBlocks;             // The number of blocks for a new mouse to mature
     int mouseLifespanBlocks;              // The number of blocks a mouse lives for after maturation
     uint256 powLimitHive;               // Highest (easiest) mouse hash target
-    uint32_t hiveNonceMarker;           // Nonce marker for hivemined blocks
-    int minHiveCheckBlock;              // Don't bother checking below this height for Hive blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
+    uint32_t hiveNonceMarker;           // Nonce marker for labyrinth-mined blocks
+    int minLabyrinthCheckBlock;              // Don't bother checking below this height for Labyrinth blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
     int hiveTargetAdjustAggression;     // Snap speed for mouse hash target adjustment EMA
-    int hiveBlockSpacingTarget;         // Target Hive block frequency (1 out of this many blocks should be Hive)
-    int hiveBlockSpacingTargetTypical;  // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
-    int hiveBlockSpacingTargetTypical_1_1; // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)
+    int labyrinthBlockSpacingTarget;         // Target Labyrinth block frequency (1 out of this many blocks should be Labyrinth)
+    int labyrinthBlockSpacingTargetTypical;  // Observed Labyrinth block frequency (1 out of this many blocks are observed to be Labyrinth)
+    int labyrinthBlockSpacingTargetTypical_1_1; // Observed Labyrinth block frequency in Labyrinth 1.1 (1 out of this many blocks are observed to be Labyrinth)
 
-    // Cascoin: Hive 1.1-related consensus fields
-    int minK;                           // Minimum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-    int maxK;                           // Maximum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-    double maxHiveDiff;                 // Hive difficulty at which max chainwork bonus is awarded
+    // Cascoin: Labyrinth 1.1-related consensus fields
+    int minK;                           // Minimum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+    int maxK;                           // Maximum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+    double maxLabyrinthDiff;                 // Labyrinth difficulty at which max chainwork bonus is awarded
     int maxKPow;                        // Maximum chainwork scale for PoW blocks
-    double powSplit1;                   // Below this Hive difficulty threshold, PoW block chainwork bonus is halved
-    double powSplit2;                   // Below this Hive difficulty threshold, PoW block chainwork bonus is halved again
-    int maxConsecutiveHiveBlocks;       // Maximum hive blocks that can occur consecutively before a PoW block is required
-    int hiveDifficultyWindow;           // How many blocks the SMA averages over in hive difficulty adjust
+    double powSplit1;                   // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved
+    double powSplit2;                   // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved again
+    int maxConsecutiveLabyrinthBlocks;       // Maximum labyrinth blocks that can occur consecutively before a PoW block is required
+    int labyrinthDifficultyWindow;           // How many blocks the SMA averages over in labyrinth difficulty adjust
 
     // Cascoin: MinotaurX+Hive1.2-related consensus fields
     int64_t lwmaAveragingWindow;        // Averaging window size for LWMA diff adjust

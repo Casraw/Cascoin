@@ -444,7 +444,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
     return EncodeHexTx(rawTx);
 }
 
-// Cascoin: Hive: Create a raw mouse creation transaction allowing user to specify the inputs
+// Cascoin: Labyrinth: Create a raw mouse creation transaction allowing user to specify the inputs
 UniValue createrawbct(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
@@ -589,7 +589,7 @@ UniValue createrawbct(const JSONRPCRequest& request)
 
     // Add optional community fund output (vout[1] if present)
     if (communityContrib) {
-        CTxDestination destinationCF = DecodeDestination(consensusParams.hiveCommunityAddress);
+        CTxDestination destinationCF = DecodeDestination(consensusParams.labyrinthCommunityAddress);
         CScript scriptPubKeyCF = GetScriptForDestination(destinationCF);
         CTxOut outCommunityContrib(donationValue,scriptPubKeyCF);
         rawTx.vout.push_back(outCommunityContrib);
@@ -1189,7 +1189,7 @@ static const CRPCCommand commands[] =
   //  --------------------- ------------------------  -----------------------  ----------
     { "rawtransactions",    "getrawtransaction",      &getrawtransaction,      {"txid","verbose","blockhash"} },
     { "rawtransactions",    "createrawtransaction",   &createrawtransaction,   {"inputs","outputs","locktime","replaceable"} },
-    { "rawtransactions",    "createrawbct",           &createrawbct,           {"inputs","mousecount","cheese_address","community_contrib", "locktime"} }, // Cascoin: Hive
+    { "rawtransactions",    "createrawbct",           &createrawbct,           {"inputs","mousecount","cheese_address","community_contrib", "locktime"} }, // Cascoin: Labyrinth
     { "rawtransactions",    "decoderawtransaction",   &decoderawtransaction,   {"hexstring","iswitness"} },
     { "rawtransactions",    "decodescript",           &decodescript,           {"hexstring"} },
     { "rawtransactions",    "sendrawtransaction",     &sendrawtransaction,     {"hexstring","allowhighfees"} },

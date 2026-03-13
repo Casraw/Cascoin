@@ -750,7 +750,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     
     // Get BCT creation address script
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     beginTransaction();
     
@@ -788,7 +788,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
         if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
             // Extract cheese address
             CTxDestination cheeseDestination;
-            if (!ExtractDestination(scriptPubKeyHoney, cheeseDestination)) {
+            if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                 continue;
             }
             std::string cheeseAddress = EncodeDestination(cheeseDestination);
@@ -833,7 +833,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     // Commit BCT inserts before scanning for rewards
     commitTransaction();
     
-    // Now scan for Hive coinbase transactions to get rewards
+    // Now scan for Labyrinth coinbase transactions to get rewards
     std::set<std::string> myBctIds;
     {
         auto allBcts = getAllBCTs(true);
@@ -847,7 +847,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     // Start new transaction for reward updates
     beginTransaction();
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap;
     
     for (const auto& item : pwallet->mapWallet) {
@@ -920,7 +920,7 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
     
     // Get BCT creation address script
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     int bctCount = 0;
     
@@ -954,7 +954,7 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
                 if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
                     // Extract cheese address
                     CTxDestination cheeseDestination;
-                    if (!ExtractDestination(scriptPubKeyHoney, cheeseDestination)) {
+                    if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                         continue;
                     }
                     std::string cheeseAddress = EncodeDestination(cheeseDestination);
@@ -992,7 +992,7 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
                     }
                 }
                 
-                // Check if this is a Hive coinbase (reward transaction)
+                // Check if this is a Labyrinth coinbase (reward transaction)
                 // Must be coinbase with OP_RETURN OP_MOUSE marker
                 if (tx->IsHiveCoinBase() && tx->vout[0].scriptPubKey.size() >= 78) {
                     // Extract BCT txid from the proof script (bytes 14-78 contain the 64-char hex txid)
@@ -1281,7 +1281,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     
     // Get BCT creation address script
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     beginTransaction();
     
@@ -1309,7 +1309,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
             // Extract cheese address
             CTxDestination cheeseDestination;
-            if (!ExtractDestination(scriptPubKeyHoney, cheeseDestination)) {
+            if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                 continue;
             }
             std::string cheeseAddress = EncodeDestination(cheeseDestination);
@@ -1364,7 +1364,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     // This ensures getAllBCTs() can find the newly inserted BCTs
     commitTransaction();
     
-    // Now scan for Hive coinbase transactions to get rewards
+    // Now scan for Labyrinth coinbase transactions to get rewards
     // Build a set of our BCT txids for quick lookup
     std::set<std::string> myBctIds;
     {
@@ -1379,17 +1379,17 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     // Start new transaction for reward updates
     beginTransaction();
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
     
-    int hiveCoinbaseCount = 0;
+    int labyrinthCoinbaseCount = 0;
     for (const auto& item : pwallet->mapWallet) {
         const CWalletTx& wtx = item.second;
         
-        // Only process hive coinbase transactions
+        // Only process labyrinth coinbase transactions
         if (!wtx.IsHiveCoinBase()) continue;
         
-        hiveCoinbaseCount++;
+        labyrinthCoinbaseCount++;
         
         // Skip unconfirmed transactions
         if (wtx.GetDepthInMainChain() < 1) continue;
@@ -1414,7 +1414,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
                 // Log first few misses for debugging
                 static int missCount = 0;
                 if (missCount++ < 5) {
-                    LogPrintf("BCTDatabase: Hive coinbase %s references BCT %s which is not in our set\n", 
+                    LogPrintf("BCTDatabase: Labyrinth coinbase %s references BCT %s which is not in our set\n",
                               wtx.GetHash().GetHex(), blockTxidStr);
                 }
                 continue;
@@ -1431,8 +1431,8 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         }
     }
     
-    LogPrintf("BCTDatabase: Scanned %d hive coinbase transactions, found %zu with matching BCTs\n", 
-              hiveCoinbaseCount, rewardsMap.size());
+    LogPrintf("BCTDatabase: Scanned %d labyrinth coinbase transactions, found %zu with matching BCTs\n",
+              labyrinthCoinbaseCount, rewardsMap.size());
     
     // Update BCT records with rewards
     int rewardsUpdated = 0;
@@ -1680,17 +1680,17 @@ void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
     
     LogPrintf("BCTDatabase: Scanning rewards for %zu BCTs\n", myBctIds.size());
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
     
-    int hiveCoinbaseCount = 0;
+    int labyrinthCoinbaseCount = 0;
     for (const auto& item : pwallet->mapWallet) {
         const CWalletTx& wtx = item.second;
         
-        // Only process hive coinbase transactions
+        // Only process labyrinth coinbase transactions
         if (!wtx.IsHiveCoinBase()) continue;
         
-        hiveCoinbaseCount++;
+        labyrinthCoinbaseCount++;
         
         // Skip unconfirmed transactions
         if (wtx.GetDepthInMainChain() < 1) continue;
@@ -1719,8 +1719,8 @@ void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
         }
     }
     
-    LogPrintf("BCTDatabase: Found %d hive coinbase transactions, %zu match our BCTs\n", 
-              hiveCoinbaseCount, rewardsMap.size());
+    LogPrintf("BCTDatabase: Found %d labyrinth coinbase transactions, %zu match our BCTs\n", 
+              labyrinthCoinbaseCount, rewardsMap.size());
     
     // Update BCT records with rewards
     beginTransaction();
@@ -1923,7 +1923,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
 
     // Get the BCT creation address script
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     // Begin transaction for atomicity
     beginTransaction();
@@ -1954,7 +1954,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
 #endif
                 // Extract cheese address
                 CTxDestination cheeseDestination;
-                if (!ExtractDestination(scriptPubKeyHoney, cheeseDestination)) {
+                if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                     LogPrintf("BCTDatabase: Couldn't extract destination from BCT %s\n", tx->GetHash().GetHex());
                     continue;
                 }
@@ -1992,7 +1992,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                 }
             }
 
-            // Check if this is a Hive coinbase (reward transaction)
+            // Check if this is a Labyrinth coinbase (reward transaction)
             // Must be coinbase with OP_RETURN OP_MOUSE marker
             if (tx->IsHiveCoinBase() && tx->vout[0].scriptPubKey.size() >= 78) {
                 // Extract BCT txid from the proof script (bytes 14-78 contain the 64-char hex txid)
@@ -2000,7 +2000,7 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                                                         &tx->vout[0].scriptPubKey[14 + 64]);
                 std::string bctTxid(bctTxidBytes.begin(), bctTxidBytes.end());
 
-                LogPrintf("BCTDatabase: Found Hive coinbase at height %d, BCT txid: %s\n", height, bctTxid);
+                LogPrintf("BCTDatabase: Found Labyrinth coinbase at height %d, BCT txid: %s\n", height, bctTxid);
 
                 // Check if this BCT exists in our database
                 if (bctExists(bctTxid)) {

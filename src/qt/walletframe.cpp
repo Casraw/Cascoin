@@ -117,7 +117,7 @@ void WalletFrame::gotoOverviewPage()
         i.value()->gotoOverviewPage();
 }
 
-// Cascoin: Hive page
+// Cascoin: Labyrinth page
 void WalletFrame::gotoHivePage()
 {
     QMap<QString, WalletView*>::const_iterator i;

@@ -21,7 +21,7 @@
 
 #include <thread>
 
-HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent) : platformStyle(_platformStyle), QAbstractTableModel(parent), walletModel(parent)
+LabyrinthTableModel::LabyrinthTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent) : platformStyle(_platformStyle), QAbstractTableModel(parent), walletModel(parent)
 {
     Q_UNUSED(wallet);
 
@@ -38,11 +38,11 @@ HiveTableModel::HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wal
     lastIncludeDeadMice = false;
 }
 
-HiveTableModel::~HiveTableModel() {
+LabyrinthTableModel::~LabyrinthTableModel() {
     // Empty destructor
 }
 
-void HiveTableModel::updateBCTs(bool includeDeadMice) {
+void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
     if (!walletModel) {
         return;
     }
@@ -243,7 +243,7 @@ void HiveTableModel::updateBCTs(bool includeDeadMice) {
     }).detach();
 }
 
-void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadMice) {
+void LabyrinthTableModel::loadFromSQLiteDatabase(bool includeDeadMice) {
     // This method is called from the main thread for immediate cache access
     BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
     if (!bctDb || !bctDb->isInitialized()) {
@@ -262,13 +262,13 @@ void HiveTableModel::loadFromSQLiteDatabase(bool includeDeadMice) {
     profit = summary.totalProfit;
 }
 
-void HiveTableModel::onDatabaseUpdated() {
+void LabyrinthTableModel::onDatabaseUpdated() {
     // Called when BCTDatabaseSQLite signals an update
     // Refresh the model with the last filter setting
     updateBCTs(lastIncludeDeadMice);
 }
 
-void HiveTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit) {
+void LabyrinthTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit) {
     _immature = immature;
     _mature = mature;
     _blocksFound = blocksFound;
@@ -278,19 +278,19 @@ void HiveTableModel::getSummaryValues(int &_immature, int &_mature, int &_dead, 
     _profit = profit;
 }
 
-int HiveTableModel::rowCount(const QModelIndex &parent) const {
+int LabyrinthTableModel::rowCount(const QModelIndex &parent) const {
     Q_UNUSED(parent);
 
     return list.length();
 }
 
-int HiveTableModel::columnCount(const QModelIndex &parent) const {
+int LabyrinthTableModel::columnCount(const QModelIndex &parent) const {
     Q_UNUSED(parent);
 
     return columns.length();
 }
 
-QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
+QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
     if(!index.isValid() || index.row() >= list.length())
         return QVariant();
 
@@ -385,11 +385,11 @@ QVariant HiveTableModel::data(const QModelIndex &index, int role) const {
     return QVariant();
 }
 
-bool HiveTableModel::setData(const QModelIndex &index, const QVariant &value, int role) {
+bool LabyrinthTableModel::setData(const QModelIndex &index, const QVariant &value, int role) {
     return true;
 }
 
-QVariant HiveTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
+QVariant LabyrinthTableModel::headerData(int section, Qt::Orientation orientation, int role) const {
     if(orientation == Qt::Horizontal)
         if(role == Qt::DisplayRole && section < columns.size())
             return columns[section];
@@ -397,7 +397,7 @@ QVariant HiveTableModel::headerData(int section, Qt::Orientation orientation, in
     return QVariant();
 }
 
-void HiveTableModel::sort(int column, Qt::SortOrder order) {
+void LabyrinthTableModel::sort(int column, Qt::SortOrder order) {
     sortColumn = column;
     sortOrder = order;
     std::sort(list.begin(), list.end(), CMouseCreationTransactionInfoLessThan(column, order));
@@ -411,22 +411,22 @@ bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransaction
         std::swap(pLeft, pRight);
 
     switch(column) {
-        case HiveTableModel::Count:
+        case LabyrinthTableModel::Count:
             return pLeft->mouseCount < pRight->mouseCount;
-        case HiveTableModel::Status:
-        case HiveTableModel::EstimatedTime:
+        case LabyrinthTableModel::Status:
+        case LabyrinthTableModel::EstimatedTime:
             return pLeft->blocksLeft < pRight->blocksLeft;
-        case HiveTableModel::Cost:
+        case LabyrinthTableModel::Cost:
             return pLeft->mouseFeePaid < pRight->mouseFeePaid;
-        case HiveTableModel::Rewards:
+        case LabyrinthTableModel::Rewards:
             return pLeft->rewardsPaid < pRight->rewardsPaid;
-        case HiveTableModel::Created:
+        case LabyrinthTableModel::Created:
         default:
             return pLeft->time < pRight->time;
     }
 }
 
-QString HiveTableModel::secondsToString(qint64 seconds) {
+QString LabyrinthTableModel::secondsToString(qint64 seconds) {
     const qint64 DAY = 86400;
     qint64 days = seconds / DAY;
     QTime t = QTime(0,0).addSecs(seconds % DAY);

@@ -38,8 +38,8 @@ OptionsDialog::OptionsDialog(QWidget *parent, bool enableWallet) :
     ui->threadsScriptVerif->setMinimum(-GetNumCores());
     ui->threadsScriptVerif->setMaximum(MAX_SCRIPTCHECK_THREADS);
 
-    // Cascoin: Hive: Mining optimisations
-    ui->hiveCheckThreads->setMaximum(GetNumVirtualCores());
+    // Cascoin: Labyrinth: Mining optimisations
+    ui->labyrinthCheckThreads->setMaximum(GetNumVirtualCores());
 
     /* Network elements init */
 #ifndef USE_UPNP
@@ -183,10 +183,10 @@ void OptionsDialog::setMapper()
     mapper->addMapping(ui->spendZeroConfChange, OptionsModel::SpendZeroConfChange);
     mapper->addMapping(ui->coinControlFeatures, OptionsModel::CoinControlFeatures);
 
-    // Cascoin: Hive: Mining optimisations (int)
-    mapper->addMapping(ui->hiveCheckThreads, OptionsModel::HiveCheckThreads);
-    mapper->addMapping(ui->hiveCheckDelay, OptionsModel::HiveCheckDelay);
-    mapper->addMapping(ui->hiveCheckEarlyOut, OptionsModel::HiveCheckEarlyOut);
+    // Cascoin: Labyrinth: Mining optimisations (int)
+    mapper->addMapping(ui->labyrinthCheckThreads, OptionsModel::LabyrinthCheckThreads);
+    mapper->addMapping(ui->labyrinthCheckDelay, OptionsModel::LabyrinthCheckDelay);
+    mapper->addMapping(ui->labyrinthCheckEarlyOut, OptionsModel::LabyrinthCheckEarlyOut);
 
     // Cascoin: MinotaurX+Hive1.2
     mapper->addMapping(ui->hiveContribCF, OptionsModel::HiveContribCF);

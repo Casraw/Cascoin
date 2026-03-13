@@ -77,7 +77,7 @@ public Q_SLOTS:
     void onBlocksChanged();  // Cascoin: Auto-update labyrinth when blocks change
 
 Q_SIGNALS:
-    void hiveStatusIconChanged(QString icon, QString tooltip);    
+    void labyrinthStatusIconChanged(QString icon, QString tooltip);
 
 private:
     Ui::HiveDialog *ui;

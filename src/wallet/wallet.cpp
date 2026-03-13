@@ -37,7 +37,7 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/thread.hpp>
 
-#include <script/ismine.h>  // Cascoin: Hive
+#include <script/ismine.h>  // Cascoin: Labyrinth
 #include <random>
 
 std::vector<CWalletRef> vpwallets;
@@ -2704,11 +2704,11 @@ OutputType CWallet::TransactionChangeType(OutputType change_type, const std::vec
     // else use g_address_type for change
     return g_address_type;
 }
-// Cascoin: Hive: Unlock for hive mining purposes only.
+// Cascoin: Labyrinth: Unlock for labyrinth mining purposes only.
 // Cascoin: Rialto: Renamed from fWalletUnlockHiveOnly to reflect usage.
 bool fWalletUnlockWithoutTransactions = false;
 
-// Cascoin: Hive: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
+// Cascoin: Labyrinth: Return info for a single BCT known by this wallet, optionally scanning for blocks minted by mice from this BCT
 CMouseCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations) {
     CMouseCreationTransactionInfo bct;
 
@@ -2718,7 +2718,7 @@ CMouseCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool include
     int maxDepth = consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     // Make sure it's really a BCT
     CAmount mouseFeePaid;
@@ -2728,8 +2728,8 @@ CMouseCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool include
 
     // Grab cheese address
     CTxDestination cheeseDestination;
-    if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
-        LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyHoney));
+    if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
+        LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyCheese));
         return bct;
     }
     std::string cheeseAddress = EncodeDestination(cheeseDestination);
@@ -2816,8 +2816,8 @@ CMouseCreationTransactionInfo CWallet::GetBCT(const CWalletTx& wtx, bool include
     return bct;
 }
 
-// Cascoin: Hive: Optimized version of GetBCT that uses pre-built lookup map for rewards
-CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& hiveCoinbaseMap) {
+// Cascoin: Labyrinth: Optimized version of GetBCT that uses pre-built lookup map for rewards
+CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations, const std::map<std::string, std::pair<int, CAmount>>& labyrinthCoinbaseMap) {
     CMouseCreationTransactionInfo bct;
 
     if (chainActive.Height() == 0)  // Don't continue if chainActive is invalid; we may be reindexing
@@ -2826,7 +2826,7 @@ CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, boo
     int maxDepth = consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
 
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     // Make sure it's really a BCT
     CAmount mouseFeePaid;
@@ -2836,8 +2836,8 @@ CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, boo
 
     // Grab cheese address
     CTxDestination cheeseDestination;
-    if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
-        LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyHoney));
+    if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
+        LogPrintf ("** Couldn't extract destination from BCT %s (dest=%s)\n", wtx.GetHash().GetHex(), HexStr(scriptPubKeyCheese));
         return bct;
     }
     std::string cheeseAddress = EncodeDestination(cheeseDestination);
@@ -2876,8 +2876,8 @@ CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, boo
     int blocksFound = 0;
     CAmount rewardsPaid = 0;
     if (isMature && scanRewards) {
-        auto it = hiveCoinbaseMap.find(bctTxid);
-        if (it != hiveCoinbaseMap.end()) {
+        auto it = labyrinthCoinbaseMap.find(bctTxid);
+        if (it != labyrinthCoinbaseMap.end()) {
             blocksFound = it->second.first;
             rewardsPaid = it->second.second;
         }
@@ -2907,7 +2907,7 @@ CMouseCreationTransactionInfo CWallet::GetBCTOptimized(const CWalletTx& wtx, boo
     return bct;
 }
 
-// Cascoin: Hive: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
+// Cascoin: Labyrinth: Return all BCTs known by this wallet, optionally including dead mice and optionally scanning for blocks minted by mice from each BCT
 std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bool scanRewards, const Consensus::Params& consensusParams, int minCheeseConfirmations) {
     std::vector<CMouseCreationTransactionInfo> bcts;
 
@@ -2915,7 +2915,7 @@ std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bo
         return bcts;
 
     CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     // Pre-compute our BCT txids to restrict reward aggregation only to relevant coinbases
     std::set<std::string> myBctIds;
@@ -2930,13 +2930,13 @@ std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bo
         }
     }
 
-    // Lookup map for hive coinbase transactions restricted to our BCT ids
-    std::map<std::string, std::pair<int, CAmount>> hiveCoinbaseMap;
+    // Lookup map for labyrinth coinbase transactions restricted to our BCT ids
+    std::map<std::string, std::pair<int, CAmount>> labyrinthCoinbaseMap;
     if (scanRewards && !myBctIds.empty()) {
         for (const std::pair<uint256, CWalletTx>& pairWtx : mapWallet) {
             const CWalletTx& wtx = pairWtx.second;
 
-            // Only process hive coinbase transactions
+            // Only process labyrinth coinbase transactions
             if (!wtx.IsHiveCoinBase()) continue;
 
             // Skip unconfirmed transactions
@@ -2950,14 +2950,14 @@ std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bo
                 // Only accumulate if this coinbase references one of our BCTs
                 if (myBctIds.find(blockTxidStr) == myBctIds.end()) continue;
 
-                auto &entry = hiveCoinbaseMap[blockTxidStr];
+                auto &entry = labyrinthCoinbaseMap[blockTxidStr];
                 entry.first++;  // blocks found
                 if (wtx.tx->vout.size() > 1) {
                     entry.second += wtx.tx->vout[1].nValue;  // rewards
                 }
             }
         }
-        LogPrintf("Processed %u wallet transactions for coinbase rewards (map size: %u)\n", (unsigned)mapWallet.size(), (unsigned)hiveCoinbaseMap.size());
+        LogPrintf("Processed %u wallet transactions for coinbase rewards (map size: %u)\n", (unsigned)mapWallet.size(), (unsigned)labyrinthCoinbaseMap.size());
     }
 
     // Iterate all wallet transactions; memory stays bounded since we only push BCTs we own
@@ -2980,7 +2980,7 @@ std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bo
             continue;
 
         // Get its info if it's a BCT - use optimized version with pre-built lookup
-        CMouseCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minCheeseConfirmations, hiveCoinbaseMap);
+        CMouseCreationTransactionInfo bct = GetBCTOptimized(wtx, includeDead, scanRewards, consensusParams, minCheeseConfirmations, labyrinthCoinbaseMap);
         if (bct.txid != "") {
             bcts.push_back(bct);
         }
@@ -2990,12 +2990,12 @@ std::vector<CMouseCreationTransactionInfo> CWallet::GetBCTs(bool includeDead, bo
     return bcts;
 }
 
-// Cascoin: Hive: Create a BCT to gestate given number of mice
+// Cascoin: Labyrinth: Create a BCT to gestate given number of mice
 bool CWallet::CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserveKey& reservekeyChange, CReserveKey& reservekeyCheese, std::string cheeseAddress, std::string changeAddress, bool communityContrib, std::string& strFailReason, const Consensus::Params& consensusParams) {
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
 
-    if (!IsHiveEnabled(pindexPrev, consensusParams)) {
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams)) {
         strFailReason = "Error: The Labyrinth has not yet been activated on the network";
         return false;
     }
@@ -3016,17 +3016,17 @@ bool CWallet::CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserve
     }
 
     // Don't spend more than potential rewards in a single BCT
-    // Cascoin: Hive 1.1: Use correct typical spacing
+    // Cascoin: Labyrinth 1.1: Use correct typical spacing
     // Cascoin: MinotaurX+Hive1.2: Get correct hive block reward
     auto blockReward = GetBlockSubsidy(pindexPrev->nHeight, consensusParams);
     if (IsMinotaurXEnabled(pindexPrev, consensusParams))
         blockReward += blockReward >> 1;
 
     CAmount totalPotentialReward;
-    if (IsHive11Enabled(pindexPrev, consensusParams))
-        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical_1_1;
+    if (IsLabyrinth11Enabled(pindexPrev, consensusParams))
+        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.labyrinthBlockSpacingTargetTypical_1_1;
     else
-        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.hiveBlockSpacingTargetTypical;
+        totalPotentialReward = (consensusParams.mouseLifespanBlocks * blockReward) / consensusParams.labyrinthBlockSpacingTargetTypical;
 
     if (totalPotentialReward < mouseCost) {
         strFailReason = "Error: Mouse creation would cost more than possible rewards";
@@ -3116,7 +3116,7 @@ bool CWallet::CreateMouseTransaction(int mouseCount, CWalletTx& wtxNew, CReserve
 
     // Add optional community fund output (vout[1] if present)
     if (communityContrib) {
-        CTxDestination destinationCF = DecodeDestination(consensusParams.hiveCommunityAddress);
+        CTxDestination destinationCF = DecodeDestination(consensusParams.labyrinthCommunityAddress);
         CScript scriptPubKeyCF = GetScriptForDestination(destinationCF);
         CRecipient recipientCF = {scriptPubKeyCF, donationValue, false};
         vecSend.push_back(recipientCF);

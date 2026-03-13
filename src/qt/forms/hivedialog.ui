@@ -1064,7 +1064,7 @@ your chance of mining any given labyrinth-mineable block.</string>
          </widget>
         </item>
         <item>
-         <widget class="QLabel" name="localHiveWeightLabel">
+         <widget class="QLabel" name="localLabyrinthWeightLabel">
           <property name="minimumSize">
            <size>
             <width>60</width>
@@ -1087,7 +1087,7 @@ your chance of mining any given labyrinth-mineable block.</string>
          </widget>
         </item>
         <item>
-         <widget class="TinyPie" name="hiveWeightPie" native="true">
+         <widget class="TinyPie" name="labyrinthWeightPie" native="true">
           <property name="sizePolicy">
            <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
             <horstretch>0</horstretch>

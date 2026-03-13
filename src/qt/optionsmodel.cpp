@@ -16,7 +16,7 @@
 #include <net.h>
 #include <netbase.h>
 #include <txdb.h> // for -dbcache defaults
-#include <miner.h> // Cascoin: Hive: Mining optimisations: For -hivecheckthreads, -hivecheckdelay, -hiveearlyout defaults
+#include <miner.h> // Cascoin: Labyrinth: Mining optimisations: For -labyrinthcheckthreads, -labyrinthcheckdelay, -labyrinthearlyout defaults
 #include <qt/intro.h>
 
 #ifdef ENABLE_WALLET
@@ -113,21 +113,21 @@ void OptionsModel::Init(bool resetSettings)
     if (!gArgs.SoftSetBoolArg("-spendzeroconfchange", settings.value("bSpendZeroConfChange").toBool()))
         addOverriddenOption("-spendzeroconfchange");
 
-    // Cascoin: Hive: Mining optimisations
-    if (!settings.contains("nHiveCheckThreads"))
-        settings.setValue("nHiveCheckThreads", (qint64)DEFAULT_HIVE_THREADS);
-    if (!gArgs.SoftSetArg("-hivecheckthreads", settings.value("nHiveCheckThreads").toString().toStdString()))
-        addOverriddenOption("-hivecheckthreads");
+    // Cascoin: Labyrinth: Mining optimisations
+    if (!settings.contains("nLabyrinthCheckThreads"))
+        settings.setValue("nLabyrinthCheckThreads", (qint64)DEFAULT_HIVE_THREADS);
+    if (!gArgs.SoftSetArg("-labyrinthcheckthreads", settings.value("nLabyrinthCheckThreads").toString().toStdString()))
+        addOverriddenOption("-labyrinthcheckthreads");
 
-    if (!settings.contains("nHiveCheckDelay"))
-        settings.setValue("nHiveCheckDelay", (qint64)DEFAULT_HIVE_CHECK_DELAY);
-    if (!gArgs.SoftSetArg("-hivecheckdelay", settings.value("nHiveCheckDelay").toString().toStdString()))
-        addOverriddenOption("-hivecheckdelay");
+    if (!settings.contains("nLabyrinthCheckDelay"))
+        settings.setValue("nLabyrinthCheckDelay", (qint64)DEFAULT_HIVE_CHECK_DELAY);
+    if (!gArgs.SoftSetArg("-labyrinthcheckdelay", settings.value("nLabyrinthCheckDelay").toString().toStdString()))
+        addOverriddenOption("-labyrinthcheckdelay");
 
-    if (!settings.contains("fHiveCheckEarlyOut"))
-        settings.setValue("fHiveCheckEarlyOut", DEFAULT_HIVE_EARLY_OUT);
-    if (!gArgs.SoftSetBoolArg("-hiveearlyout", settings.value("fHiveCheckEarlyOut").toBool()))
-        addOverriddenOption("-hiveearlyout");
+    if (!settings.contains("fLabyrinthCheckEarlyOut"))
+        settings.setValue("fLabyrinthCheckEarlyOut", DEFAULT_HIVE_EARLY_OUT);
+    if (!gArgs.SoftSetBoolArg("-labyrinthearlyout", settings.value("fLabyrinthCheckEarlyOut").toBool()))
+        addOverriddenOption("-labyrinthearlyout");
 
     // Cascoin: MinotaurX+Hive1.2
     if (!settings.contains("fHiveContribCF"))
@@ -299,13 +299,13 @@ QVariant OptionsModel::data(const QModelIndex & index, int role) const
         case SpendZeroConfChange:
             return settings.value("bSpendZeroConfChange");
 
-        // Cascoin: Hive: Mining optimisations
-        case HiveCheckThreads:
-            return settings.value("nHiveCheckThreads");
-        case HiveCheckDelay:
-            return settings.value("nHiveCheckDelay");
-        case HiveCheckEarlyOut:
-            return settings.value("fHiveCheckEarlyOut");
+        // Cascoin: Labyrinth: Mining optimisations
+        case LabyrinthCheckThreads:
+            return settings.value("nLabyrinthCheckThreads");
+        case LabyrinthCheckDelay:
+            return settings.value("nLabyrinthCheckDelay");
+        case LabyrinthCheckEarlyOut:
+            return settings.value("fLabyrinthCheckEarlyOut");
 
         // Cascoin: MinotaurX+Hive1.2
         case HiveContribCF:
@@ -426,26 +426,26 @@ bool OptionsModel::setData(const QModelIndex & index, const QVariant & value, in
             }
             break;
 
-        // Cascoin: Hive: Mining optimisations
-        case HiveCheckDelay:
-            if (settings.value("nHiveCheckDelay") != value) {
-                settings.setValue("nHiveCheckDelay", value);
-                gArgs.ForceSetArg("-hivecheckdelay", settings.value("nHiveCheckDelay").toString().toStdString());
+        // Cascoin: Labyrinth: Mining optimisations
+        case LabyrinthCheckDelay:
+            if (settings.value("nLabyrinthCheckDelay") != value) {
+                settings.setValue("nLabyrinthCheckDelay", value);
+                gArgs.ForceSetArg("-labyrinthcheckdelay", settings.value("nLabyrinthCheckDelay").toString().toStdString());
             }
 
             break;
 
-        case HiveCheckThreads:
-            if (settings.value("nHiveCheckThreads") != value) {
-                settings.setValue("nHiveCheckThreads", value);
-                gArgs.ForceSetArg("-hivecheckthreads", settings.value("nHiveCheckThreads").toString().toStdString());
+        case LabyrinthCheckThreads:
+            if (settings.value("nLabyrinthCheckThreads") != value) {
+                settings.setValue("nLabyrinthCheckThreads", value);
+                gArgs.ForceSetArg("-labyrinthcheckthreads", settings.value("nLabyrinthCheckThreads").toString().toStdString());
             }
             break;
 
-        case HiveCheckEarlyOut:
-            if (settings.value("fHiveCheckEarlyOut") != value) {
-                settings.setValue("fHiveCheckEarlyOut", value.toBool());
-                gArgs.ForceSetArg("-hiveearlyout", settings.value("fHiveCheckEarlyOut").toBool() ? "1" : "0");
+        case LabyrinthCheckEarlyOut:
+            if (settings.value("fLabyrinthCheckEarlyOut") != value) {
+                settings.setValue("fLabyrinthCheckEarlyOut", value.toBool());
+                gArgs.ForceSetArg("-labyrinthearlyout", settings.value("fLabyrinthCheckEarlyOut").toBool() ? "1" : "0");
             }
             break;
 
