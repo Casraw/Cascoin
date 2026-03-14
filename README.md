@@ -72,8 +72,9 @@ test/functional/test_runner.py
 - 🌐 Website: [cascoin.net](https://cascoin.net)
 - 🔍 Explorer: [casplorer.com](https://casplorer.com)
 - ⛏ Pool: [mining-pool.io](https://mining-pool.io)
-- � Ditscord: [discord.gg/J2NxATBS8z](https://discord.gg/J2NxATBS8z)
+- � Discord: [discord.gg/J2NxATBS8z](https://discord.gg/J2NxATBS8z)
 - 📂 GitHub: [github.com/Casraw/Cascoin](https://github.com/Casraw/Cascoin)
+- 📂 Codeberg: [codeberg.org/Casraw/Cascoin](https://codeberg.org/Cascoin/Cascoin)
 
 ## License
 
