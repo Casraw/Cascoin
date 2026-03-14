@@ -1043,7 +1043,7 @@ bool BusyMice(const Consensus::Params& consensusParams, int height) {
             LogPrintf("BusyMice: Couldn't sign the mouse proof!\n");
             return false;
         }
-        if (verbose) LogPrintf("BusyMice: messageSig                = %s\n", HexStr(&messageProofVec[0], &messageProofVec[messageProofVec.size()]));
+        if (verbose) LogPrintf("BusyMice: messageSig                = %s\n", HexStr(messageProofVec.data(), messageProofVec.data() + messageProofVec.size()));
     }
 
     unsigned char mouseNonceEncoded[4];

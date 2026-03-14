@@ -30,7 +30,7 @@
 #include <wallet/walletutil.h>
 #include <rialto.h>             // LitcoinCash: Rialto
 #include <net_processing.h>     // LitcoinCash: Rialto
-#include <beenft.h>             // Cascoin: Mouse NFT System
+#include <mousenft.h>           // Cascoin: Mouse NFT System
 #include <bctdb.h>              // Cascoin: BCT persistent database
 
 #include <init.h>  // For StartShutdown

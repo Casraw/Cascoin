@@ -2,7 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <beenft.h>
+#include <mousenft.h>
 #include <validation.h>
 #include <chainparams.h>
 #include <script/standard.h>
@@ -541,7 +541,7 @@ bool IsValidGenericNFTTransaction(const CTransaction& tx, std::string& error) {
     
     // Check for OP_RETURN output with generic NFT magic bytes
     for (const auto& output : tx.vout) {
-        if (output.scriptPubKey[0] == OP_RETURN) {
+        if (output.scriptPubKey.size() >= 2 && output.scriptPubKey[0] == OP_RETURN) {
             std::vector<unsigned char> data(output.scriptPubKey.begin() + 2, output.scriptPubKey.end());
             if (data.size() >= 6) {
                 std::string magic(data.begin(), data.begin() + 6);
@@ -551,7 +551,7 @@ bool IsValidGenericNFTTransaction(const CTransaction& tx, std::string& error) {
             }
         }
     }
-    
+
     error = "No valid generic NFT output found";
     return false;
 }
@@ -560,7 +560,7 @@ bool ParseGenericNFTTransaction(const CTransaction& tx, std::vector<GenericNFT>&
     nfts.clear();
     
     for (const auto& output : tx.vout) {
-        if (output.scriptPubKey[0] == OP_RETURN) {
+        if (output.scriptPubKey.size() >= 2 && output.scriptPubKey[0] == OP_RETURN) {
             std::vector<unsigned char> data(output.scriptPubKey.begin() + 2, output.scriptPubKey.end());
             if (data.size() >= 6) {
                 std::string magic(data.begin(), data.begin() + 6);
@@ -660,7 +660,7 @@ bool IsValidGenericNFTTransferTransaction(const CTransaction& tx, std::string& e
     
     // Check for OP_RETURN output with generic NFT transfer magic bytes
     for (const auto& output : tx.vout) {
-        if (output.scriptPubKey[0] == OP_RETURN) {
+        if (output.scriptPubKey.size() >= 2 && output.scriptPubKey[0] == OP_RETURN) {
             std::vector<unsigned char> data(output.scriptPubKey.begin() + 2, output.scriptPubKey.end());
             if (data.size() >= 6) {
                 std::string magic(data.begin(), data.begin() + 6);
@@ -670,7 +670,7 @@ bool IsValidGenericNFTTransferTransaction(const CTransaction& tx, std::string& e
             }
         }
     }
-    
+
     error = "No valid generic NFT transfer output found";
     return false;
 }
@@ -679,7 +679,7 @@ bool ParseGenericNFTTransferTransaction(const CTransaction& tx, std::vector<Gene
     transfers.clear();
     
     for (const auto& output : tx.vout) {
-        if (output.scriptPubKey[0] == OP_RETURN) {
+        if (output.scriptPubKey.size() >= 2 && output.scriptPubKey[0] == OP_RETURN) {
             std::vector<unsigned char> data(output.scriptPubKey.begin() + 2, output.scriptPubKey.end());
             if (data.size() >= 6) {
                 std::string magic(data.begin(), data.begin() + 6);

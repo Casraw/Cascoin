@@ -7,7 +7,7 @@
 
 #include <QAbstractTableModel>
 #include <QStringList>
-#include <beenft.h>
+#include <mousenft.h>
 
 class WalletModel;
 

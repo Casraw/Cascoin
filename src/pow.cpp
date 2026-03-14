@@ -781,7 +781,7 @@ bool CheckHiveProof(const CBlock* pblock, const Consensus::Params& consensusPara
     // Grab the message sig (bytes 79-end; byte 78 is size)
     std::vector<unsigned char> messageSig(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
     if (verbose)
-        LogPrintf("CheckHiveProof: messageSig          = %s\n", HexStr(&messageSig[0], &messageSig[messageSig.size()]));
+        LogPrintf("CheckHiveProof: messageSig          = %s\n", HexStr(messageSig.data(), messageSig.data() + messageSig.size()));
     
     // Grab the cheese address from the cheese vout
     CTxDestination cheeseDestination;

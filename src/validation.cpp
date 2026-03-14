@@ -2024,14 +2024,20 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // Cascoin: MinotaurX+Hive1.2: Get correct block reward
     CAmount blockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
     if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
-        if (block.IsHiveMined(chainparams.GetConsensus()))
+        if (block.IsHiveMined(chainparams.GetConsensus())) {
             blockReward += blockReward >> 1;
-        else
+            if (!MoneyRange(blockReward))
+                return state.DoS(100, error("ConnectBlock(): block reward overflow after labyrinth adjustment"),
+                                 REJECT_INVALID, "bad-cb-amount");
+        } else
             blockReward = blockReward >> 1;
     }
 
     blockReward += nFees;
-    
+    if (!MoneyRange(blockReward))
+        return state.DoS(100, error("ConnectBlock(): block reward overflow after fee addition"),
+                         REJECT_INVALID, "bad-cb-amount");
+
     if (block.vtx[0]->GetValueOut() > blockReward)
         return state.DoS(100,
                          error("ConnectBlock(): coinbase pays too much (actual=%d vs limit=%d)",

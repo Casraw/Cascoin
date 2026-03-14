@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef CASCOIN_BEENFT_H
-#define CASCOIN_BEENFT_H
+#ifndef CASCOIN_MOUSENFT_H
+#define CASCOIN_MOUSENFT_H
 
 #include <amount.h>
 #include <uint256.h>
@@ -251,4 +251,4 @@ bool ParseGenericNFTTransaction(const CTransaction& tx, std::vector<GenericNFT>&
 bool IsValidGenericNFTTransferTransaction(const CTransaction& tx, std::string& error);
 bool ParseGenericNFTTransferTransaction(const CTransaction& tx, std::vector<GenericNFTTransfer>& transfers, std::string& error);
 
-#endif // CASCOIN_BEENFT_H
+#endif // CASCOIN_MOUSENFT_H
