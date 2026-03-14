@@ -102,15 +102,15 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE; // January 28, 2017
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT; // January 31st, 2018
 
-        // Cascoin: Hive: Deployment
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].bit = 7;
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE; // Dec 26, 2018
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT; // Dec 26, 2019
+        // Cascoin: Labyrinth: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].bit = 7;
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE; // Dec 26, 2018
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT; // Dec 26, 2019
 
-        // Cascoin: Hive 1.1: Deployment
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].bit = 9;
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;  // Sept 20, 2019
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;    // Sept 20, 2020
+        // Cascoin: Labyrinth 1.1: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].bit = 9;
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;  // Sept 20, 2019
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;    // Sept 20, 2020
 
         // Cascoin: MinotaurX+Hive1.2: Deployment
         consensus.vDeployments[Consensus::DEPLOYMENT_MINOTAURX].bit = 7;
@@ -132,31 +132,31 @@ public:
         consensus.premineOutputScript = CScript(vch.begin(), vch.end());	// Output script for premine block (CashierDaZEsyBQkuvv4c2uPZFx6m2XTgT)
         consensus.totalMoneySupplyHeight = 6215968;         // Height at which TMS is reached, do not issue rewards past this point
 
-        // Cascoin: Hive: Consensus Fields
-        consensus.minBeeCost = 10000;                       // Minimum cost of a bee, used when no more block rewards
-        consensus.beeCostFactor = 2500;                     // Bee cost is block_reward/beeCostFactor
-        consensus.beeCreationAddress = "HiveCascoinBurnAddressXXXXXXXXXXkTBcG";        // Properly formatted unspendable address for bee creation
-        consensus.hiveCommunityAddress = "HF2sgFXX5NgDojHhTPCTFknc6bqh3xCd8u";      // Community fund address
+        // Cascoin: Labyrinth: Consensus Fields
+        consensus.minMouseCost = 10000;                       // Minimum cost of a mouse, used when no more block rewards
+        consensus.mouseCostFactor = 2500;                     // Mouse cost is block_reward/mouseCostFactor
+        consensus.mouseCreationAddress = "HiveCascoinBurnAddressXXXXXXXXXXkTBcG";        // Properly formatted unspendable address for mouse creation
+        consensus.labyrinthCommunityAddress = "HF2sgFXX5NgDojHhTPCTFknc6bqh3xCd8u";      // Community fund address
         consensus.communityContribFactor = 10;              // Optionally, donate bct_value/maxCommunityContribFactor to community fund
-        consensus.beeGestationBlocks = 48*24;               // The number of blocks for a new bee to mature
-        consensus.beeLifespanBlocks = 48*24*14;             // The number of blocks a bee lives for after maturation
+        consensus.mouseGestationBlocks = 48*24;               // The number of blocks for a new mouse to mature
+        consensus.mouseLifespanBlocks = 48*24*14;             // The number of blocks a mouse lives for after maturation
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");  // Target for ~2^20 work, good for CPU bootstrap
-        consensus.minHiveCheckBlock = 0;              // Allow checking for Hive blocks from the start (was 1537566)
-        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for bee hash target adjustment EMA
-        consensus.hiveBlockSpacingTarget = 2;               // Target Hive block frequency (1 out of this many blocks should be Hivemined)
-        consensus.hiveBlockSpacingTargetTypical = 3;        // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
-        consensus.hiveBlockSpacingTargetTypical_1_1 = 2;    // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)
-        consensus.hiveNonceMarker = 192;                    // Nonce marker for hivemined blocks
+        consensus.minLabyrinthCheckBlock = 0;              // Allow checking for Labyrinth blocks from the start (was 1537566)
+        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for mouse hash target adjustment EMA
+        consensus.labyrinthBlockSpacingTarget = 2;               // Target Labyrinth block frequency (1 out of this many blocks should be labyrinth-mined)
+        consensus.labyrinthBlockSpacingTargetTypical = 3;        // Observed Labyrinth block frequency (1 out of this many blocks are observed to be Labyrinth)
+        consensus.labyrinthBlockSpacingTargetTypical_1_1 = 2;    // Observed Labyrinth block frequency in Labyrinth 1.1 (1 out of this many blocks are observed to be Labyrinth)
+        consensus.hiveNonceMarker = 192;                    // Nonce marker for labyrinth-mined blocks
 
-        // Cascoin: Hive 1.1-related consensus fields
-        consensus.minK = 2;                                 // Minimum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-        consensus.maxK = 16;                                // Maximum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-        consensus.maxHiveDiff = 0.006;                      // Hive difficulty at which max chainwork bonus is awarded
+        // Cascoin: Labyrinth 1.1-related consensus fields
+        consensus.minK = 2;                                 // Minimum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+        consensus.maxK = 16;                                // Maximum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+        consensus.maxLabyrinthDiff = 0.006;                      // Labyrinth difficulty at which max chainwork bonus is awarded
         consensus.maxKPow = 5;                              // Maximum chainwork scale for PoW blocks
-        consensus.powSplit1 = 0.005;                        // Below this Hive difficulty threshold, PoW block chainwork bonus is halved
-        consensus.powSplit2 = 0.0025;                       // Below this Hive difficulty threshold, PoW block chainwork bonus is halved again
-        consensus.maxConsecutiveHiveBlocks = 2;             // Maximum hive blocks that can occur consecutively before a PoW block is required
-        consensus.hiveDifficultyWindow = 36;                // How many blocks the SMA averages over in hive difficulty adjust
+        consensus.powSplit1 = 0.005;                        // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved
+        consensus.powSplit2 = 0.0025;                       // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved again
+        consensus.maxConsecutiveLabyrinthBlocks = 2;             // Maximum labyrinth blocks that can occur consecutively before a PoW block is required
+        consensus.labyrinthDifficultyWindow = 36;                // How many blocks the SMA averages over in labyrinth difficulty adjust
 
         // Cascoin: MinotaurX+Hive1.2-related consensus fields
         consensus.lwmaAveragingWindow = 90;                 // Averaging window size for LWMA diff adjust
@@ -278,15 +278,15 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;               // Feb 13, 2024
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;      // Start + 1 year
 
-        // Cascoin: Hive: Deployment
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].bit = 7;
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;                 // Feb 13, 2024
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;        // Start + 1 year
+        // Cascoin: Labyrinth: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].bit = 7;
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;                 // Feb 13, 2024
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;        // Start + 1 year
 
-        // Cascoin: Hive 1.1: Deployment
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].bit = 9;
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;             // Feb 13, 2024 (but later than the above 3)
-        consensus.vDeployments[Consensus::DEPLOYMENT_HIVE_1_1].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;    // Start + 1 year
+        // Cascoin: Labyrinth 1.1: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].bit = 9;
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;             // Feb 13, 2024 (but later than the above 3)
+        consensus.vDeployments[Consensus::DEPLOYMENT_LABYRINTH_1_1].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;    // Start + 1 year
 
         // Cascoin: MinotaurX+Hive1.2: Deployment
         consensus.vDeployments[Consensus::DEPLOYMENT_MINOTAURX].bit = 2;
@@ -309,31 +309,31 @@ public:
         consensus.premineOutputScript = CScript();
         consensus.totalMoneySupplyHeight = 6215968;         // Height at which TMS is reached, do not issue rewards past this point (Note, not accurate value for testnet)
 
-        // Cascoin: Hive: Consensus Fields
-        consensus.minBeeCost = 10000;                       // Minimum cost of a bee, used when no more block rewards
-        consensus.beeCostFactor = 2500;                     // Bee cost is block_reward/beeCostFactor
-        consensus.beeCreationAddress = "tEstNetCreateCASWorkerBeeXXXYq6T3r";        // Unspendable address for bee creation
-        consensus.hiveCommunityAddress = "tCY5JWV4LYe64ivrAE2rD6P3bYxYtcoTsz";      // Community fund address
+        // Cascoin: Labyrinth: Consensus Fields
+        consensus.minMouseCost = 10000;                       // Minimum cost of a mouse, used when no more block rewards
+        consensus.mouseCostFactor = 2500;                     // Mouse cost is block_reward/mouseCostFactor
+        consensus.mouseCreationAddress = "tEstNetCreateCASWorkerBeeXXXYq6T3r";        // Unspendable address for mouse creation
+        consensus.labyrinthCommunityAddress = "tCY5JWV4LYe64ivrAE2rD6P3bYxYtcoTsz";      // Community fund address
         consensus.communityContribFactor = 10;              // Optionally, donate bct_value/maxCommunityContribFactor to community fund
-        consensus.beeGestationBlocks = 40;                  // The number of blocks for a new bee to mature
-        consensus.beeLifespanBlocks = 48*24*14;             // The number of blocks a bee lives for after maturation
+        consensus.mouseGestationBlocks = 40;                  // The number of blocks for a new mouse to mature
+        consensus.mouseLifespanBlocks = 48*24*14;             // The number of blocks a mouse lives for after maturation
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");  // Target for ~2^20 work, good for CPU bootstrap
-        consensus.minHiveCheckBlock = 50;                   // Don't bother checking below this height for Hive blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
-        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for bee hash target adjustment EMA
-        consensus.hiveBlockSpacingTarget = 2;               // Target Hive block frequency (1 out of this many blocks should be Hivemined)
-        consensus.hiveBlockSpacingTargetTypical = 3;        // Observed Hive block frequency (1 out of this many blocks are observed to be Hive)
-        consensus.hiveBlockSpacingTargetTypical_1_1 = 2;    // Observed Hive block frequency in Hive 1.1 (1 out of this many blocks are observed to be Hive)
-        consensus.hiveNonceMarker = 192;                    // Nonce marker for hivemined blocks
+        consensus.minLabyrinthCheckBlock = 50;                   // Don't bother checking below this height for Labyrinth blocks (not used for consensus/validation checks, just efficiency when looking for potential BCTs)
+        consensus.hiveTargetAdjustAggression = 30;          // Snap speed for mouse hash target adjustment EMA
+        consensus.labyrinthBlockSpacingTarget = 2;               // Target Labyrinth block frequency (1 out of this many blocks should be labyrinth-mined)
+        consensus.labyrinthBlockSpacingTargetTypical = 3;        // Observed Labyrinth block frequency (1 out of this many blocks are observed to be Labyrinth)
+        consensus.labyrinthBlockSpacingTargetTypical_1_1 = 2;    // Observed Labyrinth block frequency in Labyrinth 1.1 (1 out of this many blocks are observed to be Labyrinth)
+        consensus.hiveNonceMarker = 192;                    // Nonce marker for labyrinth-mined blocks
 
-        // Cascoin: Hive 1.1-related consensus fields
-        consensus.minK = 2;                                 // Minimum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-        consensus.maxK = 10;                                // Maximum chainwork scale for Hive blocks (see Hive whitepaper section 5)
-        consensus.maxHiveDiff = 0.002;                      // Hive difficulty at which max chainwork bonus is awarded
+        // Cascoin: Labyrinth 1.1-related consensus fields
+        consensus.minK = 2;                                 // Minimum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+        consensus.maxK = 10;                                // Maximum chainwork scale for Labyrinth blocks (see Labyrinth whitepaper section 5)
+        consensus.maxLabyrinthDiff = 0.002;                      // Labyrinth difficulty at which max chainwork bonus is awarded
         consensus.maxKPow = 5;                              // Maximum chainwork scale for PoW blocks
-        consensus.powSplit1 = 0.001;                        // Below this Hive difficulty threshold, PoW block chainwork bonus is halved
-        consensus.powSplit2 = 0.0005;                       // Below this Hive difficulty threshold, PoW block chainwork bonus is halved again
-        consensus.maxConsecutiveHiveBlocks = 2;             // Maximum hive blocks that can occur consecutively before a PoW block is required
-        consensus.hiveDifficultyWindow = 36;                // How many blocks the SMA averages over in hive difficulty adjust
+        consensus.powSplit1 = 0.001;                        // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved
+        consensus.powSplit2 = 0.0005;                       // Below this Labyrinth difficulty threshold, PoW block chainwork bonus is halved again
+        consensus.maxConsecutiveLabyrinthBlocks = 2;             // Maximum labyrinth blocks that can occur consecutively before a PoW block is required
+        consensus.labyrinthDifficultyWindow = 36;                // How many blocks the SMA averages over in labyrinth difficulty adjust
 
         // Cascoin: MinotaurX+Hive1.2-related consensus fields
         consensus.lwmaAveragingWindow = 90;                 // Averaging window size for LWMA diff adjust
@@ -438,7 +438,7 @@ public:
 //        consensus.premineOutputScript = CScript(vch.begin(), vch.end());	// Output script for premine block (CashierDaZEsyBQkuvv4c2uPZFx6m2XTgT)
         consensus.premineOutputScript = CScript();
         consensus.totalMoneySupplyHeight = 6215968;         // Height at which TMS is reached, do not issue rewards past this point (Note, not accurate value for testnet)
-        consensus.hiveNonceMarker = 192;                    // Nonce marker for hivemined blocks
+        consensus.hiveNonceMarker = 192;                    // Nonce marker for labyrinth-mined blocks
         // Cascoin: Add powLimitHive for regtest, matching the other networks for consistency during bootstrap
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Target for ~2^20 work, good for CPU bootstrap
 

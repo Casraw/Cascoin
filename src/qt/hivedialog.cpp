@@ -49,26 +49,26 @@ HiveDialog::HiveDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     ui->setupUi(this);
 
     if (!_platformStyle->getImagesOnButtons())
-        ui->createBeesButton->setIcon(QIcon());
+        ui->createMiceButton->setIcon(QIcon());
     else
-        ui->createBeesButton->setIcon(_platformStyle->SingleColorIcon(":/icons/bee"));
+        ui->createMiceButton->setIcon(_platformStyle->SingleColorIcon(":/icons/mouse"));
 
-    beeCost = totalCost = rewardsPaid = cost = profit = 0;
+    mouseCost = totalCost = rewardsPaid = cost = profit = 0;
     immature = mature = dead = blocksFound = 0;
     lastGlobalCheckHeight = 0;
     potentialRewards = 0;
     currentBalance = 0;
-    beePopIndex = 0;
+    mousePopIndex = 0;
 
     ui->globalHiveSummaryError->hide();
 
-    ui->beePopIndexPie->foregroundCol = Qt::red;
+    ui->mousePopIndexPie->foregroundCol = Qt::red;
 
     // Swap cols for labyrinth weight pie
-    QColor temp = ui->hiveWeightPie->foregroundCol;
-    ui->hiveWeightPie->foregroundCol = ui->hiveWeightPie->backgroundCol;
-    ui->hiveWeightPie->backgroundCol = temp;
-    ui->hiveWeightPie->borderCol = palette().color(backgroundRole());
+    QColor temp = ui->labyrinthWeightPie->foregroundCol;
+    ui->labyrinthWeightPie->foregroundCol = ui->labyrinthWeightPie->backgroundCol;
+    ui->labyrinthWeightPie->backgroundCol = temp;
+    ui->labyrinthWeightPie->borderCol = palette().color(backgroundRole());
 
     // Initialize debouncing timer for checkbox state changes
     updateTimer = new QTimer(this);
@@ -84,7 +84,7 @@ HiveDialog::HiveDialog(const PlatformStyle *_platformStyle, QWidget *parent) :
     // Don't start automatically - will be started when dialog becomes visible
 
     initGraph();
-    ui->beePopGraph->hide();
+    ui->mousePopGraph->hide();
 }
 
 void HiveDialog::setClientModel(ClientModel *_clientModel) {
@@ -102,7 +102,7 @@ void HiveDialog::setModel(WalletModel *_model) {
 
     if(_model && _model->getOptionsModel())
     {
-        _model->getHiveTableModel()->sort(HiveTableModel::Created, Qt::DescendingOrder);
+        _model->getLabyrinthTableModel()->sort(LabyrinthTableModel::Created, Qt::DescendingOrder);
         connect(_model->getOptionsModel(), SIGNAL(displayUnitChanged(int)), this, SLOT(updateDisplayUnit()));
         updateDisplayUnit();
 
@@ -117,28 +117,28 @@ void HiveDialog::setModel(WalletModel *_model) {
 
         tableView->verticalHeader()->hide();
         tableView->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-        tableView->setModel(_model->getHiveTableModel());
+        tableView->setModel(_model->getLabyrinthTableModel());
         tableView->setAlternatingRowColors(true);
         tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         tableView->setSelectionMode(QAbstractItemView::ContiguousSelection);
-        tableView->setColumnWidth(HiveTableModel::Created, CREATED_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Count, COUNT_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Status, STATUS_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::EstimatedTime, TIME_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Cost, COST_COLUMN_WIDTH);
-        tableView->setColumnWidth(HiveTableModel::Rewards, REWARDS_COLUMN_WIDTH);
-        //tableView->setColumnWidth(HiveTableModel::Profit, PROFIT_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Created, CREATED_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Count, COUNT_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Status, STATUS_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::EstimatedTime, TIME_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Cost, COST_COLUMN_WIDTH);
+        tableView->setColumnWidth(LabyrinthTableModel::Rewards, REWARDS_COLUMN_WIDTH);
+        //tableView->setColumnWidth(LabyrinthTableModel::Profit, PROFIT_COLUMN_WIDTH);
 
         // Last 2 columns are set by the columnResizingFixer, when the table geometry is ready.
         //columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, PROFIT_COLUMN_WIDTH, HIVE_COL_MIN_WIDTH, this);
         columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, REWARDS_COLUMN_WIDTH, HIVE_COL_MIN_WIDTH, this);
 
         // Connect signal to update local summary like OverviewPage
-        connect(_model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
+        connect(_model, SIGNAL(newLabyrinthSummaryAvailable()), this, SLOT(updateHiveSummary()));
 
         // Populate initial data: trigger background load
-        if (_model->getHiveTableModel()) {
-            _model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+        if (_model->getLabyrinthTableModel()) {
+            _model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
         }
     }
 }
@@ -192,8 +192,8 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
     updateHiveSummary();
 
     // Update cost-related UI regardless of sync
-    beeCost = GetBeeCost(chainActive.Tip()->nHeight, consensusParams);
-    setAmountField(ui->beeCostLabel, beeCost);
+    mouseCost = GetMouseCost(chainActive.Tip()->nHeight, consensusParams);
+    setAmountField(ui->mouseCostLabel, mouseCost);
     updateTotalCostDisplay();
 
     // Global summary only when not IBD
@@ -204,36 +204,36 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
     }
 
     if (forceGlobalSummaryUpdate || chainActive.Tip()->nHeight >= lastGlobalCheckHeight + 10) { // Don't update global summary every block
-        int globalImmatureBees, globalImmatureBCTs, globalMatureBees, globalMatureBCTs;
-        if (!GetNetworkHiveInfo(globalImmatureBees, globalImmatureBCTs, globalMatureBees, globalMatureBCTs, potentialRewards, consensusParams, true)) {
+        int globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs;
+        if (!GetNetworkLabyrinthInfo(globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs, potentialRewards, consensusParams, true)) {
             ui->globalHiveSummary->hide();
             ui->globalHiveSummaryError->show();
         } else {
             ui->globalHiveSummaryError->hide();
             ui->globalHiveSummary->show();
-            if (globalImmatureBees == 0)
+            if (globalImmatureMice == 0)
                 ui->globalImmatureLabel->setText("0");
             else
-                ui->globalImmatureLabel->setText(formatLargeNoLocale(globalImmatureBees) + " (" + QString::number(globalImmatureBCTs) + " transactions)");
+                ui->globalImmatureLabel->setText(formatLargeNoLocale(globalImmatureMice) + " (" + QString::number(globalImmatureBCTs) + " transactions)");
 
-            if (globalMatureBees == 0)
+            if (globalMatureMice == 0)
                 ui->globalMatureLabel->setText("0");
             else
-                ui->globalMatureLabel->setText(formatLargeNoLocale(globalMatureBees) + " (" + QString::number(globalMatureBCTs) + " transactions)");
+                ui->globalMatureLabel->setText(formatLargeNoLocale(globalMatureMice) + " (" + QString::number(globalMatureBCTs) + " transactions)");
 
             updateGraph();
         }
 
         setAmountField(ui->potentialRewardsLabel, potentialRewards);
 
-        double hiveWeight = (globalMatureBees == 0) ? 0.0 : mature / (double)globalMatureBees;
-        ui->localHiveWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
-        ui->hiveWeightPie->setValue(hiveWeight);
+        double hiveWeight = (globalMatureMice == 0) ? 0.0 : mature / (double)globalMatureMice;
+        ui->localLabyrinthWeightLabel->setText(QString::number(hiveWeight, 'f', 3));
+        ui->labyrinthWeightPie->setValue(hiveWeight);
 
-        beePopIndex = ((beeCost * globalMatureBees) / (double)potentialRewards) * 100.0;
-        if (beePopIndex > 200) beePopIndex = 200;
-        ui->beePopIndexLabel->setText(QString::number(floor(beePopIndex)));
-        ui->beePopIndexPie->setValue(beePopIndex / 100);
+        mousePopIndex = ((mouseCost * globalMatureMice) / (double)potentialRewards) * 100.0;
+        if (mousePopIndex > 200) mousePopIndex = 200;
+        ui->mousePopIndexLabel->setText(QString::number(floor(mousePopIndex)));
+        ui->mousePopIndexPie->setValue(mousePopIndex / 100);
         
         lastGlobalCheckHeight = chainActive.Tip()->nHeight;
     }
@@ -242,9 +242,9 @@ void HiveDialog::updateData(bool forceGlobalSummaryUpdate) {
 }
 
 void HiveDialog::updateHiveSummary() {
-    if(!(model && model->getHiveTableModel())) return;
+    if(!(model && model->getLabyrinthTableModel())) return;
 
-    model->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+    model->getLabyrinthTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
 
     // IMPORTANT: Always get total rewards from database (including expired BCTs)
     // This ensures the summary shows all rewards even when expired BCTs are hidden in the table
@@ -261,9 +261,9 @@ void HiveDialog::updateHiveSummary() {
         cost = dbSummary.totalCost;
         profit = dbSummary.totalProfit;
         // Use mice counts (not transaction counts) for display
-        dead = dbSummary.expiredBees;
-        immature = dbSummary.immatureBees;
-        mature = dbSummary.matureBees;
+        dead = dbSummary.expiredMice;
+        immature = dbSummary.immatureMice;
+        mature = dbSummary.matureMice;
     }
 
     // Update labels
@@ -290,7 +290,7 @@ void HiveDialog::updateHiveSummary() {
     if (clientModel && clientModel->getNumConnections() == 0) {
         tooltip = tr("Cascoin is not connected");
         icon = ":/icons/hivestatus_disabled";
-    } else if (!model->isHiveEnabled()) {
+    } else if (!model->isLabyrinthEnabled()) {
         tooltip = tr("The Labyrinth is not enabled on the network");
         icon = ":/icons/hivestatus_disabled";
     } else {
@@ -310,12 +310,12 @@ void HiveDialog::updateHiveSummary() {
             }
         }
     }
-    Q_EMIT hiveStatusIconChanged(icon, tooltip);
+    Q_EMIT labyrinthStatusIconChanged(icon, tooltip);
 }
 
 void HiveDialog::updateDisplayUnit() {
     if(model && model->getOptionsModel()) {
-        setAmountField(ui->beeCostLabel, beeCost);
+        setAmountField(ui->mouseCostLabel, mouseCost);
         setAmountField(ui->rewardsPaidLabel, rewardsPaid);
         setAmountField(ui->costLabel, cost);
         setAmountField(ui->profitLabel, profit);
@@ -328,23 +328,23 @@ void HiveDialog::updateDisplayUnit() {
 }
 
 void HiveDialog::updateTotalCostDisplay() {    
-    totalCost = beeCost * ui->beeCountSpinner->value();
+    totalCost = mouseCost * ui->mouseCountSpinner->value();
 
     if(model && model->getOptionsModel()) {
         setAmountField(ui->totalCostLabel, totalCost);
         
         if (totalCost > model->getBalance())
-            ui->beeCountSpinner->setStyleSheet("QSpinBox{background:#FF8080;}");
+            ui->mouseCountSpinner->setStyleSheet("QSpinBox{background:#FF8080;}");
         else
-            ui->beeCountSpinner->setStyleSheet("QSpinBox{background:white;}");
+            ui->mouseCountSpinner->setStyleSheet("QSpinBox{background:white;}");
     }
 }
 
-void HiveDialog::on_beeCountSpinner_valueChanged(int i) {
+void HiveDialog::on_mouseCountSpinner_valueChanged(int i) {
     updateTotalCostDisplay();
 }
 
-void HiveDialog::on_includeDeadBeesCheckbox_stateChanged() {
+void HiveDialog::on_includeDeadMiceCheckbox_stateChanged() {
     // Use debounced timer to prevent rapid toggling from causing multiple expensive operations
     updateTimer->stop();
     updateTimer->start();
@@ -352,16 +352,16 @@ void HiveDialog::on_includeDeadBeesCheckbox_stateChanged() {
 
 void HiveDialog::onUpdateTimerTimeout() {
     // Disable checkbox during update to provide visual feedback
-    ui->includeDeadBeesCheckbox->setEnabled(false);
-    ui->includeDeadBeesCheckbox->setText(tr("Include expired mice (updating...)"));
+    ui->includeDeadMiceCheckbox->setEnabled(false);
+    ui->includeDeadMiceCheckbox->setText(tr("Include expired mice (updating...)"));
 
-    if(model && model->getHiveTableModel()) {
-        model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+    if(model && model->getLabyrinthTableModel()) {
+        model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
     }
 
     // Re-enable checkbox after update
-    ui->includeDeadBeesCheckbox->setEnabled(true);
-    ui->includeDeadBeesCheckbox->setText(tr("Include expired mice"));
+    ui->includeDeadMiceCheckbox->setEnabled(true);
+    ui->includeDeadMiceCheckbox->setText(tr("Include expired mice"));
 }
 
 void HiveDialog::onPeriodicRefresh() {
@@ -371,8 +371,8 @@ void HiveDialog::onPeriodicRefresh() {
     }
     
     // Periodic refresh to ensure labyrinth stays current even if some notifications are missed
-    if (model && model->getHiveTableModel()) {
-        model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+    if (model && model->getLabyrinthTableModel()) {
+        model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
     }
     
     // Also update the global summary
@@ -381,10 +381,10 @@ void HiveDialog::onPeriodicRefresh() {
 
 void HiveDialog::on_showAdvancedStatsCheckbox_stateChanged() {
     if(ui->showAdvancedStatsCheckbox->isChecked()) {
-        ui->beePopGraph->show();
+        ui->mousePopGraph->show();
         ui->walletHiveStatsFrame->hide();
     } else {
-        ui->beePopGraph->hide();
+        ui->mousePopGraph->hide();
         ui->walletHiveStatsFrame->show();
     }
 }
@@ -402,7 +402,7 @@ void HiveDialog::on_releaseSwarmButton_clicked() {
         model->requestUnlock(true);
 }
 
-void HiveDialog::on_createBeesButton_clicked() {
+void HiveDialog::on_createMiceButton_clicked() {
     if (model) {
         if (totalCost > model->getBalance()) {
             QMessageBox::critical(this, tr("Error"), tr("Insufficient balance to create mice."));
@@ -411,7 +411,7 @@ void HiveDialog::on_createBeesButton_clicked() {
 		WalletModel::UnlockContext ctx(model->requestUnlock());
 		if(!ctx.isValid())
 			return;     // Unlock wallet was cancelled
-        model->createBees(ui->beeCountSpinner->value(), clientModel->getOptionsModel()->getHiveContribCF(), this, beePopIndex); // Cascoin: MinotaurX+Hive1.2
+        model->createMice(ui->mouseCountSpinner->value(), clientModel->getOptionsModel()->getHiveContribCF(), this, mousePopIndex); // Cascoin: MinotaurX+Hive1.2
     }
 }
 
@@ -432,9 +432,9 @@ void HiveDialog::onBlocksChanged() {
             // Update global summary (lightweight)
             updateData();
             
-            // Refresh hive table in background (already threaded in updateBCTs)
-            if (model && model->getHiveTableModel()) {
-                model->getHiveTableModel()->updateBCTs(ui->includeDeadBeesCheckbox->isChecked());
+            // Refresh labyrinth table in background (already threaded in updateBCTs)
+            if (model && model->getLabyrinthTableModel()) {
+                model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
             }
         });
     }
@@ -452,77 +452,77 @@ void HiveDialog::on_showHiveOptionsButton_clicked() {
 }
 
 void HiveDialog::initGraph() {
-    ui->beePopGraph->addGraph();
-    ui->beePopGraph->graph(0)->setLineStyle(QCPGraph::lsLine);
-    ui->beePopGraph->graph(0)->setPen(QPen(Qt::blue));
+    ui->mousePopGraph->addGraph();
+    ui->mousePopGraph->graph(0)->setLineStyle(QCPGraph::lsLine);
+    ui->mousePopGraph->graph(0)->setPen(QPen(Qt::blue));
     QColor color(42, 67, 182);
     color.setAlphaF(0.35);
-    ui->beePopGraph->graph(0)->setBrush(QBrush(color));
+    ui->mousePopGraph->graph(0)->setBrush(QBrush(color));
 
-    ui->beePopGraph->addGraph();
-    ui->beePopGraph->graph(1)->setLineStyle(QCPGraph::lsLine);
-    ui->beePopGraph->graph(1)->setPen(QPen(Qt::black));
+    ui->mousePopGraph->addGraph();
+    ui->mousePopGraph->graph(1)->setLineStyle(QCPGraph::lsLine);
+    ui->mousePopGraph->graph(1)->setPen(QPen(Qt::black));
     QColor color1(42, 182, 67);
     color1.setAlphaF(0.35);
-    ui->beePopGraph->graph(1)->setBrush(QBrush(color1));
+    ui->mousePopGraph->graph(1)->setBrush(QBrush(color1));
 
     QSharedPointer<QCPAxisTickerDateTime> dateTicker(new QCPAxisTickerDateTime);
     dateTicker->setTickStepStrategy(QCPAxisTicker::TickStepStrategy::tssMeetTickCount);
     dateTicker->setTickCount(8);
     dateTicker->setDateTimeFormat("ddd d MMM");
-    ui->beePopGraph->xAxis->setTicker(dateTicker);
+    ui->mousePopGraph->xAxis->setTicker(dateTicker);
 
-    ui->beePopGraph->yAxis->setLabel("Mice");
+    ui->mousePopGraph->yAxis->setLabel("Mice");
 
     giTicker = QSharedPointer<QCPAxisTickerGI>(new QCPAxisTickerGI);
-    ui->beePopGraph->yAxis2->setTicker(giTicker);
-    ui->beePopGraph->yAxis2->setLabel("Global index");
-    ui->beePopGraph->yAxis2->setVisible(true);
+    ui->mousePopGraph->yAxis2->setTicker(giTicker);
+    ui->mousePopGraph->yAxis2->setLabel("Global index");
+    ui->mousePopGraph->yAxis2->setVisible(true);
 
-    ui->beePopGraph->xAxis->setTickLabelFont(QFont(QFont().family(), 8));
-    ui->beePopGraph->xAxis2->setTickLabelFont(QFont(QFont().family(), 8));
-    ui->beePopGraph->yAxis->setTickLabelFont(QFont(QFont().family(), 8));
-    ui->beePopGraph->yAxis2->setTickLabelFont(QFont(QFont().family(), 8));
+    ui->mousePopGraph->xAxis->setTickLabelFont(QFont(QFont().family(), 8));
+    ui->mousePopGraph->xAxis2->setTickLabelFont(QFont(QFont().family(), 8));
+    ui->mousePopGraph->yAxis->setTickLabelFont(QFont(QFont().family(), 8));
+    ui->mousePopGraph->yAxis2->setTickLabelFont(QFont(QFont().family(), 8));
 
-    connect(ui->beePopGraph->xAxis, SIGNAL(rangeChanged(QCPRange)), ui->beePopGraph->xAxis2, SLOT(setRange(QCPRange)));
-    connect(ui->beePopGraph->yAxis, SIGNAL(rangeChanged(QCPRange)), ui->beePopGraph->yAxis2, SLOT(setRange(QCPRange)));
-    connect(ui->beePopGraph, SIGNAL(mouseMove(QMouseEvent*)), this, SLOT(onMouseMove(QMouseEvent*)));
+    connect(ui->mousePopGraph->xAxis, SIGNAL(rangeChanged(QCPRange)), ui->mousePopGraph->xAxis2, SLOT(setRange(QCPRange)));
+    connect(ui->mousePopGraph->yAxis, SIGNAL(rangeChanged(QCPRange)), ui->mousePopGraph->yAxis2, SLOT(setRange(QCPRange)));
+    connect(ui->mousePopGraph, SIGNAL(mouseMove(QMouseEvent*)), this, SLOT(onMouseMove(QMouseEvent*)));
 
-    globalMarkerLine = new QCPItemLine(ui->beePopGraph);
+    globalMarkerLine = new QCPItemLine(ui->mousePopGraph);
     globalMarkerLine->setPen(QPen(Qt::blue, 1, Qt::DashLine));
     
-    graphTracerImmature = new QCPItemTracer(ui->beePopGraph);
-    graphTracerImmature->setGraph(ui->beePopGraph->graph(0));
-    graphTracerMature = new QCPItemTracer(ui->beePopGraph);
-    graphTracerMature->setGraph(ui->beePopGraph->graph(1));
+    graphTracerImmature = new QCPItemTracer(ui->mousePopGraph);
+    graphTracerImmature->setGraph(ui->mousePopGraph->graph(0));
+    graphTracerMature = new QCPItemTracer(ui->mousePopGraph);
+    graphTracerMature->setGraph(ui->mousePopGraph->graph(1));
 
-    graphMouseoverText = new QCPItemText(ui->beePopGraph);
+    graphMouseoverText = new QCPItemText(ui->mousePopGraph);
 }
 
 void HiveDialog::updateGraph() {
     const Consensus::Params& consensusParams = Params().GetConsensus();
 
-    ui->beePopGraph->graph()->data()->clear();
+    ui->mousePopGraph->graph()->data()->clear();
     double now = QDateTime::currentDateTime().toSecsSinceEpoch();
-    int totalLifespan = consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+    int totalLifespan = consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
     QVector<QCPGraphData> dataMature(totalLifespan);
     QVector<QCPGraphData> dataImmature(totalLifespan);
     for (int i = 0; i < totalLifespan; i++) {
         dataImmature[i].key = now + consensusParams.nPowTargetSpacing / 2 * i;
-        dataImmature[i].value = (double)beePopGraph[i].immaturePop;
+        dataImmature[i].value = (double)mousePopGraph[i].immaturePop;
 
         dataMature[i].key = dataImmature[i].key;
-        dataMature[i].value = (double)beePopGraph[i].maturePop;
+        dataMature[i].value = (double)mousePopGraph[i].maturePop;
     }
-    ui->beePopGraph->graph(0)->data()->set(dataImmature);
-    ui->beePopGraph->graph(1)->data()->set(dataMature);
+    ui->mousePopGraph->graph(0)->data()->set(dataImmature);
+    ui->mousePopGraph->graph(1)->data()->set(dataMature);
 
-    double global100 = (double)potentialRewards / beeCost;
+    double global100 = (double)potentialRewards / mouseCost;
     globalMarkerLine->start->setCoords(now, global100);
     globalMarkerLine->end->setCoords(now + consensusParams.nPowTargetSpacing / 2 * totalLifespan, global100);
     giTicker->global100 = global100;
-    ui->beePopGraph->rescaleAxes();
-    ui->beePopGraph->replot();
+    ui->mousePopGraph->rescaleAxes();
+    ui->mousePopGraph->replot();
 }
 
 void HiveDialog::onMouseMove(QMouseEvent *event) {
@@ -533,26 +533,26 @@ void HiveDialog::onMouseMove(QMouseEvent *event) {
 
     graphTracerImmature->setGraphKey(x);
     graphTracerMature->setGraphKey(x);
-    int beeCountImmature = (int)graphTracerImmature->position->value();
-    int beeCountMature = (int)graphTracerMature->position->value();      
+    int mouseCountImmature = (int)graphTracerImmature->position->value();
+    int mouseCountMature = (int)graphTracerMature->position->value();      
 
     QDateTime xDateTime = QDateTime::fromSecsSinceEpoch(x);
-    int global100 = (int)((double)potentialRewards / beeCost);
-    QColor traceColMature = beeCountMature >= global100 ? Qt::red : Qt::black;
-    QColor traceColImmature = beeCountImmature >= global100 ? Qt::red : Qt::black;
+    int global100 = (int)((double)potentialRewards / mouseCost);
+    QColor traceColMature = mouseCountMature >= global100 ? Qt::red : Qt::black;
+    QColor traceColImmature = mouseCountImmature >= global100 ? Qt::red : Qt::black;
 
     graphTracerImmature->setPen(QPen(traceColImmature, 1, Qt::DashLine));    
     graphTracerMature->setPen(QPen(traceColMature, 1, Qt::DashLine));
 
     graphMouseoverText->setText(xDateTime.toString("ddd d MMM") + " " + xDateTime.time().toString() + ":\n" + 
-                               formatLargeNoLocale(beeCountMature) + " " + tr("adventure mice") + "\n" + 
-                               formatLargeNoLocale(beeCountImmature) + " " + tr("resting mice"));
+                               formatLargeNoLocale(mouseCountMature) + " " + tr("adventure mice") + "\n" + 
+                               formatLargeNoLocale(mouseCountImmature) + " " + tr("resting mice"));
     graphMouseoverText->setColor(traceColMature);
     graphMouseoverText->position->setCoords(QPointF(x, y));
     QPointF pixelPos = graphMouseoverText->position->pixelPosition();
 
     int xoffs, yoffs;
-    if (ui->beePopGraph->height() > 150) {
+    if (ui->mousePopGraph->height() > 150) {
         graphMouseoverText->setFont(QFont(font().family(), 10));
         xoffs = 80;
         yoffs = 30;
@@ -562,12 +562,12 @@ void HiveDialog::onMouseMove(QMouseEvent *event) {
         yoffs = 20;
     }
 
-    if (pixelPos.y() > ui->beePopGraph->height() / 2)
+    if (pixelPos.y() > ui->mousePopGraph->height() / 2)
         pixelPos.setY(pixelPos.y() - yoffs);
     else
         pixelPos.setY(pixelPos.y() + yoffs);
 
-    if (pixelPos.x() > ui->beePopGraph->width() / 2)
+    if (pixelPos.x() > ui->mousePopGraph->width() / 2)
         pixelPos.setX(pixelPos.x() - xoffs);
     else
         pixelPos.setX(pixelPos.x() + xoffs);
@@ -580,7 +580,7 @@ void HiveDialog::onMouseMove(QMouseEvent *event) {
 
 void HiveDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
-    columnResizingFixer->stretchColumnWidth(HiveTableModel::Rewards);
+    columnResizingFixer->stretchColumnWidth(LabyrinthTableModel::Rewards);
 }
 
 void HiveDialog::showEvent(QShowEvent *event) {

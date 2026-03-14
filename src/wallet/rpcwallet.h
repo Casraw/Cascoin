@@ -11,8 +11,8 @@ class CRPCTable;
 class CWallet;
 class JSONRPCRequest;
 
-struct BeePopGraphPoint;                            // Cascoin: Hive
-extern BeePopGraphPoint beePopGraph[1024*40];       // Cascoin: Hive
+struct MousePopGraphPoint;                          // Cascoin: Labyrinth
+extern MousePopGraphPoint mousePopGraph[1024*40];   // Cascoin: Labyrinth
 
 void RegisterWalletRPCCommands(CRPCTable &t);
 

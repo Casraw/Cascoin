@@ -52,7 +52,7 @@ extern void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& 
 /* Calculate the difficulty for a given block index,
  * or the block index of the given chain.
  */
-// Cascoin: Hive: Optional getHiveDifficulty param
+// Cascoin: Labyrinth: Optional getHiveDifficulty param
 // Cascoin: MinotaurX+Hive1.2: Add powType param
 double GetDifficulty(const CChain& chain, const CBlockIndex* blockindex, bool getHiveDifficulty = false, POW_TYPE powType = POW_TYPE_SHA256)
 {
@@ -66,12 +66,12 @@ double GetDifficulty(const CChain& chain, const CBlockIndex* blockindex, bool ge
 
     const Consensus::Params& consensusParams = Params().GetConsensus();
 
-    // Cascoin: Hive: If tip is PoW and we want hivemined, step back until we find a Hive block
-    // Cascoin: Hive 1.1: Allow there to be multiple hive blocks in the way
+    // Cascoin: Labyrinth: If tip is PoW and we want labyrinth mined, step back until we find a Labyrinth block
+    // Cascoin: Labyrinth 1.1: Allow there to be multiple labyrinth blocks in the way
     if (getHiveDifficulty) {
         while (!blockindex->GetBlockHeader().IsHiveMined(consensusParams)) {
-            if (!blockindex->pprev || blockindex->nHeight < consensusParams.minHiveCheckBlock) {   // Ran out of blocks without finding a Hive block? Return min target
-                LogPrint(BCLog::HIVE, "GetDifficulty: No hivemined blocks found in history\n");
+            if (!blockindex->pprev || blockindex->nHeight < consensusParams.minLabyrinthCheckBlock) {   // Ran out of blocks without finding a Labyrinth block? Return min target
+                LogPrint(BCLog::LABYRINTH, "GetDifficulty: No hivemined blocks found in history\n");
                 return 1.0;
             }
 
@@ -118,7 +118,7 @@ double GetDifficulty(const CChain& chain, const CBlockIndex* blockindex, bool ge
     return dDiff;
 }
 
-// Cascoin: Hive: Pass through optional getHiveDifficulty param
+// Cascoin: Labyrinth: Pass through optional getHiveDifficulty param
 // Cascoin: MinotaurX+Hive1.2: Add additional POW_TYPE arg
 double GetDifficulty(const CBlockIndex* blockindex, bool getHiveDifficulty, POW_TYPE powType)
 {
@@ -137,7 +137,7 @@ UniValue blockheaderToJSON(const CBlockIndex* blockindex)
     if (chainActive.Contains(blockindex))
         confirmations = chainActive.Height() - blockindex->nHeight + 1;
     bool isHive = blockindex->GetBlockHeader().IsHiveMined(consensusParams);    // Cascoin: MinotaurX+Hive1.2
-    result.push_back(Pair("type", isHive ? "hive" : "pow")); // Cascoin: Hive 1.1: Show block type in JSON
+    result.push_back(Pair("type", isHive ? "labyrinth" : "pow")); // Cascoin: Labyrinth 1.1: Show block type in JSON
     // Cascoin: MinotaurX+Hive1.2: Only report powtype for pow blocks
     if (!isHive)
         result.push_back(Pair("powtype", blockindex->GetBlockHeader().GetPoWTypeName()));
@@ -180,14 +180,14 @@ UniValue blockheaderToJSON(const CBlockIndex* blockindex)
             mainDifficultyValue = GetDifficulty(blockindex);
         }
     } else {
-         mainDifficultyValue = GetDifficulty(blockindex, true); // For Hive blocks, get Hive difficulty for the main "difficulty" field
+         mainDifficultyValue = GetDifficulty(blockindex, true); // For Labyrinth blocks, get Labyrinth difficulty for the main "difficulty" field
     }
     result.push_back(Pair("difficulty", mainDifficultyValue));
 
     if (!isHive && IsMinotaurXEnabled(blockindex, consensusParams)) // Only show minotaurxdifficulty if relevant
         result.push_back(Pair("minotaurxdifficulty", GetDifficulty(blockindex, false, POW_TYPE_MINOTAURX)));
-    if (IsHiveEnabled(blockindex, consensusParams)) // Only show hivedifficulty if Hive is generally enabled up to this block
-        result.push_back(Pair("hivedifficulty", GetDifficulty(blockindex, true)));
+    if (IsLabyrinthEnabled(blockindex, consensusParams)) // Only show labyrinthdiff if Labyrinth is generally enabled up to this block
+        result.push_back(Pair("labyrinthdiff", GetDifficulty(blockindex, true)));
     result.push_back(Pair("chainwork", blockindex->nChainWork.GetHex()));
 
     if (blockindex->pprev)
@@ -210,7 +210,7 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool tx
     if (chainActive.Contains(blockindex))
         confirmations = chainActive.Height() - blockindex->nHeight + 1;
     bool isHive = blockindex->GetBlockHeader().IsHiveMined(consensusParams);    // Cascoin: MinotaurX+Hive1.2
-    result.push_back(Pair("type", isHive ? "hive" : "pow")); // Cascoin: Hive 1.1: Show block type in JSON
+    result.push_back(Pair("type", isHive ? "labyrinth" : "pow")); // Cascoin: Labyrinth 1.1: Show block type in JSON
     // Cascoin: MinotaurX+Hive1.2: Only report powtype for pow blocks
     if (!isHive)
         result.push_back(Pair("powtype", blockindex->GetBlockHeader().GetPoWTypeName()));
@@ -264,8 +264,8 @@ UniValue blockToJSON(const CBlock& block, const CBlockIndex* blockindex, bool tx
     if (!isHive && IsMinotaurXEnabled(blockindex, consensusParams)) {
         result.push_back(Pair("minotaurxdifficulty", GetDifficulty(blockindex, false, POW_TYPE_MINOTAURX)));
     }
-    if (IsHiveEnabled(blockindex, consensusParams))
-        result.push_back(Pair("hivedifficulty", GetDifficulty(blockindex, true)));
+    if (IsLabyrinthEnabled(blockindex, consensusParams))
+        result.push_back(Pair("labyrinthdiff", GetDifficulty(blockindex, true)));
     result.push_back(Pair("chainwork", blockindex->nChainWork.GetHex()));
 
     if (blockindex->pprev)
@@ -496,23 +496,23 @@ UniValue getdifficulty(const JSONRPCRequest& request)
     return GetDifficulty(nullptr, false, powType);
 }
 
-// Cascoin: Hive: Get hive difficulty
-UniValue gethivedifficulty(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Get labyrinth difficulty
+UniValue getlabyrinthdifficulty(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
         throw std::runtime_error(
-            "gethivedifficulty\n"
+            "getlabyrinthdifficulty\n"
             "\nReturns The Labyrinth difficulty as a multiple of the minimum difficulty.\n"
             "\nResult:\n"
             "n.nnn       (numeric) The Labyrinth difficulty as a multiple of the minimum difficulty.\n"
             "\nExamples:\n"
-            + HelpExampleCli("gethivedifficulty", "")
-            + HelpExampleRpc("gethivedifficulty", "")
+            + HelpExampleCli("getlabyrinthdifficulty", "")
+            + HelpExampleRpc("getlabyrinthdifficulty", "")
         );
 
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
-    if (!IsHiveEnabled(pindexPrev, Params().GetConsensus()))
+    if (!IsLabyrinthEnabled(pindexPrev, Params().GetConsensus()))
         throw std::runtime_error(
             "Error: The Labyrinth is not yet enabled on the network"
         );
@@ -833,7 +833,7 @@ UniValue getblockheader(const JSONRPCRequest& request)
             "\nResult (for verbose = true):\n"
             "{\n"
             "  \"hash\" : \"hash\",     (string) the block hash (same as provided)\n"
-            "  \"type\" : \"hive\"|\"pow\", (string) Indicates whether this block is hive or pow mined\n"   // Cascoin: Hive 1.1: Include block type            
+            "  \"type\" : \"labyrinth\"|\"pow\", (string) Indicates whether this block is labyrinth or pow mined\n"   // Cascoin: Labyrinth 1.1: Include block type
             "  \"powtype\" : \"sha256d\"|\"minotaurx\"|\"unrecognised\", (string) Indicates the pow mining type of the block\n"   // Cascoin: MinotaurX+Hive1.2: Include pow type
             "  \"confirmations\" : n,   (numeric) The number of confirmations, or -1 if the block is not on the main chain\n"
             "  \"height\" : n,          (numeric) The block height or index\n"
@@ -846,7 +846,7 @@ UniValue getblockheader(const JSONRPCRequest& request)
             "  \"bits\" : \"1d00ffff\", (string) The bits\n"
             "  \"difficulty\" : x.xxx,  (numeric) The pow difficulty for sha256d\n"
             "  \"minotaurxdifficulty\" : x.xxx,  (numeric) The pow difficulty for minotaurx (once activated)\n" // Cascoin: MinotaurX+Hive1.2
-            "  \"hivedifficulty\" : x.xxx,  (numeric) The Labyrinth difficulty\n"    // Cascoin: Hive 1.1: Include hive diff
+            "  \"labyrinthdiff\" : x.xxx,  (numeric) The Labyrinth difficulty\n"    // Cascoin: Labyrinth 1.1: Include labyrinth diff
             "  \"chainwork\" : \"0000...1f3\"     (string) Expected number of hashes required to produce the current chain (in hex)\n"
             "  \"previousblockhash\" : \"hash\",  (string) The hash of the previous block\n"
             "  \"nextblockhash\" : \"hash\",      (string) The hash of the next block\n"
@@ -899,7 +899,7 @@ UniValue getblock(const JSONRPCRequest& request)
             "\nResult (for verbosity = 1):\n"
             "{\n"
             "  \"hash\" : \"hash\",     (string) the block hash (same as provided)\n"
-            "  \"type\" : \"hive\"|\"pow\", (string) Indicates whether this block is hive or pow mined\n"   // Cascoin: Hive 1.1: Include block type
+            "  \"type\" : \"labyrinth\"|\"pow\", (string) Indicates whether this block is labyrinth or pow mined\n"   // Cascoin: Labyrinth 1.1: Include block type
             "  \"powtype\" : \"sha256d\"|\"minotaurx\"|\"unrecognised\", (string) Indicates the pow mining type of the block\n"   // Cascoin: MinotaurX+Hive1.2: Include pow type
             "  \"confirmations\" : n,   (numeric) The number of confirmations, or -1 if the block is not on the main chain\n"
             "  \"size\" : n,            (numeric) The block size\n"
@@ -919,7 +919,7 @@ UniValue getblock(const JSONRPCRequest& request)
             "  \"bits\" : \"1d00ffff\", (string) The bits\n"
             "  \"difficulty\" : x.xxx,          (numeric) The pow difficulty for sha256d\n"
             "  \"minotaurxdifficulty\" : x.xxx, (numeric) The pow difficulty for minotaurx (once activated)\n" // Cascoin: MinotaurX+Hive1.2
-            "  \"hivedifficulty\" : x.xxx,      (numeric) The Labyrinth difficulty\n"    // Cascoin: Hive 1.1: Include hive diff
+            "  \"labyrinthdiff\" : x.xxx,        (numeric) The Labyrinth difficulty\n"    // Cascoin: Labyrinth 1.1: Include labyrinth diff
             "  \"chainwork\" : \"xxxx\",  (string) Expected number of hashes required to produce the chain up to this block (in hex)\n"
             "  \"previousblockhash\" : \"hash\",  (string) The hash of the previous block\n"
             "  \"nextblockhash\" : \"hash\"       (string) The hash of the next block\n"
@@ -1802,7 +1802,7 @@ static const CRPCCommand commands[] =
     { "blockchain",         "getblockheader",         &getblockheader,         {"blockhash","verbose"} },
     { "blockchain",         "getchaintips",           &getchaintips,           {} },
     { "blockchain",         "getdifficulty",          &getdifficulty,          {} },
-    { "blockchain",         "gethivedifficulty",      &gethivedifficulty,      {} },        // Cascoin: Get Hive difficulty
+    { "blockchain",         "getlabyrinthdifficulty",  &getlabyrinthdifficulty, {} },        // Cascoin: Get Labyrinth difficulty
     { "blockchain",         "getmempoolancestors",    &getmempoolancestors,    {"txid","verbose"} },
     { "blockchain",         "getmempooldescendants",  &getmempooldescendants,  {"txid","verbose"} },
     { "blockchain",         "getmempoolentry",        &getmempoolentry,        {"txid"} },

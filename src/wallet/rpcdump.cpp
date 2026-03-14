@@ -151,8 +151,8 @@ UniValue importprivkey(const JSONRPCRequest& request)
         bool fGood = vchSecret.SetString(strSecret);
 
         if (!fGood) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid private key encoding");
-        if(fWalletUnlockWithoutTransactions)        // Cascoin: Hive: Support unlocking wallets for hive only
-            throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Wallet is unlocked for Hive Mining and Rialto Messaging only.");  // Cascoin: Rialto: Updated message text
+        if(fWalletUnlockWithoutTransactions)        // Cascoin: Labyrinth: Support unlocking wallets for labyrinth only
+            throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Wallet is unlocked for Labyrinth Mining and Rialto Messaging only.");  // Cascoin: Rialto: Updated message text
 
         CKey key = vchSecret.GetKey();
         if (!key.IsValid()) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Private key outside allowed range");
@@ -652,8 +652,8 @@ UniValue dumpprivkey(const JSONRPCRequest& request)
     CTxDestination dest = DecodeDestination(strAddress);
     if (!IsValidDestination(dest))
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
-    if(fWalletUnlockWithoutTransactions)        // Cascoin: Hive: Support unlocking wallets for hive only
-        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Wallet is unlocked for Hive Mining and Rialto Messaging only.");  // Cascoin: Rialto: Updated message
+    if(fWalletUnlockWithoutTransactions)        // Cascoin: Labyrinth: Support unlocking wallets for labyrinth only
+        throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Wallet is unlocked for Labyrinth Mining and Rialto Messaging only.");  // Cascoin: Rialto: Updated message
     auto keyid = GetKeyForDestination(*pwallet, dest);
     if (keyid.IsNull()) {
         throw JSONRPCError(RPC_TYPE_ERROR, "Address does not refer to a key");

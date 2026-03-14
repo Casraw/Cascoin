@@ -444,7 +444,7 @@ UniValue createrawtransaction(const JSONRPCRequest& request)
     return EncodeHexTx(rawTx);
 }
 
-// Cascoin: Hive: Create a raw bee creation transaction allowing user to specify the inputs
+// Cascoin: Labyrinth: Create a raw mouse creation transaction allowing user to specify the inputs
 UniValue createrawbct(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
@@ -466,7 +466,7 @@ UniValue createrawbct(const JSONRPCRequest& request)
             "       ,...\n"
             "     ]\n"
             "2. mice_count              (numeric, required) The number of mice to create.\n"
-            "3. \"honey_address\"        (string, required) The CAS address to receive rewards for blocks mined by mice created in this transaction.\n"
+            "3. \"cheese_address\"        (string, required) The CAS address to receive rewards for blocks mined by mice created in this transaction.\n"
             "4. community_contrib      (boolean, optional, default=true) If true, a small percentage of mouse creation cost will be paid to a community fund.\n"
             "5. locktime               (numeric, optional, default=0) Raw locktime. Non-0 value also locktime-activates inputs\n"
             "\nResult:\n"
@@ -484,11 +484,11 @@ UniValue createrawbct(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, arguments 1, 2 and 3 must be non-null");
 
     UniValue inputs = request.params[0].get_array();
-    int beeCount = request.params[1].get_int();
+    int mouseCount = request.params[1].get_int();
 
-    std::string honeyAddress;
+    std::string cheeseAddress;
     RPCTypeCheckArgument(request.params[2], UniValue::VSTR);
-    honeyAddress = request.params[2].get_str();
+    cheeseAddress = request.params[2].get_str();
 
     bool communityContrib = true;
     if (!request.params[3].isNull())
@@ -544,35 +544,35 @@ UniValue createrawbct(const JSONRPCRequest& request)
         rawTx.vin.push_back(in);
     }
 
-    // Start Bee Creation
+    // Start Mouse Creation
     Consensus::Params consensusParams = Params().GetConsensus();
-    CAmount beeCost = GetBeeCost(chainActive.Height(), consensusParams);
-    CAmount totalBeeCost = beeCost * beeCount;
+    CAmount mouseCost = GetMouseCost(chainActive.Height(), consensusParams);
+    CAmount totalMouseCost = mouseCost * mouseCount;
 
-    // Check the honey address
+    // Check the cheese address
     CTxDestination destinationFCA;
-    destinationFCA = DecodeDestination(honeyAddress);
+    destinationFCA = DecodeDestination(cheeseAddress);
     if (!IsValidDestination(destinationFCA)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Invalid honey address specified");
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Invalid cheese address specified");
     }
 
     // Make sure it's legacy format (TX_PUBKEYHASH)
     std::vector<std::vector<unsigned char>> vSolutions;
     txnouttype whichType;
     if (!Solver(GetScriptForDestination(destinationFCA), whichType, vSolutions)) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Couldn't solve scriptPubKey for honey address");
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Couldn't solve scriptPubKey for cheese address");
     }
     if (whichType != TX_PUBKEYHASH) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Honey address must be legacy format (TX_PUBKEYHASH)");
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, Cheese address must be legacy format (TX_PUBKEYHASH)");
     }
 
-    CTxDestination destinationBCF = DecodeDestination(consensusParams.beeCreationAddress);
+    CTxDestination destinationBCF = DecodeDestination(consensusParams.mouseCreationAddress);
     CScript scriptPubKeyBCF = GetScriptForDestination(destinationBCF);
     CScript scriptPubKeyFCA = GetScriptForDestination(destinationFCA);
-    scriptPubKeyBCF << OP_RETURN << OP_BEE;
+    scriptPubKeyBCF << OP_RETURN << OP_MOUSE;
     scriptPubKeyBCF += scriptPubKeyFCA;
-    CAmount beeCreationValue = totalBeeCost;
-    CAmount donationValue = (CAmount)(totalBeeCost / consensusParams.communityContribFactor);
+    CAmount mouseCreationValue = totalMouseCost;
+    CAmount donationValue = (CAmount)(totalMouseCost / consensusParams.communityContribFactor);
 
     // Cascoin: MinotaurX+Hive1.2
     CBlockIndex* pindexPrev = chainActive.Tip();
@@ -581,15 +581,15 @@ UniValue createrawbct(const JSONRPCRequest& request)
         donationValue += donationValue >> 1;
             
     if(communityContrib) {
-        beeCreationValue -= donationValue;
+        mouseCreationValue -= donationValue;
     }
 
-    CTxOut outBeeCreation(beeCreationValue, scriptPubKeyBCF);
-    rawTx.vout.push_back(outBeeCreation);
+    CTxOut outMouseCreation(mouseCreationValue, scriptPubKeyBCF);
+    rawTx.vout.push_back(outMouseCreation);
 
     // Add optional community fund output (vout[1] if present)
     if (communityContrib) {
-        CTxDestination destinationCF = DecodeDestination(consensusParams.hiveCommunityAddress);
+        CTxDestination destinationCF = DecodeDestination(consensusParams.labyrinthCommunityAddress);
         CScript scriptPubKeyCF = GetScriptForDestination(destinationCF);
         CTxOut outCommunityContrib(donationValue,scriptPubKeyCF);
         rawTx.vout.push_back(outCommunityContrib);
@@ -1189,7 +1189,7 @@ static const CRPCCommand commands[] =
   //  --------------------- ------------------------  -----------------------  ----------
     { "rawtransactions",    "getrawtransaction",      &getrawtransaction,      {"txid","verbose","blockhash"} },
     { "rawtransactions",    "createrawtransaction",   &createrawtransaction,   {"inputs","outputs","locktime","replaceable"} },
-    { "rawtransactions",    "createrawbct",           &createrawbct,           {"inputs","beecount","honey_address","community_contrib", "locktime"} }, // Cascoin: Hive
+    { "rawtransactions",    "createrawbct",           &createrawbct,           {"inputs","mousecount","cheese_address","community_contrib", "locktime"} }, // Cascoin: Labyrinth
     { "rawtransactions",    "decoderawtransaction",   &decoderawtransaction,   {"hexstring","iswitness"} },
     { "rawtransactions",    "decodescript",           &decodescript,           {"hexstring"} },
     { "rawtransactions",    "sendrawtransaction",     &sendrawtransaction,     {"hexstring","allowhighfees"} },

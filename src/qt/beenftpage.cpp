@@ -30,49 +30,49 @@
 #include <QFont>
 #include <thread>
 
-BeeNFTPage::BeeNFTPage(const PlatformStyle *_platformStyle, QWidget *parent) :
+MouseNFTPage::MouseNFTPage(const PlatformStyle *_platformStyle, QWidget *parent) :
     QWidget(parent),
     walletModel(0),
-    beeNFTModel(0),
+    mouseNFTModel(0),
     platformStyle(_platformStyle)
 {
     // BCTDatabaseSQLite is accessed via singleton - no initialization needed here
     setupUI();
 }
 
-BeeNFTPage::~BeeNFTPage()
+MouseNFTPage::~MouseNFTPage()
 {
     // BCTDatabaseSQLite is a singleton - no cleanup needed here
 }
 
-void BeeNFTPage::setModel(WalletModel *_walletModel)
+void MouseNFTPage::setModel(WalletModel *_walletModel)
 {
     this->walletModel = _walletModel;
     if (_walletModel) {
-        // Initialize bee NFT model
-        if (!beeNFTModel) {
-            beeNFTModel = new BeeNFTTableModel(_walletModel);
-            beeNFTView->setModel(beeNFTModel);
+        // Initialize mouse NFT model
+        if (!mouseNFTModel) {
+            mouseNFTModel = new MouseNFTTableModel(_walletModel);
+            mouseNFTView->setModel(mouseNFTModel);
             
             // Connect model signals
-            connect(beeNFTModel, SIGNAL(beeNFTsChanged()), this, SLOT(updateBeeNFTCombo()));
+            connect(mouseNFTModel, SIGNAL(mouseNFTsChanged()), this, SLOT(updateMouseNFTCombo()));
 
             // Connect selection after model is set
-            if (beeNFTView->selectionModel()) {
-                connect(beeNFTView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
-                        this, SLOT(onBeeNFTSelectionChanged()));
+            if (mouseNFTView->selectionModel()) {
+                connect(mouseNFTView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
+                        this, SLOT(onMouseNFTSelectionChanged()));
             }
         }
         
-        updateBeeNFTCombo();
-        refreshBeeNFTs();
+        updateMouseNFTCombo();
+        refreshMouseNFTs();
         
         // Load mice asynchronously to not block GUI startup
         QTimer::singleShot(100, this, SLOT(loadAvailableMice()));
     }
 }
 
-void BeeNFTPage::setupUI()
+void MouseNFTPage::setupUI()
 {
     setWindowTitle(tr("Mice NFTs"));
     
@@ -81,7 +81,7 @@ void BeeNFTPage::setupUI()
     // Create tab widget
     tabWidget = new QTabWidget(this);
     
-    // === Bee NFT List Tab ===
+    // === Mouse NFT List Tab ===
     listTab = new QWidget();
     QVBoxLayout *listLayout = new QVBoxLayout(listTab);
     
@@ -99,15 +99,15 @@ void BeeNFTPage::setupUI()
     
     listLayout->addLayout(controlsLayout);
     
-    // Bee NFT table
-    beeNFTView = new QTableView();
-    beeNFTView->setSelectionBehavior(QAbstractItemView::SelectRows);
-    beeNFTView->setSelectionMode(QAbstractItemView::SingleSelection);
-    beeNFTView->setAlternatingRowColors(true);
-    beeNFTView->setContextMenuPolicy(Qt::CustomContextMenu);
-    beeNFTView->setSortingEnabled(true);
+    // Mouse NFT table
+    mouseNFTView = new QTableView();
+    mouseNFTView->setSelectionBehavior(QAbstractItemView::SelectRows);
+    mouseNFTView->setSelectionMode(QAbstractItemView::SingleSelection);
+    mouseNFTView->setAlternatingRowColors(true);
+    mouseNFTView->setContextMenuPolicy(Qt::CustomContextMenu);
+    mouseNFTView->setSortingEnabled(true);
     
-    listLayout->addWidget(beeNFTView);
+    listLayout->addWidget(mouseNFTView);
     
     tabWidget->addTab(listTab, tr("My Mice NFTs"));
     
@@ -169,9 +169,9 @@ void BeeNFTPage::setupUI()
     
     // Mice NFT Selection
     transferGridLayout->addWidget(new QLabel(tr("Select Mice NFT:")), 0, 0);
-    beeNFTCombo = new QComboBox();
-    beeNFTCombo->setToolTip(tr("Select the mice NFT to transfer"));
-    transferGridLayout->addWidget(beeNFTCombo, 0, 1, 1, 2);
+    mouseNFTCombo = new QComboBox();
+    mouseNFTCombo->setToolTip(tr("Select the mice NFT to transfer"));
+    transferGridLayout->addWidget(mouseNFTCombo, 0, 1, 1, 2);
     
     // Recipient Address
     transferGridLayout->addWidget(new QLabel(tr("Recipient Address:")), 1, 0);
@@ -194,7 +194,7 @@ void BeeNFTPage::setupUI()
     mainLayout->addWidget(tabWidget);
     
     // Connect signals
-    connect(refreshButton, SIGNAL(clicked()), this, SLOT(refreshBeeNFTs()));
+    connect(refreshButton, SIGNAL(clicked()), this, SLOT(refreshMouseNFTs()));
     connect(detailsButton, SIGNAL(clicked()), this, SLOT(showBeeNFTDetails()));
     connect(refreshMiceButton, SIGNAL(clicked()), this, SLOT(loadAvailableMice()));
     connect(tokenizeButton, SIGNAL(clicked()), this, SLOT(tokenizeBee()));
@@ -210,7 +210,7 @@ void BeeNFTPage::setupUI()
         showExpiredCheckBox->setEnabled(false);
         showExpiredCheckBox->setText(tr("Show expired mice NFTs (updating...)"));
         
-        refreshBeeNFTs();
+        refreshMouseNFTs();
         
         // Re-enable checkbox after refresh
         showExpiredCheckBox->setEnabled(true);
@@ -242,7 +242,7 @@ void BeeNFTPage::setupUI()
     });
 }
 
-void BeeNFTPage::loadAvailableMice()
+void MouseNFTPage::loadAvailableMice()
 {
     if (!walletModel) {
         return;
@@ -352,7 +352,7 @@ void BeeNFTPage::loadAvailableMice()
                 bctProgressBar->setValue(100);
                 
                 // Also update the table model with the same real data
-                if (beeNFTModel) {
+                if (mouseNFTModel) {
                     updateTableModelWithRealData(jsonString);
                 }
             } else {
@@ -369,7 +369,7 @@ void BeeNFTPage::loadAvailableMice()
     }).detach();
 }
 
-void BeeNFTPage::loadAvailableMiceFromWallet()
+void MouseNFTPage::loadAvailableMiceFromWallet()
 {
     // Load BCTs from SQLite database (much faster than blockchain sync)
     
@@ -398,14 +398,14 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
     for (const BCTRecord& bct : bctList) {
         matureBCTs++;
         
-        // Add BCT entry with bee count
+        // Add BCT entry with mouse count
         QString displayText = QString("BCT %1 — %2 mice available (mature)")
                            .arg(QString::fromStdString(bct.txid).left(8) + "...")
-                           .arg(bct.beeCount);
+                           .arg(bct.mouseCount);
         
         // Store BCT txid for tokenization
         mouseSelectionCombo->addItem(displayText, QString::fromStdString(bct.txid));
-        totalAvailableMice += bct.beeCount;
+        totalAvailableMice += bct.mouseCount;
     }
     
     // Insert summary at top
@@ -420,14 +420,14 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
     }
 }
 
-void BeeNFTPage::loadSampleBCTData()
+void MouseNFTPage::loadSampleBCTData()
 {
     // Sample data is no longer needed - BCTDatabaseSQLite is populated from blockchain
     // This function is kept for compatibility but does nothing
-    LogPrintf("BeeNFTPage::loadSampleBCTData() - Sample data not needed with SQLite database\n");
+    LogPrintf("MouseNFTPage::loadSampleBCTData() - Sample data not needed with SQLite database\n");
 }
 
-void BeeNFTPage::tokenizeBee()
+void MouseNFTPage::tokenizeMouse()
 {
     if (!walletModel) {
         return;
@@ -451,7 +451,7 @@ void BeeNFTPage::tokenizeBee()
     showMouseSelectionDialog(selectedBctId, ownerAddress);
 }
 
-void BeeNFTPage::showMouseSelectionDialog(const QString& bctId, const QString& ownerAddress)
+void MouseNFTPage::showMouseSelectionDialog(const QString& bctId, const QString& ownerAddress)
 {
     // Create a simple confirmation dialog for complete BCT tokenization
     QDialog dialog(this);
@@ -519,7 +519,7 @@ void BeeNFTPage::showMouseSelectionDialog(const QString& bctId, const QString& o
     }
 }
 
-void BeeNFTPage::executeTokenization(const QString& bctId, int mouseIndex, const QString& ownerAddress)
+void MouseNFTPage::executeTokenization(const QString& bctId, int mouseIndex, const QString& ownerAddress)
 {
     QString message = tr("Are you sure you want to tokenize mouse #%1 from BCT %2?\n\n"
                         "Owner: %3\n\n"
@@ -557,7 +557,7 @@ void BeeNFTPage::executeTokenization(const QString& bctId, int mouseIndex, const
     }
 }
 
-void BeeNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, const QString& ownerAddress)
+void MouseNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, const QString& ownerAddress)
 {
     QString message = tr("Are you sure you want to tokenize %1 mice from BCT %2?\n\n"
                         "Owner: %3\n\n"
@@ -609,7 +609,7 @@ void BeeNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, co
     }
 }
 
-void BeeNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QString& ownerAddress)
+void MouseNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QString& ownerAddress)
 {
     QString message = tr("Are you sure you want to tokenize the complete BCT %1?\n\n"
                         "Owner: %2\n\n"
@@ -642,7 +642,7 @@ void BeeNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QStr
                         
                         // Refresh the BCT list after successful tokenization
                         QTimer::singleShot(1000, this, SLOT(loadAvailableMice()));
-                        QTimer::singleShot(1000, this, SLOT(refreshBeeNFTs()));
+                        QTimer::singleShot(1000, this, SLOT(refreshMouseNFTs()));
                     } else {
                         QString errorMsg = QString::fromStdString(rpcResult);
                         if (errorMsg.isEmpty()) {
@@ -663,13 +663,13 @@ void BeeNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QStr
     }
 }
 
-void BeeNFTPage::transferBeeNFT()
+void MouseNFTPage::transferMouseNFT()
 {
     if (!walletModel) {
         return;
     }
     
-    QString beeNFTId = beeNFTCombo->currentData().toString();
+    QString beeNFTId = mouseNFTCombo->currentData().toString();
     QString recipientAddress = recipientAddressEdit->text().trimmed();
     
     // Validate inputs
@@ -719,7 +719,7 @@ void BeeNFTPage::transferBeeNFT()
                         QMessageBox::information(this, tr("Transfer Complete"), result);
                         
                         // Refresh the NFT list after successful transfer
-                        QTimer::singleShot(1000, this, SLOT(refreshBeeNFTs()));
+                        QTimer::singleShot(1000, this, SLOT(refreshMouseNFTs()));
                     } else {
                         QString errorMsg = QString::fromStdString(rpcResult);
                         if (errorMsg.isEmpty()) {
@@ -740,13 +740,13 @@ void BeeNFTPage::transferBeeNFT()
     }
 }
 
-void BeeNFTPage::refreshBeeNFTs()
+void MouseNFTPage::refreshMouseNFTs()
 {
     if (!walletModel) {
         return;
     }
     
-    // Refresh bee NFT list by calling wallet functions
+    // Refresh mouse NFT list by calling wallet functions
     std::thread([=]() {
         try {
             // TODO: Implement actual wallet call to get owned NFTs
@@ -754,12 +754,12 @@ void BeeNFTPage::refreshBeeNFTs()
             
             QMetaObject::invokeMethod(this, [this]() {
                 // Update both the combo and the table view
-                updateBeeNFTCombo();
+                updateMouseNFTCombo();
                 
                 // Also update the table model with sample data (will be replaced with real data)
-                if (beeNFTModel) {
+                if (mouseNFTModel) {
                     // Trigger model update which will reload the data
-                    beeNFTModel->updateBeeNFTs();
+                    mouseNFTModel->updateMouseNFTs();
     
     // Note: Real NFT data will be loaded on demand when user interacts with the NFT system
     // This prevents startup crashes when no RPC connection is available
@@ -775,29 +775,29 @@ void BeeNFTPage::refreshBeeNFTs()
     }).detach();
 }
 
-void BeeNFTPage::showBeeNFTDetails()
+void MouseNFTPage::showMouseNFTDetails()
 {
-    QModelIndexList selection = beeNFTView->selectionModel()->selectedRows();
+    QModelIndexList selection = mouseNFTView->selectionModel()->selectedRows();
     if (selection.isEmpty()) {
         return;
     }
     
-    // TODO: Show detailed bee NFT information dialog
+    // TODO: Show detailed mouse NFT information dialog
     QMessageBox::information(this, tr("Mice NFT Details"), tr("Mice NFT details dialog will be implemented."));
 }
 
-void BeeNFTPage::onBeeNFTSelectionChanged()
+void MouseNFTPage::onMouseNFTSelectionChanged()
 {
-    QModelIndexList selection = beeNFTView->selectionModel()->selectedRows();
+    QModelIndexList selection = mouseNFTView->selectionModel()->selectedRows();
     bool hasSelection = !selection.isEmpty();
     
     detailsButton->setEnabled(hasSelection);
 }
 
-void BeeNFTPage::updateBeeNFTCombo()
+void MouseNFTPage::updateMouseNFTCombo()
 {
-    beeNFTCombo->clear();
-    beeNFTCombo->addItem(tr("Select BCT NFT to transfer..."), "");
+    mouseNFTCombo->clear();
+    mouseNFTCombo->addItem(tr("Select BCT NFT to transfer..."), "");
     
     if (!walletModel) {
         return;
@@ -821,27 +821,27 @@ void BeeNFTPage::updateBeeNFTCombo()
                     if (i + 1 < ownedNFTs.size()) {
                         QString displayText = ownedNFTs[i];
                         QString nftId = ownedNFTs[i + 1];
-                        beeNFTCombo->addItem(displayText, nftId);
+                        mouseNFTCombo->addItem(displayText, nftId);
                     }
                 }
                 
-                if (beeNFTCombo->count() == 1) {
-                    beeNFTCombo->addItem(tr("No BCT NFTs owned yet"), "");
+                if (mouseNFTCombo->count() == 1) {
+                    mouseNFTCombo->addItem(tr("No BCT NFTs owned yet"), "");
                 }
                 
-                transferButton->setEnabled(beeNFTCombo->count() > 2);
+                transferButton->setEnabled(mouseNFTCombo->count() > 2);
             }, Qt::QueuedConnection);
             
         } catch (const std::exception& e) {
             QMetaObject::invokeMethod(this, [=]() {
-                beeNFTCombo->addItem(tr("Error loading NFTs: %1").arg(QString::fromStdString(e.what())), "");
+                mouseNFTCombo->addItem(tr("Error loading NFTs: %1").arg(QString::fromStdString(e.what())), "");
                 transferButton->setEnabled(false);
             }, Qt::QueuedConnection);
         }
     }).detach();
 }
 
-void BeeNFTPage::generateNewAddress()
+void MouseNFTPage::generateNewAddress()
 {
     if (!walletModel) {
         return;
@@ -863,9 +863,9 @@ void BeeNFTPage::generateNewAddress()
     }
 }
 
-void BeeNFTPage::updateTableModelWithRealData(const QString& jsonString)
+void MouseNFTPage::updateTableModelWithRealData(const QString& jsonString)
 {
-    if (!beeNFTModel) return;
+    if (!mouseNFTModel) return;
     
     QJsonParseError error;
     QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &error);
@@ -876,7 +876,7 @@ void BeeNFTPage::updateTableModelWithRealData(const QString& jsonString)
     
     // Clear current model data and add real BCT data
     QJsonArray bctArray = doc.array();
-    QList<BeeNFTRecord> newRecords;
+    QList<MouseNFTRecord> newRecords;
     
     for (const QJsonValue& bctValue : bctArray) {
         if (!bctValue.isObject()) continue;
@@ -897,11 +897,11 @@ void BeeNFTPage::updateTableModelWithRealData(const QString& jsonString)
             
             // Only show mice that have been tokenized (are actual NFTs)
             if (alreadyTokenized) {
-                BeeNFTRecord record;
+                MouseNFTRecord record;
                 int miceIndex = mouse["mice_index"].toInt();
-                record.beeNFTId = QString("mice-nft-%1-%2").arg(bctTxid.left(8)).arg(miceIndex);
+                record.mouseNFTId = QString("mice-nft-%1-%2").arg(bctTxid.left(8)).arg(miceIndex);
                 record.originalBCT = bctTxid;
-                record.beeIndex = miceIndex;
+                record.mouseIndex = miceIndex;
                 record.currentOwner = mouse["owner"].toString();
                 record.status = status == "mature" ? "mature" : "immature";
                 record.maturityHeight = bct["maturity_height"].toInt();
@@ -915,10 +915,10 @@ void BeeNFTPage::updateTableModelWithRealData(const QString& jsonString)
     }
     
     // Update the model with real data
-    beeNFTModel->updateBeeNFTListWithData(newRecords);
+    mouseNFTModel->updateMouseNFTListWithData(newRecords);
 }
 
-void BeeNFTPage::loadRealNFTData()
+void MouseNFTPage::loadRealNFTData()
 {
     if (!walletModel) {
         return;
@@ -957,16 +957,16 @@ void BeeNFTPage::loadRealNFTData()
                 
                 if (error.error == QJsonParseError::NoError && doc.isArray()) {
                     QJsonArray nftArray = doc.array();
-                    QList<BeeNFTRecord> nftRecords;
+                    QList<MouseNFTRecord> nftRecords;
                     
                     for (const QJsonValue& value : nftArray) {
                         if (value.isObject()) {
                             QJsonObject nftObj = value.toObject();
                             
-                            BeeNFTRecord record;
-                            record.beeNFTId = nftObj["nft_id"].toString();
+                            MouseNFTRecord record;
+                            record.mouseNFTId = nftObj["nft_id"].toString();
                             record.originalBCT = nftObj["original_bct"].toString();
-                            record.beeIndex = nftObj["total_mice"].toInt();
+                            record.mouseIndex = nftObj["total_mice"].toInt();
                             record.currentOwner = nftObj["owner"].toString();
                             record.status = nftObj["status"].toString();
                             record.maturityHeight = nftObj["maturity_height"].toInt();
@@ -980,8 +980,8 @@ void BeeNFTPage::loadRealNFTData()
                     
                     // Update UI on main thread
                     QMetaObject::invokeMethod(this, [=]() {
-                        if (beeNFTModel) {
-                            beeNFTModel->updateBeeNFTListWithData(nftRecords);
+                        if (mouseNFTModel) {
+                            mouseNFTModel->updateMouseNFTListWithData(nftRecords);
                         }
                     }, Qt::QueuedConnection);
                 }

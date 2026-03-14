@@ -283,7 +283,7 @@ bool GetTransaction(const uint256& hash, CTransactionRef& tx, const Consensus::P
 /** Find the best known block, and make it the tip of the block chain */
 bool ActivateBestChain(CValidationState& state, const CChainParams& chainparams, std::shared_ptr<const CBlock> pblock = std::shared_ptr<const CBlock>());
 CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams);
-CAmount GetBeeCost(int nHeight, const Consensus::Params& consensusParams);  // Cascoin: Hive: Get the cost of a bee at given height
+CAmount GetMouseCost(int nHeight, const Consensus::Params& consensusParams);  // Cascoin: Labyrinth: Get the cost of a mouse at given height
 /** Guess verification progress (as a fraction between 0.0=genesis and 1.0=current tip). */
 double GuessVerificationProgress(const ChainTxData& data, const CBlockIndex* pindex);
 
@@ -412,11 +412,11 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
 /** Check whether witness commitments are required for block. */
 bool IsWitnessEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 
-// Cascoin: Hive: Check if Hive is activated at given point
-bool IsHiveEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
+// Cascoin: Labyrinth: Check if Labyrinth is activated at given point
+bool IsLabyrinthEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 
-// Cascoin: Hive: Check if Hive 1.1 is activated at given point
-bool IsHive11Enabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
+// Cascoin: Labyrinth: Check if Labyrinth 1.1 is activated at given point
+bool IsLabyrinth11Enabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 
 // Cascoin: MinotaurX+Hive1.2: Check if MinotaurX is activated at given point
 bool IsMinotaurXEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
@@ -436,10 +436,10 @@ bool RialtoUnblockNick(const std::string nick);                                 
 std::vector<std::string> RialtoGetBlockedNicks();                                   // Get all blocked nicks
 bool RialtoGetLocalPrivKeyForNick(const std::string nick, unsigned char* privKey);  // Get privkey for given nick from local wallet. Should only be used with a secure allocator!
 
-// Cascoin: Hive: Get the well-rooted deterministic random string (see whitepaper section 4.1)
+// Cascoin: Labyrinth: Get the well-rooted deterministic random string (see whitepaper section 4.1)
 std::string GetDeterministicRandString(const CBlockIndex* pindexPrev);
 
-// Cascoin: Hive: Get tx by given hash, from a block at given chain height
+// Cascoin: Labyrinth: Get tx by given hash, from a block at given chain height
 bool GetTxByHashAndHeight(const uint256 txHash, const int nHeight, CTransactionRef& txNew, CBlockIndex& foundAtOut, CBlockIndex* pindex, const Consensus::Params& consensusParams);
 
 /** When there are blocks in the active chain with missing data, rewind the chainstate and remove them from the block index */

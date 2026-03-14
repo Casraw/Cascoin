@@ -84,7 +84,7 @@ private:
     QLabel *labelWalletEncryptionIcon;
     QLabel *labelWalletHDStatusIcon;
     QLabel *connectionsControl;
-    QLabel *hiveStatusIcon;             // Cascoin: Hive status icon
+    QLabel *labyrinthStatusIcon;             // Cascoin: Labyrinth status icon
     QLabel *labelBlocksIcon;
     QLabel *progressBarLabel;
     QProgressBar *progressBar;
@@ -92,8 +92,8 @@ private:
 
     QMenuBar *appMenuBar;
     QAction *overviewAction;
-    QAction *hiveAction;                // Cascoin: Hive page
-    QAction *beeNFTAction;              // Cascoin: Mice NFT page
+    QAction *labyrinthAction;                // Cascoin: Labyrinth page
+    QAction *mouseNFTAction;              // Cascoin: Mice NFT page
     QAction *importPrivateKeyAction;    // Cascoin: Key import helper
     QAction *historyAction;
     QAction *quitAction;
@@ -176,8 +176,8 @@ public Q_SLOTS:
     */
     void message(const QString &title, const QString &message, unsigned int style, bool *ret = nullptr);
 
-    // Cascoin: Hive: Update hive status icon
-    void updateHiveStatusIcon(QString icon, QString tooltip);
+    // Cascoin: Labyrinth: Update labyrinth status icon
+    void updateLabyrinthStatusIcon(QString icon, QString tooltip);
     
 #ifdef ENABLE_WALLET
     /** Set the encryption status as shown in the UI.
@@ -209,11 +209,11 @@ private Q_SLOTS:
     /** Switch to send coins page */
     void gotoSendCoinsPage(QString addr = "");
 
-    // Cascoin: Hive: Switch to hive page
+    // Cascoin: Labyrinth: Switch to labyrinth page
     void gotoHivePage();
     
     // Cascoin: Mice NFT: Switch to mice NFT page
-    void gotoBeeNFTPage();
+    void gotoMouseNFTPage();
 
     /** Show Sign/Verify Message dialog and switch to sign message tab */
     void gotoSignMessageTab(QString addr = "");

@@ -139,13 +139,13 @@ const char* GetOpName(opcodetype opcode)
     case OP_NOP9                   : return "OP_NOP9";
     case OP_NOP10                  : return "OP_NOP10";
 
-    // Cascoin: Hive
-    case OP_BEE                    : return "OP_BEE";
+    // Cascoin: Labyrinth
+    case OP_MOUSE                  : return "OP_MOUSE";
 
     // Cascoin: Rialto
     case OP_NICK_CREATE            : return "OP_NICK_CREATE";
 
-    // Cascoin: Bee NFT System - REMOVED opcodes for true soft fork compatibility
+    // Cascoin: Mouse NFT System - REMOVED opcodes for true soft fork compatibility
 
     case OP_INVALIDOPCODE          : return "OP_INVALIDOPCODE";
 

@@ -378,7 +378,7 @@ public:
 };
 
 arith_uint256 GetBlockProof(const CBlockIndex& block);
-// Cascoin: Hive: Reimplement un-boosted GetBlockProof for getnetworkhashps estimation.
+// Cascoin: Labyrinth: Reimplement un-boosted GetBlockProof for getnetworkhashps estimation.
 // Cascoin: MinotaurX+Hive1.2
 arith_uint256 GetNumHashes(const CBlockIndex& block, POW_TYPE powType);
 /** Return the time it would take to redo the work difference between from and to, assuming the current hashrate corresponds to the difficulty at tip, in seconds. */

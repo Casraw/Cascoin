@@ -103,7 +103,7 @@ namespace BCLog {
         COINDB      = (1 << 18),
         QT          = (1 << 19),
         LEVELDB     = (1 << 20),
-        HIVE        = (1 << 21),    // Cascoin: Hive logging
+        LABYRINTH   = (1 << 21),    // Cascoin: Labyrinth logging
         MINOTAURX   = (1 << 22),    // Cascoin: MinotaurX+Hive1.2
         RIALTO      = (1 << 23),    // Cascoin: Rialto
         ALL         = ~(uint32_t)0,
@@ -310,7 +310,7 @@ std::string HelpMessageOpt(const std::string& option, const std::string& message
  * when boost is newer than 1.56.
  */
 int GetNumCores();
-int GetNumVirtualCores();   // Cascoin: Hive: Mining Optimisations: Return number of virt cores
+int GetNumVirtualCores();   // Cascoin: Labyrinth: Mining Optimisations: Return number of virt cores
 
 void RenameThread(const char* name);
 

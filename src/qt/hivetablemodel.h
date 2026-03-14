@@ -16,25 +16,25 @@
 
 class CWallet;
 
-class CBeeCreationTransactionInfoLessThan
+class CMouseCreationTransactionInfoLessThan
 {
 public:
-    CBeeCreationTransactionInfoLessThan(int nColumn, Qt::SortOrder fOrder):
+    CMouseCreationTransactionInfoLessThan(int nColumn, Qt::SortOrder fOrder):
         column(nColumn), order(fOrder) {}
-    bool operator()(CBeeCreationTransactionInfo &left, CBeeCreationTransactionInfo &right) const;
+    bool operator()(CMouseCreationTransactionInfo &left, CMouseCreationTransactionInfo &right) const;
     
 private:
     int column;
     Qt::SortOrder order;
 };
 
-class HiveTableModel: public QAbstractTableModel
+class LabyrinthTableModel: public QAbstractTableModel
 {
     Q_OBJECT
 
 public:
-    explicit HiveTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent);
-    ~HiveTableModel();
+    explicit LabyrinthTableModel(const PlatformStyle *_platformStyle, CWallet *wallet, WalletModel *parent);
+    ~LabyrinthTableModel();
 
     enum ColumnIndex {
         Created = 0,
@@ -46,7 +46,7 @@ public:
         NUMBER_OF_COLUMNS
     };
 
-    void updateBCTs(bool includeDeadBees);
+    void updateBCTs(bool includeDeadMice);
     void getSummaryValues(int &_immature, int &_mature, int &_dead, int &_blocksFound, CAmount &_cost, CAmount &_rewardsPaid, CAmount &_profit);
 
     // Stuff overridden from QAbstractTableModel
@@ -65,20 +65,20 @@ public Q_SLOTS:
 
 private:
     static QString secondsToString(qint64 seconds);
-    void addBCT(const CBeeCreationTransactionInfo &bct);
-    void loadFromSQLiteDatabase(bool includeDeadBees);  // Load data from BCTDatabaseSQLite
+    void addBCT(const CMouseCreationTransactionInfo &bct);
+    void loadFromSQLiteDatabase(bool includeDeadMice);  // Load data from BCTDatabaseSQLite
 
     const PlatformStyle *platformStyle;
     WalletModel *walletModel;
     QStringList columns;
-    QList<CBeeCreationTransactionInfo> list;
+    QList<CMouseCreationTransactionInfo> list;
     int sortColumn;
     Qt::SortOrder sortOrder;
     int immature, mature, dead, blocksFound;
     CAmount cost, rewardsPaid, profit;
     bool updateInProgress;  // Flag to prevent concurrent updates
     bool pendingUpdate;     // If an update was requested while one is running
-    bool lastIncludeDeadBees;  // Remember last filter setting for refresh
+    bool lastIncludeDeadMice;  // Remember last filter setting for refresh
 };
 
 #endif // BITCOIN_QT_HIVETABLEMODEL_H
