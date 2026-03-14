@@ -19,14 +19,14 @@ const struct VBDeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION_B
         /*.name =*/ "segwit",
         /*.gbt_force =*/ true,
     },
-    // Cascoin: Hive: Deployment
+    // Cascoin: Labyrinth: Deployment
     {
-        /*.name =*/ "hive",
+        /*.name =*/ "labyrinth",
         /*.gbt_force =*/ true,
     },
-    // Cascoin: Hive: Deployment of 1.1
+    // Cascoin: Labyrinth: Deployment of 1.1
     {
-        /*.name =*/ "hive_1_1",
+        /*.name =*/ "labyrinth_1_1",
         /*.gbt_force =*/ true,
     },
     // Cascoin: MinotaurX+Hive1.2: Deployment

@@ -8,7 +8,7 @@
 #include <primitives/transaction.h>
 #include <script/interpreter.h>
 #include <consensus/validation.h>
-#include <beenft.h>
+#include <mousenft.h>
 
 // TODO remove the following dependencies
 #include <chain.h>
@@ -214,12 +214,12 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
                 if (magic == "CASTOK" || magic == "CASXFR") {
                     std::string error;
                     if (magic == "CASTOK") {
-                        if (!IsValidBeeNFTTokenTransaction(tx, error)) {
-                            return state.DoS(0, false, REJECT_NONSTANDARD, "invalid-bee-nft-token");
+                        if (!IsValidMouseNFTTokenTransaction(tx, error)) {
+                            return state.DoS(0, false, REJECT_NONSTANDARD, "invalid-mouse-nft-token");
                         }
                     } else if (magic == "CASXFR") {
-                        if (!IsValidBeeNFTTransferTransaction(tx, error)) {
-                            return state.DoS(0, false, REJECT_NONSTANDARD, "invalid-bee-nft-transfer");
+                        if (!IsValidMouseNFTTransferTransaction(tx, error)) {
+                            return state.DoS(0, false, REJECT_NONSTANDARD, "invalid-mouse-nft-transfer");
                         }
                     }
                 }

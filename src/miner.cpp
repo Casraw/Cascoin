@@ -31,19 +31,19 @@
 #include <queue>
 #include <utility>
 
-#include <wallet/wallet.h>  // Cascoin: Hive
-#include <rpc/server.h>     // Cascoin: Hive
-#include <base58.h>         // Cascoin: Hive
-#include <sync.h>           // Cascoin: Hive
-#include <boost/thread.hpp> // Cascoin: Hive: Mining optimisations
+#include <wallet/wallet.h>  // Cascoin: Labyrinth
+#include <rpc/server.h>     // Cascoin: Labyrinth
+#include <base58.h>         // Cascoin: Labyrinth
+#include <sync.h>           // Cascoin: Labyrinth
+#include <boost/thread.hpp> // Cascoin: Labyrinth: Mining optimisations
 #include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
 
 
 static CCriticalSection cs_solution_vars;
-std::atomic<bool> solutionFound;            // Cascoin: Hive: Mining optimisations: Thread-safe atomic flag to signal solution found (saves a slow mutex)
-std::atomic<bool> earlyAbort;               // Cascoin: Hive: Mining optimisations: Thread-safe atomic flag to signal early abort needed
-CBeeRange solvingRange;                     // Cascoin: Hive: Mining optimisations: The solving range (protected by mutex)
-uint32_t solvingBee;                        // Cascoin: Hive: Mining optimisations: The solving bee (protected by mutex)
+std::atomic<bool> solutionFound;            // Cascoin: Labyrinth: Mining optimisations: Thread-safe atomic flag to signal solution found (saves a slow mutex)
+std::atomic<bool> earlyAbort;               // Cascoin: Labyrinth: Mining optimisations: Thread-safe atomic flag to signal early abort needed
+CMouseRange solvingRange;                     // Cascoin: Labyrinth: Mining optimisations: The solving range (protected by mutex)
+uint32_t solvingMouse;                        // Cascoin: Labyrinth: Mining optimisations: The solving mouse (protected by mutex)
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -68,7 +68,7 @@ int64_t UpdateTime(CBlockHeader* pblock, const Consensus::Params& consensusParam
         pblock->nTime = nNewTime;
 
     // Updating time can change work required on testnet:
-    // Cascoin: Hive: Don't do this
+    // Cascoin: Labyrinth: Don't do this
     /*
     if (consensusParams.fPowAllowMinDifficultyBlocks)
         pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, consensusParams);
@@ -117,14 +117,14 @@ void BlockAssembler::resetBlock()
     nBlockWeight = 4000;
     nBlockSigOpsCost = 400;
     fIncludeWitness = false;
-    fIncludeBCTs = true;    // Cascoin: Hive
+    fIncludeBCTs = true;    // Cascoin: Labyrinth
 
     // These counters do not include coinbase tx
     nBlockTx = 0;
     nFees = 0;
 }
 
-// Cascoin: Hive: If hiveProofScript is passed, create a Hive block instead of a PoW block
+// Cascoin: Labyrinth: If hiveProofScript is passed, create a Labyrinth block instead of a PoW block
 // Cascoin: MinotaurX+Hive1.2: Accept POW_TYPE arg
 std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& scriptPubKeyIn, bool fMineWitnessTx, const CScript* hiveProofScript, const POW_TYPE powType)
 {
@@ -147,8 +147,8 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
 
-    // Cascoin: Hive: Make sure Hive is enabled if a Hive block is requested
-    if (hiveProofScript && !IsHiveEnabled(pindexPrev, chainparams.GetConsensus()))
+    // Cascoin: Labyrinth: Make sure Labyrinth is enabled if a Labyrinth block is requested
+    if (hiveProofScript && !IsLabyrinthEnabled(pindexPrev, chainparams.GetConsensus()))
         throw std::runtime_error(
             "Error: The Labyrinth is not yet enabled on the network"
         );
@@ -201,7 +201,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     nLastBlockTx = nBlockTx;
     nLastBlockWeight = nBlockWeight;
 
-    // Cascoin: Hive: Create appropriate coinbase tx for pow or Hive block
+    // Cascoin: Labyrinth: Create appropriate coinbase tx for pow or Labyrinth block
     if (hiveProofScript) {
         CMutableTransaction coinbaseTx;
 
@@ -219,12 +219,12 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
         }
         coinbaseTx.vin[0].scriptSig = scriptSig;
 
-        // vout[0]: Hive proof
+        // vout[0]: Labyrinth proof
         coinbaseTx.vout.resize(2);
         coinbaseTx.vout[0].scriptPubKey = *hiveProofScript;
         coinbaseTx.vout[0].nValue = 0;
 
-        // vout[1]: Honey :)
+        // vout[1]: Cheese :)
         coinbaseTx.vout[1].scriptPubKey = scriptPubKeyIn;
 
         // Cascoin: MinotaurX+Hive1.2: Hive rewards are 150% of base block reward
@@ -275,7 +275,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
     pblock->hashPrevBlock  = pindexPrev->GetBlockHash();
     UpdateTime(pblock, chainparams.GetConsensus(), pindexPrev);
 
-    // Cascoin: Hive: Choose correct nBits depending on whether a Hive block is requested
+    // Cascoin: Labyrinth: Choose correct nBits depending on whether a Labyrinth block is requested
     if (hiveProofScript)
         pblock->nBits = GetNextHiveWorkRequired(pindexPrev, chainparams.GetConsensus());
     else {
@@ -286,7 +286,7 @@ std::unique_ptr<CBlockTemplate> BlockAssembler::CreateNewBlock(const CScript& sc
             pblock->nBits = GetNextWorkRequired(pindexPrev, pblock, chainparams.GetConsensus());
     }
 
-    // Cascoin: Hive: Set nonce marker for hivemined blocks
+    // Cascoin: Labyrinth: Set nonce marker for labyrinth mined blocks
     pblock->nNonce = hiveProofScript ? chainparams.GetConsensus().hiveNonceMarker : 0;
     pblocktemplate->vTxSigOpsCost[0] = WITNESS_SCALE_FACTOR * GetLegacySigOpCount(*pblock->vtx[0]);
 
@@ -370,15 +370,15 @@ bool BlockAssembler::TestPackage(uint64_t packageSize, int64_t packageSigOpsCost
 //   segwit activation)
 bool BlockAssembler::TestPackageTransactions(const CTxMemPool::setEntries& package)
 {
-    const Consensus::Params& consensusParams = Params().GetConsensus(); // Cascoin: Hive
+    const Consensus::Params& consensusParams = Params().GetConsensus(); // Cascoin: Labyrinth
 
     for (const CTxMemPool::txiter it : package) {
         if (!IsFinalTx(it->GetTx(), nHeight, nLockTimeCutoff))
             return false;
         if (!fIncludeWitness && it->GetTx().HasWitness())
             return false;
-        // Cascoin: Hive: Inhibit BCTs if required
-        if (!fIncludeBCTs && it->GetTx().IsBCT(consensusParams, GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress))))
+        // Cascoin: Labyrinth: Inhibit BCTs if required
+        if (!fIncludeBCTs && it->GetTx().IsBCT(consensusParams, GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress))))
             return false;
     }
     return true;
@@ -615,12 +615,12 @@ void IncrementExtraNonce(CBlock* pblock, const CBlockIndex* pindexPrev, unsigned
     pblock->hashMerkleRoot = BlockMerkleRoot(*pblock);
 }
 
-// Cascoin: Hive: Bee management thread
-void BeeKeeper(const CChainParams& chainparams) {
+// Cascoin: Labyrinth: Mouse management thread
+void MouseKeeper(const CChainParams& chainparams) {
     const Consensus::Params& consensusParams = chainparams.GetConsensus();
 
-    LogPrintf("BeeKeeper: Thread started\n");
-    RenameThread("hive-beekeeper");
+    LogPrintf("MouseKeeper: Thread started\n");
+    RenameThread("labyrinth-mousekeeper");
 
     int height;
     {
@@ -630,8 +630,8 @@ void BeeKeeper(const CChainParams& chainparams) {
 
     try {
         while (true) {
-            // Cascoin: Hive: Mining optimisations: Parameterised sleep time
-            int sleepTime = std::max((int64_t) 1, gArgs.GetArg("-hivecheckdelay", DEFAULT_HIVE_CHECK_DELAY));
+            // Cascoin: Labyrinth: Mining optimisations: Parameterised sleep time
+            int sleepTime = std::max((int64_t) 1, gArgs.GetArg("-labyrinthcheckdelay", DEFAULT_HIVE_CHECK_DELAY));
             MilliSleep(sleepTime);
 
             int newHeight;
@@ -640,22 +640,22 @@ void BeeKeeper(const CChainParams& chainparams) {
                 newHeight = chainActive.Tip()->nHeight;
             }
             if (newHeight != height) {
-                // Height changed; release the bees!
+                // Height changed; release the mice!
                 height = newHeight;
                 try {
-                    BusyBees(consensusParams, height);
+                    BusyMice(consensusParams, height);
                 } catch (const std::runtime_error &e) {
-                    LogPrintf("! BeeKeeper: Error: %s\n", e.what());
+                    LogPrintf("! MouseKeeper: Error: %s\n", e.what());
                 }
             }
         }
     } catch (const boost::thread_interrupted&) {
-        LogPrintf("!!! BeeKeeper: FATAL: Thread interrupted\n");
+        LogPrintf("!!! MouseKeeper: FATAL: Thread interrupted\n");
         throw;
     }
 }
 
-// Cascoin: Hive: Mining optimisations: Thread to signal abort on new block
+// Cascoin: Labyrinth: Mining optimisations: Thread to signal abort on new block
 void AbortWatchThread(int height) {
     // Loop until any exit condition
     while (true) {
@@ -682,32 +682,32 @@ void AbortWatchThread(int height) {
     }
 }
 
-// Cascoin: Hive: Mining optimisations: Thread to check a single bin
-void CheckBin(int threadID, std::vector<CBeeRange> bin, std::string deterministicRandString, arith_uint256 beeHashTarget) {
+// Cascoin: Labyrinth: Mining optimisations: Thread to check a single bin
+void CheckBin(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget) {
     // Iterate over ranges in this bin
     int checkCount = 0;
-    for (std::vector<CBeeRange>::const_iterator it = bin.begin(); it != bin.end(); it++) {
-        CBeeRange beeRange = *it;
-        //LogPrintf("THREAD #%i: Checking %i-%i in %s\n", threadID, beeRange.offset, beeRange.offset + beeRange.count - 1, beeRange.txid);
-        // Iterate over bees in this range
-        for (int i = beeRange.offset; i < beeRange.offset + beeRange.count; i++) {
-            // Check abort conditions (Only every N bees. The atomic load is expensive, but much cheaper than a mutex - esp on Windows, see https://www.arangodb.com/2015/02/comparing-atomic-mutex-rwlocks/)
+    for (std::vector<CMouseRange>::const_iterator it = bin.begin(); it != bin.end(); it++) {
+        CMouseRange mouseRange = *it;
+        //LogPrintf("THREAD #%i: Checking %i-%i in %s\n", threadID, mouseRange.offset, mouseRange.offset + mouseRange.count - 1, mouseRange.txid);
+        // Iterate over mice in this range
+        for (int i = mouseRange.offset; i < mouseRange.offset + mouseRange.count; i++) {
+            // Check abort conditions (Only every N mice. The atomic load is expensive, but much cheaper than a mutex - esp on Windows, see https://www.arangodb.com/2015/02/comparing-atomic-mutex-rwlocks/)
             if(checkCount++ % 1000 == 0) {
                 if (solutionFound.load() || earlyAbort.load()) {
                     //LogPrintf("THREAD #%i: Solution found elsewhere or early abort requested, ending early\n", threadID);
                     return;
                 }
             }
-            // Hash the bee
-            std::string hashHex = (CHashWriter(SER_GETHASH, 0) << deterministicRandString << beeRange.txid << i).GetHash().GetHex();
-            arith_uint256 beeHash = arith_uint256(hashHex);
+            // Hash the mouse
+            std::string hashHex = (CHashWriter(SER_GETHASH, 0) << deterministicRandString << mouseRange.txid << i).GetHash().GetHex();
+            arith_uint256 mouseHash = arith_uint256(hashHex);
             // Compare to target and write out result if successful
-            if (beeHash < beeHashTarget) {
+            if (mouseHash < mouseHashTarget) {
                 //LogPrintf("THREAD #%i: Solution found, returning\n", threadID);
                 LOCK(cs_solution_vars);                                 // Expensive mutex only happens at write-out
                 solutionFound.store(true);
-                solvingRange = beeRange;
-                solvingBee = i;
+                solvingRange = mouseRange;
+                solvingMouse = i;
                 return;
             }
         }
@@ -715,8 +715,8 @@ void CheckBin(int threadID, std::vector<CBeeRange> bin, std::string deterministi
     //LogPrintf("THREAD #%i: Out of tasks\n", threadID);
 }
 
-// Cascoin: MinotaurX+Hive1.2: Thread to check a single bee bin
-void CheckBinMinotaur(int threadID, std::vector<CBeeRange> bin, std::string deterministicRandString, arith_uint256 beeHashTarget) {
+// Cascoin: MinotaurX+Hive1.2: Thread to check a single mouse bin
+void CheckBinMinotaur(int threadID, std::vector<CMouseRange> bin, std::string deterministicRandString, arith_uint256 mouseHashTarget) {
     // Create yespower thread-local storage
     /*
     static __thread yespower_local_t local;
@@ -725,12 +725,12 @@ void CheckBinMinotaur(int threadID, std::vector<CBeeRange> bin, std::string dete
 
     // Iterate over ranges in this bin
     int checkCount = 0;
-    for (std::vector<CBeeRange>::const_iterator it = bin.begin(); it != bin.end(); it++) {
-        CBeeRange beeRange = *it;
-        //LogPrintf("THREAD #%i: Checking %i-%i in %s\n", threadID, beeRange.offset, beeRange.offset + beeRange.count - 1, beeRange.txid);
-        // Iterate over bees in this range
-        for (int i = beeRange.offset; i < beeRange.offset + beeRange.count; i++) {
-            // Check abort conditions (Only every N bees. The atomic load is expensive, but much cheaper than a mutex - esp on Windows, see https://www.arangodb.com/2015/02/comparing-atomic-mutex-rwlocks/)
+    for (std::vector<CMouseRange>::const_iterator it = bin.begin(); it != bin.end(); it++) {
+        CMouseRange mouseRange = *it;
+        //LogPrintf("THREAD #%i: Checking %i-%i in %s\n", threadID, mouseRange.offset, mouseRange.offset + mouseRange.count - 1, mouseRange.txid);
+        // Iterate over mice in this range
+        for (int i = mouseRange.offset; i < mouseRange.offset + mouseRange.count; i++) {
+            // Check abort conditions (Only every N mice. The atomic load is expensive, but much cheaper than a mutex - esp on Windows, see https://www.arangodb.com/2015/02/comparing-atomic-mutex-rwlocks/)
             if(checkCount++ % 1000 == 0) {
                 if (solutionFound.load() || earlyAbort.load()) {
                     //LogPrintf("THREAD #%i: Solution found elsewhere or early abort requested, ending early\n", threadID);
@@ -739,23 +739,23 @@ void CheckBinMinotaur(int threadID, std::vector<CBeeRange> bin, std::string dete
                 }
             }
 
-            // Hash the bee
+            // Hash the mouse
             std::stringstream buf;
             buf << deterministicRandString;
-            buf << beeRange.txid;
+            buf << mouseRange.txid;
             buf << i;
             std::string hashString = buf.str();
 
-            uint256 beeHashUint = CBlockHeader::MinotaurHashString(hashString);
-            arith_uint256 beeHash(beeHashUint.ToString());
+            uint256 mouseHashUint = CBlockHeader::MinotaurHashString(hashString);
+            arith_uint256 mouseHash(mouseHashUint.ToString());
 
             // Compare to target and write out result if successful
-            if (beeHash < beeHashTarget) {
+            if (mouseHash < mouseHashTarget) {
                 //LogPrintf("THREAD #%i: Solution found, returning\n", threadID);
                 LOCK(cs_solution_vars);     // Expensive mutex only happens at write-out
                 solutionFound.store(true);
-                solvingRange = beeRange;
-                solvingBee = i;
+                solvingRange = mouseRange;
+                solvingMouse = i;
                 //yespower_free_local(&local);
                 return;
             }
@@ -767,33 +767,33 @@ void CheckBinMinotaur(int threadID, std::vector<CBeeRange> bin, std::string dete
     //yespower_free_local(&local);
 }
 
-// Cascoin: Hive: Attempt to mint the next block
-bool BusyBees(const Consensus::Params& consensusParams, int height) {
-    bool verbose = LogAcceptCategory(BCLog::HIVE);
+// Cascoin: Labyrinth: Attempt to mint the next block
+bool BusyMice(const Consensus::Params& consensusParams, int height) {
+    bool verbose = LogAcceptCategory(BCLog::LABYRINTH);
 
     CBlockIndex* pindexPrev = chainActive.Tip();
     assert(pindexPrev != nullptr);
 
     // Sanity checks
-    if (!IsHiveEnabled(pindexPrev, consensusParams)) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check: The Labyrinth is not enabled on the network\n");
+    if (!IsLabyrinthEnabled(pindexPrev, consensusParams)) {
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check: The Labyrinth is not enabled on the network\n");
         return false;
     }
     if(!g_connman) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check: Peer-to-peer functionality missing or disabled\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check: Peer-to-peer functionality missing or disabled\n");
         return false;
     }
     if (g_connman->GetNodeCount(CConnman::CONNECTIONS_ALL) == 0) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (not connected)\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check (not connected)\n");
         return false;
     }
     if (IsInitialBlockDownload()) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (in initial block download)\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check (in initial block download)\n");
         return false;
     }
 
-    // Cascoin: Hive 1.1: Check that there aren't too many consecutive Hive blocks
-    if (IsHive11Enabled(pindexPrev, consensusParams)) {
+    // Cascoin: Labyrinth 1.1: Check that there aren't too many consecutive Labyrinth blocks
+    if (IsLabyrinth11Enabled(pindexPrev, consensusParams)) {
         int hiveBlocksAtTip = 0;
         CBlockIndex* pindexTemp = pindexPrev;
         while (pindexTemp->GetBlockHeader().IsHiveMined(consensusParams)) {
@@ -801,14 +801,14 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
             pindexTemp = pindexTemp->pprev;
             hiveBlocksAtTip++;
         }
-        if (hiveBlocksAtTip >= consensusParams.maxConsecutiveHiveBlocks) {
-            LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (max Hive blocks without a POW block reached)\n");
+        if (hiveBlocksAtTip >= consensusParams.maxConsecutiveLabyrinthBlocks) {
+            LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check (max Labyrinth blocks without a POW block reached)\n");
             return false;
         }
     } else {
         // Check previous block wasn't hivemined
         if (pindexPrev->GetBlockHeader().IsHiveMined(consensusParams)) {
-            LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (Hive block must follow a POW block)\n");
+            LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check (Labyrinth block must follow a POW block)\n");
             return false;
         }
     }
@@ -817,51 +817,51 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     JSONRPCRequest request;
     CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
     if (!EnsureWalletIsAvailable(pwallet, true)) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check (wallet unavailable)\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check (wallet unavailable)\n");
         return false;
     }
     if (pwallet->IsLocked()) {
-        LogPrint(BCLog::HIVE, "BusyBees: Skipping hive check, wallet is locked\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: Skipping labyrinth check, wallet is locked\n");
         return false;
     }
 
-    LogPrintf("********************* Hive: Bees at work *********************\n");
+    LogPrintf("********************* Labyrinth: Mice at work *********************\n");
 
     // Find deterministicRandString
     std::string deterministicRandString = GetDeterministicRandString(pindexPrev);
-    if (verbose) LogPrintf("BusyBees: deterministicRandString   = %s\n", deterministicRandString);
+    if (verbose) LogPrintf("BusyMice: deterministicRandString   = %s\n", deterministicRandString);
 
-    // Find beeHashTarget
-    arith_uint256 beeHashTarget;
-    beeHashTarget.SetCompact(GetNextHiveWorkRequired(pindexPrev, consensusParams));
-    LogPrint(BCLog::HIVE, "BusyBees: beeHashTarget for current attempt = %s\n", beeHashTarget.ToString());
+    // Find mouseHashTarget
+    arith_uint256 mouseHashTarget;
+    mouseHashTarget.SetCompact(GetNextHiveWorkRequired(pindexPrev, consensusParams));
+    LogPrint(BCLog::LABYRINTH, "BusyMice: mouseHashTarget for current attempt = %s\n", mouseHashTarget.ToString());
 
     // Grab all BCTs from wallet that are mature and not yet expired.
-    // We don't need to scan for rewards here as we only need the txid and honey address.
+    // We don't need to scan for rewards here as we only need the txid and cheese address.
     // Cascoin: Memory leak fix - Limit potential BCTs to prevent memory overflow
-    std::vector<CBeeCreationTransactionInfo> potentialBctsWallet = pwallet->GetBCTs(false, false, consensusParams);
-    std::vector<CBeeCreationTransactionInfo> potentialBcts; // This will store the filtered BCTs
+    std::vector<CMouseCreationTransactionInfo> potentialBctsWallet = pwallet->GetBCTs(false, false, consensusParams);
+    std::vector<CMouseCreationTransactionInfo> potentialBcts; // This will store the filtered BCTs
     
     // Reserve reasonable space and limit processing
     potentialBcts.reserve(std::min((size_t)5000, potentialBctsWallet.size()));
-    int totalBees = 0;
+    int totalMice = 0;
 
-    // Original logic to populate potentialBcts and totalBees based on wallet status
+    // Original logic to populate potentialBcts and totalMice based on wallet status
     for (const auto& bctInfoWallet : potentialBctsWallet) {
-        if (bctInfoWallet.beeStatus == "mature") { // Filter by mature status from wallet
+        if (bctInfoWallet.mouseStatus == "mature") { // Filter by mature status from wallet
             potentialBcts.push_back(bctInfoWallet);
-            totalBees += bctInfoWallet.beeCount;
+            totalMice += bctInfoWallet.mouseCount;
         }
     }
 
-    if (potentialBcts.empty() || totalBees == 0)
+    if (potentialBcts.empty() || totalMice == 0)
     {
-        LogPrint(BCLog::HIVE, "BusyBees: No mature mice found\n");
+        LogPrint(BCLog::LABYRINTH, "BusyMice: No mature mice found\n");
         return false;
     }
 
     int coreCount = GetNumVirtualCores();
-    int threadCount = gArgs.GetArg("-hivecheckthreads", DEFAULT_HIVE_THREADS);
+    int threadCount = gArgs.GetArg("-labyrinthcheckthreads", DEFAULT_HIVE_THREADS);
     if (threadCount == -2)
         threadCount = std::max(1, coreCount - 1);
     else if (threadCount < 0 || threadCount > coreCount)
@@ -869,85 +869,85 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     else if (threadCount == 0)
         threadCount = 1;
 
-    int beesPerBin = ceil(totalBees / (float)threadCount);  // We want to check this many bees per thread
+    int micePerBin = ceil(totalMice / (float)threadCount);  // We want to check this many mice per thread
 
-    // Cascoin: Memory leak fix - Limit bee binning to prevent memory overflow
-    if (verbose) LogPrint(BCLog::HIVE, "BusyBees: Binning %i bees in %i bins (%i bees per bin)\n", totalBees, threadCount, beesPerBin);
-    std::vector<CBeeCreationTransactionInfo>::const_iterator bctIterator = potentialBcts.begin();
-    CBeeCreationTransactionInfo bct = *bctIterator;
-    std::vector<std::vector<CBeeRange>> beeBins;
+    // Cascoin: Memory leak fix - Limit mouse binning to prevent memory overflow
+    if (verbose) LogPrint(BCLog::LABYRINTH, "BusyMice: Binning %i mice in %i bins (%i mice per bin)\n", totalMice, threadCount, micePerBin);
+    std::vector<CMouseCreationTransactionInfo>::const_iterator bctIterator = potentialBcts.begin();
+    CMouseCreationTransactionInfo bct = *bctIterator;
+    std::vector<std::vector<CMouseRange>> mouseBins;
     
     // Reserve space for bins to prevent frequent reallocations
-    beeBins.reserve(std::min(threadCount, 100)); // Limit to max 100 bins
-    int beeOffset = 0;                                      // Track offset in current BCT
+    mouseBins.reserve(std::min(threadCount, 100)); // Limit to max 100 bins
+    int mouseOffset = 0;                                      // Track offset in current BCT
     while(bctIterator != potentialBcts.end()) {                      // Until we're out of BCTs
-        std::vector<CBeeRange> currentBin;                  // Create a new bin
-        int beesInBin = 0;
+        std::vector<CMouseRange> currentBin;                  // Create a new bin
+        int miceInBin = 0;
         while (bctIterator != potentialBcts.end()) {                 // Keep filling it until full
-            int spaceLeft = beesPerBin - beesInBin;
-            if (bct.beeCount - beeOffset <= spaceLeft) {    // If there's soom, add all the bees from this BCT...
-                CBeeRange range = {bct.txid, bct.honeyAddress, bct.communityContrib, beeOffset, bct.beeCount - beeOffset};
+            int spaceLeft = micePerBin - miceInBin;
+            if (bct.mouseCount - mouseOffset <= spaceLeft) {    // If there's soom, add all the mice from this BCT...
+                CMouseRange range = {bct.txid, bct.cheeseAddress, bct.communityContrib, mouseOffset, bct.mouseCount - mouseOffset};
                 currentBin.push_back(range);
 
-                beesInBin += bct.beeCount - beeOffset;
-                beeOffset = 0;
+                miceInBin += bct.mouseCount - mouseOffset;
+                mouseOffset = 0;
 
                 do {                                        // ... and iterate to next BCT
                     bctIterator++;
                     if (bctIterator == potentialBcts.end())
                         break;
                     bct = *bctIterator;
-                } while (bct.beeStatus != "mature");
+                } while (bct.mouseStatus != "mature");
             } else {                                        // Can't fit the whole thing to current bin; add what we can fit and let the rest go in next bin
-                CBeeRange range = {bct.txid, bct.honeyAddress, bct.communityContrib, beeOffset, spaceLeft};
+                CMouseRange range = {bct.txid, bct.cheeseAddress, bct.communityContrib, mouseOffset, spaceLeft};
                 currentBin.push_back(range);
-                beeOffset += spaceLeft;
+                mouseOffset += spaceLeft;
                 break;
             }
         }
-        beeBins.push_back(currentBin);
+        mouseBins.push_back(currentBin);
     }
 
     // Create a worker thread for each bin
-    if (verbose) LogPrintf("BusyBees: Running bins\n");
+    if (verbose) LogPrintf("BusyMice: Running bins\n");
     solutionFound.store(false);
     earlyAbort.store(false);
-    std::vector<std::vector<CBeeRange>>::const_iterator beeBinIterator = beeBins.begin();
+    std::vector<std::vector<CMouseRange>>::const_iterator mouseBinIterator = mouseBins.begin();
     std::vector<boost::thread> binThreads;
     int64_t checkTime = GetTimeMillis();
     int binID = 0;
     bool minotaurXEnabled = IsMinotaurXEnabled(pindexPrev, consensusParams);    // Cascoin: MinotaurX+Hive1.2: Check if minotaurX enabled
-    while (beeBinIterator != beeBins.end()) {
-        std::vector<CBeeRange> beeBin = *beeBinIterator;
+    while (mouseBinIterator != mouseBins.end()) {
+        std::vector<CMouseRange> mouseBin = *mouseBinIterator;
 
         if (verbose) {
-            LogPrintf("BusyBees: Bin #%i\n", binID);
-            std::vector<CBeeRange>::const_iterator beeRangeIterator = beeBin.begin();
-            while (beeRangeIterator != beeBin.end()) {
-                CBeeRange beeRange = *beeRangeIterator;
-                LogPrintf("offset = %i, count = %i, txid = %s\n", beeRange.offset, beeRange.count, beeRange.txid);
-                beeRangeIterator++;
+            LogPrintf("BusyMice: Bin #%i\n", binID);
+            std::vector<CMouseRange>::const_iterator mouseRangeIterator = mouseBin.begin();
+            while (mouseRangeIterator != mouseBin.end()) {
+                CMouseRange mouseRange = *mouseRangeIterator;
+                LogPrintf("offset = %i, count = %i, txid = %s\n", mouseRange.offset, mouseRange.count, mouseRange.txid);
+                mouseRangeIterator++;
             }
         }
         // Cascoin: MinotaurX+Hive1.2: Use correct inner hash
         if (!minotaurXEnabled)
-            binThreads.push_back(boost::thread(CheckBin, binID++, beeBin, deterministicRandString, beeHashTarget));
+            binThreads.push_back(boost::thread(CheckBin, binID++, mouseBin, deterministicRandString, mouseHashTarget));
         else
-            binThreads.push_back(boost::thread(CheckBinMinotaur, binID++, beeBin, deterministicRandString, beeHashTarget));
+            binThreads.push_back(boost::thread(CheckBinMinotaur, binID++, mouseBin, deterministicRandString, mouseHashTarget));
 
-        beeBinIterator++;
+        mouseBinIterator++;
     }
 
     // Add an extra thread to watch external abort conditions (eg new incoming block)
-    bool useEarlyAbortThread = gArgs.GetBoolArg("-hiveearlyout", DEFAULT_HIVE_EARLY_OUT);
+    bool useEarlyAbortThread = gArgs.GetBoolArg("-labyrinthearlyout", DEFAULT_HIVE_EARLY_OUT);
     if (verbose && useEarlyAbortThread)
-        LogPrintf("BusyBees: Will use early-abort thread\n");
+        LogPrintf("BusyMice: Will use early-abort thread\n");
 
     boost::thread earlyAbortThread;
     if (useEarlyAbortThread)
         earlyAbortThread = boost::thread(AbortWatchThread, height);
 
-    // Wait for bin worker threads to find a solution or abort (in which case the others will all stop), or to run out of bees
+    // Wait for bin worker threads to find a solution or abort (in which case the others will all stop), or to run out of mice
     for(auto& t:binThreads)
         t.join();
 
@@ -958,7 +958,7 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     // Handle early aborts
     if (useEarlyAbortThread) {
         if (earlyAbort.load()) {
-            LogPrintf("BusyBees: Chain state changed (check aborted after %ims)\n", checkTime);
+            LogPrintf("BusyMice: Chain state changed (check aborted after %ims)\n", checkTime);
             return false;
         } else {
             // We didn't abort; stop abort thread now
@@ -969,10 +969,10 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
 
     // Check if a solution was found
     if (!solutionFound.load()) {
-        LogPrintf("BusyBees: No bee meets hash target (%i bees checked with %i threads in %ims)\n", totalBees, threadCount, checkTime);
+        LogPrintf("BusyMice: No mouse meets hash target (%i mice checked with %i threads in %ims)\n", totalMice, threadCount, checkTime);
         return false;
     }
-    LogPrintf("BusyBees: Bee meets hash target (check aborted after %ims). Solution with bee #%i from BCT %s. Honey address is %s.\\n", checkTime, solvingBee, solvingRange.txid, solvingRange.honeyAddress);
+    LogPrintf("BusyMice: Mouse meets hash target (check aborted after %ims). Solution with mouse #%i from BCT %s. Cheese address is %s.\\n", checkTime, solvingMouse, solvingRange.txid, solvingRange.cheeseAddress);
 
     // Assemble The Labyrinth proof script
     std::vector<unsigned char> messageProofVec;
@@ -982,7 +982,7 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     {   // Don't lock longer than needed
         LOCK2(cs_main, pwallet->cs_wallet);
 
-        uint256 initialTipHashAtStartOfBusyBees = pindexPrev->GetBlockHash(); // pindexPrev is from the start of BusyBees
+        uint256 initialTipHashAtStartOfBusyMice = pindexPrev->GetBlockHash(); // pindexPrev is from the start of BusyMice
         uint256 currentActiveTipHash = chainActive.Tip() ? chainActive.Tip()->GetBlockHash() : uint256();
         uint256 currentPcoinsTipHash = pcoinsTip ? pcoinsTip->GetBestBlock() : uint256();
 
@@ -991,48 +991,48 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
         uint256 hashBlockBCT; // Block containing the BCT
 
         if (!GetTransaction(uint256S(solvingRange.txid), txBCT, consensusParams, hashBlockBCT, true)) {
-            LogPrintf("BusyBees: BCT %s for winning bee: GetTransaction failed. Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
-                solvingRange.txid, initialTipHashAtStartOfBusyBees.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
+            LogPrintf("BusyMice: BCT %s for winning mouse: GetTransaction failed. Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
+                solvingRange.txid, initialTipHashAtStartOfBusyMice.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
             return false;
         }
 
         if (hashBlockBCT.IsNull() || mapBlockIndex.find(hashBlockBCT) == mapBlockIndex.end()) {
-            LogPrintf("BusyBees: BCT %s for winning bee: Block hash %s not found in mapBlockIndex. Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
-                solvingRange.txid, hashBlockBCT.ToString(), initialTipHashAtStartOfBusyBees.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
+            LogPrintf("BusyMice: BCT %s for winning mouse: Block hash %s not found in mapBlockIndex. Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
+                solvingRange.txid, hashBlockBCT.ToString(), initialTipHashAtStartOfBusyMice.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
             return false;
         }
         
         CBlockIndex* pindexBCT = mapBlockIndex[hashBlockBCT];
         if (!chainActive.Contains(pindexBCT)) {
-            LogPrintf("BusyBees: BCT %s (in block %s, height %d) for winning bee is no longer in the active chain (reorg?). Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
-                solvingRange.txid, hashBlockBCT.ToString(), pindexBCT->nHeight, initialTipHashAtStartOfBusyBees.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
+            LogPrintf("BusyMice: BCT %s (in block %s, height %d) for winning mouse is no longer in the active chain (reorg?). Aborting. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
+                solvingRange.txid, hashBlockBCT.ToString(), pindexBCT->nHeight, initialTipHashAtStartOfBusyMice.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
             return false;
         }
 
         // BCT transaction is confirmed in an active block.
         // Get the BCT height from its block index.
         bctHeight = pindexBCT->nHeight;
-        LogPrintf("BusyBees: Verified BCT %s is in active block %s at height %d. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
-            solvingRange.txid, hashBlockBCT.ToString(), bctHeight, initialTipHashAtStartOfBusyBees.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
+        LogPrintf("BusyMice: Verified BCT %s is in active block %s at height %d. StartTip: %s, ActiveTip: %s, UTXOTip: %s\\n",
+            solvingRange.txid, hashBlockBCT.ToString(), bctHeight, initialTipHashAtStartOfBusyMice.ToString(), currentActiveTipHash.ToString(), currentPcoinsTipHash.ToString());
 
         // The OP_RETURN output (vout[0]) of the BCT is not expected to be in the UTXO set (pcoinsTip).
         // Its validity is confirmed by GetTransaction and its presence in the active chain.
 
-        CTxDestination dest = DecodeDestination(solvingRange.honeyAddress);
+        CTxDestination dest = DecodeDestination(solvingRange.cheeseAddress);
         if (!IsValidDestination(dest)) {
-            LogPrintf("BusyBees: Honey destination invalid\n");
+            LogPrintf("BusyMice: Cheese destination invalid\n");
             return false;
         }
 
         const CKeyID *keyID = boost::get<CKeyID>(&dest);
         if (!keyID) {
-            LogPrintf("BusyBees: Wallet doesn't have privkey for honey destination\n");
+            LogPrintf("BusyMice: Wallet doesn't have privkey for cheese destination\n");
             return false;
         }
 
         CKey key;
         if (!pwallet->GetKey(*keyID, key)) {
-            LogPrintf("BusyBees: Privkey unavailable\n");
+            LogPrintf("BusyMice: Privkey unavailable\n");
             return false;
         }
 
@@ -1040,30 +1040,30 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
         ss << deterministicRandString;
         uint256 mhash = ss.GetHash();
         if (!key.SignCompact(mhash, messageProofVec)) {
-            LogPrintf("BusyBees: Couldn't sign the bee proof!\n");
+            LogPrintf("BusyMice: Couldn't sign the mouse proof!\n");
             return false;
         }
-        if (verbose) LogPrintf("BusyBees: messageSig                = %s\n", HexStr(&messageProofVec[0], &messageProofVec[messageProofVec.size()]));
+        if (verbose) LogPrintf("BusyMice: messageSig                = %s\n", HexStr(messageProofVec.data(), messageProofVec.data() + messageProofVec.size()));
     }
 
-    unsigned char beeNonceEncoded[4];
-    WriteLE32(beeNonceEncoded, solvingBee);
-    std::vector<unsigned char> beeNonceVec(beeNonceEncoded, beeNonceEncoded + 4);
+    unsigned char mouseNonceEncoded[4];
+    WriteLE32(mouseNonceEncoded, solvingMouse);
+    std::vector<unsigned char> mouseNonceVec(mouseNonceEncoded, mouseNonceEncoded + 4);
 
     unsigned char bctHeightEncoded[4];
     WriteLE32(bctHeightEncoded, bctHeight);
     std::vector<unsigned char> bctHeightVec(bctHeightEncoded, bctHeightEncoded + 4);
 
     opcodetype communityContribFlag = solvingRange.communityContrib ? OP_TRUE : OP_FALSE;
-    hiveProofScript << OP_RETURN << OP_BEE << beeNonceVec << bctHeightVec << communityContribFlag << txidVec << messageProofVec;
+    hiveProofScript << OP_RETURN << OP_MOUSE << mouseNonceVec << bctHeightVec << communityContribFlag << txidVec << messageProofVec;
 
-    // Create honey script from honey address
-    CScript honeyScript = GetScriptForDestination(DecodeDestination(solvingRange.honeyAddress));
+    // Create cheese script from cheese address
+    CScript cheeseScript = GetScriptForDestination(DecodeDestination(solvingRange.cheeseAddress));
 
-    // Create a Hive block
-    std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(honeyScript, true, &hiveProofScript));
+    // Create a Labyrinth block
+    std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler(Params()).CreateNewBlock(cheeseScript, true, &hiveProofScript));
     if (!pblocktemplate.get()) {
-        LogPrintf("BusyBees: Couldn't create block\n");
+        LogPrintf("BusyMice: Couldn't create block\n");
         return false;
     }
     CBlock *pblock = &pblocktemplate->block;
@@ -1073,23 +1073,23 @@ bool BusyBees(const Consensus::Params& consensusParams, int height) {
     {
         LOCK(cs_main);
         if (pblock->hashPrevBlock != chainActive.Tip()->GetBlockHash()) {
-            LogPrintf("BusyBees: Generated block is stale.\n");
+            LogPrintf("BusyMice: Generated block is stale.\n");
             return false;
         }
     }
 
     if (verbose) {
-        LogPrintf("BusyBees: Block created:\n");
+        LogPrintf("BusyMice: Block created:\n");
         LogPrintf("%s",pblock->ToString());
     }
 
     // Commit and propagate the block
     std::shared_ptr<const CBlock> shared_pblock = std::make_shared<const CBlock>(*pblock);
     if (!ProcessNewBlock(Params(), shared_pblock, true, nullptr)) {
-        LogPrintf("BusyBees: Block wasn't accepted\n");
+        LogPrintf("BusyMice: Block wasn't accepted\n");
         return false;
     }
 
-    LogPrintf("BusyBees: ** Block mined\n");
+    LogPrintf("BusyMice: ** Block mined\n");
     return true;
 }

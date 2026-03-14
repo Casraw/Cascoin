@@ -10,7 +10,7 @@
 #include <utilstrencodings.h>
 #include <crypto/common.h>
 #include <crypto/scrypt.h>
-#include <chainparams.h>    // Cascoin: Hive
+#include <chainparams.h>    // Cascoin: Labyrinth
 
 #include <crypto/minotaurx/minotaur.h>  // Cascoin: MinotaurX+Hive1.2
 #include <validation.h>                 // Cascoin: MinotaurX+Hive1.2
@@ -136,10 +136,10 @@ POW_TYPE CBlockHeader::GetEffectivePoWTypeForHashing(const Consensus::Params& co
 std::string CBlock::ToString() const
 {
     std::stringstream s;
-    // Cascoin: Hive: Include type
+    // Cascoin: Labyrinth: Include type
     bool isHive = IsHiveMined(Params().GetConsensus());
     s << strprintf("CBlock(type=%s, hash=%s, powHash=%s, powType=%s, ver=0x%08x, hashPrevBlock=%s, hashMerkleRoot=%s, nTime=%u, nBits=%08x, nNonce=%u, vtx=%u)\n",
-        isHive ? "hive" : "pow",
+        isHive ? "labyrinth" : "pow",
         GetHash().ToString(),
         GetPoWHash().ToString(),
         isHive ? "n/a" : GetPoWTypeName(),  // Cascoin: MinotaurX+Hive1.2: Include pow type name

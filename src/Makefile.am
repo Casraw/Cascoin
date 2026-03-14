@@ -177,7 +177,7 @@ BITCOIN_CORE_H = \
   zmq/zmqnotificationinterface.h \
   zmq/zmqpublishnotifier.h \
   rialto.h \
-  beenft.h \
+  mousenft.h \
   bctdb.h
 
 
@@ -231,7 +231,7 @@ libbitcoin_server_a_SOURCES = \
   validationinterface.cpp \
   versionbits.cpp \
   rialto.cpp \
-  beenft.cpp \
+  mousenft.cpp \
   bctdb.cpp \
   $(BITCOIN_CORE_H)
 
@@ -260,7 +260,7 @@ libbitcoin_wallet_a_SOURCES = \
   wallet/wallet.cpp \
   wallet/walletdb.cpp \
   wallet/walletutil.cpp \
-  beenft.cpp \
+  mousenft.cpp \
   $(BITCOIN_CORE_H)
 
 # crypto primitives library

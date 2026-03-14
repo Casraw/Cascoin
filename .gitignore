@@ -121,3 +121,5 @@ src/.vscode/
 just*.sh
 
 .kiro/
+.claude/
+codeberg_token

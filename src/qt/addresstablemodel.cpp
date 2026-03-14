@@ -429,7 +429,7 @@ QString AddressTableModel::labelForAddress(const QString &address) const
         if (mi != wallet->mapAddressBook.end())
         {
             QString label = QString::fromStdString(mi->second.name);
-            if (label == "Hivemined Honey")
+            if (label == "Labyrinth Cheese")
                 return QString("Found Cheese");
             return label;
         }

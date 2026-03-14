@@ -33,7 +33,7 @@ QT_BEGIN_NAMESPACE
 class QModelIndex;
 QT_END_NAMESPACE
 
-extern BeePopGraphPoint beePopGraph[1024*40];
+extern MousePopGraphPoint mousePopGraph[1024*40];
 
 class QCPAxisTickerGI : public QCPAxisTicker 
 {
@@ -77,7 +77,7 @@ public Q_SLOTS:
     void onBlocksChanged();  // Cascoin: Auto-update labyrinth when blocks change
 
 Q_SIGNALS:
-    void hiveStatusIconChanged(QString icon, QString tooltip);    
+    void labyrinthStatusIconChanged(QString icon, QString tooltip);
 
 private:
     Ui::HiveDialog *ui;
@@ -85,12 +85,12 @@ private:
     ClientModel *clientModel;
     WalletModel *model;
     const PlatformStyle *platformStyle;
-    CAmount beeCost, totalCost;
+    CAmount mouseCost, totalCost;
     int immature, mature, dead, blocksFound;
     CAmount rewardsPaid, cost, profit;
     CAmount potentialRewards;
     CAmount currentBalance;
-    double beePopIndex;
+    double mousePopIndex;
     int lastGlobalCheckHeight;
     virtual void resizeEvent(QResizeEvent *event);
     virtual void showEvent(QShowEvent *event);
@@ -112,9 +112,9 @@ private:
 
 private Q_SLOTS:
     void on_showHiveOptionsButton_clicked();    // Cascoin: Labyrinth: Mining optimisations: Shortcut to Labyrinth mining options
-    void on_createBeesButton_clicked();
-    void on_beeCountSpinner_valueChanged(int i);
-    void on_includeDeadBeesCheckbox_stateChanged();
+    void on_createMiceButton_clicked();
+    void on_mouseCountSpinner_valueChanged(int i);
+    void on_includeDeadMiceCheckbox_stateChanged();
     void onUpdateTimerTimeout();
     void onPeriodicRefresh();  // Cascoin: Periodic refresh for labyrinth
     void on_showAdvancedStatsCheckbox_stateChanged();

@@ -99,7 +99,7 @@ public:
         return (int64_t)nTime;
     }
 
-    // Cascoin: Hive: Check if this block is hivemined
+    // Cascoin: Labyrinth: Check if this block is labyrinth mined
     bool IsHiveMined(const Consensus::Params& consensusParams) const {
         return (nNonce == consensusParams.hiveNonceMarker);
     }

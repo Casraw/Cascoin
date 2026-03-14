@@ -49,9 +49,9 @@ public:
         DatabaseCache,          // int
         SpendZeroConfChange,    // bool
         Listen,                 // bool
-        HiveCheckDelay,         // Cascoin: Hive: Mining optimisations (int)
-        HiveCheckThreads,       // Cascoin: Hive: Mining optimisations (int)
-        HiveCheckEarlyOut,      // Cascoin: Hive: Mining optimisations (bool)
+        LabyrinthCheckDelay,         // Cascoin: Labyrinth: Mining optimisations (int)
+        LabyrinthCheckThreads,       // Cascoin: Labyrinth: Mining optimisations (int)
+        LabyrinthCheckEarlyOut,      // Cascoin: Labyrinth: Mining optimisations (bool)
         HiveContribCF,          // Cascoin: MinotaurX+Hive1.2
         ShowBCTView,            // Cascoin: Show/hide BCT NFT view (bool)
         OptionIDRowCount,

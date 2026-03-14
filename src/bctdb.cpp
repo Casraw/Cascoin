@@ -32,7 +32,7 @@ const int BCTDatabaseSQLite::SCHEMA_VERSION;
 
 // SQL column list for BCT queries (used in multiple places to avoid duplication)
 static const char* BCT_SELECT_COLUMNS = 
-    "txid, honey_address, status, bee_count, creation_height, "
+    "txid, cheese_address, status, mouse_count, creation_height, "
     "maturity_height, expiration_height, timestamp, cost, blocks_found, "
     "rewards_paid, profit, checksum, updated_at";
 
@@ -64,7 +64,7 @@ std::string BCTRecord::calculateChecksum() const {
     // Note: checksum is calculated from immutable fields only
     // updatedAt is excluded as it changes on every update
     std::stringstream ss;
-    ss << txid << honeyAddress << beeCount << creationHeight
+    ss << txid << cheeseAddress << mouseCount << creationHeight
        << maturityHeight << expirationHeight << timestamp << cost;
     
     std::string data = ss.str();
@@ -78,9 +78,9 @@ bool BCTRecord::validateChecksum() const {
 
 bool BCTRecord::operator==(const BCTRecord& other) const {
     return txid == other.txid &&
-           honeyAddress == other.honeyAddress &&
+           cheeseAddress == other.cheeseAddress &&
            status == other.status &&
-           beeCount == other.beeCount &&
+           mouseCount == other.mouseCount &&
            creationHeight == other.creationHeight &&
            maturityHeight == other.maturityHeight &&
            expirationHeight == other.expirationHeight &&
@@ -178,9 +178,9 @@ bool BCTDatabaseSQLite::createSchema() {
         -- BCT records
         CREATE TABLE IF NOT EXISTS bcts (
             txid TEXT PRIMARY KEY,
-            honey_address TEXT NOT NULL,
+            cheese_address TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'immature',
-            bee_count INTEGER NOT NULL,
+            mouse_count INTEGER NOT NULL,
             creation_height INTEGER NOT NULL,
             maturity_height INTEGER NOT NULL,
             expiration_height INTEGER NOT NULL,
@@ -196,7 +196,7 @@ bool BCTDatabaseSQLite::createSchema() {
         -- Indexes for fast queries
         CREATE INDEX IF NOT EXISTS idx_bcts_status ON bcts(status);
         CREATE INDEX IF NOT EXISTS idx_bcts_creation_height ON bcts(creation_height);
-        CREATE INDEX IF NOT EXISTS idx_bcts_honey_address ON bcts(honey_address);
+        CREATE INDEX IF NOT EXISTS idx_bcts_cheese_address ON bcts(cheese_address);
 
         -- Metadata for sync status
         CREATE TABLE IF NOT EXISTS sync_state (
@@ -333,7 +333,7 @@ bool BCTDatabaseSQLite::insertBCT(const BCTRecord& bct) {
     if (db == nullptr) return false;
 
     const char* sql = R"(
-        INSERT INTO bcts (txid, honey_address, status, bee_count, creation_height,
+        INSERT INTO bcts (txid, cheese_address, status, mouse_count, creation_height,
                          maturity_height, expiration_height, timestamp, cost,
                          blocks_found, rewards_paid, profit, checksum, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
@@ -350,9 +350,9 @@ bool BCTDatabaseSQLite::insertBCT(const BCTRecord& bct) {
     record.updatedAt = std::time(nullptr);
 
     sqlite3_bind_text(stmt, 1, record.txid.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(stmt, 2, record.honeyAddress.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, record.cheeseAddress.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 3, record.status.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 4, record.beeCount);
+    sqlite3_bind_int(stmt, 4, record.mouseCount);
     sqlite3_bind_int(stmt, 5, record.creationHeight);
     sqlite3_bind_int(stmt, 6, record.maturityHeight);
     sqlite3_bind_int(stmt, 7, record.expirationHeight);
@@ -383,7 +383,7 @@ bool BCTDatabaseSQLite::updateBCT(const std::string& txid, const BCTRecord& bct)
 
     const char* sql = R"(
         UPDATE bcts SET 
-            honey_address = ?, status = ?, bee_count = ?, creation_height = ?,
+            cheese_address = ?, status = ?, mouse_count = ?, creation_height = ?,
             maturity_height = ?, expiration_height = ?, timestamp = ?, cost = ?,
             blocks_found = ?, rewards_paid = ?, profit = ?, checksum = ?, updated_at = ?
         WHERE txid = ?;
@@ -399,9 +399,9 @@ bool BCTDatabaseSQLite::updateBCT(const std::string& txid, const BCTRecord& bct)
     record.checksum = record.calculateChecksum();
     record.updatedAt = std::time(nullptr);
 
-    sqlite3_bind_text(stmt, 1, record.honeyAddress.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 1, record.cheeseAddress.c_str(), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(stmt, 2, record.status.c_str(), -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(stmt, 3, record.beeCount);
+    sqlite3_bind_int(stmt, 3, record.mouseCount);
     sqlite3_bind_int(stmt, 4, record.creationHeight);
     sqlite3_bind_int(stmt, 5, record.maturityHeight);
     sqlite3_bind_int(stmt, 6, record.expirationHeight);
@@ -457,9 +457,9 @@ BCTRecord BCTDatabaseSQLite::recordFromStatement(sqlite3_stmt* stmt) {
     BCTRecord record;
     
     record.txid = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
-    record.honeyAddress = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    record.cheeseAddress = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
     record.status = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
-    record.beeCount = sqlite3_column_int(stmt, 3);
+    record.mouseCount = sqlite3_column_int(stmt, 3);
     record.creationHeight = sqlite3_column_int(stmt, 4);
     record.maturityHeight = sqlite3_column_int(stmt, 5);
     record.expirationHeight = sqlite3_column_int(stmt, 6);
@@ -582,14 +582,14 @@ BCTSummary BCTDatabaseSQLite::getSummary() {
             SUM(CASE WHEN status = 'immature' THEN 1 ELSE 0 END) as immature_count,
             SUM(CASE WHEN status = 'mature' THEN 1 ELSE 0 END) as mature_count,
             SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expired_count,
-            SUM(bee_count) as total_bees,
+            SUM(mouse_count) as total_mice,
             SUM(blocks_found) as total_blocks,
             SUM(cost) as total_cost,
             SUM(rewards_paid) as total_rewards,
             SUM(profit) as total_profit,
-            SUM(CASE WHEN status = 'immature' THEN bee_count ELSE 0 END) as immature_bees,
-            SUM(CASE WHEN status = 'mature' THEN bee_count ELSE 0 END) as mature_bees,
-            SUM(CASE WHEN status = 'expired' THEN bee_count ELSE 0 END) as expired_bees
+            SUM(CASE WHEN status = 'immature' THEN mouse_count ELSE 0 END) as immature_mice,
+            SUM(CASE WHEN status = 'mature' THEN mouse_count ELSE 0 END) as mature_mice,
+            SUM(CASE WHEN status = 'expired' THEN mouse_count ELSE 0 END) as expired_mice
         FROM bcts;
     )";
 
@@ -602,14 +602,14 @@ BCTSummary BCTDatabaseSQLite::getSummary() {
         summary.immatureCount = sqlite3_column_int(stmt, 0);
         summary.matureCount = sqlite3_column_int(stmt, 1);
         summary.expiredCount = sqlite3_column_int(stmt, 2);
-        summary.totalBeeCount = sqlite3_column_int(stmt, 3);
+        summary.totalMouseCount = sqlite3_column_int(stmt, 3);
         summary.blocksFound = sqlite3_column_int(stmt, 4);
         summary.totalCost = sqlite3_column_int64(stmt, 5);
         summary.totalRewards = sqlite3_column_int64(stmt, 6);
         summary.totalProfit = sqlite3_column_int64(stmt, 7);
-        summary.immatureBees = sqlite3_column_int(stmt, 8);
-        summary.matureBees = sqlite3_column_int(stmt, 9);
-        summary.expiredBees = sqlite3_column_int(stmt, 10);
+        summary.immatureMice = sqlite3_column_int(stmt, 8);
+        summary.matureMice = sqlite3_column_int(stmt, 9);
+        summary.expiredMice = sqlite3_column_int(stmt, 10);
     }
 
     sqlite3_finalize(stmt);
@@ -749,8 +749,8 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     }
     
     // Get BCT creation address script
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     beginTransaction();
     
@@ -782,39 +782,39 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
             continue;
         
         // Check if this is a BCT
-        CAmount beeFeePaid = 0;
-        CScript scriptPubKeyHoney;
+        CAmount mouseFeePaid = 0;
+        CScript scriptPubKeyCheese;
         
-        if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
-            // Extract honey address
-            CTxDestination honeyDestination;
-            if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
+        if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
+            // Extract cheese address
+            CTxDestination cheeseDestination;
+            if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                 continue;
             }
-            std::string honeyAddress = EncodeDestination(honeyDestination);
+            std::string cheeseAddress = EncodeDestination(cheeseDestination);
             
             // Check for community contribution
             if (wtx.tx->vout.size() > 1 && wtx.tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-                beeFeePaid += wtx.tx->vout[1].nValue;
+                mouseFeePaid += wtx.tx->vout[1].nValue;
             }
             
-            // Calculate bee count
-            CAmount beeCost = GetBeeCost(height, consensusParams);
-            int beeCount = beeCost > 0 ? beeFeePaid / beeCost : 0;
+            // Calculate mouse count
+            CAmount mouseCost = GetMouseCost(height, consensusParams);
+            int mouseCount = mouseCost > 0 ? mouseFeePaid / mouseCost : 0;
             
             // Create BCT record
             BCTRecord record;
             record.txid = wtx.GetHash().GetHex();
-            record.honeyAddress = honeyAddress;
-            record.beeCount = beeCount;
+            record.cheeseAddress = cheeseAddress;
+            record.mouseCount = mouseCount;
             record.creationHeight = height;
-            record.maturityHeight = height + consensusParams.beeGestationBlocks;
-            record.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+            record.maturityHeight = height + consensusParams.mouseGestationBlocks;
+            record.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
             record.timestamp = wtx.GetTxTime();
-            record.cost = beeFeePaid;
+            record.cost = mouseFeePaid;
             record.blocksFound = 0;
             record.rewardsPaid = 0;
-            record.profit = -beeFeePaid;
+            record.profit = -mouseFeePaid;
             
             // Update status based on current height
             record.updateStatus(currentHeight);
@@ -833,7 +833,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     // Commit BCT inserts before scanning for rewards
     commitTransaction();
     
-    // Now scan for Hive coinbase transactions to get rewards
+    // Now scan for Labyrinth coinbase transactions to get rewards
     std::set<std::string> myBctIds;
     {
         auto allBcts = getAllBCTs(true);
@@ -847,7 +847,7 @@ int BCTDatabaseSQLite::rescanFromWallet(CWallet* pwallet, int startHeight, int s
     // Start new transaction for reward updates
     beginTransaction();
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap;
     
     for (const auto& item : pwallet->mapWallet) {
@@ -919,8 +919,8 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
     const Consensus::Params& consensusParams = Params().GetConsensus();
     
     // Get BCT creation address script
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     int bctCount = 0;
     
@@ -947,40 +947,40 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
             
             // Scan transactions in this block
             for (const auto& tx : block.vtx) {
-                // Check if this is a BCT (Bee Creation Transaction)
-                CAmount beeFeePaid = 0;
-                CScript scriptPubKeyHoney;
+                // Check if this is a BCT (Mouse Creation Transaction)
+                CAmount mouseFeePaid = 0;
+                CScript scriptPubKeyCheese;
                 
-                if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
-                    // Extract honey address
-                    CTxDestination honeyDestination;
-                    if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
+                if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
+                    // Extract cheese address
+                    CTxDestination cheeseDestination;
+                    if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                         continue;
                     }
-                    std::string honeyAddress = EncodeDestination(honeyDestination);
+                    std::string cheeseAddress = EncodeDestination(cheeseDestination);
                     
                     // Check for community contribution
                     if (tx->vout.size() > 1 && tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-                        beeFeePaid += tx->vout[1].nValue;
+                        mouseFeePaid += tx->vout[1].nValue;
                     }
                     
-                    // Calculate bee count
-                    CAmount beeCost = GetBeeCost(height, consensusParams);
-                    int beeCount = beeCost > 0 ? beeFeePaid / beeCost : 0;
+                    // Calculate mouse count
+                    CAmount mouseCost = GetMouseCost(height, consensusParams);
+                    int mouseCount = mouseCost > 0 ? mouseFeePaid / mouseCost : 0;
                     
                     // Create BCT record
                     BCTRecord record;
                     record.txid = tx->GetHash().GetHex();
-                    record.honeyAddress = honeyAddress;
-                    record.beeCount = beeCount;
+                    record.cheeseAddress = cheeseAddress;
+                    record.mouseCount = mouseCount;
                     record.creationHeight = height;
-                    record.maturityHeight = height + consensusParams.beeGestationBlocks;
-                    record.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+                    record.maturityHeight = height + consensusParams.mouseGestationBlocks;
+                    record.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
                     record.timestamp = pindex->GetBlockTime();
-                    record.cost = beeFeePaid;
+                    record.cost = mouseFeePaid;
                     record.blocksFound = 0;
                     record.rewardsPaid = 0;
-                    record.profit = -beeFeePaid;
+                    record.profit = -mouseFeePaid;
                     
                     // Update status based on current chain height
                     record.updateStatus(stopHeight);
@@ -992,8 +992,8 @@ int BCTDatabaseSQLite::rescanFromHeight(int startHeight, int stopHeight) {
                     }
                 }
                 
-                // Check if this is a Hive coinbase (reward transaction)
-                // Must be coinbase with OP_RETURN OP_BEE marker
+                // Check if this is a Labyrinth coinbase (reward transaction)
+                // Must be coinbase with OP_RETURN OP_MOUSE marker
                 if (tx->IsHiveCoinBase() && tx->vout[0].scriptPubKey.size() >= 78) {
                     // Extract BCT txid from the proof script (bytes 14-78 contain the 64-char hex txid)
                     std::vector<unsigned char> bctTxidBytes(&tx->vout[0].scriptPubKey[14], 
@@ -1189,8 +1189,8 @@ bool BCTDatabaseSQLite::migrateFromJSON(const std::string& jsonPath) {
         
         record.txid = extractString("txid");
         record.status = extractString("status");
-        record.honeyAddress = extractString("honey_address");
-        record.beeCount = extractInt("total_mice");
+        record.cheeseAddress = extractString("cheese_address");
+        record.mouseCount = extractInt("total_mice");
         record.blocksFound = extractInt("blocks_found");
         record.timestamp = extractInt64("timestamp");
         record.cost = extractInt64("cost");
@@ -1280,8 +1280,8 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     int currentHeight = chainActive.Height();
     
     // Get BCT creation address script
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
     
     beginTransaction();
     
@@ -1303,20 +1303,20 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
             continue;
         
         // Check if this is a BCT
-        CAmount beeFeePaid = 0;
-        CScript scriptPubKeyHoney;
+        CAmount mouseFeePaid = 0;
+        CScript scriptPubKeyCheese;
         
-        if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
-            // Extract honey address
-            CTxDestination honeyDestination;
-            if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
+        if (wtx.tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
+            // Extract cheese address
+            CTxDestination cheeseDestination;
+            if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                 continue;
             }
-            std::string honeyAddress = EncodeDestination(honeyDestination);
+            std::string cheeseAddress = EncodeDestination(cheeseDestination);
             
             // Check for community contribution
             if (wtx.tx->vout.size() > 1 && wtx.tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-                beeFeePaid += wtx.tx->vout[1].nValue;
+                mouseFeePaid += wtx.tx->vout[1].nValue;
             }
             
             // Get block height
@@ -1328,23 +1328,23 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
                 }
             }
             
-            // Calculate bee count
-            CAmount beeCost = GetBeeCost(height, consensusParams);
-            int beeCount = beeCost > 0 ? beeFeePaid / beeCost : 0;
+            // Calculate mouse count
+            CAmount mouseCost = GetMouseCost(height, consensusParams);
+            int mouseCount = mouseCost > 0 ? mouseFeePaid / mouseCost : 0;
             
             // Create BCT record
             BCTRecord record;
             record.txid = wtx.GetHash().GetHex();
-            record.honeyAddress = honeyAddress;
-            record.beeCount = beeCount;
+            record.cheeseAddress = cheeseAddress;
+            record.mouseCount = mouseCount;
             record.creationHeight = height;
-            record.maturityHeight = height + consensusParams.beeGestationBlocks;
-            record.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+            record.maturityHeight = height + consensusParams.mouseGestationBlocks;
+            record.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
             record.timestamp = wtx.GetTxTime();
-            record.cost = beeFeePaid;
+            record.cost = mouseFeePaid;
             record.blocksFound = 0;
             record.rewardsPaid = 0;
-            record.profit = -beeFeePaid;
+            record.profit = -mouseFeePaid;
             
             // Update status based on current height
             record.updateStatus(currentHeight);
@@ -1364,7 +1364,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     // This ensures getAllBCTs() can find the newly inserted BCTs
     commitTransaction();
     
-    // Now scan for Hive coinbase transactions to get rewards
+    // Now scan for Labyrinth coinbase transactions to get rewards
     // Build a set of our BCT txids for quick lookup
     std::set<std::string> myBctIds;
     {
@@ -1379,17 +1379,17 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
     // Start new transaction for reward updates
     beginTransaction();
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
     
-    int hiveCoinbaseCount = 0;
+    int labyrinthCoinbaseCount = 0;
     for (const auto& item : pwallet->mapWallet) {
         const CWalletTx& wtx = item.second;
         
-        // Only process hive coinbase transactions
+        // Only process labyrinth coinbase transactions
         if (!wtx.IsHiveCoinBase()) continue;
         
-        hiveCoinbaseCount++;
+        labyrinthCoinbaseCount++;
         
         // Skip unconfirmed transactions
         if (wtx.GetDepthInMainChain() < 1) continue;
@@ -1414,7 +1414,7 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
                 // Log first few misses for debugging
                 static int missCount = 0;
                 if (missCount++ < 5) {
-                    LogPrintf("BCTDatabase: Hive coinbase %s references BCT %s which is not in our set\n", 
+                    LogPrintf("BCTDatabase: Labyrinth coinbase %s references BCT %s which is not in our set\n",
                               wtx.GetHash().GetHex(), blockTxidStr);
                 }
                 continue;
@@ -1431,8 +1431,8 @@ bool BCTDatabaseSQLite::performInitialScan(CWallet* pwallet) {
         }
     }
     
-    LogPrintf("BCTDatabase: Scanned %d hive coinbase transactions, found %zu with matching BCTs\n", 
-              hiveCoinbaseCount, rewardsMap.size());
+    LogPrintf("BCTDatabase: Scanned %d labyrinth coinbase transactions, found %zu with matching BCTs\n",
+              labyrinthCoinbaseCount, rewardsMap.size());
     
     // Update BCT records with rewards
     int rewardsUpdated = 0;
@@ -1601,7 +1601,7 @@ int BCTDatabaseSQLite::validateWalletOwnership(CWallet* pwallet) {
     LOCK(pwallet->cs_wallet);
     
     const Consensus::Params& consensusParams = Params().GetConsensus();
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
     
     auto allRecords = getAllBCTs(true);
     int foreignCount = 0;
@@ -1680,17 +1680,17 @@ void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
     
     LogPrintf("BCTDatabase: Scanning rewards for %zu BCTs\n", myBctIds.size());
     
-    // Build rewards map from Hive coinbase transactions
+    // Build rewards map from Labyrinth coinbase transactions
     std::map<std::string, std::pair<int, CAmount>> rewardsMap; // txid -> (blocksFound, rewardsPaid)
     
-    int hiveCoinbaseCount = 0;
+    int labyrinthCoinbaseCount = 0;
     for (const auto& item : pwallet->mapWallet) {
         const CWalletTx& wtx = item.second;
         
-        // Only process hive coinbase transactions
+        // Only process labyrinth coinbase transactions
         if (!wtx.IsHiveCoinBase()) continue;
         
-        hiveCoinbaseCount++;
+        labyrinthCoinbaseCount++;
         
         // Skip unconfirmed transactions
         if (wtx.GetDepthInMainChain() < 1) continue;
@@ -1719,8 +1719,8 @@ void BCTDatabaseSQLite::rescanRewardsOnly(CWallet* pwallet) {
         }
     }
     
-    LogPrintf("BCTDatabase: Found %d hive coinbase transactions, %zu match our BCTs\n", 
-              hiveCoinbaseCount, rewardsMap.size());
+    LogPrintf("BCTDatabase: Found %d labyrinth coinbase transactions, %zu match our BCTs\n", 
+              labyrinthCoinbaseCount, rewardsMap.size());
     
     // Update BCT records with rewards
     beginTransaction();
@@ -1883,8 +1883,8 @@ void BCTDatabaseSQLite::updateAllStatuses(int currentHeight) {
 
     // Get consensus params for maturity/expiration calculations
     const Consensus::Params& consensusParams = Params().GetConsensus();
-    int gestationBlocks = consensusParams.beeGestationBlocks;
-    int lifespanBlocks = consensusParams.beeLifespanBlocks;
+    int gestationBlocks = consensusParams.mouseGestationBlocks;
+    int lifespanBlocks = consensusParams.mouseLifespanBlocks;
 
     // Update immature -> mature
     // Only update records with valid heights (creation_height > 0)
@@ -1922,8 +1922,8 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
     LogPrintf("BCTDatabase: Processing block %d for BCT updates\n", height);
 
     // Get the BCT creation address script
-    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.beeCreationAddress));
-    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.hiveCommunityAddress));
+    CScript scriptPubKeyBCF = GetScriptForDestination(DecodeDestination(consensusParams.mouseCreationAddress));
+    CScript scriptPubKeyCF = GetScriptForDestination(DecodeDestination(consensusParams.labyrinthCommunityAddress));
 
     // Begin transaction for atomicity
     beginTransaction();
@@ -1931,11 +1931,11 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
     try {
         // Scan transactions in this block
         for (const auto& tx : block.vtx) {
-            // Check if this is a BCT (Bee Creation Transaction)
-            CAmount beeFeePaid = 0;
-            CScript scriptPubKeyHoney;
+            // Check if this is a BCT (Mouse Creation Transaction)
+            CAmount mouseFeePaid = 0;
+            CScript scriptPubKeyCheese;
             
-            if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &beeFeePaid, &scriptPubKeyHoney)) {
+            if (tx->IsBCT(consensusParams, scriptPubKeyBCF, &mouseFeePaid, &scriptPubKeyCheese)) {
 #ifdef ENABLE_WALLET
                 // CRITICAL: Only include BCTs that belong to our wallet
                 // Check if this transaction is in our wallet and we created it
@@ -1952,55 +1952,55 @@ void BCTDatabaseSQLite::processBlock(const CBlock& block, const CBlockIndex* pin
                     }
                 }
 #endif
-                // Extract honey address
-                CTxDestination honeyDestination;
-                if (!ExtractDestination(scriptPubKeyHoney, honeyDestination)) {
+                // Extract cheese address
+                CTxDestination cheeseDestination;
+                if (!ExtractDestination(scriptPubKeyCheese, cheeseDestination)) {
                     LogPrintf("BCTDatabase: Couldn't extract destination from BCT %s\n", tx->GetHash().GetHex());
                     continue;
                 }
-                std::string honeyAddress = EncodeDestination(honeyDestination);
+                std::string cheeseAddress = EncodeDestination(cheeseDestination);
 
                 // Check for community contribution
                 if (tx->vout.size() > 1 && tx->vout[1].scriptPubKey == scriptPubKeyCF) {
-                    beeFeePaid += tx->vout[1].nValue;
+                    mouseFeePaid += tx->vout[1].nValue;
                 }
 
-                // Calculate bee count
-                CAmount beeCost = GetBeeCost(height, consensusParams);
-                int beeCount = beeFeePaid / beeCost;
+                // Calculate mouse count
+                CAmount mouseCost = GetMouseCost(height, consensusParams);
+                int mouseCount = mouseFeePaid / mouseCost;
 
                 // Create BCT record
                 BCTRecord record;
                 record.txid = tx->GetHash().GetHex();
-                record.honeyAddress = honeyAddress;
+                record.cheeseAddress = cheeseAddress;
                 record.status = "immature";
-                record.beeCount = beeCount;
+                record.mouseCount = mouseCount;
                 record.creationHeight = height;
-                record.maturityHeight = height + consensusParams.beeGestationBlocks;
-                record.expirationHeight = height + consensusParams.beeGestationBlocks + consensusParams.beeLifespanBlocks;
+                record.maturityHeight = height + consensusParams.mouseGestationBlocks;
+                record.expirationHeight = height + consensusParams.mouseGestationBlocks + consensusParams.mouseLifespanBlocks;
                 record.timestamp = pindex->GetBlockTime();
-                record.cost = beeFeePaid;
+                record.cost = mouseFeePaid;
                 record.blocksFound = 0;
                 record.rewardsPaid = 0;
-                record.profit = -beeFeePaid;
+                record.profit = -mouseFeePaid;
 
                 // Insert or update the record
                 if (!bctExists(record.txid)) {
                     insertBCT(record);
-                    LogPrintf("BCTDatabase: Added new BCT %s with %d bees at height %d\n", 
-                             record.txid, beeCount, height);
+                    LogPrintf("BCTDatabase: Added new BCT %s with %d mice at height %d\n", 
+                             record.txid, mouseCount, height);
                 }
             }
 
-            // Check if this is a Hive coinbase (reward transaction)
-            // Must be coinbase with OP_RETURN OP_BEE marker
+            // Check if this is a Labyrinth coinbase (reward transaction)
+            // Must be coinbase with OP_RETURN OP_MOUSE marker
             if (tx->IsHiveCoinBase() && tx->vout[0].scriptPubKey.size() >= 78) {
                 // Extract BCT txid from the proof script (bytes 14-78 contain the 64-char hex txid)
                 std::vector<unsigned char> bctTxidBytes(&tx->vout[0].scriptPubKey[14], 
                                                         &tx->vout[0].scriptPubKey[14 + 64]);
                 std::string bctTxid(bctTxidBytes.begin(), bctTxidBytes.end());
 
-                LogPrintf("BCTDatabase: Found Hive coinbase at height %d, BCT txid: %s\n", height, bctTxid);
+                LogPrintf("BCTDatabase: Found Labyrinth coinbase at height %d, BCT txid: %s\n", height, bctTxid);
 
                 // Check if this BCT exists in our database
                 if (bctExists(bctTxid)) {
