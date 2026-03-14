@@ -540,6 +540,7 @@ std::string HelpMessage(HelpMessageMode mode)
 std::string LicenseInfo()
 {
     const std::string URL_SOURCE_CODE = "<https://github.com/cascoin-project/cascoin>";
+    const std::string URL_SOURCE_CODE_CODEBERG = "<https://codeberg.org/Cascoin/Cascoin>";
     const std::string URL_WEBSITE = "<https://cascoin.net>";
 
     return CopyrightHolders(strprintf(_("Copyright (C) %i-%i"), 2011, COPYRIGHT_YEAR) + " ") + "\n" +
@@ -550,6 +551,9 @@ std::string LicenseInfo()
            "\n" +
            strprintf(_("The source code is available from %s."),
                URL_SOURCE_CODE) +
+           "\n" +
+           strprintf(_("Also available on Codeberg: %s."),
+               URL_SOURCE_CODE_CODEBERG) +
            "\n" +
            "\n" +
            _("This is experimental software.") + "\n" +
