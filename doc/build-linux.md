@@ -41,7 +41,7 @@ Build Steps
 ### Ubuntu / Debian (general)
 
 ```bash
-cd /pfad/zu/Cascoin
+cd /path/to/Cascoin
 ./autogen.sh
 
 ./configure \
@@ -64,7 +64,7 @@ make -j"$(nproc)"
 On Debian 13, the Qt6 translation tools (`lrelease`, `lupdate`) are located in `/usr/lib/qt6/bin/` instead of `/usr/lib/qt6/libexec/`:
 
 ```bash
-cd /pfad/zu/Cascoin
+cd /path/to/Cascoin
 ./autogen.sh
 
 ./configure \
