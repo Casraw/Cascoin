@@ -47,9 +47,9 @@ std::string RandomHexString(std::mt19937& gen, size_t length) {
 void VerifyBCTRecordFieldsMatch(const BCTRecord& expected, const BCTRecord& actual, const std::string& context = "") {
     std::string ctx = context.empty() ? "" : " (" + context + ")";
     BOOST_CHECK_EQUAL(expected.txid, actual.txid);
-    BOOST_CHECK_EQUAL(expected.honeyAddress, actual.honeyAddress);
+    BOOST_CHECK_EQUAL(expected.cheeseAddress, actual.cheeseAddress);
     BOOST_CHECK_EQUAL(expected.status, actual.status);
-    BOOST_CHECK_EQUAL(expected.beeCount, actual.beeCount);
+    BOOST_CHECK_EQUAL(expected.mouseCount, actual.mouseCount);
     BOOST_CHECK_EQUAL(expected.creationHeight, actual.creationHeight);
     BOOST_CHECK_EQUAL(expected.maturityHeight, actual.maturityHeight);
     BOOST_CHECK_EQUAL(expected.expirationHeight, actual.expirationHeight);
@@ -67,8 +67,8 @@ BCTRecord GenerateRandomBCTRecord(std::mt19937& gen) {
     // Generate random txid (64 hex chars)
     record.txid = RandomHexString(gen, 64);
     
-    // Generate random honey address
-    record.honeyAddress = "C" + RandomString(gen, 33);
+    // Generate random cheese address
+    record.cheeseAddress = "C" + RandomString(gen, 33);
     
     // Random status
     std::uniform_int_distribution<> statusDist(0, 2);
@@ -76,8 +76,8 @@ BCTRecord GenerateRandomBCTRecord(std::mt19937& gen) {
     record.status = statuses[statusDist(gen)];
     
     // Random numeric values
-    std::uniform_int_distribution<> beeCountDist(1, 100);
-    record.beeCount = beeCountDist(gen);
+    std::uniform_int_distribution<> mouseCountDist(1, 100);
+    record.mouseCount = mouseCountDist(gen);
     
     std::uniform_int_distribution<> heightDist(1, 1000000);
     record.creationHeight = heightDist(gen);
@@ -196,9 +196,9 @@ BOOST_AUTO_TEST_CASE(crud_operations)
     // Create a test record
     BCTRecord record;
     record.txid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    record.honeyAddress = "CTestAddress123456789012345678901234";
+    record.cheeseAddress = "CTestAddress123456789012345678901234";
     record.status = "immature";
-    record.beeCount = 10;
+    record.mouseCount = 10;
     record.creationHeight = 100000;
     record.maturityHeight = 100100;
     record.expirationHeight = 110100;
@@ -215,7 +215,7 @@ BOOST_AUTO_TEST_CASE(crud_operations)
     // Test read
     BCTRecord retrieved = db->getBCT(record.txid);
     BOOST_CHECK_EQUAL(record.txid, retrieved.txid);
-    BOOST_CHECK_EQUAL(record.honeyAddress, retrieved.honeyAddress);
+    BOOST_CHECK_EQUAL(record.cheeseAddress, retrieved.cheeseAddress);
     
     // Test update
     record.status = "mature";
@@ -249,9 +249,9 @@ BOOST_AUTO_TEST_CASE(query_operations)
     for (int i = 0; i < 9; ++i) {
         BCTRecord record;
         record.txid = std::string(64, '0' + i);
-        record.honeyAddress = "CTestAddress" + std::to_string(i);
+        record.cheeseAddress = "CTestAddress" + std::to_string(i);
         record.status = statuses[i % 3];
-        record.beeCount = i + 1;
+        record.mouseCount = i + 1;
         record.creationHeight = 100000 + i * 100;
         record.maturityHeight = record.creationHeight + 100;
         record.expirationHeight = record.maturityHeight + 10000;
@@ -288,11 +288,11 @@ BOOST_AUTO_TEST_CASE(query_operations)
     BOOST_CHECK_EQUAL(3, summary.immatureCount);
     BOOST_CHECK_EQUAL(3, summary.matureCount);
     BOOST_CHECK_EQUAL(3, summary.expiredCount);
-    BOOST_CHECK_EQUAL(45, summary.totalBeeCount); // 1+2+3+4+5+6+7+8+9
+    BOOST_CHECK_EQUAL(45, summary.totalMouseCount); // 1+2+3+4+5+6+7+8+9
     // Mice counts per status: immature(0,3,6)=1+4+7=12, mature(1,4,7)=2+5+8=15, expired(2,5,8)=3+6+9=18
-    BOOST_CHECK_EQUAL(12, summary.immatureBees);
-    BOOST_CHECK_EQUAL(15, summary.matureBees);
-    BOOST_CHECK_EQUAL(18, summary.expiredBees);
+    BOOST_CHECK_EQUAL(12, summary.immatureMice);
+    BOOST_CHECK_EQUAL(15, summary.matureMice);
+    BOOST_CHECK_EQUAL(18, summary.expiredMice);
     
     // Clean up
     for (const auto& record : records) {
@@ -331,9 +331,9 @@ BOOST_AUTO_TEST_CASE(reward_tracking)
     // Create a BCT record first
     BCTRecord record;
     record.txid = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-    record.honeyAddress = "CTestRewardAddress";
+    record.cheeseAddress = "CTestRewardAddress";
     record.status = "mature";
-    record.beeCount = 10;
+    record.mouseCount = 10;
     record.creationHeight = 100000;
     record.maturityHeight = 100100;
     record.expirationHeight = 110100;
@@ -552,9 +552,9 @@ BOOST_AUTO_TEST_CASE(bctrecord_helpers)
 {
     BCTRecord record;
     record.txid = "test";
-    record.honeyAddress = "CTest";
+    record.cheeseAddress = "CTest";
     record.status = "immature";
-    record.beeCount = 10;
+    record.mouseCount = 10;
     record.creationHeight = 100000;
     record.maturityHeight = 100100;
     record.expirationHeight = 110100;
@@ -585,7 +585,7 @@ BOOST_AUTO_TEST_CASE(bctrecord_helpers)
     BOOST_CHECK(record.validateChecksum());
     
     // Modify a field and verify checksum fails
-    record.beeCount = 20;
+    record.mouseCount = 20;
     BOOST_CHECK(!record.validateChecksum());
 }
 
@@ -727,7 +727,7 @@ BOOST_AUTO_TEST_CASE(property_transaction_atomicity)
         BCTRecord originalFirst = db->getBCT(batch[0].txid);
         BCTRecord duplicateRecord = batch[0];
         duplicateRecord.status = "expired";  // Try to change status via duplicate insert
-        duplicateRecord.beeCount = 9999;
+        duplicateRecord.mouseCount = 9999;
         
         // This should fail (duplicate primary key)
         bool duplicateInsertResult = db->insertBCT(duplicateRecord);
@@ -737,8 +737,8 @@ BOOST_AUTO_TEST_CASE(property_transaction_atomicity)
         // Original record should be unchanged after failed duplicate insert
         BCTRecord afterFailedInsert = db->getBCT(batch[0].txid);
         BOOST_CHECK_EQUAL(originalFirst.status, afterFailedInsert.status);
-        BOOST_CHECK_EQUAL(originalFirst.beeCount, afterFailedInsert.beeCount);
-        BOOST_CHECK_EQUAL(originalFirst.honeyAddress, afterFailedInsert.honeyAddress);
+        BOOST_CHECK_EQUAL(originalFirst.mouseCount, afterFailedInsert.mouseCount);
+        BOOST_CHECK_EQUAL(originalFirst.cheeseAddress, afterFailedInsert.cheeseAddress);
         BOOST_CHECK_EQUAL(originalFirst.creationHeight, afterFailedInsert.creationHeight);
         
         // Test 3: Verify update atomicity - all fields change together or none
@@ -761,8 +761,8 @@ BOOST_AUTO_TEST_CASE(property_transaction_atomicity)
         BOOST_CHECK_EQUAL(999999, retrieved.rewardsPaid);
         BOOST_CHECK_EQUAL(updated.profit, retrieved.profit);
         // Unchanged fields should remain the same
-        BOOST_CHECK_EQUAL(originalRecord.honeyAddress, retrieved.honeyAddress);
-        BOOST_CHECK_EQUAL(originalRecord.beeCount, retrieved.beeCount);
+        BOOST_CHECK_EQUAL(originalRecord.cheeseAddress, retrieved.cheeseAddress);
+        BOOST_CHECK_EQUAL(originalRecord.mouseCount, retrieved.mouseCount);
         BOOST_CHECK_EQUAL(originalRecord.creationHeight, retrieved.creationHeight);
         
         // Test 4: Verify update to non-existent record doesn't create partial data
@@ -807,9 +807,9 @@ BOOST_AUTO_TEST_CASE(reorg_handling)
     for (int i = 0; i < 10; ++i) {
         BCTRecord record;
         record.txid = std::string(64, '0' + i);
-        record.honeyAddress = "CTestAddress" + std::to_string(i);
+        record.cheeseAddress = "CTestAddress" + std::to_string(i);
         record.status = "immature";
-        record.beeCount = i + 1;
+        record.mouseCount = i + 1;
         record.creationHeight = 100000 + i * 100;  // Heights: 100000, 100100, 100200, ...
         record.maturityHeight = record.creationHeight + 100;
         record.expirationHeight = record.maturityHeight + 10000;

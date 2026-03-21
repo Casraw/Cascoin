@@ -14,8 +14,8 @@
 #include <qt/transactionfilterproxy.h>
 #include <qt/transactiontablemodel.h>
 #include <qt/walletmodel.h>
-#include <qt/hivetablemodel.h>  // Cascoin: Labyrinth
-#include <qt/hivedialog.h>      // Cascoin: Labyrinth: For formatLargeNoLocale()
+#include <qt/labyrinthtablemodel.h>  // Cascoin: Labyrinth
+#include <qt/labyrinthdialog.h>      // Cascoin: Labyrinth: For formatLargeNoLocale()
 #include <bctdb.h>              // Cascoin: Labyrinth: For BCTDatabaseSQLite summary
 
 #include <QAbstractItemDelegate>
@@ -260,7 +260,7 @@ void OverviewPage::setWalletModel(WalletModel *model)
         connect(model, SIGNAL(notifyWatchonlyChanged(bool)), this, SLOT(updateWatchOnlyLabels(bool)));
 
         // Cascoin: Labyrinth: Connect summary updater
-        connect(model, SIGNAL(newHiveSummaryAvailable()), this, SLOT(updateHiveSummary()));
+        connect(model, SIGNAL(newLabyrinthSummaryAvailable()), this, SLOT(updateLabyrinthSummary()));
 
         // Cascoin: Rialto: Connect wallet unlock button
         if (model->getEncryptionStatus() != WalletModel::Locked)
@@ -273,10 +273,10 @@ void OverviewPage::setWalletModel(WalletModel *model)
 }
 
 // Cascoin: Labyrinth: Update The Labyrinth summary
-void OverviewPage::updateHiveSummary() {
-    if (walletModel && walletModel->getHiveTableModel()) {
+void OverviewPage::updateLabyrinthSummary() {
+    if (walletModel && walletModel->getLabyrinthTableModel()) {
         int immature, mature, dead, blocksFound;
-        walletModel->getHiveTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
+        walletModel->getLabyrinthTableModel()->getSummaryValues(immature, mature, dead, blocksFound, cost, rewardsPaid, profit);
 
         // Use database summary for totals that include expired BCTs
         // The table model may filter out expired BCTs, missing their rewards/blocks
@@ -287,9 +287,9 @@ void OverviewPage::updateHiveSummary() {
             rewardsPaid = dbSummary.totalRewards;
             cost = dbSummary.totalCost;
             profit = dbSummary.totalProfit;
-            immature = dbSummary.immatureBees;
-            mature = dbSummary.matureBees;
-            dead = dbSummary.expiredBees;
+            immature = dbSummary.immatureMice;
+            mature = dbSummary.matureMice;
+            dead = dbSummary.expiredMice;
         }
 
         ui->rewardsPaidLabel->setText(
@@ -309,11 +309,11 @@ void OverviewPage::updateHiveSummary() {
         );
         // Update the single mice status label with clean formatting using proper terminology
         QString miceText = QString("(%1 resting mice, %2 adventure mice")
-            .arg(HiveDialog::formatLargeNoLocale(immature))
-            .arg(HiveDialog::formatLargeNoLocale(mature));
+            .arg(LabyrinthDialog::formatLargeNoLocale(immature))
+            .arg(LabyrinthDialog::formatLargeNoLocale(mature));
         
         if (dead > 0) {
-            miceText += QString(", %1 deceased").arg(HiveDialog::formatLargeNoLocale(dead));
+            miceText += QString(", %1 deceased").arg(LabyrinthDialog::formatLargeNoLocale(dead));
         }
         miceText += ")";
         
@@ -321,7 +321,7 @@ void OverviewPage::updateHiveSummary() {
         
         // Update the blocks found status label with proper terminology
         QString blocksText = QString("(%1 cheese blocks found in labyrinth)")
-            .arg(HiveDialog::formatLargeNoLocale(blocksFound));
+            .arg(LabyrinthDialog::formatLargeNoLocale(blocksFound));
         ui->blocksFoundStatusLabel->setText(blocksText);
     }
 }
@@ -371,8 +371,8 @@ void OverviewPage::showOutOfSyncWarning(bool fShow)
 }
 
 // Cascoin: Labyrinth: Handle mice button click
-void OverviewPage::on_beeButton_clicked() {
-    Q_EMIT beeButtonClicked();
+void OverviewPage::on_mouseButton_clicked() {
+    Q_EMIT mouseButtonClicked();
 }
 
 // Cascoin: Rialto: Handle unlock wallet button click

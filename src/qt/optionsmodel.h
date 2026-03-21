@@ -49,10 +49,10 @@ public:
         DatabaseCache,          // int
         SpendZeroConfChange,    // bool
         Listen,                 // bool
-        HiveCheckDelay,         // Cascoin: Hive: Mining optimisations (int)
-        HiveCheckThreads,       // Cascoin: Hive: Mining optimisations (int)
-        HiveCheckEarlyOut,      // Cascoin: Hive: Mining optimisations (bool)
-        HiveContribCF,          // Cascoin: MinotaurX+Hive1.2
+        LabyrinthCheckDelay,         // Cascoin: Labyrinth: Mining optimisations (int)
+        LabyrinthCheckThreads,       // Cascoin: Labyrinth: Mining optimisations (int)
+        LabyrinthCheckEarlyOut,      // Cascoin: Labyrinth: Mining optimisations (bool)
+        LabyrinthContribCF,          // Cascoin: MinotaurX+Labyrinth1.2
         ShowBCTView,            // Cascoin: Show/hide BCT NFT view (bool)
         OptionIDRowCount,
     };
@@ -75,7 +75,7 @@ public:
     bool getProxySettings(QNetworkProxy& proxy) const;
     bool getCoinControlFeatures() const { return fCoinControlFeatures; }
     const QString& getOverriddenByCommandLine() { return strOverriddenByCommandLine; }
-    bool getHiveContribCF() const { return fHiveContribCF; }    // Cascoin: MinotaurX+Hive1.2
+    bool getLabyrinthContribCF() const { return fLabyrinthContribCF; }    // Cascoin: MinotaurX+Labyrinth1.2
     bool getShowBCTView() const { return fShowBCTView; }       // Cascoin: BCT view toggle
 
     /* Restart flag helper */
@@ -87,7 +87,7 @@ private:
     bool fHideTrayIcon;
     bool fMinimizeToTray;
     bool fMinimizeOnClose;
-    bool fHiveContribCF;    // Cascoin: MinotaurX+Hive1.2
+    bool fLabyrinthContribCF;    // Cascoin: MinotaurX+Labyrinth1.2
     bool fShowBCTView;      // Cascoin: BCT view toggle
 
     QString language;

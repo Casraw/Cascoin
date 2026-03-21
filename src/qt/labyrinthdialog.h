@@ -4,8 +4,8 @@
 
 // Cascoin: Labyrinth
 
-#ifndef BITCOIN_QT_HIVEDIALOG_H
-#define BITCOIN_QT_HIVEDIALOG_H
+#ifndef BITCOIN_QT_LABYRINTHDIALOG_H
+#define BITCOIN_QT_LABYRINTHDIALOG_H
 
 #include <qt/guiutil.h>
 
@@ -26,14 +26,14 @@ class ClientModel;
 class WalletModel;
 
 namespace Ui {
-    class HiveDialog;
+    class LabyrinthDialog;
 }
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
 QT_END_NAMESPACE
 
-extern BeePopGraphPoint beePopGraph[1024*40];
+extern MousePopGraphPoint mousePopGraph[1024*40];
 
 class QCPAxisTickerGI : public QCPAxisTicker 
 {
@@ -46,7 +46,7 @@ public:
     }
 };
 
-class HiveDialog : public QDialog
+class LabyrinthDialog : public QDialog
 {
     Q_OBJECT
 
@@ -58,11 +58,11 @@ public:
         TIME_COLUMN_WIDTH = 300,
         COST_COLUMN_WIDTH = 110,
         REWARDS_COLUMN_WIDTH = 220,
-        HIVE_COL_MIN_WIDTH = 100
+        LABYRINTH_COL_MIN_WIDTH = 100
     };
 
-    explicit HiveDialog(const PlatformStyle *platformStyle, QWidget *parent = 0);
-    ~HiveDialog();
+    explicit LabyrinthDialog(const PlatformStyle *platformStyle, QWidget *parent = 0);
+    ~LabyrinthDialog();
 
     void setClientModel(ClientModel *_clientModel);
     void setModel(WalletModel *model);
@@ -70,27 +70,27 @@ public:
 
 public Q_SLOTS:
     void updateData(bool forceGlobalSummaryUpdate = false);
-    void updateHiveSummary();
+    void updateLabyrinthSummary();
     void setBalance(const CAmount& balance, const CAmount& unconfirmedBalance, const CAmount& immatureBalance,
                     const CAmount& watchOnlyBalance, const CAmount& watchUnconfBalance, const CAmount& watchImmatureBalance);
     void setEncryptionStatus(int status);
     void onBlocksChanged();  // Cascoin: Auto-update labyrinth when blocks change
 
 Q_SIGNALS:
-    void hiveStatusIconChanged(QString icon, QString tooltip);    
+    void labyrinthStatusIconChanged(QString icon, QString tooltip);    
 
 private:
-    Ui::HiveDialog *ui;
+    Ui::LabyrinthDialog *ui;
     GUIUtil::TableViewLastColumnResizingFixer *columnResizingFixer;
     ClientModel *clientModel;
     WalletModel *model;
     const PlatformStyle *platformStyle;
-    CAmount beeCost, totalCost;
+    CAmount mouseCost, totalCost;
     int immature, mature, dead, blocksFound;
     CAmount rewardsPaid, cost, profit;
     CAmount potentialRewards;
     CAmount currentBalance;
-    double beePopIndex;
+    double mousePopIndex;
     int lastGlobalCheckHeight;
     virtual void resizeEvent(QResizeEvent *event);
     virtual void showEvent(QShowEvent *event);
@@ -111,10 +111,10 @@ private:
     void setAmountField(QLabel *field, CAmount value);
 
 private Q_SLOTS:
-    void on_showHiveOptionsButton_clicked();    // Cascoin: Labyrinth: Mining optimisations: Shortcut to Labyrinth mining options
-    void on_createBeesButton_clicked();
-    void on_beeCountSpinner_valueChanged(int i);
-    void on_includeDeadBeesCheckbox_stateChanged();
+    void on_showLabyrinthOptionsButton_clicked();    // Cascoin: Labyrinth: Mining optimisations: Shortcut to Labyrinth mining options
+    void on_createMiceButton_clicked();
+    void on_mouseCountSpinner_valueChanged(int i);
+    void on_includeDeadMiceCheckbox_stateChanged();
     void onUpdateTimerTimeout();
     void onPeriodicRefresh();  // Cascoin: Periodic refresh for labyrinth
     void on_showAdvancedStatsCheckbox_stateChanged();
@@ -125,4 +125,4 @@ private Q_SLOTS:
     void onMouseMove(QMouseEvent* event);
 };
 
-#endif // BITCOIN_QT_HIVEDIALOG_H
+#endif // BITCOIN_QT_LABYRINTHDIALOG_H

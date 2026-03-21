@@ -542,7 +542,7 @@ void BitcoinApplication::createSplashScreen(const NetworkStyle *networkStyle)
             if (bctDb && bctDb->isInitialized()) {
                 // Get summary to verify database is working
                 BCTSummary summary = bctDb->getSummary();
-                (void)summary.totalBeeCount;
+                (void)summary.totalMouseCount;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             uiInterface.ShowProgress("Mice DB initialisieren", 80, false);

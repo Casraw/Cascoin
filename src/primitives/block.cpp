@@ -10,11 +10,11 @@
 #include <utilstrencodings.h>
 #include <crypto/common.h>
 #include <crypto/scrypt.h>
-#include <chainparams.h>    // Cascoin: Hive
+#include <chainparams.h>    // Cascoin: Labyrinth
 
-#include <crypto/minotaurx/minotaur.h>  // Cascoin: MinotaurX+Hive1.2
-#include <validation.h>                 // Cascoin: MinotaurX+Hive1.2
-#include <util.h>                       // Cascoin: MinotaurX+Hive1.2
+#include <crypto/minotaurx/minotaur.h>  // Cascoin: MinotaurX+Labyrinth1.2
+#include <validation.h>                 // Cascoin: MinotaurX+Labyrinth1.2
+#include <util.h>                       // Cascoin: MinotaurX+Labyrinth1.2
 
 uint256 CBlockHeader::GetHash() const
 {
@@ -22,27 +22,27 @@ uint256 CBlockHeader::GetHash() const
 }
 
 /*
-// Cascoin: MinotaurX+Hive1.2: Hash arbitrary data, using internally-managed thread-local memory for YP
+// Cascoin: MinotaurX+Labyrinth1.2: Hash arbitrary data, using internally-managed thread-local memory for YP
 uint256 CBlockHeader::MinotaurXHashArbitrary(const char* data) {
     return Minotaur(data, data + strlen(data), true);
 }
 
-// Cascoin: MinotaurX+Hive1.2: Hash a string with MinotaurX, using provided YP thread-local memory
+// Cascoin: MinotaurX+Labyrinth1.2: Hash a string with MinotaurX, using provided YP thread-local memory
 uint256 CBlockHeader::MinotaurXHashStringWithLocal(std::string data, yespower_local_t *local) {
     return Minotaur(data.begin(), data.end(), true, local);
 }*/
 
-// Cascoin: MinotaurX+Hive1.2: Hash arbitrary data with classical Minotaur
+// Cascoin: MinotaurX+Labyrinth1.2: Hash arbitrary data with classical Minotaur
 uint256 CBlockHeader::MinotaurHashArbitrary(const char* data) {
     return Minotaur(data, data + strlen(data), false);
 }
 
-// Cascoin: MinotaurX+Hive1.2: Hash a string with classical Minotaur
+// Cascoin: MinotaurX+Labyrinth1.2: Hash a string with classical Minotaur
 uint256 CBlockHeader::MinotaurHashString(std::string data) {
     return Minotaur(data.begin(), data.end(), false);
 }
 
-// Cascoin: MinotaurX+Hive1.2: Get pow hash based on block type and UASF activation
+// Cascoin: MinotaurX+Labyrinth1.2: Get pow hash based on block type and UASF activation
 uint256 CBlockHeader::GetPoWHash() const
 {
     // Throttled summary logging for PoW hashing (only when -debug=minotaurx)
@@ -128,7 +128,7 @@ POW_TYPE CBlockHeader::GetEffectivePoWTypeForHashing(const Consensus::Params& co
         return POW_TYPE_SHA256;
 
     } else {
-        // Pre-multi-algorithm fork phase: Default to Scrypt (as per original Litecoin Cash behavior pre-Hive/MinotaurX)
+        // Pre-multi-algorithm fork phase: Default to Scrypt (as per original Litecoin Cash behavior pre-Labyrinth/MinotaurX)
         return POW_TYPE_SCRYPT; // LCC's original PoW was Scrypt
     }
 }
@@ -136,13 +136,13 @@ POW_TYPE CBlockHeader::GetEffectivePoWTypeForHashing(const Consensus::Params& co
 std::string CBlock::ToString() const
 {
     std::stringstream s;
-    // Cascoin: Hive: Include type
-    bool isHive = IsHiveMined(Params().GetConsensus());
+    // Cascoin: Labyrinth: Include type
+    bool isLabyrinth = IsLabyrinthMined(Params().GetConsensus());
     s << strprintf("CBlock(type=%s, hash=%s, powHash=%s, powType=%s, ver=0x%08x, hashPrevBlock=%s, hashMerkleRoot=%s, nTime=%u, nBits=%08x, nNonce=%u, vtx=%u)\n",
-        isHive ? "hive" : "pow",
+        isLabyrinth ? "labyrinth" : "pow",
         GetHash().ToString(),
         GetPoWHash().ToString(),
-        isHive ? "n/a" : GetPoWTypeName(),  // Cascoin: MinotaurX+Hive1.2: Include pow type name
+        isLabyrinth ? "n/a" : GetPoWTypeName(),  // Cascoin: MinotaurX+Labyrinth1.2: Include pow type name
         nVersion,
         hashPrevBlock.ToString(),
         hashMerkleRoot.ToString(),

@@ -44,8 +44,8 @@ unsigned int ParseConfirmTarget(const UniValue& value)
  * or from the last difficulty change if 'lookup' is nonpositive.
  * If 'height' is nonnegative, compute the estimate at the time when a given block was found.
  */
-// Cascoin: Hive: count hashes with dedicated function, dont use chainwork. GetNumHashes is Hive Aware.
-// Cascoin: MinotaurX+Hive1.2: Only consider the correct powType when counting hashes
+// Cascoin: Labyrinth: count hashes with dedicated function, dont use chainwork. GetNumHashes is Labyrinth Aware.
+// Cascoin: MinotaurX+Labyrinth1.2: Only consider the correct powType when counting hashes
 UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
     CBlockIndex *pb = chainActive.Tip();
 
@@ -57,13 +57,13 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
 
     // If lookup is -1, then use blocks since last difficulty change.
     if (lookup <= 0)
-        lookup = IsHive11Enabled(pb, Params().GetConsensus()) ? 1 : pb->nHeight % Params().GetConsensus().DifficultyAdjustmentInterval() + 1;   // Cascoin: Hive 1.1: Taking the opportunity to provide a more sensible default.
+        lookup = IsLabyrinth11Enabled(pb, Params().GetConsensus()) ? 1 : pb->nHeight % Params().GetConsensus().DifficultyAdjustmentInterval() + 1;   // Cascoin: Labyrinth 1.1: Taking the opportunity to provide a more sensible default.
 
     // If lookup is larger than chain, then set it to chain length.
     if (lookup > pb->nHeight)
         lookup = pb->nHeight;
 
-    // Cascoin: MinotaurX+Hive1.2: Skip incorrect powType
+    // Cascoin: MinotaurX+Labyrinth1.2: Skip incorrect powType
     while(pb && IsMinotaurXEnabled(pb, Params().GetConsensus()) && pb->GetBlockHeader().GetPoWType() != powType) {
         if (!pb->pprev) {
             pb = nullptr; // Signify we've walked off the chain for this type
@@ -84,7 +84,7 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
     int64_t minTime = pb->GetBlockTime();
     int64_t maxTime = minTime;
 	
-	arith_uint256 workDiff = GetNumHashes(*pb, powType);    // Cascoin: MinotaurX+Hive1.2: add powType param
+	arith_uint256 workDiff = GetNumHashes(*pb, powType);    // Cascoin: MinotaurX+Labyrinth1.2: add powType param
 	
     for (int i = 0; i < lookup; i++) {
         if (!pb->pprev) { // Check before assigning to pprev
@@ -95,11 +95,11 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
              break;
         }
 
-        // Cascoin: MinotaurX+Hive1.2: Skip incorrect powType
+        // Cascoin: MinotaurX+Labyrinth1.2: Skip incorrect powType
 
-        // TODO: Strictly speaking we may also went to step over hive blocks in here!
-        // However, it is not a major problem as GetNumHashes is Hive aware, and since
-        // hive blocks almost immediately follow pow blocks, the contribution to timing
+        // TODO: Strictly speaking we may also went to step over labyrinth blocks in here!
+        // However, it is not a major problem as GetNumHashes is Labyrinth aware, and since
+        // labyrinth blocks almost immediately follow pow blocks, the contribution to timing
         // inaccuracies are most likely fairly insignificant.
 
         while(pb && IsMinotaurXEnabled(pb, Params().GetConsensus()) && pb->GetBlockHeader().GetPoWType() != powType) {
@@ -122,7 +122,7 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
         int64_t time = pb->GetBlockTime();
         minTime = std::min(time, minTime);
         maxTime = std::max(time, maxTime);
-        workDiff += GetNumHashes(*pb, powType);              // Cascoin: MinotaurX+Hive1.2: add powType param
+        workDiff += GetNumHashes(*pb, powType);              // Cascoin: MinotaurX+Labyrinth1.2: add powType param
     }
 
     // In case there's a situation where minTime == maxTime, we don't want a divide by zero exception.
@@ -134,51 +134,51 @@ UniValue GetNetworkHashPS(int lookup, int height, POW_TYPE powType) {
 	return workDiff.getdouble() / timeDiff;
 }
 
-// Cascoin: Hive: Mining optimisations: Set hive mining params
-UniValue sethiveparams(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+UniValue setlabyrinthparams(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 3)
         throw std::runtime_error(
-            "sethiveparams ( hivecheckdelay, hivecheckthreads, hiveearlyout )\n"
-            "\nSet hivemining optimisation parameters.\n"
+            "setlabyrinthparams ( labyrinthcheckdelay, labyrinthcheckthreads, labyrinthearlyout )\n"
+            "\nSet labyrinthmining optimisation parameters.\n"
             "\nArguments:\n"
-            "1. hivecheckdelay     (numeric, required, default=1) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "2. hivecheckthreads   (numeric, required, default=-2) Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores.\n"
-            "3. hiveearlyout       (boolean, required, default=true) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
+            "1. labyrinthcheckdelay     (numeric, required, default=1) Time between Labyrinth checks in ms. This should be left at default unless performance degradation is observed.\n"
+            "2. labyrinthcheckthreads   (numeric, required, default=-2) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "3. labyrinthearlyout       (boolean, required, default=true) Abort Labyrinth checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "\nExamples:\n"
-            + HelpExampleCli("sethiveparams", "500 -1 false")
-            + HelpExampleRpc("sethiveparams", "2000 8 true")
+            + HelpExampleCli("setlabyrinthparams", "500 -1 false")
+            + HelpExampleRpc("setlabyrinthparams", "2000 8 true")
        );
 
-    gArgs.ForceSetArg("-hivecheckdelay", std::to_string(request.params[0].get_int()));
-    gArgs.ForceSetArg("-hivecheckthreads", std::to_string(request.params[1].get_int()));
-    gArgs.ForceSetArg("-hiveearlyout", std::to_string(request.params[2].get_bool()));
+    gArgs.ForceSetArg("-labyrinthcheckdelay", std::to_string(request.params[0].get_int()));
+    gArgs.ForceSetArg("-labyrinthcheckthreads", std::to_string(request.params[1].get_int()));
+    gArgs.ForceSetArg("-labyrinthearlyout", std::to_string(request.params[2].get_bool()));
 
     return NullUniValue;
 }
 
-// Cascoin: Hive: Mining optimisations: Get hive mining params
-UniValue gethiveparams(const JSONRPCRequest& request)
+// Cascoin: Labyrinth: Mining optimisations: Get labyrinth mining params
+UniValue getlabyrinthparams(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 0)
         throw std::runtime_error(
-            "gethiveparams\n"
-            "\nGet hivemining optimisation parameters.\n"
+            "getlabyrinthparams\n"
+            "\nGet labyrinthmining optimisation parameters.\n"
             "\nResult:\n"
             "{\n"
-            "  \"hivecheckdelay\" : n,             (numeric) Time between Hive checks in ms. This should be left at default unless performance degradation is observed.\n"
-            "  \"hivecheckthreads\" : n,           (numeric) Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores.\n"
-            "  \"hiveearlyout\" : true|false,      (boolean) Abort Hive checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
+            "  \"labyrinthcheckdelay\" : n,             (numeric) Time between Labyrinth checks in ms. This should be left at default unless performance degradation is observed.\n"
+            "  \"labyrinthcheckthreads\" : n,           (numeric) Number of threads to use when checking mice, -1 for all available cores, or -2 for one less than all available cores.\n"
+            "  \"labyrinthearlyout\" : true|false,      (boolean) Abort Labyrinth checking as quickly as possible when a new block comes in. This should be left enabled unless performance degradation is observed.\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("gethiveparams", "")
-            + HelpExampleRpc("gethiveparams", "")
+            + HelpExampleCli("getlabyrinthparams", "")
+            + HelpExampleRpc("getlabyrinthparams", "")
        );
 
     UniValue obj(UniValue::VOBJ);
-    obj.push_back(Pair("hivecheckdelay", gArgs.GetArg("-hivecheckdelay", DEFAULT_HIVE_CHECK_DELAY)));
-    obj.push_back(Pair("hivecheckthreads", gArgs.GetArg("-hivecheckthreads", DEFAULT_HIVE_THREADS)));
-    obj.push_back(Pair("hiveearlyout", gArgs.GetBoolArg("-hiveearlyout", DEFAULT_HIVE_EARLY_OUT) ? "true" : "false"));
+    obj.push_back(Pair("labyrinthcheckdelay", gArgs.GetArg("-labyrinthcheckdelay", DEFAULT_LABYRINTH_CHECK_DELAY)));
+    obj.push_back(Pair("labyrinthcheckthreads", gArgs.GetArg("-labyrinthcheckthreads", DEFAULT_LABYRINTH_THREADS)));
+    obj.push_back(Pair("labyrinthearlyout", gArgs.GetBoolArg("-labyrinthearlyout", DEFAULT_LABYRINTH_EARLY_OUT) ? "true" : "false"));
 
     return obj;
 }
@@ -187,7 +187,7 @@ UniValue getnetworkhashps(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 3)
         throw std::runtime_error(
-            "getnetworkhashps ( nblocks height powalgo )\n"     // Cascoin: MinotaurX+Hive1.2
+            "getnetworkhashps ( nblocks height powalgo )\n"     // Cascoin: MinotaurX+Labyrinth1.2
             "\nReturns the estimated network hashes per second based on the last n blocks.\n"
             "Pass in [blocks] to override # of blocks, -1 specifies since last difficulty change.\n"
             "Pass in [height] to estimate the network speed at the time when a certain block was found.\n"
@@ -195,7 +195,7 @@ UniValue getnetworkhashps(const JSONRPCRequest& request)
             "\nArguments:\n"
             "1. nblocks     (numeric, optional, default=120) The number of blocks, or -1 for blocks since last difficulty change.\n"
             "2. height      (numeric, optional, default=-1) To estimate at the time of the given height.\n"
-            "3. powalgo     (string, optional) This can be set to \"sha256d\" or \"minotaurx\". If omitted, wallet's default is assumed (-powalgo conf option)\n" // Cascoin: MinotaurX+Hive1.2
+            "3. powalgo     (string, optional) This can be set to \"sha256d\" or \"minotaurx\". If omitted, wallet's default is assumed (-powalgo conf option)\n" // Cascoin: MinotaurX+Labyrinth1.2
             "\nResult:\n"
             "x             (numeric) Hashes per second estimated\n"
             "\nExamples:\n"
@@ -203,7 +203,7 @@ UniValue getnetworkhashps(const JSONRPCRequest& request)
             + HelpExampleRpc("getnetworkhashps", "")
        );
 
-    // Cascoin: MinotaurX+Hive1.2
+    // Cascoin: MinotaurX+Labyrinth1.2
     std::string strAlgo = gArgs.GetArg("-powalgo", DEFAULT_POW_TYPE);
     if (!request.params[2].isNull())
         strAlgo = request.params[2].get_str();
@@ -318,7 +318,7 @@ UniValue getmininginfo(const JSONRPCRequest& request)
             "  \"currentblockweight\": nnn, (numeric) The last block weight\n"
             "  \"currentblocktx\": nnn,     (numeric) The last block transaction\n"
             "  \"difficulty\": xxx.xxxxx    (numeric) The current difficulty for sha256d\n"
-            "  \"minotaurxdifficulty\": x.x (numeric) the current difficulty for minotaurx once activated\n"  // Cascoin: MinotaurX+Hive1.2
+            "  \"minotaurxdifficulty\": x.x (numeric) the current difficulty for minotaurx once activated\n"  // Cascoin: MinotaurX+Labyrinth1.2
             "  \"networkhashps\": nnn,      (numeric) The network hashes per second\n"
             "  \"pooledtx\": n              (numeric) The size of the mempool\n"
             "  \"chain\": \"xxxx\",           (string) current network name as defined in BIP70 (main, test, regtest)\n"
@@ -339,7 +339,7 @@ UniValue getmininginfo(const JSONRPCRequest& request)
     obj.push_back(Pair("currentblocktx",   (uint64_t)nLastBlockTx));
     obj.push_back(Pair("difficulty",       (double)GetDifficulty()));
     if (IsMinotaurXEnabled(chainActive.Tip(), Params().GetConsensus()))
-        obj.push_back(Pair("minotaurxdifficulty", GetDifficulty(nullptr, false, POW_TYPE_MINOTAURX)));    // Cascoin: MinotaurX+Hive1.2
+        obj.push_back(Pair("minotaurxdifficulty", GetDifficulty(nullptr, false, POW_TYPE_MINOTAURX)));    // Cascoin: MinotaurX+Labyrinth1.2
     obj.push_back(Pair("networkhashps",    getnetworkhashps(request)));
     obj.push_back(Pair("pooledtx",         (uint64_t)mempool.size()));
     obj.push_back(Pair("chain",            Params().NetworkIDString()));
@@ -418,7 +418,7 @@ std::string gbt_vb_name(const Consensus::DeploymentPos pos) {
 UniValue getblocktemplate(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() > 1)
-        // Cascoin: MinotaurX+Hive1.2: Include help note about algo field in template_request
+        // Cascoin: MinotaurX+Labyrinth1.2: Include help note about algo field in template_request
         throw std::runtime_error(
             "getblocktemplate ( TemplateRequest )\n"
             "\nIf the request parameters include a 'mode' key, that is used to explicitly select between the default 'template' request or a 'proposal'.\n"
@@ -502,7 +502,7 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     UniValue lpval = NullUniValue;
     std::set<std::string> setClientRules;
     int64_t nMaxVersionPreVB = -1;
-    std::string strAlgo = gArgs.GetArg("-powalgo", DEFAULT_POW_TYPE);   // Cascoin: MinotaurX+Hive1.2: Pow type (as string)
+    std::string strAlgo = gArgs.GetArg("-powalgo", DEFAULT_POW_TYPE);   // Cascoin: MinotaurX+Labyrinth1.2: Pow type (as string)
     if (!request.params[0].isNull())
     {
         const UniValue& oparam = request.params[0].get_obj();
@@ -547,7 +547,7 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
             return BIP22ValidationResult(state);
         }
 
-        // Cascoin: MinotaurX+Hive1.2: Override default pow type
+        // Cascoin: MinotaurX+Labyrinth1.2: Override default pow type
         const UniValue& algoval = find_value(oparam, "powalgo");
         if (algoval.isStr())
             strAlgo = algoval.get_str();
@@ -567,7 +567,7 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
         }
     }
 
-    // Cascoin: MinotaurX+Hive1.2: Check for a valid pow type
+    // Cascoin: MinotaurX+Labyrinth1.2: Check for a valid pow type
     bool algoFound = false;
     POW_TYPE powType;
     for (unsigned int i = 0; i < NUM_BLOCK_TYPES; i++) {
@@ -653,11 +653,11 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
     // Cache whether the last invocation was with segwit support, to avoid returning
     // a segwit-block to a non-segwit caller.
     static bool fLastTemplateSupportsSegwit = true;
-    static POW_TYPE lastPowType = NUM_BLOCK_TYPES;  // Cascoin: MinotaurX+Hive1.2
+    static POW_TYPE lastPowType = NUM_BLOCK_TYPES;  // Cascoin: MinotaurX+Labyrinth1.2
     if (pindexPrev != chainActive.Tip() ||
         (mempool.GetTransactionsUpdated() != nTransactionsUpdatedLast && GetTime() - nStart > 5) ||
         fLastTemplateSupportsSegwit != fSupportsSegwit ||
-        lastPowType != powType) // Cascoin: MinotaurX+Hive1.2: Include powType check in cache refresh condition
+        lastPowType != powType) // Cascoin: MinotaurX+Labyrinth1.2: Include powType check in cache refresh condition
     {
         // Clear pindexPrev so future calls make a new block, despite any failures from here on
         pindexPrev = nullptr;
@@ -670,8 +670,8 @@ UniValue getblocktemplate(const JSONRPCRequest& request)
 
         // Create new block
         CScript scriptDummy = CScript() << OP_TRUE;
-        pblocktemplate = BlockAssembler(Params()).CreateNewBlock(scriptDummy, fSupportsSegwit, nullptr, powType);   // Cascoin: MinotaurX+Hive1.2: Include powType
-        lastPowType = powType;   // Cascoin: MinotaurX+Hive1.2: Cache pow type just requested
+        pblocktemplate = BlockAssembler(Params()).CreateNewBlock(scriptDummy, fSupportsSegwit, nullptr, powType);   // Cascoin: MinotaurX+Labyrinth1.2: Include powType
+        lastPowType = powType;   // Cascoin: MinotaurX+Labyrinth1.2: Cache pow type just requested
         if (!pblocktemplate)
             throw JSONRPCError(RPC_OUT_OF_MEMORY, "Out of memory");
 
@@ -1139,8 +1139,8 @@ static const CRPCCommand commands[] =
 
     { "hidden",             "estimaterawfee",         &estimaterawfee,         {"conf_target", "threshold"} },
 
-    { "mining",             "sethiveparams",          &sethiveparams,          {"hivecheckdelay", "hivecheckthreads", "hiveearlyout"} },  // Cascoin: Hive: Mining optimisations: Set hive mining params
-    { "mining",             "gethiveparams",          &gethiveparams,          {} },  // Cascoin: Hive: Mining optimisations: Get hive mining params
+    { "mining",             "setlabyrinthparams",          &setlabyrinthparams,          {"labyrinthcheckdelay", "labyrinthcheckthreads", "labyrinthearlyout"} },  // Cascoin: Labyrinth: Mining optimisations: Set labyrinth mining params
+    { "mining",             "getlabyrinthparams",          &getlabyrinthparams,          {} },  // Cascoin: Labyrinth: Mining optimisations: Get labyrinth mining params
 };
 
 void RegisterMiningRPCCommands(CRPCTable &t)

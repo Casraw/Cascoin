@@ -4,7 +4,7 @@
 
 #include <versionbits.h>
 #include <consensus/params.h>
-#include <validation.h> // Cascoin: MinotaurX+Hive1.2: For IsMinotaurXEnabled
+#include <validation.h> // Cascoin: MinotaurX+Labyrinth1.2: For IsMinotaurXEnabled
 
 const struct VBDeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION_BITS_DEPLOYMENTS] = {
     {
@@ -19,19 +19,19 @@ const struct VBDeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION_B
         /*.name =*/ "segwit",
         /*.gbt_force =*/ true,
     },
-    // Cascoin: Hive: Deployment
+    // Cascoin: Labyrinth: Deployment
     {
-        /*.name =*/ "hive",
+        /*.name =*/ "labyrinth",
         /*.gbt_force =*/ true,
     },
-    // Cascoin: Hive: Deployment of 1.1
+    // Cascoin: Labyrinth: Deployment of 1.1
     {
-        /*.name =*/ "hive_1_1",
+        /*.name =*/ "labyrinth_1_1",
         /*.gbt_force =*/ true,
     },
-    // Cascoin: MinotaurX+Hive1.2: Deployment
+    // Cascoin: MinotaurX+Labyrinth1.2: Deployment
     {
-        /*.name =*/ "minotaurx_and_hive_1_2",
+        /*.name =*/ "minotaurx_and_labyrinth_1_2",
         /*.gbt_force =*/ true,
     },
     // Cascoin: Rialto: Deployment
@@ -215,7 +215,7 @@ protected:
 
     bool Condition(const CBlockIndex* pindex, const Consensus::Params& params) const override
     {
-        // Cascoin: MinotaurX+Hive1.2: Versionbits always active since powforktime and high bits repurposed at minotaurx UASF activation;
+        // Cascoin: MinotaurX+Labyrinth1.2: Versionbits always active since powforktime and high bits repurposed at minotaurx UASF activation;
         // So, don't use VERSIONBITS_TOP_MASK any time past powforktime
         if (pindex->nTime > params.powForkTime)
             return (pindex->nVersion & Mask(params)) != 0;

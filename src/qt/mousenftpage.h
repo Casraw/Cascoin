@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef CASCOIN_QT_BEENFTPAGE_H
-#define CASCOIN_QT_BEENFTPAGE_H
+#ifndef CASCOIN_QT_MOUSENFTPAGE_H
+#define CASCOIN_QT_MOUSENFTPAGE_H
 
 #include <QWidget>
 #include <QTabWidget>
@@ -23,48 +23,48 @@
 #include <bctdb.h>  // For BCTDatabaseSQLite
 
 class WalletModel;
-class BeeNFTTableModel;
+class MouseNFTTableModel;
 class PlatformStyle;
 
 QT_BEGIN_NAMESPACE
 class QModelIndex;
 QT_END_NAMESPACE
 
-/** Widget for managing Bee NFTs */
-class BeeNFTPage : public QWidget
+/** Widget for managing Mouse NFTs */
+class MouseNFTPage : public QWidget
 {
     Q_OBJECT
 
 public:
-    explicit BeeNFTPage(const PlatformStyle *platformStyle, QWidget *parent = 0);
-    ~BeeNFTPage();
+    explicit MouseNFTPage(const PlatformStyle *platformStyle, QWidget *parent = 0);
+    ~MouseNFTPage();
 
     void setModel(WalletModel *model);
 
 private Q_SLOTS:
-    void tokenizeBee();
-    void transferBeeNFT();
-    void refreshBeeNFTs();
-    void showBeeNFTDetails();
-    void onBeeNFTSelectionChanged();
+    void tokenizeMouse();
+    void transferMouseNFT();
+    void refreshMouseNFTs();
+    void showMouseNFTDetails();
+    void onMouseNFTSelectionChanged();
     void generateNewAddress();
     void loadAvailableMice();
     void loadAvailableMiceFromWallet();
     void loadSampleBCTData();
-    void updateBeeNFTCombo();
+    void updateMouseNFTCombo();
 
 private:
     WalletModel *walletModel;
-    BeeNFTTableModel *beeNFTModel;
+    MouseNFTTableModel *mouseNFTModel;
     const PlatformStyle *platformStyle;
     // BCTDatabaseSQLite is accessed via singleton - no member needed
 
     // UI Components
     QTabWidget *tabWidget;
     
-    // Bee NFT List Tab
+    // Mouse NFT List Tab
     QWidget *listTab;
-    QTableView *beeNFTView;
+    QTableView *mouseNFTView;
     QPushButton *refreshButton;
     QPushButton *detailsButton;
     QCheckBox *showExpiredCheckBox;
@@ -83,7 +83,7 @@ private:
     
     // Transfer Tab
     QWidget *transferTab;
-    QComboBox *beeNFTCombo;
+    QComboBox *mouseNFTCombo;
     QLineEdit *recipientAddressEdit;
     QPushButton *transferButton;
     
@@ -96,4 +96,4 @@ private:
     void loadRealNFTData();
 };
 
-#endif // CASCOIN_QT_BEENFTPAGE_H
+#endif // CASCOIN_QT_MOUSENFTPAGE_H

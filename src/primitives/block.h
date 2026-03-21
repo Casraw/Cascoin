@@ -9,22 +9,22 @@
 #include <primitives/transaction.h>
 #include <serialize.h>
 #include <uint256.h>
-#include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Hive1.2
+#include <crypto/minotaurx/yespower/yespower.h>  // Cascoin: MinotaurX+Labyrinth1.2
 
-// Cascoin: MinotaurX+Hive1.2: An impossible pow hash (can't meet any target)
+// Cascoin: MinotaurX+Labyrinth1.2: An impossible pow hash (can't meet any target)
 const uint256 HIGH_HASH = uint256S("0x0fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
 
-// Cascoin: MinotaurX+Hive1.2: Default value for -powalgo argument
+// Cascoin: MinotaurX+Labyrinth1.2: Default value for -powalgo argument
 const std::string DEFAULT_POW_TYPE = "sha256d";
 
-// Cascoin: MinotaurX+Hive1.2: Pow type names
+// Cascoin: MinotaurX+Labyrinth1.2: Pow type names
 const char* const POW_TYPE_NAMES[] = {
     "sha256d",
     "minotaurx",
     "scrypt"
 };
 
-// Cascoin: MinotaurX+Hive1.2: Pow type IDs
+// Cascoin: MinotaurX+Labyrinth1.2: Pow type IDs
 enum POW_TYPE {
     POW_TYPE_SHA256,
     POW_TYPE_MINOTAURX,
@@ -87,7 +87,7 @@ public:
 
     uint256 GetPoWHash() const;
 
-    // Cascoin: MinotaurX+Hive1.2: Hashing utils
+    // Cascoin: MinotaurX+Labyrinth1.2: Hashing utils
     /*
     static uint256 MinotaurXHashArbitrary(const char* data);                                    // Hash arbitrary data with MinotaurX, using internally-managed thread-local memory for YP
     static uint256 MinotaurXHashStringWithLocal(std::string data, yespower_local_t *local);     // Hash a string with MinotaurX, using provided YP thread-local memory
@@ -99,12 +99,12 @@ public:
         return (int64_t)nTime;
     }
 
-    // Cascoin: Hive: Check if this block is hivemined
-    bool IsHiveMined(const Consensus::Params& consensusParams) const {
-        return (nNonce == consensusParams.hiveNonceMarker);
+    // Cascoin: Labyrinth: Check if this block is labyrinthmined
+    bool IsLabyrinthMined(const Consensus::Params& consensusParams) const {
+        return (nNonce == consensusParams.labyrinthNonceMarker);
     }
 
-    // Cascoin: MinotaurX+Hive1.2: Get pow type from version bits
+    // Cascoin: MinotaurX+Labyrinth1.2: Get pow type from version bits
     POW_TYPE GetPoWType() const {
         // LogPrintf("GetPoWType: nVersion=0x%08x\n", nVersion); // Already present or similar in GetPoWHash, avoid duplicate
         POW_TYPE type = (POW_TYPE)((nVersion >> 16) & 0xFF);
@@ -113,7 +113,7 @@ public:
         return type;
     }
 
-    // Cascoin: MinotaurX+Hive1.2: Get pow type name
+    // Cascoin: MinotaurX+Labyrinth1.2: Get pow type name
     const char* GetPoWTypeName() const {
         if (nVersion >= 0x20000000)
             return POW_TYPE_NAMES[0];

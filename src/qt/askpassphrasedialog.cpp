@@ -18,7 +18,7 @@
 #include <QMessageBox>
 #include <QPushButton>
 
-extern bool fWalletUnlockWithoutTransactions;   // Cascoin: Hive: Encrypted wallet support
+extern bool fWalletUnlockWithoutTransactions;   // Cascoin: Labyrinth: Encrypted wallet support
 
 AskPassphraseDialog::AskPassphraseDialog(Mode _mode, QWidget *parent) :
     QDialog(parent),
@@ -42,9 +42,9 @@ AskPassphraseDialog::AskPassphraseDialog(Mode _mode, QWidget *parent) :
     ui->passEdit2->installEventFilter(this);
     ui->passEdit3->installEventFilter(this);
 
-	// Cascoin: Hive: Support unlocking for hive only
-	ui->hiveOnlyLabel->hide();
-	fHiveOnly = fWalletUnlockWithoutTransactions;
+	// Cascoin: Labyrinth: Support unlocking for labyrinth only
+	ui->labyrinthOnlyLabel->hide();
+	fLabyrinthOnly = fWalletUnlockWithoutTransactions;
 
     switch(mode)
     {
@@ -54,9 +54,9 @@ AskPassphraseDialog::AskPassphraseDialog(Mode _mode, QWidget *parent) :
             ui->passEdit1->hide();
             setWindowTitle(tr("Encrypt wallet"));
             break;
-        case UnlockHiveMining: // Cascoin: Hive: Support locked wallets
-            ui->hiveOnlyLabel->show();
-			fHiveOnly = true;
+        case UnlockLabyrinthMining: // Cascoin: Labyrinth: Support locked wallets
+            ui->labyrinthOnlyLabel->show();
+			fLabyrinthOnly = true;
             // fallthru
         case Unlock: // Ask passphrase
             ui->warningLabel->setText(tr("This operation needs your wallet passphrase to unlock the wallet."));
@@ -162,7 +162,7 @@ void AskPassphraseDialog::accept()
             QDialog::reject(); // Cancelled
         }
         } break;
-    case UnlockHiveMining:  // Cascoin: Hive: Support locked wallets
+    case UnlockLabyrinthMining:  // Cascoin: Labyrinth: Support locked wallets
     case Unlock:
         if(!model->setWalletLocked(false, oldpass))
         {
@@ -171,7 +171,7 @@ void AskPassphraseDialog::accept()
         }
         else
         {
-            fWalletUnlockWithoutTransactions = fHiveOnly;   // Cascoin: Hive: Support locked wallets
+            fWalletUnlockWithoutTransactions = fLabyrinthOnly;   // Cascoin: Labyrinth: Support locked wallets
             QDialog::accept(); // Success
         }
         break;
@@ -219,7 +219,7 @@ void AskPassphraseDialog::textChanged()
     case Encrypt: // New passphrase x2
         acceptable = !ui->passEdit2->text().isEmpty() && !ui->passEdit3->text().isEmpty();
         break;
-    case UnlockHiveMining:  // Cascoin: Hive: Support locked wallets
+    case UnlockLabyrinthMining:  // Cascoin: Labyrinth: Support locked wallets
     case Unlock: // Old passphrase x1
     case Decrypt:
         acceptable = !ui->passEdit1->text().isEmpty();

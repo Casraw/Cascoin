@@ -4,7 +4,7 @@ Cascoin Core is the full node software that makes up the backbone of the CAS net
 
 ## What is Cascoin?
 
-Cascoin is a cryptocurrency supporting dual PoW (SHA256/MinotaurX) and Labyrinth Mining (Hive) - a unique hybrid consensus mechanism that combines traditional mining with "mice" creation for block rewards.
+Cascoin is a cryptocurrency supporting dual PoW (SHA256/MinotaurX) and Labyrinth Mining - a unique hybrid consensus mechanism that combines traditional mining with "mice" creation for block rewards.
 
 ### Key Specifications
 
@@ -14,14 +14,14 @@ Cascoin is a cryptocurrency supporting dual PoW (SHA256/MinotaurX) and Labyrinth
 | Max Supply | 84 million CAS |
 | Halving Interval | 840,000 blocks |
 | PoW Block Reward | 25 CAS |
-| Hive Block Reward | 75 CAS |
+| Labyrinth Block Reward | 75 CAS |
 | PoW Algorithm | SHA256 (ASIC) / MinotaurX (CPU) |
 | Default Port | 22222 |
 | Address Prefix | H (mainnet) |
 
 ### Features
 
-- **Hybrid Consensus**: Combines PoW with Labyrinth Mining (Hive)
+- **Hybrid Consensus**: Combines PoW with Labyrinth Mining
 - **Labyrinth Mining**: Create "mice" that can mine blocks without hardware
 - **Dual PoW**: SHA256 for ASIC miners, MinotaurX for CPU miners
 - **SegWit**: Native Segregated Witness support

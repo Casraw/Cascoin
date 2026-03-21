@@ -641,13 +641,13 @@
        </item>
       </layout>
      </widget>
-     <widget class="QWidget" name="tabHive">
+     <widget class="QWidget" name="tabLabyrinth">
       <attribute name="title">
        <string>&amp;Labyrinth</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_3">
        <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_1_Hive">
+        <layout class="QHBoxLayout" name="horizontalLayout_1_Labyrinth">
          <item>
           <widget class="QLabel" name="label">
            <property name="text">
@@ -656,7 +656,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QSpinBox" name="hiveCheckDelay">
+          <widget class="QSpinBox" name="labyrinthCheckDelay">
            <property name="minimum">
             <number>1</number>
            </property>
@@ -688,7 +688,7 @@
         </layout>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_1_Hive_2">
+        <layout class="QHBoxLayout" name="horizontalLayout_1_Labyrinth_2">
          <item>
           <widget class="QLabel" name="label_3">
            <property name="text">
@@ -697,7 +697,7 @@
           </widget>
          </item>
          <item>
-          <widget class="QSpinBox" name="hiveCheckThreads">
+          <widget class="QSpinBox" name="labyrinthCheckThreads">
            <property name="minimum">
             <number>-2</number>
            </property>
@@ -726,9 +726,9 @@
         </layout>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_1_Hive_3">
+        <layout class="QHBoxLayout" name="horizontalLayout_1_Labyrinth_3">
          <item>
-          <widget class="QCheckBox" name="hiveCheckEarlyOut">
+          <widget class="QCheckBox" name="labyrinthCheckEarlyOut">
            <property name="text">
             <string>Labyrinth Early Abort enabled</string>
            </property>
@@ -750,9 +750,9 @@
         </layout>
        </item>
        <item>
-        <layout class="QHBoxLayout" name="horizontalLayout_1_Hive_4">
+        <layout class="QHBoxLayout" name="horizontalLayout_1_Labyrinth_4">
                    <item>
-           <widget class="QCheckBox" name="hiveContribCF">
+           <widget class="QCheckBox" name="labyrinthContribCF">
             <property name="text">
              <string>Send 15% of mouse fee to Community Fund (10% before Labyrinth 1.2 activation)</string>
             </property>

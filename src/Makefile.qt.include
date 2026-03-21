@@ -134,7 +134,7 @@ QT_FORMS_UI = \
   qt/forms/openuridialog.ui \
   qt/forms/optionsdialog.ui \
   qt/forms/overviewpage.ui \
-  qt/forms/hivedialog.ui \
+  qt/forms/labyrinthdialog.ui \
   qt/forms/receivecoinsdialog.ui \
   qt/forms/receiverequestdialog.ui \
   qt/forms/debugwindow.ui \
@@ -176,7 +176,7 @@ QT_MOC_CPP = \
   qt/moc_receivecoinsdialog.cpp \
   qt/moc_receiverequestdialog.cpp \
   qt/moc_recentrequeststablemodel.cpp \
-  qt/moc_hivetablemodel.cpp \
+  qt/moc_labyrinthtablemodel.cpp \
   qt/moc_rpcconsole.cpp \
   qt/moc_sendcoinsdialog.cpp \
   qt/moc_sendcoinsentry.cpp \
@@ -188,9 +188,9 @@ QT_MOC_CPP = \
   qt/moc_transactionfilterproxy.cpp \
   qt/moc_transactiontablemodel.cpp \
   qt/moc_transactionview.cpp \
-  qt/moc_hivedialog.cpp \
-  qt/moc_beenftpage.cpp \
-  qt/moc_beenfttablemodel.cpp \
+  qt/moc_labyrinthdialog.cpp \
+  qt/moc_mousenftpage.cpp \
+  qt/moc_mousenfttablemodel.cpp \
   qt/moc_utilitydialog.cpp \
   qt/moc_walletframe.cpp \
   qt/moc_walletmodel.cpp \
@@ -246,9 +246,9 @@ BITCOIN_QT_H = \
   qt/optionsdialog.h \
   qt/optionsmodel.h \
   qt/overviewpage.h \
-  qt/hivedialog.h \
-  qt/beenftpage.h \
-  qt/beenfttablemodel.h \
+  qt/labyrinthdialog.h \
+  qt/mousenftpage.h \
+  qt/mousenfttablemodel.h \
   qt/paymentrequestplus.h \
   qt/paymentserver.h \
   qt/peertablemodel.h \
@@ -258,7 +258,7 @@ BITCOIN_QT_H = \
   qt/receivecoinsdialog.h \
   qt/receiverequestdialog.h \
   qt/recentrequeststablemodel.h \
-  qt/hivetablemodel.h \
+  qt/labyrinthtablemodel.h \
   qt/rpcconsole.h \
   qt/sendcoinsdialog.h \
   qt/sendcoinsentry.h \
@@ -333,24 +333,24 @@ RES_ICONS = \
   qt/res/icons/tx_input.png \
   qt/res/icons/tx_output.png \
   qt/res/icons/tx_mined.png \
-  qt/res/icons/tx_hive_bct.png \
-  qt/res/icons/tx_hive_cf.png \
-  qt/res/icons/tx_hive_honey.png \
+  qt/res/icons/tx_labyrinth_bct.png \
+  qt/res/icons/tx_labyrinth_cf.png \
+  qt/res/icons/tx_labyrinth_cheese.png \
   qt/res/icons/warning.png \
-  qt/res/icons/beestatus_mature.png \
-  qt/res/icons/beestatus_immature.png \
-  qt/res/icons/beestatus_crown.png \
-  qt/res/icons/beestatus_dead.png \
+  qt/res/icons/labyrinthicon.png \
+  qt/res/icons/mousestatus_immature.png \
+  qt/res/icons/mousestatus_crown.png \
+  qt/res/icons/mousestatus_dead.png \
   qt/res/icons/refresh.png \
-  qt/res/icons/hivestatus_disabled.png \
-  qt/res/icons/hivestatus_clear.png \
-  qt/res/icons/hivestatus_red.png \
-  qt/res/icons/hivestatus_orange.png \
-  qt/res/icons/hivestatus_green.png \
-  qt/res/icons/hive_background_flash.png \
+  qt/res/icons/labyrinths_disabled.png \
+  qt/res/icons/labyrinths_clear.png \
+  qt/res/icons/labyrinths_red.png \
+  qt/res/icons/labyrinths_orange.png \
+  qt/res/icons/labyrinths_green.png \
+  qt/res/icons/labyrinth_background_flash.png \
   qt/res/icons/presentationlogo.png \
   qt/res/icons/presentationlogo-fade.png \
-  qt/res/icons/hiveicon.png \
+  qt/res/icons/mousestatus_mature.png \
   qt/res/icons/verify.png
 
 BITCOIN_QT_BASE_CPP = \
@@ -390,15 +390,15 @@ BITCOIN_QT_WALLET_CPP = \
   qt/editaddressdialog.cpp \
   qt/openuridialog.cpp \
   qt/overviewpage.cpp \
-  qt/hivedialog.cpp \
-  qt/beenftpage.cpp \
-  qt/beenfttablemodel.cpp \
+  qt/labyrinthdialog.cpp \
+  qt/mousenftpage.cpp \
+  qt/mousenfttablemodel.cpp \
   qt/paymentrequestplus.cpp \
   qt/paymentserver.cpp \
   qt/receivecoinsdialog.cpp \
   qt/receiverequestdialog.cpp \
   qt/recentrequeststablemodel.cpp \
-  qt/hivetablemodel.cpp \
+  qt/labyrinthtablemodel.cpp \
   qt/sendcoinsdialog.cpp \
   qt/sendcoinsentry.cpp \
   qt/signverifymessagedialog.cpp \

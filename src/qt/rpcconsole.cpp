@@ -78,7 +78,7 @@ const QStringList historyFilter = QStringList()
     << "walletpassphrase"
     << "walletpassphrasechange"
     << "encryptwallet"
-	<< "walletpassphrasehiveonly";	// Cascoin: Hive: Locked wallet hive unlock
+	<< "walletpassphraselabyrinthonly";	// Cascoin: Labyrinth: Locked wallet labyrinth unlock
 
 }
 
