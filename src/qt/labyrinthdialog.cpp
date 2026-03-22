@@ -248,22 +248,26 @@ void LabyrinthDialog::updateLabyrinthSummary() {
 
     // IMPORTANT: Always get total rewards from database (including expired BCTs)
     // This ensures the summary shows all rewards even when expired BCTs are hidden in the table
+    // Only override if the DB actually has records — an empty-but-initialized DB
+    // returns all-zero SUMs which would wipe out the table model's wallet-scan fallback data.
     BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
     if (bctDb && bctDb->isInitialized()) {
         BCTSummary dbSummary = bctDb->getSummary();
-        // Use database totals for rewards-related fields (includes all BCTs, even expired)
-        // The table model only loads non-expired BCTs by default, so it would miss
-        // blocksFound/rewards from expired mice without this database query.
-        // Note: With PRAGMA busy_timeout=5000, getSummary() will wait up to 5s
-        // if another thread holds a write lock, instead of returning empty results.
-        blocksFound = dbSummary.blocksFound;
-        rewardsPaid = dbSummary.totalRewards;
-        cost = dbSummary.totalCost;
-        profit = dbSummary.totalProfit;
-        // Use mice counts (not transaction counts) for display
-        dead = dbSummary.expiredMice;
-        immature = dbSummary.immatureMice;
-        mature = dbSummary.matureMice;
+        if (dbSummary.immatureCount + dbSummary.matureCount + dbSummary.expiredCount > 0) {
+            // Use database totals for rewards-related fields (includes all BCTs, even expired)
+            // The table model only loads non-expired BCTs by default, so it would miss
+            // blocksFound/rewards from expired mice without this database query.
+            // Note: With PRAGMA busy_timeout=5000, getSummary() will wait up to 5s
+            // if another thread holds a write lock, instead of returning empty results.
+            blocksFound = dbSummary.blocksFound;
+            rewardsPaid = dbSummary.totalRewards;
+            cost = dbSummary.totalCost;
+            profit = dbSummary.totalProfit;
+            // Use mice counts (not transaction counts) for display
+            dead = dbSummary.expiredMice;
+            immature = dbSummary.immatureMice;
+            mature = dbSummary.matureMice;
+        }
     }
 
     // Update labels

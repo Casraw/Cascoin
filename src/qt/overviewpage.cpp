@@ -280,16 +280,20 @@ void OverviewPage::updateLabyrinthSummary() {
 
         // Use database summary for totals that include expired BCTs
         // The table model may filter out expired BCTs, missing their rewards/blocks
+        // Only override if the DB actually has records — an empty-but-initialized DB
+        // returns all-zero SUMs which would wipe out the table model's wallet-scan fallback data.
         BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
         if (bctDb && bctDb->isInitialized()) {
             BCTSummary dbSummary = bctDb->getSummary();
-            blocksFound = dbSummary.blocksFound;
-            rewardsPaid = dbSummary.totalRewards;
-            cost = dbSummary.totalCost;
-            profit = dbSummary.totalProfit;
-            immature = dbSummary.immatureMice;
-            mature = dbSummary.matureMice;
-            dead = dbSummary.expiredMice;
+            if (dbSummary.immatureCount + dbSummary.matureCount + dbSummary.expiredCount > 0) {
+                blocksFound = dbSummary.blocksFound;
+                rewardsPaid = dbSummary.totalRewards;
+                cost = dbSummary.totalCost;
+                profit = dbSummary.totalProfit;
+                immature = dbSummary.immatureMice;
+                mature = dbSummary.matureMice;
+                dead = dbSummary.expiredMice;
+            }
         }
 
         ui->rewardsPaidLabel->setText(

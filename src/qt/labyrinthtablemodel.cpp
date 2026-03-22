@@ -222,7 +222,7 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 sort(sortColumn, sortOrder);
 
                 // Fire signal
-                QMetaObject::invokeMethod(walletModel, "newLabyrinthSummaryAvailable", Qt::QueuedConnection);
+                Q_EMIT walletModel->newLabyrinthSummaryAvailable();
 
                 // Reset update flag and process any pending request
                 updateInProgress = false;
