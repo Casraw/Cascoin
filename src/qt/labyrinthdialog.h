@@ -35,7 +35,7 @@ QT_END_NAMESPACE
 
 extern MousePopGraphPoint mousePopGraph[1024*40];
 
-class QCPAxisTickerGI : public QCPAxisTicker 
+class QCPAxisTickerGI : public QCPAxisTicker
 {
 public:
     double global100;
@@ -43,6 +43,21 @@ public:
     QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
         tick = (tick / global100 * 100); // At tick = global100, scale is 100
         return QString::number(qRound(tick));
+    }
+};
+
+class QCPAxisTickerHumanReadable : public QCPAxisTicker
+{
+public:
+    QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
+        double abs = qAbs(tick);
+        if (abs >= 1e9)
+            return QString::number(tick / 1e9, 'f', 1) + "B";
+        if (abs >= 1e6)
+            return QString::number(tick / 1e6, 'f', 1) + "M";
+        if (abs >= 1e3)
+            return QString::number(tick / 1e3, 'f', 1) + "K";
+        return QString::number(tick, 'f', 0);
     }
 };
 
