@@ -938,13 +938,6 @@ void BitcoinGUI::setNumBlocks(int count, const QDateTime& blockDate, double nVer
         {
             walletFrame->showOutOfSyncWarning(false);
             modalOverlay->showHide(true, true);
-            
-            // Ensure main window is properly visible when overlay is hidden
-            this->update();
-            this->repaint();
-            centralWidget()->update();
-            centralWidget()->repaint();
-            QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents, 50);
         }
 #endif // ENABLE_WALLET
 
