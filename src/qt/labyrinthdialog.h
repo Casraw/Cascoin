@@ -52,6 +52,7 @@ protected:
         double rangePct = (range.upper - range.lower) / global100 * 100.0;
         // Pick a nice percentage step (10%, 20%, 25%, 50%, etc.)
         double rawStep = rangePct / 6.0; // aim for ~6 ticks
+        if (rawStep < 1e-9) return QCPAxisTicker::getTickStep(range);
         static const double niceSteps[] = {5, 10, 20, 25, 50, 100};
         double pctStep = niceSteps[0];
         for (double s : niceSteps) {
@@ -64,6 +65,7 @@ protected:
         QVector<double> ticks;
         if (global100 <= 0 || tickStep <= 0) return QCPAxisTicker::createTickVector(tickStep, range);
         double pctStep = tickStep / global100 * 100.0;
+        if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
         double startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
         double endPct = range.upper / global100 * 100.0;
         for (double pct = startPct; pct <= endPct + 0.5; pct += pctStep) {
