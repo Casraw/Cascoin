@@ -42,7 +42,7 @@ public:
 
     QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
         tick = (tick / global100 * 100); // At tick = global100, scale is 100
-        return QString::number((int)tick);
+        return QString::number(qRound(tick));
     }
 };
 
