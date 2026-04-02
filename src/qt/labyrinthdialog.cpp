@@ -528,10 +528,9 @@ void LabyrinthDialog::updateGraph() {
     globalMarkerLine->end->setCoords(now + consensusParams.nPowTargetSpacing / 2 * totalLifespan, global100);
     giTicker->global100 = global100;
     ui->mousePopGraph->rescaleAxes();
-    // Ensure Y-axis always shows at least 100% so users can see how far they are from max efficiency.
-    // Add a small margin above global100 so QCustomPlot places a tick at the 100% value.
-    if (ui->mousePopGraph->yAxis->range().upper < global100 * 1.02)
-        ui->mousePopGraph->yAxis->setRangeUpper(global100 * 1.02);
+    // Ensure Y-axis always shows at least 100% so users can see how far they are from max efficiency
+    if (ui->mousePopGraph->yAxis->range().upper < global100)
+        ui->mousePopGraph->yAxis->setRangeUpper(global100);
     ui->mousePopGraph->replot();
 }
 

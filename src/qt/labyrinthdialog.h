@@ -41,8 +41,35 @@ public:
     double global100;
 
     QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
-        tick = (tick / global100 * 100); // At tick = global100, scale is 100
-        return QString::number(qRound(tick));
+        double pct = tick / global100 * 100.0;
+        return QString::number(qRound(pct)) + "%";
+    }
+
+protected:
+    // Generate ticks at positions corresponding to round percentage values
+    double getTickStep(const QCPRange &range) Q_DECL_OVERRIDE {
+        if (global100 <= 0) return QCPAxisTicker::getTickStep(range);
+        double rangePct = (range.upper - range.lower) / global100 * 100.0;
+        // Pick a nice percentage step (10%, 20%, 25%, 50%, etc.)
+        double rawStep = rangePct / 6.0; // aim for ~6 ticks
+        static const double niceSteps[] = {5, 10, 20, 25, 50, 100};
+        double pctStep = niceSteps[0];
+        for (double s : niceSteps) {
+            if (s >= rawStep) { pctStep = s; break; }
+        }
+        return pctStep / 100.0 * global100;
+    }
+
+    QVector<double> createTickVector(double tickStep, const QCPRange &range) Q_DECL_OVERRIDE {
+        QVector<double> ticks;
+        if (global100 <= 0 || tickStep <= 0) return QCPAxisTicker::createTickVector(tickStep, range);
+        double pctStep = tickStep / global100 * 100.0;
+        double startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
+        double endPct = range.upper / global100 * 100.0;
+        for (double pct = startPct; pct <= endPct + 0.5; pct += pctStep) {
+            ticks.append(qRound(pct) / 100.0 * global100);
+        }
+        return ticks;
     }
 };
 
