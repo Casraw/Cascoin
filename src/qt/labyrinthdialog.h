@@ -66,8 +66,12 @@ protected:
         if (global100 <= 0 || tickStep <= 0) return QCPAxisTicker::createTickVector(tickStep, range);
         double pctStep = tickStep / global100 * 100.0;
         if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
-        double startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
         double endPct = range.upper / global100 * 100.0;
+        double startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
+        if ((endPct - startPct) / pctStep > 20)
+            pctStep = (endPct - startPct) / 6.0;
+        if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
+        startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
         for (double pct = startPct; pct <= endPct + 0.5; pct += pctStep) {
             ticks.append(qRound(pct) / 100.0 * global100);
         }
