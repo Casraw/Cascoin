@@ -173,14 +173,14 @@ echo "Skipping Qt6 libraries - they should be installed on target system via pac
 echo "Creating wrapper scripts..."
 cat > "$DIST_DIR/bin/cascoin-qt-wrapper" << 'EOF'
 #!/bin/bash
-export LD_LIBRARY_PATH="$(dirname "$0")/../lib:$LD_LIBRARY_PATH"
-exec "$(dirname "$0")/cascoin-qt" "$@"
+export LD_LIBRARY_PATH="/opt/cascoin/lib:$LD_LIBRARY_PATH"
+exec "/opt/cascoin/bin/cascoin-qt" "$@"
 EOF
 
 cat > "$DIST_DIR/bin/cascoind-wrapper" << 'EOF'
 #!/bin/bash
-export LD_LIBRARY_PATH="$(dirname "$0")/../lib:$LD_LIBRARY_PATH"
-exec "$(dirname "$0")/cascoind" "$@"
+export LD_LIBRARY_PATH="/opt/cascoin/lib:$LD_LIBRARY_PATH"
+exec "/opt/cascoin/bin/cascoind" "$@"
 EOF
 
 chmod +x "$DIST_DIR/bin"/*wrapper
@@ -285,7 +285,8 @@ EOF
 
 # Create package
 VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "unknown")
-PACKAGE_NAME="cascoin-linux-x86_64-$VERSION"
+ARCH=$(uname -m)
+PACKAGE_NAME="cascoin-linux-$ARCH-$VERSION"
 
 echo "Creating package: $PACKAGE_NAME.tar.gz"
 tar -czf "$PACKAGE_NAME.tar.gz" "$DIST_DIR/"
