@@ -10,7 +10,7 @@
 #include <stdint.h>
 #include <vector>
 
-static const int64_t DEFAULT_MAX_TIME_ADJUSTMENT = ((90 * 5 * 60) / 20) / 2;    // Cascoin: MinotaurX+Hive1.2: FTL/2 (675)
+static const int64_t DEFAULT_MAX_TIME_ADJUSTMENT = ((90 * 5 * 60) / 20) / 2;    // Cascoin: MinotaurX+Labyrinth1.2: FTL/2 (675)
 
 class CNetAddr;
 

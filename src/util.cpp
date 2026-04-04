@@ -256,8 +256,8 @@ const CLogCategoryDesc LogCategories[] =
     {BCLog::COINDB, "coindb"},
     {BCLog::QT, "qt"},
     {BCLog::LEVELDB, "leveldb"},
-    {BCLog::HIVE, "hive"},  // Cascoin: Hive
-    {BCLog::MINOTAURX, "minotaurx"},  // Cascoin: MinotaurX+Hive1.2
+    {BCLog::LABYRINTH, "labyrinth"},  // Cascoin: Labyrinth
+    {BCLog::MINOTAURX, "minotaurx"},  // Cascoin: MinotaurX+Labyrinth1.2
     {BCLog::RIALTO, "rialto"},        // Cascoin: Rialto
     {BCLog::ALL, "1"},
     {BCLog::ALL, "all"},
@@ -1011,7 +1011,7 @@ bool SetupNetworking()
     return true;
 }
 
-// Cascoin: Hive: Mining Optimisations: Return number of virt cores
+// Cascoin: Labyrinth: Mining Optimisations: Return number of virt cores
 int GetNumVirtualCores() {
     return boost::thread::hardware_concurrency();
 }

@@ -2,8 +2,8 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#ifndef CASCOIN_BEENFT_H
-#define CASCOIN_BEENFT_H
+#ifndef CASCOIN_MOUSENFT_H
+#define CASCOIN_MOUSENFT_H
 
 #include <amount.h>
 #include <uint256.h>
@@ -17,32 +17,32 @@
 #include <map>
 
 /*
-Cascoin: Bee NFT System
+Cascoin: Mouse NFT System
 
-Individual Bee Tokenization allows transferring specific bees from BCTs as NFT-like tokens.
-Each bee from a BCT can be tokenized and transferred independently, enabling:
-- Bee trading markets
+Individual Mouse Tokenization allows transferring specific mice from BCTs as NFT-like tokens.
+Each mouse from a BCT can be tokenized and transferred independently, enabling:
+- Mouse trading markets
 - Granular mining rights transfer
-- Individual bee ownership tracking
+- Individual mouse ownership tracking
 - Integration with DeFi systems
 
 Architecture:
-1. BCT creates N bees (existing system)
-2. Owner can tokenize individual bees via OP_BEE_TOKEN transaction
-3. Bee tokens can be transferred via OP_BEE_TRANSFER transaction
-4. Mining system checks bee token ownership for mining rights
-5. Rewards go to current bee token owner
+1. BCT creates N mice (existing system)
+2. Owner can tokenize individual mice via OP_MOUSE_TOKEN transaction
+3. Mouse tokens can be transferred via OP_MOUSE_TRANSFER transaction
+4. Mining system checks mouse token ownership for mining rights
+5. Rewards go to current mouse token owner
 
-Each bee NFT contains:
+Each mouse NFT contains:
 - Original BCT transaction ID
-- Bee index within that BCT (0 to N-1)
+- Mouse index within that BCT (0 to N-1)
 - Maturity and expiry heights
 - Current owner address
 - Mining performance history
 */
 
-// Maximum data size for bee NFT transactions
-const int BEE_NFT_MAX_DATA_SIZE = 4096; // 4KB for larger metadata as required
+// Maximum data size for mouse NFT transactions
+const int MOUSE_NFT_MAX_DATA_SIZE = 4096; // 4KB for larger metadata as required
 
 // Cascoin: Memory management for NFT system - prevent memory leaks
 const int MAX_NFT_CACHE_ENTRIES = 500; // Maximum NFT objects to keep in memory
@@ -55,13 +55,13 @@ const size_t MAX_NFT_MEMORY_POOL_SIZE = 8 * 1024 * 1024; // 8MB max for NFT data
 #define NFT_MAGIC_GENERIC "CASNFT"
 #define NFT_MAGIC_GENERIC_TRANSFER "CASGEN"
 
-// Bee NFT Token structure
-struct BeeNFTToken {
+// Mouse NFT Token structure
+struct MouseNFTToken {
     uint256 originalBCT;        // Original BCT transaction hash
-    uint32_t beeIndex;          // Index of this bee within the BCT (0-based)
-    uint32_t maturityHeight;    // Block height when bee matures for mining
-    uint32_t expiryHeight;      // Block height when bee expires
-    uint32_t tokenizedHeight;   // Block height when bee was tokenized
+    uint32_t mouseIndex;          // Index of this mouse within the BCT (0-based)
+    uint32_t maturityHeight;    // Block height when mouse matures for mining
+    uint32_t expiryHeight;      // Block height when mouse expires
+    uint32_t tokenizedHeight;   // Block height when mouse was tokenized
     std::string currentOwner;   // Current owner's address
     
     // Serialization for storage and network transmission
@@ -69,33 +69,33 @@ struct BeeNFTToken {
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
         READWRITE(originalBCT);
-        READWRITE(beeIndex);
+        READWRITE(mouseIndex);
         READWRITE(maturityHeight);
         READWRITE(expiryHeight);
         READWRITE(tokenizedHeight);
         READWRITE(currentOwner);
     }
     
-    // Generate unique bee NFT ID
-    uint256 GetBeeNFTId() const {
+    // Generate unique mouse NFT ID
+    uint256 GetMouseNFTId() const {
         CHashWriter ss(SER_GETHASH, 0);
-        ss << originalBCT << beeIndex;
+        ss << originalBCT << mouseIndex;
         return ss.GetHash();
     }
     
-    // Check if bee is currently mature for mining
+    // Check if mouse is currently mature for mining
     bool IsMature(int currentHeight) const {
         return currentHeight >= maturityHeight && currentHeight < expiryHeight;
     }
     
-    // Check if bee has expired
+    // Check if mouse has expired
     bool IsExpired(int currentHeight) const {
         return currentHeight >= expiryHeight;
     }
     
     // Cascoin: Memory management - estimate memory usage for this NFT
     size_t EstimateMemoryUsage() const {
-        return sizeof(BeeNFTToken) + currentOwner.size() + 64; // Conservative estimate: ~512 bytes per entry
+        return sizeof(MouseNFTToken) + currentOwner.size() + 64; // Conservative estimate: ~512 bytes per entry
     }
 };
 
@@ -157,9 +157,9 @@ public:
     }
 };
 
-// Bee NFT Transfer record
-struct BeeNFTTransfer {
-    uint256 beeNFTId;           // Unique bee NFT identifier
+// Mouse NFT Transfer record
+struct MouseNFTTransfer {
+    uint256 mouseNFTId;           // Unique mouse NFT identifier
     std::string fromOwner;      // Previous owner address
     std::string toOwner;        // New owner address
     uint32_t transferHeight;    // Block height of transfer
@@ -169,7 +169,7 @@ struct BeeNFTTransfer {
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(beeNFTId);
+        READWRITE(mouseNFTId);
         READWRITE(fromOwner);
         READWRITE(toOwner);
         READWRITE(transferHeight);
@@ -178,9 +178,9 @@ struct BeeNFTTransfer {
     }
 };
 
-// Bee NFT mining performance record
-struct BeeNFTMiningRecord {
-    uint256 beeNFTId;           // Unique bee NFT identifier
+// Mouse NFT mining performance record
+struct MouseNFTMiningRecord {
+    uint256 mouseNFTId;           // Unique mouse NFT identifier
     uint32_t blockHeight;       // Height of mined block
     uint256 blockHash;          // Hash of mined block
     CAmount rewardAmount;       // Mining reward received
@@ -189,7 +189,7 @@ struct BeeNFTMiningRecord {
     ADD_SERIALIZE_METHODS;
     template <typename Stream, typename Operation>
     inline void SerializationOp(Stream& s, Operation ser_action) {
-        READWRITE(beeNFTId);
+        READWRITE(mouseNFTId);
         READWRITE(blockHeight);
         READWRITE(blockHash);
         READWRITE(rewardAmount);
@@ -221,25 +221,25 @@ struct GenericNFTTransfer {
 };
 
 // Validation functions
-bool IsValidBeeNFTTokenTransaction(const CTransaction& tx, std::string& error);
-bool IsValidBeeNFTTransferTransaction(const CTransaction& tx, std::string& error);
+bool IsValidMouseNFTTokenTransaction(const CTransaction& tx, std::string& error);
+bool IsValidMouseNFTTransferTransaction(const CTransaction& tx, std::string& error);
 
-// Parsing functions for bee NFT transactions
-bool ParseBeeNFTTokenTransaction(const CTransaction& tx, std::vector<BeeNFTToken>& tokens, std::string& error);
-bool ParseBeeNFTTransferTransaction(const CTransaction& tx, std::vector<BeeNFTTransfer>& transfers, std::string& error);
+// Parsing functions for mouse NFT transactions
+bool ParseMouseNFTTokenTransaction(const CTransaction& tx, std::vector<MouseNFTToken>& tokens, std::string& error);
+bool ParseMouseNFTTransferTransaction(const CTransaction& tx, std::vector<MouseNFTTransfer>& transfers, std::string& error);
 
 // Utility functions
-std::vector<unsigned char> SerializeBeeNFTToken(const BeeNFTToken& token);
-bool DeserializeBeeNFTToken(const std::vector<unsigned char>& data, BeeNFTToken& token);
+std::vector<unsigned char> SerializeMouseNFTToken(const MouseNFTToken& token);
+bool DeserializeMouseNFTToken(const std::vector<unsigned char>& data, MouseNFTToken& token);
 
-std::vector<unsigned char> SerializeBeeNFTTransfer(const BeeNFTTransfer& transfer);
-bool DeserializeBeeNFTTransfer(const std::vector<unsigned char>& data, BeeNFTTransfer& transfer);
+std::vector<unsigned char> SerializeMouseNFTTransfer(const MouseNFTTransfer& transfer);
+bool DeserializeMouseNFTTransfer(const std::vector<unsigned char>& data, MouseNFTTransfer& transfer);
 
-// Create bee NFT token transaction script
-CScript CreateBeeNFTTokenScript(const std::vector<BeeNFTToken>& tokens);
+// Create mouse NFT token transaction script
+CScript CreateMouseNFTTokenScript(const std::vector<MouseNFTToken>& tokens);
 
-// Create bee NFT transfer transaction script  
-CScript CreateBeeNFTTransferScript(const std::vector<BeeNFTTransfer>& transfers);
+// Create mouse NFT transfer transaction script  
+CScript CreateMouseNFTTransferScript(const std::vector<MouseNFTTransfer>& transfers);
 
 // Generic NFT script creation functions
 std::vector<unsigned char> CreateGenericNFTScript(const std::vector<GenericNFT>& nfts);
@@ -251,4 +251,4 @@ bool ParseGenericNFTTransaction(const CTransaction& tx, std::vector<GenericNFT>&
 bool IsValidGenericNFTTransferTransaction(const CTransaction& tx, std::string& error);
 bool ParseGenericNFTTransferTransaction(const CTransaction& tx, std::vector<GenericNFTTransfer>& transfers, std::string& error);
 
-#endif // CASCOIN_BEENFT_H
+#endif // CASCOIN_MOUSENFT_H

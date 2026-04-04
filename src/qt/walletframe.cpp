@@ -117,20 +117,20 @@ void WalletFrame::gotoOverviewPage()
         i.value()->gotoOverviewPage();
 }
 
-// Cascoin: Hive page
-void WalletFrame::gotoHivePage()
+// Cascoin: Labyrinth page
+void WalletFrame::gotoLabyrinthPage()
 {
     QMap<QString, WalletView*>::const_iterator i;
     for (i = mapWalletViews.constBegin(); i != mapWalletViews.constEnd(); ++i)
-        i.value()->gotoHivePage();
+        i.value()->gotoLabyrinthPage();
 }
 
-// Cascoin: Bee NFT page
-void WalletFrame::gotoBeeNFTPage()
+// Cascoin: Mouse NFT page
+void WalletFrame::gotoMouseNFTPage()
 {
     QMap<QString, WalletView*>::const_iterator i;
     for (i = mapWalletViews.constBegin(); i != mapWalletViews.constEnd(); ++i)
-        i.value()->gotoBeeNFTPage();
+        i.value()->gotoMouseNFTPage();
 }
 
 // Cascoin: Key import helper

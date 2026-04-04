@@ -114,7 +114,7 @@ public:
     explicit uint160(const std::vector<unsigned char>& vch) : base_blob<160>(vch) {}
 };
 
-// Cascoin: MinotaurX+Hive1.2: 512-bit opaque blob
+// Cascoin: MinotaurX+Labyrinth1.2: 512-bit opaque blob
 class uint512 : public base_blob<512> {
 public:
     uint512() {}
@@ -135,7 +135,7 @@ public:
     uint256() {}
     explicit uint256(const std::vector<unsigned char>& vch) : base_blob<256>(vch) {}
 
-    // Cascoin: MinotaurX+Hive1.2: Truncate a uint512 to a uint256
+    // Cascoin: MinotaurX+Labyrinth1.2: Truncate a uint512 to a uint256
     uint256(uint512& dat){
         memcpy(begin(), dat.begin(), size());
     }

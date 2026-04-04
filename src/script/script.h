@@ -181,13 +181,13 @@ enum opcodetype
     OP_NOP9 = 0xb8,
     OP_NOP10 = 0xb9,
 
-    // Cascoin: Hive
-    OP_BEE = 0xbe,
+    // Cascoin: Labyrinth
+    OP_MOUSE = 0xbe,
 
     // Cascoin: Rialto
     OP_NICK_CREATE = 0xbf,
 
-    // Cascoin: Bee NFT System - REMOVED opcodes for true soft fork compatibility
+    // Cascoin: Mouse NFT System - REMOVED opcodes for true soft fork compatibility
     // 0xc0 and 0xc1 are now undefined opcodes - old nodes will reject them
     // NFT system now uses magic bytes in OP_RETURN data instead
 
@@ -677,38 +677,38 @@ public:
         shrink_to_fit();
     }
 
-    // Cascoin: Hive: Check if script is a Bee Creation script and optionally get the honey scriptPubKey in scriptPubKeyHoney
-    static bool IsBCTScript(CScript scriptPubKey, CScript scriptPubKeyBCF, CScript* scriptPubKeyHoney = nullptr) {
-        // More flexible bee creation transaction validation
+    // Cascoin: Labyrinth: Check if script is a Mouse Creation script and optionally get the cheese scriptPubKey in scriptPubKeyCheese
+    static bool IsBCTScript(CScript scriptPubKey, CScript scriptPubKeyBCF, CScript* scriptPubKeyCheese = nullptr) {
+        // More flexible mouse creation transaction validation
         // There are two formats that are valid:
         
         // Format 1: Traditional format with exact byte pattern
         if (scriptPubKey.size() == 52) {
-            // Check for the unspendable bee creation script
+            // Check for the unspendable mouse creation script
             CScript scriptPubKeyBCFCheck(&scriptPubKey[0], &scriptPubKey[25]);
             if (scriptPubKeyBCFCheck == scriptPubKeyBCF) {
-                // Check OP_RETURN OP_BEE delimiter
-                if (scriptPubKey[25] == OP_RETURN && scriptPubKey[26] == OP_BEE) {
-                    // Grab scriptPubKeyHoney
-                    CScript localScriptPubKeyHoney(&scriptPubKey[27], &scriptPubKey[scriptPubKey.size()]);
-                    if (scriptPubKeyHoney)
-                        *scriptPubKeyHoney = localScriptPubKeyHoney;
+                // Check OP_RETURN OP_MOUSE delimiter
+                if (scriptPubKey[25] == OP_RETURN && scriptPubKey[26] == OP_MOUSE) {
+                    // Grab scriptPubKeyCheese
+                    CScript localScriptPubKeyCheese(&scriptPubKey[27], &scriptPubKey[scriptPubKey.size()]);
+                    if (scriptPubKeyCheese)
+                        *scriptPubKeyCheese = localScriptPubKeyCheese;
                     
                     return true;
                 }
             }
         }
         
-        // Format 2: Simplified format with OP_RETURN OP_BEE marker
+        // Format 2: Simplified format with OP_RETURN OP_MOUSE marker
         // This format is used during blockchain bootstrap
         if (scriptPubKey.size() >= 2 && 
             scriptPubKey[0] == OP_RETURN && 
-            scriptPubKey[1] == OP_BEE) {
+            scriptPubKey[1] == OP_MOUSE) {
             
-            // If possible, extract a honey address (may not be present in all formats)
-            if (scriptPubKey.size() > 2 && scriptPubKeyHoney) {
-                CScript localScriptPubKeyHoney(&scriptPubKey[2], &scriptPubKey[scriptPubKey.size()]);
-                *scriptPubKeyHoney = localScriptPubKeyHoney;
+            // If possible, extract a cheese address (may not be present in all formats)
+            if (scriptPubKey.size() > 2 && scriptPubKeyCheese) {
+                CScript localScriptPubKeyCheese(&scriptPubKey[2], &scriptPubKey[scriptPubKey.size()]);
+                *scriptPubKeyCheese = localScriptPubKeyCheese;
             }
             
             return true;

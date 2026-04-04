@@ -27,13 +27,13 @@ namespace Consensus {
 }
 
 /**
- * BCTRecord - Data structure representing a Bee Creation Transaction record
+ * BCTRecord - Data structure representing a Mouse Creation Transaction record
  */
 struct BCTRecord {
     std::string txid;
-    std::string honeyAddress;
+    std::string cheeseAddress;
     std::string status;          // "immature", "mature", "expired"
-    int beeCount;
+    int mouseCount;
     int creationHeight;
     int maturityHeight;
     int expirationHeight;
@@ -45,7 +45,7 @@ struct BCTRecord {
     std::string checksum;        // For integrity validation
     int64_t updatedAt;
 
-    BCTRecord() : beeCount(0), creationHeight(0), maturityHeight(0),
+    BCTRecord() : mouseCount(0), creationHeight(0), maturityHeight(0),
                   expirationHeight(0), timestamp(0), cost(0), blocksFound(0),
                   rewardsPaid(0), profit(0), updatedAt(0) {}
 
@@ -73,25 +73,25 @@ struct BCTSummary {
     int immatureCount;      // Number of immature BCT transactions
     int matureCount;        // Number of mature BCT transactions
     int expiredCount;       // Number of expired BCT transactions
-    int totalBeeCount;
+    int totalMouseCount;
     int blocksFound;
     int64_t totalCost;
     int64_t totalRewards;
     int64_t totalProfit;
-    int immatureBees;       // Total mice count across immature BCTs
-    int matureBees;         // Total mice count across mature BCTs
-    int expiredBees;        // Total mice count across expired BCTs
+    int immatureMice;       // Total mice count across immature BCTs
+    int matureMice;         // Total mice count across mature BCTs
+    int expiredMice;        // Total mice count across expired BCTs
 
     BCTSummary() : immatureCount(0), matureCount(0), expiredCount(0),
-                   totalBeeCount(0), blocksFound(0), totalCost(0),
+                   totalMouseCount(0), blocksFound(0), totalCost(0),
                    totalRewards(0), totalProfit(0),
-                   immatureBees(0), matureBees(0), expiredBees(0) {}
+                   immatureMice(0), matureMice(0), expiredMice(0) {}
 };
 
 /**
  * BCTDatabaseSQLite - SQLite-based persistent storage for BCT data
  * 
- * This class provides persistent storage for BCT (Bee Creation Transaction) data
+ * This class provides persistent storage for BCT (Mouse Creation Transaction) data
  * using SQLite. It supports incremental updates, caching, and efficient queries.
  */
 class BCTDatabaseSQLite {

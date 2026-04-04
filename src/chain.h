@@ -19,7 +19,7 @@
  * current network-adjusted time before the block will be accepted.
  */
 static const int64_t MAX_FUTURE_BLOCK_TIME = 2 * 60 * 60;
-static const int64_t MAX_FUTURE_BLOCK_TIME_MINOTAURX = (90 * 5 * 60) / 20;  // Cascoin: MinotaurX+Hive1.2: (N*T)/20
+static const int64_t MAX_FUTURE_BLOCK_TIME_MINOTAURX = (90 * 5 * 60) / 20;  // Cascoin: MinotaurX+Labyrinth1.2: (N*T)/20
 
 /**
  * Timestamp window used as a grace period by code that compares external
@@ -378,8 +378,8 @@ public:
 };
 
 arith_uint256 GetBlockProof(const CBlockIndex& block);
-// Cascoin: Hive: Reimplement un-boosted GetBlockProof for getnetworkhashps estimation.
-// Cascoin: MinotaurX+Hive1.2
+// Cascoin: Labyrinth: Reimplement un-boosted GetBlockProof for getnetworkhashps estimation.
+// Cascoin: MinotaurX+Labyrinth1.2
 arith_uint256 GetNumHashes(const CBlockIndex& block, POW_TYPE powType);
 /** Return the time it would take to redo the work difference between from and to, assuming the current hashrate corresponds to the difficulty at tip, in seconds. */
 int64_t GetBlockProofEquivalentTime(const CBlockIndex& to, const CBlockIndex& from, const CBlockIndex& tip, const Consensus::Params&);

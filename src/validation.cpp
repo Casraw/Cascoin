@@ -54,8 +54,8 @@ using namespace boost::placeholders;
 #include <boost/algorithm/string/join.hpp>
 #include <boost/thread.hpp>
 
-#include <miner.h>  // Cascoin: Hive
-#include <merkleblock.h> // Cascoin: Hive for merkle transaction check in block
+#include <miner.h>  // Cascoin: Labyrinth
+#include <merkleblock.h> // Cascoin: Labyrinth for merkle transaction check in block
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -1116,10 +1116,10 @@ bool ReadBlockFromDisk(CBlock& block, const CDiskBlockPos& pos, const Consensus:
         return error("%s: Deserialize or I/O error - %s at %s", __func__, e.what(), pos.ToString());
     }
 
-    // Cascoin: Hive: Check PoW or Hive work depending on blocktype
-    if (block.IsHiveMined(consensusParams)) {
-        if (!CheckHiveProof(&block, consensusParams))
-            return error("ReadBlockFromDisk: Errors in Hive block header at %s", pos.ToString());
+    // Cascoin: Labyrinth: Check PoW or Labyrinth work depending on blocktype
+    if (block.IsLabyrinthMined(consensusParams)) {
+        if (!CheckLabyrinthProof(&block, consensusParams))
+            return error("ReadBlockFromDisk: Errors in Labyrinth block header at %s", pos.ToString());
     } else {
         if (!CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
             return error("ReadBlockFromDisk: Errors in PoW block header at %s", pos.ToString());
@@ -1177,16 +1177,16 @@ CAmount GetBlockSubsidy(int nHeight, const Consensus::Params& consensusParams)
     return nSubsidy;
 }
 
-// Cascoin: Hive: Return the current cost for a single worker bee
-CAmount GetBeeCost(int nHeight, const Consensus::Params& consensusParams)
+// Cascoin: Labyrinth: Return the current cost for a single worker mouse
+CAmount GetMouseCost(int nHeight, const Consensus::Params& consensusParams)
 {
     if(nHeight >= consensusParams.totalMoneySupplyHeight)
-        return consensusParams.minBeeCost;
+        return consensusParams.minMouseCost;
 
-    // Cascoin: MinotaurX+Hive1.2: Note that this doesn't change; bee cost remains calculated against the base subsidy. Great!
+    // Cascoin: MinotaurX+Labyrinth1.2: Note that this doesn't change; mouse cost remains calculated against the base subsidy. Great!
     CAmount blockReward = GetBlockSubsidy(nHeight, consensusParams);
-    CAmount beeCost = blockReward / consensusParams.beeCostFactor;
-    return beeCost <= consensusParams.minBeeCost ? consensusParams.minBeeCost : beeCost;
+    CAmount mouseCost = blockReward / consensusParams.mouseCostFactor;
+    return mouseCost <= consensusParams.minMouseCost ? consensusParams.minMouseCost : mouseCost;
 }
 
 bool IsInitialBlockDownload()
@@ -1729,7 +1729,7 @@ int32_t ComputeBlockVersion(const CBlockIndex* pindexPrev, const Consensus::Para
     LOCK(cs_main);
     int32_t nVersion = VERSIONBITS_TOP_BITS;
 
-    // Cascoin: MinotaurX+Hive1.2: Set bit 29 to 0
+    // Cascoin: MinotaurX+Labyrinth1.2: Set bit 29 to 0
     if (IsMinotaurXEnabled(pindexPrev, params))
         nVersion = 0;
 
@@ -1761,7 +1761,7 @@ public:
 
     bool Condition(const CBlockIndex* pindex, const Consensus::Params& params) const override
     {
-        // Cascoin: MinotaurX+Hive1.2: Versionbits always active since powforktime and high bits repurposed at minotaurx UASF activation;
+        // Cascoin: MinotaurX+Labyrinth1.2: Versionbits always active since powforktime and high bits repurposed at minotaurx UASF activation;
         // So, don't use VERSIONBITS_TOP_MASK any time past powforktime
         if (pindex->nTime > params.powForkTime)
             return ((pindex->nVersion >> bit) & 1) != 0 &&
@@ -2021,10 +2021,10 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     int64_t nTime3 = GetTimeMicros(); nTimeConnect += nTime3 - nTime2;
     LogPrint(BCLog::BENCH, "      - Connect %u transactions: %.2fms (%.3fms/tx, %.3fms/txin) [%.2fs (%.2fms/blk)]\n", (unsigned)block.vtx.size(), MILLI * (nTime3 - nTime2), MILLI * (nTime3 - nTime2) / block.vtx.size(), nInputs <= 1 ? 0 : MILLI * (nTime3 - nTime2) / (nInputs-1), nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
-    // Cascoin: MinotaurX+Hive1.2: Get correct block reward
+    // Cascoin: MinotaurX+Labyrinth1.2: Get correct block reward
     CAmount blockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
     if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
-        if (block.IsHiveMined(chainparams.GetConsensus()))
+        if (block.IsLabyrinthMined(chainparams.GetConsensus()))
             blockReward += blockReward >> 1;
         else
             blockReward = blockReward >> 1;
@@ -2248,14 +2248,14 @@ void static UpdateTip(const CBlockIndex *pindexNew, const CChainParams& chainPar
         for (int i = 0; i < 100 && pindex != nullptr; i++)
         {
             int32_t nExpectedVersion = ComputeBlockVersion(pindex->pprev, chainParams.GetConsensus());
-            // Cascoin: MinotaurX+Hive1.2: Mask out blocktype before checking for possible unknown upgrade
+            // Cascoin: MinotaurX+Labyrinth1.2: Mask out blocktype before checking for possible unknown upgrade
             if (IsMinotaurXEnabled(pindex, chainParams.GetConsensus())) {
                 // Cascoin: Rialto: Added explicit cast to prevent compile warning
-                if ((pindex->nVersion & (int32_t)0xFF00FFFF) != nExpectedVersion && !pindex->GetBlockHeader().IsHiveMined(chainParams.GetConsensus()))
+                if ((pindex->nVersion & (int32_t)0xFF00FFFF) != nExpectedVersion && !pindex->GetBlockHeader().IsLabyrinthMined(chainParams.GetConsensus()))
                     ++nUpgraded;
             } else {
-                // Cascoin: Hive: Don't warn about unexpected version in Hivemined blocks
-                if (pindex->nVersion > VERSIONBITS_LAST_OLD_BLOCK_VERSION && (pindex->nVersion & ~nExpectedVersion) != 0 && !pindex->GetBlockHeader().IsHiveMined(chainParams.GetConsensus()))
+                // Cascoin: Labyrinth: Don't warn about unexpected version in Labyrinthmined blocks
+                if (pindex->nVersion > VERSIONBITS_LAST_OLD_BLOCK_VERSION && (pindex->nVersion & ~nExpectedVersion) != 0 && !pindex->GetBlockHeader().IsLabyrinthMined(chainParams.GetConsensus()))
                     ++nUpgraded;
             }
             pindex = pindex->pprev;
@@ -3115,8 +3115,8 @@ static bool FindUndoPos(CValidationState &state, int nFile, CDiskBlockPos &pos, 
 
 static bool CheckBlockHeader(const CBlockHeader& block, CValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
-    // Cascoin: Hive: Check PoW or Hive work depending on blocktype
-    if (fCheckPOW && !block.IsHiveMined(consensusParams)) {
+    // Cascoin: Labyrinth: Check PoW or Labyrinth work depending on blocktype
+    if (fCheckPOW && !block.IsLabyrinthMined(consensusParams)) {
         if (!CheckProofOfWork(block.GetPoWHash(), block.nBits, consensusParams))
             return state.DoS(50, false, REJECT_INVALID, "high-hash", false, "proof of work failed");
     }
@@ -3136,10 +3136,10 @@ bool CheckBlock(const CBlock& block, CValidationState& state, const Consensus::P
     if (!CheckBlockHeader(block, state, consensusParams, fCheckPOW))
         return false;
 
-    // Cascoin: Hive: Check Hive proof
-    if (block.IsHiveMined(consensusParams))
-        if (!CheckHiveProof(&block, consensusParams))
-            return state.DoS(100, false, REJECT_INVALID, "bad-hive-proof", false, "proof of hive failed");
+    // Cascoin: Labyrinth: Check Labyrinth proof
+    if (block.IsLabyrinthMined(consensusParams))
+        if (!CheckLabyrinthProof(&block, consensusParams))
+            return state.DoS(100, false, REJECT_INVALID, "bad-labyrinth-proof", false, "proof of labyrinth failed");
 
     // Check the merkle root.
     if (fCheckMerkleRoot) {
@@ -3198,21 +3198,21 @@ bool IsWitnessEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& pa
     return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_SEGWIT, versionbitscache) == THRESHOLD_ACTIVE);
 }
 
-// Cascoin: Hive: Check if Hive is activated at given point
-bool IsHiveEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params)
+// Cascoin: Labyrinth: Check if Labyrinth is activated at given point
+bool IsLabyrinthEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params)
 {
     LOCK(cs_main);
-    return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_HIVE, versionbitscache) == THRESHOLD_ACTIVE);
+    return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_LABYRINTH, versionbitscache) == THRESHOLD_ACTIVE);
 }
 
-// Cascoin: Hive: Check if Hive 1.1 is activated at given point
-bool IsHive11Enabled(const CBlockIndex* pindexPrev, const Consensus::Params& params)
+// Cascoin: Labyrinth: Check if Labyrinth 1.1 is activated at given point
+bool IsLabyrinth11Enabled(const CBlockIndex* pindexPrev, const Consensus::Params& params)
 {
     LOCK(cs_main);
-    return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_HIVE_1_1, versionbitscache) == THRESHOLD_ACTIVE);
+    return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_LABYRINTH_1_1, versionbitscache) == THRESHOLD_ACTIVE);
 }
 
-// Cascoin: MinotaurX+Hive1.2: Check if MinotaurX is activated at given point
+// Cascoin: MinotaurX+Labyrinth1.2: Check if MinotaurX is activated at given point
 bool IsMinotaurXEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params)
 {
     LOCK(cs_main);
@@ -3322,7 +3322,7 @@ bool RialtoGetLocalPrivKeyForNick(const std::string nick, unsigned char* privKey
     return false;
 }
 
-// Cascoin: Hive: Get the well-rooted deterministic random string (see whitepaper section 4.1)
+// Cascoin: Labyrinth: Get the well-rooted deterministic random string (see whitepaper section 4.1)
 std::string GetDeterministicRandString(const CBlockIndex* pindexPrev) {
     //LOCK(cs_main);  // Lock maybe not needed
 
@@ -3345,7 +3345,7 @@ std::string GetDeterministicRandString(const CBlockIndex* pindexPrev) {
     return deterministicRandString;
 }
 
-// Cascoin: Hive: Get tx by given hash, from a block at given chain height
+// Cascoin: Labyrinth: Get tx by given hash, from a block at given chain height
 bool GetTxByHashAndHeight(const uint256 txHash, const int nHeight, CTransactionRef& txNew, CBlockIndex& foundAtOut, CBlockIndex* pindex, const Consensus::Params& consensusParams) {
     // Check that we are stepping back from a point AFTER the requested height
     if (pindex->nHeight < nHeight)
@@ -3451,12 +3451,12 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     assert(pindexPrev != nullptr);
     const int nHeight = pindexPrev->nHeight + 1;
 
-    // Cascoin: Hive: Check appropriate Hive or PoW target
-    if (block.IsHiveMined(consensusParams)) {
-        if (block.nBits != GetNextHiveWorkRequired(pindexPrev, consensusParams))
-            return state.DoS(100, false, REJECT_INVALID, "bad-hive-diffbits", false, "incorrect hive difficulty in block");
+    // Cascoin: Labyrinth: Check appropriate Labyrinth or PoW target
+    if (block.IsLabyrinthMined(consensusParams)) {
+        if (block.nBits != GetNextLabyrinthWorkRequired(pindexPrev, consensusParams))
+            return state.DoS(100, false, REJECT_INVALID, "bad-labyrinth-diffbits", false, "incorrect labyrinth difficulty in block");
     } else {
-        // Cascoin: MinotaurX+Hive1.2: Handle pow type
+        // Cascoin: MinotaurX+Labyrinth1.2: Handle pow type
         if (IsMinotaurXEnabled(pindexPrev, consensusParams)) {
             POW_TYPE effectivePowType = block.GetEffectivePoWTypeForHashing(consensusParams);
             const char* effective_pow_type_name_for_log = "UNKNOWN_EFFECTIVE_POW_TYPE";
@@ -3526,12 +3526,12 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
         return state.Invalid(false, REJECT_INVALID, "time-too-old", "block's timestamp is too early");
 
     // Check timestamp
-    // Cascoin: MinotaurX+Hive1.2: Use alternative MAX_FUTURE_BLOCK_TIME after fork
+    // Cascoin: MinotaurX+Labyrinth1.2: Use alternative MAX_FUTURE_BLOCK_TIME after fork
     int64_t max_future_block_time = IsMinotaurXEnabled(pindexPrev, consensusParams) ? MAX_FUTURE_BLOCK_TIME_MINOTAURX : MAX_FUTURE_BLOCK_TIME;
     if (block.GetBlockTime() > nAdjustedTime + max_future_block_time)
         return state.Invalid(false, REJECT_INVALID, "time-too-new", "block timestamp too far in the future");
     
-    // Cascoin: MinotaurX+Hive1.2: Handle nVersion differently after activation
+    // Cascoin: MinotaurX+Labyrinth1.2: Handle nVersion differently after activation
     if (!IsMinotaurXEnabled(pindexPrev,consensusParams)) {
         // Reject outdated version blocks when 95% (75% on testnet) of the network has upgraded:
         // check for version 2, 3 and 4 upgrades
@@ -3568,7 +3568,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
     }
 
     // Cascoin: Log before returning true if all checks passed so far for SHA256 (MinotaurX enabled path)
-    if (block.GetPoWType() == POW_TYPE_SHA256 && !block.IsHiveMined(consensusParams) && IsMinotaurXEnabled(pindexPrev, consensusParams) ) {
+    if (block.GetPoWType() == POW_TYPE_SHA256 && !block.IsLabyrinthMined(consensusParams) && IsMinotaurXEnabled(pindexPrev, consensusParams) ) {
          LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 All contextual checks PASSED. Returning true.\\n");
     }
 

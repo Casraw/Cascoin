@@ -71,11 +71,11 @@ public Q_SLOTS:
     /** Switch to send coins page */
     void gotoSendCoinsPage(QString addr = "");
 
-    // Cascoin: Hive: Switch to hive page
-    void gotoHivePage();
+    // Cascoin: Labyrinth: Switch to labyrinth page
+    void gotoLabyrinthPage();
 
-    // Cascoin: Bee NFT: Switch to bee NFT page
-    void gotoBeeNFTPage();
+    // Cascoin: Mouse NFT: Switch to mouse NFT page
+    void gotoMouseNFTPage();
 
     // Cascoin: Key import helper
     void importPrivateKey();
