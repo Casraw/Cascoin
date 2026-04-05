@@ -135,6 +135,35 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
                 break;
             }
         }
+
+        // When close to synced, the progress-based estimate becomes unreliable because
+        // verificationProgress (transaction-based) can jump faster than actual block
+        // validation. Use a block-count-based estimate as a floor: remaining blocks
+        // times the average time per block observed over a recent short window.
+        if (bestHeaderHeight > count && count > 0) {
+            int blocksLeft = bestHeaderHeight - count;
+
+            // Calculate recent per-block time from a short window (last ~30 seconds)
+            // to get a more responsive estimate near the end of sync.
+            double recentPerBlockMs = 0;
+            for (int i = 1; i < blockProcessTime.size(); i++) {
+                qint64 windowTime = blockProcessTime[0].first - blockProcessTime[i].first;
+                if (windowTime >= 30 * 1000 || i == blockProcessTime.size() - 1) {
+                    if (i > 0 && windowTime > 0) {
+                        recentPerBlockMs = (double)windowTime / i;
+                    }
+                    break;
+                }
+            }
+
+            if (recentPerBlockMs > 0) {
+                qint64 blockBasedMSecs = (qint64)(blocksLeft * recentPerBlockMs);
+                if (blockBasedMSecs > remainingMSecs) {
+                    remainingMSecs = blockBasedMSecs;
+                }
+            }
+        }
+
         // show progress increase per hour
         if (progressPerHour > 0) {
             ui->progressIncreasePerH->setText(QString::number(progressPerHour * 100, 'f', 2)+"%");
@@ -143,7 +172,7 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
         }
 
         // show expected remaining time
-        if(remainingMSecs >= 0) {	
+        if(remainingMSecs >= 0) {
             ui->expectedTimeLeft->setText(GUIUtil::formatNiceTimeOffset(remainingMSecs / 1000.0));
         } else {
             ui->expectedTimeLeft->setText(QObject::tr("calculating..."));
