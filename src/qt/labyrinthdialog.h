@@ -35,14 +35,62 @@ QT_END_NAMESPACE
 
 extern MousePopGraphPoint mousePopGraph[1024*40];
 
-class QCPAxisTickerGI : public QCPAxisTicker 
+class QCPAxisTickerGI : public QCPAxisTicker
 {
 public:
     double global100;
 
     QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
-        tick = (tick / global100 * 100); // At tick = global100, scale is 100
-        return QString::number((int)tick);
+        double pct = tick / global100 * 100.0;
+        return QString::number(qRound(pct)) + "%";
+    }
+
+protected:
+    // Generate ticks at positions corresponding to round percentage values
+    double getTickStep(const QCPRange &range) Q_DECL_OVERRIDE {
+        if (global100 <= 0) return QCPAxisTicker::getTickStep(range);
+        double rangePct = (range.upper - range.lower) / global100 * 100.0;
+        // Pick a nice percentage step (10%, 20%, 25%, 50%, etc.)
+        double rawStep = rangePct / 6.0; // aim for ~6 ticks
+        if (rawStep < 1e-9) return QCPAxisTicker::getTickStep(range);
+        static const double niceSteps[] = {5, 10, 20, 25, 50, 100};
+        double pctStep = niceSteps[0];
+        for (double s : niceSteps) {
+            if (s >= rawStep) { pctStep = s; break; }
+        }
+        return pctStep / 100.0 * global100;
+    }
+
+    QVector<double> createTickVector(double tickStep, const QCPRange &range) Q_DECL_OVERRIDE {
+        QVector<double> ticks;
+        if (global100 <= 0 || tickStep <= 0) return QCPAxisTicker::createTickVector(tickStep, range);
+        double pctStep = tickStep / global100 * 100.0;
+        if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
+        double endPct = range.upper / global100 * 100.0;
+        double startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
+        if ((endPct - startPct) / pctStep > 20)
+            pctStep = (endPct - startPct) / 6.0;
+        if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
+        startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
+        for (double pct = startPct; pct <= endPct + 0.5; pct += pctStep) {
+            ticks.append(qRound(pct) / 100.0 * global100);
+        }
+        return ticks;
+    }
+};
+
+class QCPAxisTickerHumanReadable : public QCPAxisTicker
+{
+public:
+    QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
+        double abs = qAbs(tick);
+        if (abs >= 1e9)
+            return QString::number(tick / 1e9, 'f', 1) + "B";
+        if (abs >= 1e6)
+            return QString::number(tick / 1e6, 'f', 1) + "M";
+        if (abs >= 1e3)
+            return QString::number(tick / 1e3, 'f', 1) + "K";
+        return QString::number(tick, 'f', 0);
     }
 };
 

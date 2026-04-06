@@ -477,6 +477,8 @@ void LabyrinthDialog::initGraph() {
     ui->mousePopGraph->xAxis->setTicker(dateTicker);
 
     ui->mousePopGraph->yAxis->setLabel("Mice");
+    QSharedPointer<QCPAxisTickerHumanReadable> miceTicker(new QCPAxisTickerHumanReadable);
+    ui->mousePopGraph->yAxis->setTicker(miceTicker);
 
     giTicker = QSharedPointer<QCPAxisTickerGI>(new QCPAxisTickerGI);
     ui->mousePopGraph->yAxis2->setTicker(giTicker);
@@ -526,6 +528,9 @@ void LabyrinthDialog::updateGraph() {
     globalMarkerLine->end->setCoords(now + consensusParams.nPowTargetSpacing / 2 * totalLifespan, global100);
     giTicker->global100 = global100;
     ui->mousePopGraph->rescaleAxes();
+    // Ensure Y-axis always shows at least 100% so users can see how far they are from max efficiency
+    if (ui->mousePopGraph->yAxis->range().upper < global100)
+        ui->mousePopGraph->yAxis->setRangeUpper(global100);
     ui->mousePopGraph->replot();
 }
 
