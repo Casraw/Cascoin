@@ -781,7 +781,7 @@ bool CheckLabyrinthProof(const CBlock* pblock, const Consensus::Params& consensu
     // Grab the message sig (bytes 79-end; byte 78 is size)
     std::vector<unsigned char> messageSig(&txCoinbase->vout[0].scriptPubKey[79], &txCoinbase->vout[0].scriptPubKey[79 + 65]);
     if (verbose)
-        LogPrintf("CheckLabyrinthProof: messageSig          = %s\n", HexStr(&messageSig[0], &messageSig[messageSig.size()]));
+        LogPrintf("CheckLabyrinthProof: messageSig          = %s\n", HexStr(messageSig.begin(), messageSig.end()));
     
     // Grab the cheese address from the cheese vout
     CTxDestination cheeseDestination;

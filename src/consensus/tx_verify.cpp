@@ -205,7 +205,7 @@ bool CheckTransaction(const CTransaction& tx, CValidationState &state, bool fChe
 
     // Cascoin: Check for NFT transactions
     for (const auto& output : tx.vout) {
-        if (output.scriptPubKey[0] == OP_RETURN) {
+        if (output.scriptPubKey.size() >= 2 && output.scriptPubKey[0] == OP_RETURN) {
             std::vector<unsigned char> data(output.scriptPubKey.begin() + 2, output.scriptPubKey.end());
             if (data.size() >= 6) {
                 std::string magic(data.begin(), data.begin() + 6);

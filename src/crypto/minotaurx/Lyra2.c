@@ -73,6 +73,7 @@ int LYRA2(void *K, uint64_t kLen, const void *pwd, uint64_t pwdlen, const void *
     //Allocates pointers to each row of the matrix
     uint64_t **memMatrix = malloc(nRows * sizeof (uint64_t*));
     if (memMatrix == NULL) {
+      free(wholeMatrix);
       return -1;
     }
     //Places the pointers in the correct positions
@@ -242,6 +243,7 @@ int LYRA2_old(void *K, uint64_t kLen, const void *pwd, uint64_t pwdlen, const vo
     //Allocates pointers to each row of the matrix
     uint64_t **memMatrix = malloc(nRows * sizeof (uint64_t*));
     if (memMatrix == NULL) {
+      free(wholeMatrix);
       return -1;
     }
     //Places the pointers in the correct positions
