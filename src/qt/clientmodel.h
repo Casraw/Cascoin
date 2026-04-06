@@ -84,6 +84,10 @@ public:
     mutable std::atomic<int> cachedBestHeaderHeight;
     mutable std::atomic<int64_t> cachedBestHeaderTime;
 
+    // cached block tip state for IBD transition detection
+    mutable std::atomic<int> cachedNumBlocks;
+    mutable std::atomic<bool> cachedInIBD;
+
 private:
     OptionsModel *optionsModel;
     PeerTableModel *peerTableModel;

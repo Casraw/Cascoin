@@ -39,6 +39,8 @@ ClientModel::ClientModel(OptionsModel *_optionsModel, QObject *parent) :
 {
     cachedBestHeaderHeight = -1;
     cachedBestHeaderTime = -1;
+    cachedNumBlocks = -1;
+    cachedInIBD = true;
     peerTableModel = new PeerTableModel(this);
     banTableModel = new BanTableModel(this);
     pollTimer = new QTimer(this);
@@ -152,6 +154,26 @@ void ClientModel::updateTimer()
     // the following calls will acquire the required lock
     Q_EMIT mempoolSizeChanged(getMempoolSize(), getMempoolDynamicUsage());
     Q_EMIT bytesChanged(getTotalBytesRecv(), getTotalBytesSent());
+
+    // Detect IBD->non-IBD transition and block count changes, and emit
+    // numBlocksChanged as a fallback. During IBD, BlockTipChanged throttles
+    // updates to 250ms intervals and may suppress the final notification when
+    // sync completes. Without this fallback the UI can get stuck showing
+    // 99.99% until the next incoming block triggers a fresh notification.
+    bool currentlyInIBD = inInitialBlockDownload();
+    int currentBlocks = getNumBlocks();
+    bool ibdJustEnded = cachedInIBD.load() && !currentlyInIBD;
+    bool blocksChangedOutsideIBD = !currentlyInIBD && (currentBlocks != cachedNumBlocks.load());
+
+    if (ibdJustEnded || blocksChangedOutsideIBD) {
+        cachedInIBD.store(currentlyInIBD);
+        cachedNumBlocks.store(currentBlocks);
+        Q_EMIT numBlocksChanged(currentBlocks, getLastBlockDate(), getVerificationProgress(nullptr), false);
+    } else if (currentlyInIBD) {
+        // Keep cached IBD state in sync even while in IBD so the transition is detected promptly
+        cachedInIBD.store(true);
+        cachedNumBlocks.store(currentBlocks);
+    }
 }
 
 void ClientModel::updateNumConnections(int numConnections)
