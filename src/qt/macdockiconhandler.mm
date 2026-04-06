@@ -48,18 +48,17 @@ void setupDockClickHandler() {
 
 MacDockIconHandler::MacDockIconHandler() : QObject()
 {
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-
-    setupDockClickHandler();
-    this->m_dummyWidget = new QWidget();
-    this->m_dockMenu = new QMenu(this->m_dummyWidget);
-    this->setMainWindow(nullptr);
+    @autoreleasepool {
+        setupDockClickHandler();
+        this->m_dummyWidget = new QWidget();
+        this->m_dockMenu = new QMenu(this->m_dummyWidget);
+        this->setMainWindow(nullptr);
 #if QT_VERSION < 0x050000
-    qt_mac_set_dock_menu(this->m_dockMenu);
+        qt_mac_set_dock_menu(this->m_dockMenu);
 #elif QT_VERSION >= 0x050200
-    this->m_dockMenu->setAsDockMenu();
+        this->m_dockMenu->setAsDockMenu();
 #endif
-    [pool release];
+    }
 }
 
 void MacDockIconHandler::setMainWindow(QMainWindow *window) {
@@ -79,35 +78,35 @@ QMenu *MacDockIconHandler::dockMenu()
 
 void MacDockIconHandler::setIcon(const QIcon &icon)
 {
-    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-    NSImage *image = nil;
-    if (icon.isNull())
-        image = [[NSImage imageNamed:@"NSApplicationIcon"] retain];
-    else {
-        // generate NSImage from QIcon and use this as dock icon.
-        QSize size = icon.actualSize(QSize(128, 128));
-        QPixmap pixmap = icon.pixmap(size);
+    @autoreleasepool {
+        NSImage *image = nil;
+        if (icon.isNull())
+            image = [[NSImage imageNamed:@"NSApplicationIcon"] retain];
+        else {
+            // generate NSImage from QIcon and use this as dock icon.
+            QSize size = icon.actualSize(QSize(128, 128));
+            QPixmap pixmap = icon.pixmap(size);
 
-        // Write image into a R/W buffer from raw pixmap, then save the image.
-        QBuffer notificationBuffer;
-        if (!pixmap.isNull() && notificationBuffer.open(QIODevice::ReadWrite)) {
-            QImageWriter writer(&notificationBuffer, "PNG");
-            if (writer.write(pixmap.toImage())) {
-                NSData* macImgData = [NSData dataWithBytes:notificationBuffer.buffer().data()
-                                             length:notificationBuffer.buffer().size()];
-                image =  [[NSImage alloc] initWithData:macImgData];
+            // Write image into a R/W buffer from raw pixmap, then save the image.
+            QBuffer notificationBuffer;
+            if (!pixmap.isNull() && notificationBuffer.open(QIODevice::ReadWrite)) {
+                QImageWriter writer(&notificationBuffer, "PNG");
+                if (writer.write(pixmap.toImage())) {
+                    NSData* macImgData = [NSData dataWithBytes:notificationBuffer.buffer().data()
+                                                 length:notificationBuffer.buffer().size()];
+                    image =  [[NSImage alloc] initWithData:macImgData];
+                }
+            }
+
+            if(!image) {
+                // if testnet image could not be created, load std. app icon
+                image = [[NSImage imageNamed:@"NSApplicationIcon"] retain];
             }
         }
 
-        if(!image) {
-            // if testnet image could not be created, load std. app icon
-            image = [[NSImage imageNamed:@"NSApplicationIcon"] retain];
-        }
+        [NSApp setApplicationIconImage:image];
+        [image release];
     }
-
-    [NSApp setApplicationIconImage:image];
-    [image release];
-    [pool release];
 }
 
 MacDockIconHandler *MacDockIconHandler::instance()
