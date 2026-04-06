@@ -553,9 +553,11 @@ void LabyrinthDialog::onMouseMove(QMouseEvent *event) {
     graphTracerImmature->setPen(QPen(traceColImmature, 1, Qt::DashLine));    
     graphTracerMature->setPen(QPen(traceColMature, 1, Qt::DashLine));
 
-    graphMouseoverText->setText(xDateTime.toString("ddd d MMM") + " " + xDateTime.time().toString() + ":\n" + 
-                               formatLargeNoLocale(mouseCountMature) + " " + tr("adventure mice") + "\n" + 
-                               formatLargeNoLocale(mouseCountImmature) + " " + tr("resting mice"));
+    QString maturePct = global100 > 0 ? " (" + QString::number(mouseCountMature * 100.0 / global100, 'f', 1) + "%)" : "";
+    QString immaturePct = global100 > 0 ? " (" + QString::number(mouseCountImmature * 100.0 / global100, 'f', 1) + "%)" : "";
+    graphMouseoverText->setText(xDateTime.toString("ddd d MMM") + " " + xDateTime.time().toString() + ":\n" +
+                               formatLargeNoLocale(mouseCountMature) + " " + tr("adventure mice") + maturePct + "\n" +
+                               formatLargeNoLocale(mouseCountImmature) + " " + tr("resting mice") + immaturePct);
     graphMouseoverText->setColor(traceColMature);
     graphMouseoverText->position->setCoords(QPointF(x, y));
     QPointF pixelPos = graphMouseoverText->position->pixelPosition();
