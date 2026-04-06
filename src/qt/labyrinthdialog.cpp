@@ -227,7 +227,7 @@ void LabyrinthDialog::updateData(bool forceGlobalSummaryUpdate) {
         setAmountField(ui->potentialRewardsLabel, potentialRewards);
 
         double labyrinthWeight = (globalMatureMice == 0) ? 0.0 : mature / (double)globalMatureMice;
-        ui->localLabyrinthWeightLabel->setText(QString::number(labyrinthWeight, 'f', 3));
+        ui->localLabyrinthWeightLabel->setText(QString::number(labyrinthWeight * 100, 'f', 1) + "%");
         ui->labyrinthWeightPie->setValue(labyrinthWeight);
 
         mousePopIndex = ((mouseCost * globalMatureMice) / (double)potentialRewards) * 100.0;
