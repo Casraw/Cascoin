@@ -10,7 +10,6 @@
 #include <chainparams.h>
 
 #include <QResizeEvent>
-#include <QPropertyAnimation>
 
 ModalOverlay::ModalOverlay(QWidget *parent) :
 QWidget(parent),
@@ -222,53 +221,19 @@ void ModalOverlay::showHide(bool hide, bool userRequested)
     if ( (layerIsVisible && !hide) || (!layerIsVisible && hide) || (!hide && userClosed && !userRequested))
         return;
 
-    if (!isVisible() && !hide) {
-        // First show: avoid animation to prevent black frame on some systems
-        if (parent()) {
-            setGeometry(static_cast<QWidget*>(parent())->rect());
-        }
-        setVisible(true);
-        move(0, 0);
-        if (ui->bgWidget) ui->bgWidget->setVisible(true);
-        layerIsVisible = true;
-        return;
-    }
-
-    // Keep modal properly positioned at the center of parent
     if (parent()) {
         setGeometry(static_cast<QWidget*>(parent())->rect());
     }
 
-    QPropertyAnimation* animation = new QPropertyAnimation(this, "geometry");
-    animation->setDuration(300);
-    
-    QRect parentRect = parent() ? static_cast<QWidget*>(parent())->rect() : this->rect();
-    QRect startRect = hide ? parentRect : QRect(parentRect.x(), parentRect.y() + parentRect.height(), parentRect.width(), parentRect.height());
-    QRect endRect = hide ? QRect(parentRect.x(), parentRect.y() + parentRect.height(), parentRect.width(), parentRect.height()) : parentRect;
-    
-    animation->setStartValue(startRect);
-    animation->setEndValue(endRect);
-    animation->setEasingCurve(QEasingCurve::OutQuad);
-    
-    // Connect animation finished signal to handle visibility properly
-    connect(animation, &QPropertyAnimation::finished, this, [this, hide]() {
-        if (hide) {
-            // Hide the widget after animation completes
-            setVisible(false);
-            if (ui->bgWidget) ui->bgWidget->setVisible(false);
-        }
-        layerIsVisible = !hide;
-    });
-    
-    animation->start(QAbstractAnimation::DeleteWhenStopped);
-    
-    if (!hide && ui->bgWidget) {
-        ui->bgWidget->setVisible(true);
-    }
-    
-    // Update layerIsVisible immediately for show, but wait for animation completion for hide
     if (!hide) {
+        setVisible(true);
+        move(0, 0);
+        if (ui->bgWidget) ui->bgWidget->setVisible(true);
         layerIsVisible = true;
+    } else {
+        setVisible(false);
+        if (ui->bgWidget) ui->bgWidget->setVisible(false);
+        layerIsVisible = false;
     }
 }
 
