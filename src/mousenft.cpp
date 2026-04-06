@@ -470,65 +470,98 @@ CScript CreateMouseNFTTransferScript(const std::vector<MouseNFTTransfer>& transf
 // Generic NFT script creation
 std::vector<unsigned char> CreateGenericNFTScript(const std::vector<GenericNFT>& nfts) {
     std::vector<unsigned char> script;
-    
+
+    if (nfts.size() > MAX_NFTS_PER_TX) {
+        LogPrintf("CreateGenericNFTScript: too many NFTs (%zu > %zu)\n", nfts.size(), MAX_NFTS_PER_TX);
+        return script;
+    }
+    if (nfts.size() > 255) {
+        LogPrintf("CreateGenericNFTScript: NFT count %zu exceeds single-byte encoding limit\n", nfts.size());
+        return script;
+    }
+
+    for (const auto& nft : nfts) {
+        if (nft.name.length() > 255 || nft.description.length() > 255 ||
+            nft.metadata.length() > 255 || nft.owner_address.length() > 255) {
+            LogPrintf("CreateGenericNFTScript: NFT field length exceeds 255 bytes\n");
+            return script;
+        }
+    }
+
     // Add magic bytes
     std::string magic = NFT_MAGIC_GENERIC;
     script.insert(script.end(), magic.begin(), magic.end());
-    
+
     // Add number of NFTs
-    script.push_back(nfts.size());
-    
+    script.push_back(static_cast<unsigned char>(nfts.size()));
+
     for (const auto& nft : nfts) {
         // Add NFT name length and data
-        script.push_back(nft.name.length());
+        script.push_back(static_cast<unsigned char>(nft.name.length()));
         script.insert(script.end(), nft.name.begin(), nft.name.end());
-        
+
         // Add description length and data
-        script.push_back(nft.description.length());
+        script.push_back(static_cast<unsigned char>(nft.description.length()));
         script.insert(script.end(), nft.description.begin(), nft.description.end());
-        
+
         // Add metadata length and data
-        script.push_back(nft.metadata.length());
+        script.push_back(static_cast<unsigned char>(nft.metadata.length()));
         script.insert(script.end(), nft.metadata.begin(), nft.metadata.end());
-        
+
         // Add amount (8 bytes)
         for (int i = 0; i < 8; i++) {
             script.push_back((nft.amount >> (i * 8)) & 0xFF);
         }
-        
+
         // Add owner address length and data
-        script.push_back(nft.owner_address.length());
+        script.push_back(static_cast<unsigned char>(nft.owner_address.length()));
         script.insert(script.end(), nft.owner_address.begin(), nft.owner_address.end());
     }
-    
+
     return script;
 }
 
 std::vector<unsigned char> CreateGenericNFTTransferScript(const std::vector<GenericNFTTransfer>& transfers) {
     std::vector<unsigned char> script;
-    
+
+    if (transfers.size() > MAX_NFTS_PER_TX) {
+        LogPrintf("CreateGenericNFTTransferScript: too many transfers (%zu > %zu)\n", transfers.size(), MAX_NFTS_PER_TX);
+        return script;
+    }
+    if (transfers.size() > 255) {
+        LogPrintf("CreateGenericNFTTransferScript: transfer count %zu exceeds single-byte encoding limit\n", transfers.size());
+        return script;
+    }
+
+    for (const auto& transfer : transfers) {
+        if (transfer.nft_txid.length() > 255 || transfer.recipient_address.length() > 255) {
+            LogPrintf("CreateGenericNFTTransferScript: transfer field length exceeds 255 bytes\n");
+            return script;
+        }
+    }
+
     // Add magic bytes
     std::string magic = NFT_MAGIC_GENERIC_TRANSFER;
     script.insert(script.end(), magic.begin(), magic.end());
-    
+
     // Add number of transfers
-    script.push_back(transfers.size());
-    
+    script.push_back(static_cast<unsigned char>(transfers.size()));
+
     for (const auto& transfer : transfers) {
         // Add NFT TXID length and data
-        script.push_back(transfer.nft_txid.length());
+        script.push_back(static_cast<unsigned char>(transfer.nft_txid.length()));
         script.insert(script.end(), transfer.nft_txid.begin(), transfer.nft_txid.end());
-        
+
         // Add recipient address length and data
-        script.push_back(transfer.recipient_address.length());
+        script.push_back(static_cast<unsigned char>(transfer.recipient_address.length()));
         script.insert(script.end(), transfer.recipient_address.begin(), transfer.recipient_address.end());
-        
+
         // Add amount (8 bytes)
         for (int i = 0; i < 8; i++) {
             script.push_back((transfer.amount >> (i * 8)) & 0xFF);
         }
     }
-    
+
     return script;
 }
 
@@ -572,14 +605,19 @@ bool ParseGenericNFTTransaction(const CTransaction& tx, std::vector<GenericNFT>&
                         return false;
                     }
                     
-                    int nftCount = data[pos++];
-                    
-                    for (int i = 0; i < nftCount; i++) {
+                    size_t nftCount = data[pos++];
+
+                    if (nftCount > MAX_NFTS_PER_TX) {
+                        error = strprintf("Too many NFTs in transaction (%u > %u)", nftCount, MAX_NFTS_PER_TX);
+                        return false;
+                    }
+
+                    for (size_t i = 0; i < nftCount; i++) {
                         if (pos >= data.size()) {
                             error = "Invalid generic NFT data: incomplete NFT";
                             return false;
                         }
-                        
+
                         // Read name
                         int nameLen = data[pos++];
                         if (pos + nameLen > data.size()) {
@@ -691,14 +729,19 @@ bool ParseGenericNFTTransferTransaction(const CTransaction& tx, std::vector<Gene
                         return false;
                     }
                     
-                    int transferCount = data[pos++];
-                    
-                    for (int i = 0; i < transferCount; i++) {
+                    size_t transferCount = data[pos++];
+
+                    if (transferCount > MAX_NFTS_PER_TX) {
+                        error = strprintf("Too many transfers in transaction (%u > %u)", transferCount, MAX_NFTS_PER_TX);
+                        return false;
+                    }
+
+                    for (size_t i = 0; i < transferCount; i++) {
                         if (pos >= data.size()) {
                             error = "Invalid generic NFT transfer data: incomplete transfer";
                             return false;
                         }
-                        
+
                         // Read NFT TXID
                         int txidLen = data[pos++];
                         if (pos + txidLen > data.size()) {

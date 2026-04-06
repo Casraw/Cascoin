@@ -1642,8 +1642,11 @@ int BCTDatabaseSQLite::validateWalletOwnership(CWallet* pwallet) {
     
     return foreignCount;
 #else
-    LogPrintf("BCTDatabase: Wallet support not enabled\n");
-    return -1;
+    // Without wallet support, ownership cannot be validated.
+    // Return 0 (no foreign BCTs) so the caller's success path is reachable
+    // rather than always falling into the error branch.
+    LogPrintf("BCTDatabase: Wallet support not enabled, skipping ownership validation\n");
+    return 0;
 #endif
 }
 

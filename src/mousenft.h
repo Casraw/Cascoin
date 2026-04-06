@@ -44,6 +44,9 @@ Each mouse NFT contains:
 // Maximum data size for mouse NFT transactions
 const int MOUSE_NFT_MAX_DATA_SIZE = 4096; // 4KB for larger metadata as required
 
+// Maximum number of NFTs or transfers per transaction
+const size_t MAX_NFTS_PER_TX = 100;
+
 // Cascoin: Memory management for NFT system - prevent memory leaks
 const int MAX_NFT_CACHE_ENTRIES = 500; // Maximum NFT objects to keep in memory
 const int NFT_CACHE_CLEANUP_THRESHOLD = 600; // Start cleanup when this many entries
