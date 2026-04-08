@@ -675,32 +675,39 @@ void BitcoinApplication::initializeResult(bool success)
         }
 #endif
 
-        // Keep splash until mice DB init finished, THEN show window
-        if (!g_miceDbReady.load()) {
-            QElapsedTimer timer; timer.start();
-            while (!g_miceDbReady.load() && timer.elapsed() < 10000) {
-                QThread::msleep(50);
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        // Show window once mice DB is ready (or after timeout).
+        // Use a QTimer instead of a processEvents() loop to avoid
+        // Qt6 QCocoaEventDispatcher assertions on macOS 15+.
+        auto showWindow = [this]() {
+            if(gArgs.GetBoolArg("-min", false))
+            {
+                window->showMinimized();
             }
+            else
+            {
+                window->show();
+                window->raise();
+                window->activateWindow();
+            }
+            Q_EMIT splashFinished(window);
+        };
+
+        if (g_miceDbReady.load()) {
+            showWindow();
+        } else {
+            QTimer *miceTimer = new QTimer(this);
+            QElapsedTimer *elapsed = new QElapsedTimer();
+            elapsed->start();
+            connect(miceTimer, &QTimer::timeout, this, [this, miceTimer, elapsed, showWindow]() {
+                if (g_miceDbReady.load() || elapsed->elapsed() >= 10000) {
+                    miceTimer->stop();
+                    miceTimer->deleteLater();
+                    delete elapsed;
+                    showWindow();
+                }
+            });
+            miceTimer->start(50);
         }
-        
-        // Ensure all widgets are properly initialized before showing
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        
-        // Show window
-        if(gArgs.GetBoolArg("-min", false))
-        {
-            window->showMinimized();
-        }
-        else
-        {
-            window->show();
-            window->raise();
-            window->activateWindow();
-        }
-        
-        // Immediately close splash - let window render naturally
-        Q_EMIT splashFinished(window);
 
 #ifdef ENABLE_WALLET
         // Now that initialization/startup is done, process any command-line
