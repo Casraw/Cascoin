@@ -337,10 +337,17 @@ void LabyrinthDialog::updateTotalCostDisplay() {
     if(model && model->getOptionsModel()) {
         setAmountField(ui->totalCostLabel, totalCost);
         
+        // Note: setStyleSheet replaces the spinner's full stylesheet, so we must
+        // re-specify text color and the inner QLineEdit color, otherwise a parent
+        // dark theme paints the typed text white-on-white (invisible).
         if (totalCost > model->getBalance())
-            ui->mouseCountSpinner->setStyleSheet("QSpinBox{background:#FF8080;}");
+            ui->mouseCountSpinner->setStyleSheet(
+                "QSpinBox { background: #FF8080; color: #000000; }"
+                "QSpinBox QLineEdit { background: #FF8080; color: #000000; }");
         else
-            ui->mouseCountSpinner->setStyleSheet("QSpinBox{background:white;}");
+            ui->mouseCountSpinner->setStyleSheet(
+                "QSpinBox { background: #FFFFFF; color: #000000; }"
+                "QSpinBox QLineEdit { background: #FFFFFF; color: #000000; }");
     }
 }
 
