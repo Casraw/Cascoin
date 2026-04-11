@@ -121,5 +121,6 @@ src/.vscode/
 just*.sh
 
 .kiro/cascoin-linux-distribution/
+.kiro/settings/mcp.json
 *~
 cascoin-linux-distribution/

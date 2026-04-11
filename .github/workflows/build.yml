@@ -18,7 +18,7 @@ on:
 
 jobs:
   build-linux:
-    runs-on: self-hosted
+    runs-on: [self-hosted, X64]
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -400,6 +400,274 @@ jobs:
           if-no-files-found: ignore
 
 
+  build-linux-arm64:
+    runs-on: [self-hosted, Linux, ARM64]
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure ccache directory exists
+        shell: bash
+        run: mkdir -p ~/.ccache
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ccache-linux-arm64-gcc-${{ hashFiles('configure.ac', 'src/**/*.cpp', 'src/**/*.h') }}
+          restore-keys: |
+            ccache-linux-arm64-gcc-
+
+      - name: Configure ccache
+        shell: bash
+        run: |
+          ccache --zero-stats || true
+          ccache --max-size=2G || true
+
+      - name: Autogen
+        shell: bash
+        run: ./autogen.sh
+
+      - name: Configure (Qt6 GUI, wallet, incompatible BDB)
+        shell: bash
+        run: |
+          CFLAGS="-g" CXXFLAGS="-g" CC="ccache gcc" CXX="ccache g++" \
+          MOC=/usr/lib/qt6/libexec/moc \
+          UIC=/usr/lib/qt6/libexec/uic \
+          RCC=/usr/lib/qt6/libexec/rcc \
+          LRELEASE=/usr/lib/qt6/bin/lrelease \
+          LUPDATE=/usr/lib/qt6/bin/lupdate \
+          ./configure \
+            --with-gui=qt6 \
+            --with-boost=/usr \
+            --with-boost-libdir=/usr/lib/aarch64-linux-gnu \
+            --enable-wallet \
+            --with-incompatible-bdb
+
+      - name: Build
+        shell: bash
+        run: |
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          make -j"$(nproc)"
+
+      - name: Strip binaries (non-fatal) and keep debug symbols
+        shell: bash
+        run: |
+          shopt -s nullglob
+          bins=(src/qt/*-qt src/*coind src/*coin-cli)
+          for b in "${bins[@]}"; do
+            if [[ -x "$b" ]]; then
+              echo "Processing $b"
+              if command -v objcopy >/dev/null 2>&1; then
+                objcopy --only-keep-debug "$b" "$b".debug || true
+              fi
+              if command -v strip >/dev/null 2>&1; then
+                strip --strip-unneeded "$b" || true
+              fi
+              if command -v objcopy >/dev/null 2>&1; then
+                objcopy --add-gnu-debuglink="$b".debug "$b" || true
+              fi
+            fi
+          done
+
+      - name: List built binaries
+        shell: bash
+        run: |
+          ls -lah src || true
+          ls -lah src/qt || true
+          file src/qt/*-qt || true
+
+      - name: Create Linux ARM64 distribution package
+        shell: bash
+        run: |
+          # Create distribution structure
+          DIST_DIR="cascoin-linux-distribution"
+          mkdir -p "$DIST_DIR"/bin
+          mkdir -p "$DIST_DIR"/lib/aarch64-linux-gnu
+
+          # Copy binaries
+          cp src/qt/cascoin-qt "$DIST_DIR"/bin/ || true
+          cp src/cascoind "$DIST_DIR"/bin/ || true
+          cp src/cascoin-cli "$DIST_DIR"/bin/ || true
+          cp src/cascoin-tx "$DIST_DIR"/bin/ || true
+
+          # Note: Qt6 libraries are NOT copied - they should be installed on target system
+          echo "Skipping Qt6 libraries - they should be installed on target system via package manager"
+
+          # Copy ONLY the exact libraries that Cascoin needs (no extras)
+          echo "Copying ONLY required Cascoin libraries..."
+          LIB_DIR="$DIST_DIR/lib/aarch64-linux-gnu"
+
+          # Copy exact Boost libraries needed by Cascoin
+          echo "  Collecting required Boost libraries..."
+          boost_libs=(
+            "libboost_system.so*"
+            "libboost_filesystem.so*"
+            "libboost_chrono.so*"
+            "libboost_thread.so*"
+            "libboost_program_options.so*"
+          )
+
+          for boost_lib in "${boost_libs[@]}"; do
+            find /usr/lib/aarch64-linux-gnu -name "$boost_lib" 2>/dev/null | while read lib; do
+              if [[ -f "$lib" ]]; then
+                lib_name=$(basename "$lib")
+                if [[ "$lib_name" =~ \.[0-9]+\. ]] || [[ "$lib_name" =~ \.[0-9]+$ ]]; then
+                  if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                    echo "    Copying: $lib_name"
+                    cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                  fi
+                fi
+              fi
+            done
+          done
+
+          # Copy Berkeley DB libraries (C++ interface for wallet)
+          echo "  Collecting Berkeley DB libraries..."
+          find /usr/lib/aarch64-linux-gnu -name "libdb_cxx-*.so*" -o -name "libdb-*.so*" 2>/dev/null | while read lib; do
+            if [[ -f "$lib" ]]; then
+              lib_name=$(basename "$lib")
+              if [[ "$lib_name" =~ \.[0-9]+\. ]] || [[ "$lib_name" =~ \.[0-9]+$ ]] || [[ "$lib_name" =~ -[0-9]+\. ]]; then
+                if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                  echo "    Copying: $lib_name"
+                  cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                fi
+              fi
+            fi
+          done
+
+          # Copy exact libevent libraries needed
+          echo "  Collecting libevent libraries..."
+          libevent_libs=(
+            "libevent-*.so*"
+            "libevent_pthreads-*.so*"
+          )
+
+          for event_lib in "${libevent_libs[@]}"; do
+            find /usr/lib/aarch64-linux-gnu -name "$event_lib" 2>/dev/null | while read lib; do
+              if [[ -f "$lib" ]]; then
+                lib_name=$(basename "$lib")
+                if [[ "$lib_name" =~ \.[0-9]+\. ]] || [[ "$lib_name" =~ \.[0-9]+$ ]] || [[ "$lib_name" =~ -[0-9]+\. ]]; then
+                  if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                    echo "    Copying: $lib_name"
+                    cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                  fi
+                fi
+              fi
+            done
+          done
+
+          # Copy remaining required libraries
+          echo "  Collecting other required libraries..."
+          other_required_libs=(
+            "libminiupnpc.so*"
+            "libprotobuf.so*"
+            "libqrencode.so*"
+            "libzmq.so*"
+          )
+
+          for req_lib in "${other_required_libs[@]}"; do
+            find /usr/lib/aarch64-linux-gnu -name "$req_lib" 2>/dev/null | while read lib; do
+              if [[ -f "$lib" ]]; then
+                lib_name=$(basename "$lib")
+                if [[ "$lib_name" =~ \.[0-9]+\. ]] || [[ "$lib_name" =~ \.[0-9]+$ ]]; then
+                  if [[ ! -f "$LIB_DIR/$lib_name" ]]; then
+                    echo "    Copying: $lib_name"
+                    cp "$lib" "$LIB_DIR/" 2>/dev/null || true
+                  fi
+                fi
+              fi
+            done
+          done
+
+          # Create wrapper scripts
+          cat > "$DIST_DIR"/bin/cascoin-qt-wrapper << 'EOF'
+          #!/bin/bash
+          export LD_LIBRARY_PATH="$(dirname "$0")/../lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"
+          exec "$(dirname "$0")/cascoin-qt" "$@"
+          EOF
+
+          cat > "$DIST_DIR"/bin/cascoind-wrapper << 'EOF'
+          #!/bin/bash
+          export LD_LIBRARY_PATH="$(dirname "$0")/../lib/aarch64-linux-gnu:$LD_LIBRARY_PATH"
+          exec "$(dirname "$0")/cascoind" "$@"
+          EOF
+
+          chmod +x "$DIST_DIR"/bin/*wrapper
+
+          # Create README
+          cat > "$DIST_DIR"/README.md << 'EOF'
+          # Cascoin Core Linux ARM64 Distribution Package
+
+          This package contains Cascoin Core binaries for ARM64 (aarch64) with essential libraries.
+          Qt6 must be installed separately via your distribution's package manager.
+
+          ## Prerequisites
+
+          Install Qt6 before running the GUI:
+
+          ```bash
+          # Debian Trixie / Ubuntu
+          sudo apt-get install qt6-base-dev qt6-base-dev-tools
+          ```
+
+          ## Manual Installation
+
+          ```bash
+          tar -xzf cascoin-linux-aarch64-distribution-*.tar.gz
+          cd cascoin-linux-distribution
+          sudo mkdir -p /opt/cascoin
+          sudo cp -r bin lib /opt/cascoin/
+          sudo ln -sf /opt/cascoin/bin/cascoin-qt-wrapper /usr/local/bin/cascoin-qt
+          sudo ln -sf /opt/cascoin/bin/cascoind-wrapper /usr/local/bin/cascoind
+          sudo ln -sf /opt/cascoin/bin/cascoin-cli /usr/local/bin/cascoin-cli
+          sudo ln -sf /opt/cascoin/bin/cascoin-tx /usr/local/bin/cascoin-tx
+          ```
+
+          ## System Requirements
+
+          - Linux aarch64 (ARM64)
+          - Debian Trixie or compatible
+          - Qt6 6.0+ (for GUI)
+          EOF
+
+          # Show collected libraries
+          echo "Collected versioned libraries:"
+          ls -la "$LIB_DIR"/ 2>/dev/null || echo "No libraries found"
+
+          echo ""
+          echo "Distribution package created:"
+          find "$DIST_DIR" -type d | sort
+          echo ""
+          echo "Binaries:"
+          ls -la "$DIST_DIR"/bin/
+
+          # Get version and create package
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "latest")
+          tar -czf "cascoin-linux-aarch64-distribution-$VERSION.tar.gz" "$DIST_DIR"/
+
+      - name: Upload Linux ARM64 distribution package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cascoin-linux-aarch64-distribution
+          path: |
+            cascoin-linux-aarch64-distribution-*.tar.gz
+          if-no-files-found: warn
+
+      - name: Upload debug symbols
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cascoin-linux-arm64-debug
+          path: |
+            src/qt/*.debug
+            src/*.debug
+          if-no-files-found: ignore
+
+
   build-windows:
     runs-on: self-hosted
     timeout-minutes: 120
@@ -660,6 +928,7 @@ jobs:
     runs-on: self-hosted
     needs:
       - build-linux
+      - build-linux-arm64
       - build-windows
       - build-macos
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
@@ -702,6 +971,23 @@ jobs:
             mv "${files[0]}" "release/cascoin-linux-x86_64-distribution-${{ steps.tag.outputs.value }}.tar.gz"
           else
             echo "Warnung: Kein Linux-Archiv gefunden." >&2
+          fi
+
+      - name: Download Linux ARM64 distribution artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cascoin-linux-aarch64-distribution
+          path: release/linux-arm64
+
+      - name: Normalize Linux ARM64 artifact filename
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(release/linux-arm64/*.tar.gz)
+          if (( ${#files[@]} )); then
+            mv "${files[0]}" "release/cascoin-linux-aarch64-distribution-${{ steps.tag.outputs.value }}.tar.gz"
+          else
+            echo "Warnung: Kein Linux ARM64-Archiv gefunden." >&2
           fi
 
       - name: Download Windows build artifact
@@ -783,6 +1069,16 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: release/cascoin-linux-x86_64-distribution-${{ steps.tag.outputs.value }}.tar.gz
           asset_name: cascoin-linux-x86_64-distribution-${{ steps.tag.outputs.value }}.tar.gz
+          asset_content_type: application/gzip
+
+      - name: Artefakt hochladen (Linux ARM64)
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/cascoin-linux-aarch64-distribution-${{ steps.tag.outputs.value }}.tar.gz
+          asset_name: cascoin-linux-aarch64-distribution-${{ steps.tag.outputs.value }}.tar.gz
           asset_content_type: application/gzip
 
       - name: Artefakt hochladen (Windows)
