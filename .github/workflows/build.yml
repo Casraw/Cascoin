@@ -18,7 +18,7 @@ on:
 
 jobs:
   build-linux:
-    runs-on: [self-hosted, X64]
+    runs-on: [self-hosted, Linux, X64, default]
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -669,7 +669,7 @@ jobs:
 
 
   build-windows:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64, default]
     timeout-minutes: 120
     env:
       HOST: x86_64-w64-mingw32
@@ -925,7 +925,7 @@ jobs:
           if-no-files-found: warn
 
   release:
-    runs-on: self-hosted
+    runs-on: [self-hosted, Linux, X64, default]
     needs:
       - build-linux
       - build-linux-arm64
