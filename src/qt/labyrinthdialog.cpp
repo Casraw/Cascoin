@@ -162,7 +162,10 @@ void LabyrinthDialog::setEncryptionStatus(int status) {
             ui->releaseSwarmButton->show();
             break;
     }
-    updateData();
+    // Only run the expensive updateData() when the dialog is visible;
+    // gotoLabyrinthPage() already calls updateData() when the user navigates here.
+    if (isVisible())
+        updateData();
 }
 
 void LabyrinthDialog::setAmountField(QLabel *field, CAmount value) {

@@ -134,7 +134,8 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
 {
     QSettings settings;
     if (!restoreGeometry(settings.value("MainWindowGeometry").toByteArray())) {
-        // Restore failed (perhaps missing setting), center the window
+        // Restore failed (perhaps missing setting), set a sensible default size and center
+        resize(850, 550);
         #if QT_VERSION >= 0x060000
         const QRect available = screen() ? screen()->availableGeometry() : QGuiApplication::primaryScreen()->availableGeometry();
         move(available.center() - frameGeometry().center());
@@ -287,15 +288,6 @@ BitcoinGUI::BitcoinGUI(const PlatformStyle *_platformStyle, const NetworkStyle *
 #endif
 
     updateLabyrinthStatusIcon(":/icons/labyrinths_disabled", tr("The Labyrinth is not enabled on the network"));
-    
-    // Allow free window resizing - remove minimum size constraints
-    setMinimumSize(200, 150); // Very small minimum size to allow maximum flexibility
-    
-    // Set size policies to allow compression of the central widget
-    if (centralWidget()) {
-        centralWidget()->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-        centralWidget()->setMinimumSize(200, 150);
-    }
 }
 
 BitcoinGUI::~BitcoinGUI()
