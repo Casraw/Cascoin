@@ -20,6 +20,7 @@
 
 #include <pow.h>
 #include <qt/qcustomplot.h>
+#include <cmath>
 
 class PlatformStyle;
 class ClientModel;
@@ -41,8 +42,12 @@ public:
     double global100;
 
     QString getTickLabel(double tick, const QLocale &locale, QChar formatChar, int precision) {
+        if (global100 <= 0 || !std::isfinite(global100))
+            return QString::number(tick, 'f', 0);
         double pct = tick / global100 * 100.0;
-        return QString::number(qRound(pct)) + "%";
+        if (!std::isfinite(pct))
+            return QString::number(tick, 'f', 0);
+        return QString::number((int)qBound(-1e9, (double)qRound(qBound(-1e8, pct, 1e8)), 1e9)) + "%";
     }
 
 protected:
@@ -73,7 +78,8 @@ protected:
         if (pctStep < 1e-9) return QCPAxisTicker::createTickVector(tickStep, range);
         startPct = qCeil(range.lower / global100 * 100.0 / pctStep) * pctStep;
         for (double pct = startPct; pct <= endPct + 0.5; pct += pctStep) {
-            ticks.append(qRound(pct) / 100.0 * global100);
+            double rounded = qBound(-1e8, pct, 1e8);
+            ticks.append(qRound(rounded) / 100.0 * global100);
         }
         return ticks;
     }

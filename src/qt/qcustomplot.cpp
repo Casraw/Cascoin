@@ -3980,7 +3980,7 @@ QVector<int> QCPLayout::getSectionSizes(QVector<int> maxSizes, QVector<int> minS
   
   QVector<int> result(sectionCount);
   for (int i=0; i<sectionCount; ++i)
-    result[i] = qRound(sectionSizes.at(i));
+    result[i] = std::isfinite(sectionSizes.at(i)) ? qRound(qBound(-1e9, sectionSizes.at(i), 1e9)) : 0;
   return result;
 }
 
@@ -6012,7 +6012,8 @@ double QCPAxisTickerDateTime::getTickStep(const QCPRange &range)
 int QCPAxisTickerDateTime::getSubTickCount(double tickStep)
 {
   int result = QCPAxisTicker::getSubTickCount(tickStep);
-  switch (qRound(tickStep)) // hand chosen subticks for specific minute/hour/day/week/month range (as specified in getTickStep)
+  if (!std::isfinite(tickStep)) return result;
+  switch (qRound(qBound(-1e9, tickStep, 1e9))) // hand chosen subticks for specific minute/hour/day/week/month range (as specified in getTickStep)
   {
     case 5*60: result = 4; break;
     case 10*60: result = 1; break;
@@ -6333,7 +6334,8 @@ double QCPAxisTickerTime::getTickStep(const QCPRange &range)
 int QCPAxisTickerTime::getSubTickCount(double tickStep)
 {
   int result = QCPAxisTicker::getSubTickCount(tickStep);
-  switch (qRound(tickStep)) // hand chosen subticks for specific minute/hour/day range (as specified in getTickStep)
+  if (!std::isfinite(tickStep)) return result;
+  switch (qRound(qBound(-1e9, tickStep, 1e9))) // hand chosen subticks for specific minute/hour/day range (as specified in getTickStep)
   {
     case 5*60: result = 4; break;
     case 10*60: result = 1; break;
@@ -6377,7 +6379,7 @@ QString QCPAxisTickerTime::getTickLabel(double tick, const QLocale &locale, QCha
   for (int i = mSmallestUnit; i <= mBiggestUnit; ++i)
   {
     TimeUnit iUnit = static_cast<TimeUnit>(i);
-    replaceUnit(result, iUnit, qRound(iUnit == mBiggestUnit ? restValues[iUnit] : values[iUnit]));
+    replaceUnit(result, iUnit, std::isfinite(iUnit == mBiggestUnit ? restValues[iUnit] : values[iUnit]) ? qRound(qBound(-1e9, iUnit == mBiggestUnit ? restValues[iUnit] : values[iUnit], 1e9)) : 0);
   }
   if (negative)
     result.prepend(QLatin1Char('-'));
@@ -6844,7 +6846,7 @@ QString QCPAxisTickerPi::getTickLabel(double tick, const QLocale &locale, QChar 
   {
     // simply construct fraction from decimal like 1.234 -> 1234/1000 and then simplify fraction, smaller digits are irrelevant due to mPiTickStep conditional above
     int denominator = 1000;
-    int numerator = qRound(tickInPis*denominator);
+    int numerator = std::isfinite(tickInPis*denominator) ? qRound(qBound(-1e9, tickInPis*denominator, 1e9)) : 0;
     simplifyFraction(numerator, denominator);
     if (qAbs(numerator) == 1 && denominator == 1)
       return (numerator < 0 ? QLatin1String("-") : QLatin1String("")) + mPiSymbol.trimmed();
@@ -15678,8 +15680,8 @@ QPixmap QCustomPlot::toPixmap(int width, int height, double scale)
     newWidth = width;
     newHeight = height;
   }
-  int scaledWidth = qRound(scale*newWidth);
-  int scaledHeight = qRound(scale*newHeight);
+  int scaledWidth = std::isfinite(scale*newWidth) ? qRound(qBound(0.0, scale*newWidth, 1e7)) : newWidth;
+  int scaledHeight = std::isfinite(scale*newHeight) ? qRound(qBound(0.0, scale*newHeight, 1e7)) : newHeight;
 
   QPixmap result(scaledWidth, scaledHeight);
   result.fill(mBackgroundBrush.style() == Qt::SolidPattern ? mBackgroundBrush.color() : Qt::transparent); // if using non-solid pattern, make transparent now and draw brush pattern later
@@ -21078,7 +21080,8 @@ void QCPGraph::getOptimizedScatterData(QVector<QCPGraphData> *scatterData, QCPGr
         {
           // determine value pixel span and add as many points in interval to maintain certain vertical data density (this is specific to scatter plot):
           double valuePixelSpan = qAbs(valueAxis->coordToPixel(minValue)-valueAxis->coordToPixel(maxValue));
-          int dataModulo = qMax(1, qRound(intervalDataCount/(valuePixelSpan/4.0))); // approximately every 4 value pixels one data point on average
+          double dataModuloRaw = valuePixelSpan > 0 ? intervalDataCount/(valuePixelSpan/4.0) : 1;
+          int dataModulo = qMax(1, std::isfinite(dataModuloRaw) ? qRound(qBound(1.0, dataModuloRaw, 1e9)) : 1); // approximately every 4 value pixels one data point on average
           QCPGraphDataContainer::const_iterator intervalIt = currentIntervalStart;
           int c = 0;
           while (intervalIt != it)
@@ -21121,7 +21124,8 @@ void QCPGraph::getOptimizedScatterData(QVector<QCPGraphData> *scatterData, QCPGr
     {
       // determine value pixel span and add as many points in interval to maintain certain vertical data density (this is specific to scatter plot):
       double valuePixelSpan = qAbs(valueAxis->coordToPixel(minValue)-valueAxis->coordToPixel(maxValue));
-      int dataModulo = qMax(1, qRound(intervalDataCount/(valuePixelSpan/4.0))); // approximately every 4 value pixels one data point on average
+      double dataModuloRaw2 = valuePixelSpan > 0 ? intervalDataCount/(valuePixelSpan/4.0) : 1;
+      int dataModulo = qMax(1, std::isfinite(dataModuloRaw2) ? qRound(qBound(1.0, dataModuloRaw2, 1e9)) : 1); // approximately every 4 value pixels one data point on average
       QCPGraphDataContainer::const_iterator intervalIt = currentIntervalStart;
       int intervalItIndex = intervalIt-mDataContainer->constBegin();
       int c = 0;
