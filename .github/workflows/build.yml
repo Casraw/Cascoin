@@ -699,9 +699,21 @@ jobs:
             python3 bsdextrautils faketime libfaketime \
             rsync git \
             qt6-tools-dev qt6-tools-dev-tools
-          # Switch mingw-w64 to posix threads (required for std::mutex / std::condition_variable)
-          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix || true
-          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix || true
+
+      - name: Switch mingw-w64 to posix threads
+        shell: bash
+        run: |
+          # Required for std::mutex / std::condition_variable support.
+          # On Ubuntu Noble the default is win32 threads which breaks C++11 threading.
+          echo "=== Before update-alternatives ==="
+          ls -la /usr/bin/x86_64-w64-mingw32-g++* || true
+          x86_64-w64-mingw32-g++ -v 2>&1 | tail -1 || true
+          sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+          sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+          echo "=== After update-alternatives ==="
+          x86_64-w64-mingw32-g++ -v 2>&1 | tail -1
+          # Verify posix thread model
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep -i "thread model" || true
 
       - name: Prepare depends cache directories
         shell: bash
@@ -749,10 +761,30 @@ jobs:
       - name: Build depends (${{ env.HOST }})
         shell: bash
         run: |
+          # Verify we are using posix threads before building
+          echo "=== Compiler thread model check ==="
+          x86_64-w64-mingw32-g++ -v 2>&1 | grep "Thread model"
+          # Build depends
           make -C depends HOST=${HOST} -j"$(nproc)"
           # show whether native ccache was staged
           ls -lah depends/*/native/bin || true
           ls -lah depends/${HOST}
+          # Force config.site to use posix compiler explicitly.
+          # The depends system writes CC/CXX as the generic names (without -posix suffix).
+          # Even with update-alternatives, the ccache wrapper or stale symlinks can
+          # cause the win32 variant to be picked up. Using the explicit -posix binary
+          # names guarantees the correct thread model.
+          echo "=== Patching config.site for posix threads ==="
+          SITE="depends/${HOST}/share/config.site"
+          if [ -f "$SITE" ]; then
+            sed -i 's|CC="x86_64-w64-mingw32-gcc"|CC="x86_64-w64-mingw32-gcc-posix"|' "$SITE"
+            sed -i 's|CXX="x86_64-w64-mingw32-g++"|CXX="x86_64-w64-mingw32-g++-posix"|' "$SITE"
+            echo "Patched CC/CXX in config.site:"
+            grep -E '^(CC|CXX)=' "$SITE"
+          fi
+          # List Qt6 bundled libs to help debug linking issues
+          echo "=== Qt6 bundled libraries ==="
+          ls -la depends/${HOST}/lib/libQt6Bundled*.a 2>/dev/null || echo "No Qt6 bundled libs found"
 
       - name: Autogen
         shell: bash
@@ -762,6 +794,9 @@ jobs:
         shell: bash
         run: |
           export CONFIG_SITE="$PWD/depends/${HOST}/share/config.site"
+          export PATH=/usr/lib/qt6/bin:$PATH
+          echo "=== Verifying compiler from config.site ==="
+          grep -E '^(CC|CXX)=' "$CONFIG_SITE"
           echo "=== Checking Qt6 tools from depends ==="
           ls -la "$PWD/depends/${HOST}/native/libexec/" | head -10
           echo "=== Checking Qt6 libraries ==="
@@ -769,8 +804,8 @@ jobs:
           echo "=== Checking Qt6 includes ==="
           ls -la "$PWD/depends/x86_64-w64-mingw32/include/" | grep -i qt || echo "No Qt includes found"
           echo "=== Running configure ==="
-          CFLAGS="-g -D_WIN32_WINNT=0x0601" CXXFLAGS="-g -D_WIN32_WINNT=0x0601" \
-          export PATH=/usr/lib/qt6/bin:$PATH
+          CFLAGS="-g -D_WIN32_WINNT=0x0601" \
+          CXXFLAGS="-g -D_WIN32_WINNT=0x0601" \
           CPPFLAGS="-I$PWD/depends/x86_64-w64-mingw32/include" \
           LDFLAGS="-L$PWD/depends/x86_64-w64-mingw32/lib" \
           PKG_CONFIG_PATH="$PWD/depends/x86_64-w64-mingw32/lib/pkgconfig" \
@@ -784,9 +819,10 @@ jobs:
             --with-qt-libdir=$PWD/depends/x86_64-w64-mingw32/lib \
             --with-qt-bindir=$PWD/depends/x86_64-w64-mingw32/native/libexec:/usr/lib/qt6/bin \
             --with-incompatible-bdb
-          echo "=== Configure completed, checking config.log for Qt6 detection ==="
-          grep -A 5 -B 5 "checking for Qt" config.log || echo "Qt check not found in config.log"
-          grep -A 5 -B 5 "GUI.*qt" config.log || echo "GUI check not found in config.log"
+          echo "=== Configure completed ==="
+          echo "Compiler used:"
+          grep "^CC " src/Makefile | head -1 || true
+          grep "^CXX " src/Makefile | head -1 || true
       - name: Build (Windows ${HOST})
         shell: bash
         run: |

@@ -481,7 +481,7 @@ qt_cascoin_qt_LDADD += $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL)
 if TARGET_WINDOWS
 qt_cascoin_qt_LDADD += \
   -lQt6EntryPoint -lqwindows -lQt6DeviceDiscoverySupport -lQt6FbSupport \
-  -lQt6Gui -lQt6Core -lQt6BundledFreetype -lQt6BundledHarfbuzz -lQt6BundledPcre2 -lQt6BundledLibpng -lQt6BundledZLIB \
+  -lQt6Gui -lQt6Core -lQt6BundledHarfbuzz -lQt6BundledPcre2 -lQt6BundledLibpng -lQt6BundledZLIB \
   -ld3d9 -lruntimeobject -lshcore -lwtsapi32 -luxtheme -lsetupapi -ldwmapi -lcomdlg32 -loleaut32 -limm32 -lwinmm -lws2_32 -lole32 -luuid -ladvapi32 \
   -lsecur32 -lversion -ldwrite -ldxgi -ld3d11 -ld3d12 -lauthz -lnetapi32 -luserenv -lsynchronization
 qt_cascoin_qt_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(QT_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -L$(top_srcdir)/depends/x86_64-w64-mingw32/plugins/platforms
