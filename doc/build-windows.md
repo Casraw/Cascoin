@@ -80,6 +80,11 @@ Common steps to install mingw32 cross compiler tool chain:
 
     sudo apt install g++-mingw-w64-x86-64
 
+On Ubuntu Noble 24.04 and newer, switch to posix threads (required for std::mutex / std::condition_variable):
+
+    sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+    sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+
 Ubuntu Trusty 14.04:
 
     No further steps required
