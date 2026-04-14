@@ -676,6 +676,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          clean: true
+
+      - name: Clean stale build artifacts from previous runs
+        shell: bash
+        run: |
+          # Self-hosted runners keep the workspace between runs.
+          # Old .o/.a files compiled with win32 threads will cause link errors
+          # when we switch to posix threads. Nuke all build output.
+          make distclean 2>/dev/null || true
+          git clean -fdx --exclude=depends/sources --exclude=depends/sdk-sources
 
       - name: Install cross-compile and depends prerequisites (apt)
         shell: bash
@@ -696,24 +707,6 @@ jobs:
         shell: bash
         run: |
           mkdir -p depends/built depends/work depends/sources depends/sdk-sources depends/${HOST} depends/stamps
-
-      - name: Clean stale win32-thread depends artifacts
-        shell: bash
-        run: |
-          # Remove any cached built artifacts that were compiled with win32 threads.
-          # The posix-thread compiler produces incompatible object files.
-          echo "Cleaning stale depends artifacts to avoid win32/posix thread mismatch..."
-          rm -rf depends/built/${HOST} depends/built/x86_64-w64-mingw32 || true
-          rm -rf depends/work/${HOST} depends/work/x86_64-w64-mingw32 || true
-          # Keep depends/${HOST}/share/config.site but nuke compiled libs
-          if [ -d "depends/${HOST}/lib" ]; then
-            echo "Removing old depends/${HOST} compiled output..."
-            rm -rf depends/${HOST}/lib depends/${HOST}/include depends/${HOST}/bin \
-                   depends/${HOST}/native depends/${HOST}/plugins depends/${HOST}/mkspecs \
-                   depends/${HOST}/metatypes depends/${HOST}/modules \
-                   depends/${HOST}/.stamp_* || true
-          fi
-          echo "Done."
 
       - name: Cache depends (sources)
         uses: actions/cache@v5
