@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies (apt)
         shell: bash
@@ -50,7 +50,7 @@ jobs:
         run: mkdir -p ~/.ccache
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           key: ccache-${{ runner.os }}-gcc-${{ hashFiles('configure.ac', 'src/**/*.cpp', 'src/**/*.h') }}
@@ -371,7 +371,7 @@ jobs:
 
       - name: Upload artifacts (binaries only)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-linux-build
           path: |
@@ -382,7 +382,7 @@ jobs:
 
       - name: Upload Linux distribution package
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-linux-x86_64-distribution
           path: |
@@ -391,7 +391,7 @@ jobs:
 
       - name: Upload debug symbols
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-linux-debug
           path: |
@@ -405,14 +405,14 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Ensure ccache directory exists
         shell: bash
         run: mkdir -p ~/.ccache
 
       - name: Cache ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.ccache
           key: ccache-linux-arm64-gcc-${{ hashFiles('configure.ac', 'src/**/*.cpp', 'src/**/*.h') }}
@@ -650,7 +650,7 @@ jobs:
 
       - name: Upload Linux ARM64 distribution package
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-linux-aarch64-distribution
           path: |
@@ -659,7 +659,7 @@ jobs:
 
       - name: Upload debug symbols
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-linux-arm64-debug
           path: |
@@ -675,7 +675,7 @@ jobs:
       HOST: x86_64-w64-mingw32
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install cross-compile and depends prerequisites (apt)
         shell: bash
@@ -697,8 +697,26 @@ jobs:
         run: |
           mkdir -p depends/built depends/work depends/sources depends/sdk-sources depends/${HOST} depends/stamps
 
+      - name: Clean stale win32-thread depends artifacts
+        shell: bash
+        run: |
+          # Remove any cached built artifacts that were compiled with win32 threads.
+          # The posix-thread compiler produces incompatible object files.
+          echo "Cleaning stale depends artifacts to avoid win32/posix thread mismatch..."
+          rm -rf depends/built/${HOST} depends/built/x86_64-w64-mingw32 || true
+          rm -rf depends/work/${HOST} depends/work/x86_64-w64-mingw32 || true
+          # Keep depends/${HOST}/share/config.site but nuke compiled libs
+          if [ -d "depends/${HOST}/lib" ]; then
+            echo "Removing old depends/${HOST} compiled output..."
+            rm -rf depends/${HOST}/lib depends/${HOST}/include depends/${HOST}/bin \
+                   depends/${HOST}/native depends/${HOST}/plugins depends/${HOST}/mkspecs \
+                   depends/${HOST}/metatypes depends/${HOST}/modules \
+                   depends/${HOST}/.stamp_* || true
+          fi
+          echo "Done."
+
       - name: Cache depends (sources)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             depends/sources
@@ -706,28 +724,22 @@ jobs:
           key: depends-sources-${{ hashFiles('depends/packages/*.mk') }}
 
       - name: Cache depends (built packages)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: depends/${{ env.HOST }}
-          key: depends-built-${{ runner.os }}-${{ env.HOST }}-posix-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
-          restore-keys: |
-            depends-built-${{ runner.os }}-${{ env.HOST }}-posix-
+          key: depends-built-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
 
       - name: Cache depends (built artifacts)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: depends/built
-          key: depends-artifacts-${{ runner.os }}-${{ env.HOST }}-posix-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
-          restore-keys: |
-            depends-artifacts-${{ runner.os }}-${{ env.HOST }}-posix-
+          key: depends-artifacts-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk', 'depends/patches/**') }}
 
       - name: Cache depends (work - experimental)
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: depends/work
-          key: depends-work-${{ runner.os }}-${{ env.HOST }}-posix-${{ hashFiles('depends/**/*.mk') }}-${{ github.run_id }}
-          restore-keys: |
-            depends-work-${{ runner.os }}-${{ env.HOST }}-posix-${{ hashFiles('depends/**/*.mk') }}-
+          key: depends-work-${{ runner.os }}-${{ env.HOST }}-posix-v2-${{ hashFiles('depends/**/*.mk') }}-${{ github.run_id }}
 
       # Disabled ccache for Qt depends build to avoid path complexity
       # - name: Prebuild native ccache and ensure path for depends
@@ -839,7 +851,7 @@ jobs:
 
       - name: Upload Windows artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-windows-${{ env.HOST }}-build
           path: |
@@ -853,7 +865,7 @@ jobs:
 
       - name: Upload Windows debug symbols
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-windows-${{ env.HOST }}-debug
           path: |
@@ -867,7 +879,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install dependencies (Homebrew)
         run: |
@@ -920,7 +932,7 @@ jobs:
 
       - name: Upload macOS distribution package
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cascoin-macos-arm64-distribution.tar.gz
           path: |
@@ -939,7 +951,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Determine tag
         id: tag
@@ -960,7 +972,7 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
 
       - name: Download Linux distribution artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cascoin-linux-x86_64-distribution
           path: release/linux
@@ -977,7 +989,7 @@ jobs:
           fi
 
       - name: Download Linux ARM64 distribution artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cascoin-linux-aarch64-distribution
           path: release/linux-arm64
@@ -994,13 +1006,13 @@ jobs:
           fi
 
       - name: Download Windows build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cascoin-windows-x86_64-w64-mingw32-build
           path: release/windows
 
       - name: Download macOS build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cascoin-macos-arm64-distribution.tar.gz
           path: release/macos
