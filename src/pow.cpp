@@ -429,7 +429,11 @@ unsigned int GetNextLabyrinth11WorkRequired(const CBlockIndex* pindexLast, const
     mouseHashTarget /= labyrinthBlockCount;    // Average the mouse hash targets in window
 
     // Retarget based on totalBlockCount
-    int targetTotalBlockCount = labyrinthBlockCount * params.labyrinthBlockSpacingTarget;
+    int64_t targetTotalBlockCount = (int64_t)labyrinthBlockCount * (int64_t)params.labyrinthBlockSpacingTarget;
+    if (targetTotalBlockCount <= 0) {
+        LogPrint(BCLog::LABYRINTH, "GetNextLabyrinth11WorkRequired: invalid targetTotalBlockCount.\n");
+        return bnPowLimit.GetCompact();
+    }
     mouseHashTarget *= totalBlockCount;
     mouseHashTarget /= targetTotalBlockCount;
 
@@ -468,7 +472,11 @@ unsigned int GetNextLabyrinth12WorkRequired(const CBlockIndex* pindexLast, const
     mouseHashTarget /= labyrinthBlockCount;    // Average the mouse hash targets in window
 
     // Retarget based on totalBlockCount
-    int targetTotalBlockCount = labyrinthBlockCount * params.labyrinthBlockSpacingTarget;
+    int64_t targetTotalBlockCount = (int64_t)labyrinthBlockCount * (int64_t)params.labyrinthBlockSpacingTarget;
+    if (targetTotalBlockCount <= 0) {
+        LogPrint(BCLog::LABYRINTH, "GetNextLabyrinth12WorkRequired: invalid targetTotalBlockCount.\n");
+        return bnPowLimit.GetCompact();
+    }
     mouseHashTarget *= totalBlockCount;
     mouseHashTarget /= targetTotalBlockCount;
 
