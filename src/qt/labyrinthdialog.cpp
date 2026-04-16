@@ -48,6 +48,16 @@ LabyrinthDialog::LabyrinthDialog(const PlatformStyle *_platformStyle, QWidget *p
 {
     ui->setupUi(this);
 
+    // Sync overlay: shown while the node is performing IBD or reindex
+    syncOverlayLabel = new QLabel(this);
+    syncOverlayLabel->setAlignment(Qt::AlignCenter);
+    syncOverlayLabel->setWordWrap(true);
+    syncOverlayLabel->setStyleSheet(
+        "QLabel { background-color: rgba(30,30,30,210); color: #ffffff;"
+        " font-size: 14px; border-radius: 8px; padding: 24px; }"
+    );
+    syncOverlayLabel->hide();
+
     if (!_platformStyle->getImagesOnButtons())
         ui->createMiceButton->setIcon(QIcon());
     else
@@ -94,6 +104,7 @@ void LabyrinthDialog::setClientModel(ClientModel *_clientModel) {
         connect(_clientModel, SIGNAL(numBlocksChanged(int,QDateTime,double,bool)), this, SLOT(onBlocksChanged()));
         // Removed: numConnectionsChanged was triggering expensive updateData() calls
         // The status icon update is now handled more efficiently in updateLabyrinthSummary()
+        updateSyncOverlay();
     }
 }
 
@@ -187,23 +198,51 @@ QString LabyrinthDialog::formatLargeNoLocale(int i) {
     return i_str;
 }
 
+void LabyrinthDialog::updateSyncOverlay() {
+    if (!syncOverlayLabel)
+        return;
+
+    if (!clientModel) {
+        syncOverlayLabel->hide();
+        return;
+    }
+
+    bool syncing = clientModel->inInitialBlockDownload()
+                   || clientModel->getBlockSource() == BLOCK_SOURCE_REINDEX
+                   || clientModel->getBlockSource() == BLOCK_SOURCE_DISK;
+
+    if (!syncing) {
+        syncOverlayLabel->hide();
+        return;
+    }
+
+    double progress = clientModel->getVerificationProgress(nullptr);
+    int pct = (int)(progress * 100.0 + 0.5);
+    syncOverlayLabel->setText(
+        tr("Labyrinth data unavailable — node is syncing: %1% complete. Please wait.").arg(pct)
+    );
+    syncOverlayLabel->setGeometry(rect());
+    syncOverlayLabel->show();
+    syncOverlayLabel->raise();
+}
+
 void LabyrinthDialog::updateData(bool forceGlobalSummaryUpdate) {
     const Consensus::Params& consensusParams = Params().GetConsensus();
 
     // Always ensure local summary UI reflects latest cached values
     updateLabyrinthSummary();
 
-    // Update cost-related UI regardless of sync
-    mouseCost = GetMouseCost(chainActive.Tip()->nHeight, consensusParams);
-    setAmountField(ui->mouseCostLabel, mouseCost);
-    updateTotalCostDisplay();
-
-    // Global summary only when not IBD
-    if(IsInitialBlockDownload() || chainActive.Height() == 0) {
+    // Guard against null tip during initial sync or reindex — chainActive.Tip() is
+    // null until the first block is connected, so all Tip() access must come after this.
+    if (IsInitialBlockDownload() || chainActive.Height() == 0 || !chainActive.Tip()) {
         ui->globalLabyrinthSummary->hide();
         ui->globalLabyrinthSummaryError->show();
         return;
     }
+
+    mouseCost = GetMouseCost(chainActive.Tip()->nHeight, consensusParams);
+    setAmountField(ui->mouseCostLabel, mouseCost);
+    updateTotalCostDisplay();
 
     if (forceGlobalSummaryUpdate || chainActive.Tip()->nHeight >= lastGlobalCheckHeight + 10) { // Don't update global summary every block
         int globalImmatureMice, globalImmatureBCTs, globalMatureMice, globalMatureBCTs;
@@ -430,7 +469,10 @@ void LabyrinthDialog::on_createMiceButton_clicked() {
 
 // Cascoin: Auto-update labyrinth when new blocks are found
 void LabyrinthDialog::onBlocksChanged() {
-    // Only update if this dialog is currently visible to avoid unnecessary work
+    // Always update the sync overlay so progress % stays current even when hidden
+    updateSyncOverlay();
+
+    // Only update the rest if this dialog is currently visible to avoid unnecessary work
     if (!isVisible()) {
         return;
     }
@@ -600,10 +642,13 @@ void LabyrinthDialog::onMouseMove(QMouseEvent *event) {
 
 void LabyrinthDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
+    if (syncOverlayLabel && syncOverlayLabel->isVisible())
+        syncOverlayLabel->setGeometry(rect());
 }
 
 void LabyrinthDialog::showEvent(QShowEvent *event) {
     QDialog::showEvent(event);
+    updateSyncOverlay();
     // Start periodic refresh when dialog becomes visible
     if (periodicRefreshTimer && !periodicRefreshTimer->isActive()) {
         periodicRefreshTimer->start();

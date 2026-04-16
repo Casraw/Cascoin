@@ -156,8 +156,10 @@ private:
     QTimer *updateTimer;  // Timer for debouncing checkbox state changes
     QTimer *periodicRefreshTimer;  // Timer for periodic labyrinth refresh
     QTimer *blockUpdateTimer = nullptr;  // Timer for debouncing block change updates
+    QLabel *syncOverlayLabel = nullptr;  // Shown while node is syncing/reindexing
 
     void updateTotalCostDisplay();
+    void updateSyncOverlay();
     void initGraph();
     void updateGraph();
     void showPointToolTip(QMouseEvent *event);

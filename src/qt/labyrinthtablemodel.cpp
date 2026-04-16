@@ -325,6 +325,8 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                 return LabyrinthDialog::formatLargeNoLocale(rec->mouseCount);
             case Status:
                 {
+                    if (rec->mouseStatus.empty())
+                        return QVariant();
                     QString status = QString::fromStdString(rec->mouseStatus);
                     status[0] = status[0].toUpper();
                     return status;
@@ -359,20 +361,25 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                 }
             case Cost:
                 {
-                    int unit = walletModel->getOptionsModel()->getDisplayUnit();
-                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(unit);
-                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(unit);
+                    OptionsModel* opts = walletModel ? walletModel->getOptionsModel() : nullptr;
+                    if (!opts) return QVariant();
+                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(opts->getDisplayUnit());
+                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(opts->getDisplayUnit());
                 }
             case ROI:
                 if (rec->mouseFeePaid == 0)
                     return QString("–");
                 return QString::number(rec->rewardsPaid * 100.0 / rec->mouseFeePaid, 'f', 1) + "%";
             case Rewards:
-                if (rec->blocksFound == 0)
-                    return "No blocks mined";
-                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->rewardsPaid)
-                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit())
-                    + " (" + QString::number(rec->blocksFound) + " blocks mined)";
+                {
+                    if (rec->blocksFound == 0)
+                        return "No blocks mined";
+                    OptionsModel* opts = walletModel ? walletModel->getOptionsModel() : nullptr;
+                    if (!opts) return QVariant();
+                    return BitcoinUnits::format(opts->getDisplayUnit(), rec->rewardsPaid)
+                        + " " + BitcoinUnits::shortName(opts->getDisplayUnit())
+                        + " (" + QString::number(rec->blocksFound) + " blocks mined)";
+                }
         }
     } else if (role == Qt::TextAlignmentRole) {
         /*if (index.column() == Rewards && rec->blocksFound == 0)
@@ -431,7 +438,8 @@ void LabyrinthTableModel::sort(int column, Qt::SortOrder order) {
     sortColumn = column;
     sortOrder = order;
     std::sort(list.begin(), list.end(), CMouseCreationTransactionInfoLessThan(column, order));
-    Q_EMIT dataChanged(index(0, 0, QModelIndex()), index(list.size() - 1, NUMBER_OF_COLUMNS - 1, QModelIndex()));
+    if (!list.isEmpty())
+        Q_EMIT dataChanged(index(0, 0, QModelIndex()), index(list.size() - 1, NUMBER_OF_COLUMNS - 1, QModelIndex()));
 }
 
 bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransactionInfo &left, CMouseCreationTransactionInfo &right) const {
