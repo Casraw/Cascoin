@@ -117,6 +117,7 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
     }
 
     // show progress speed if we have more then one sample
+    bool hasValidEstimate = false;
     if (blockProcessTime.size() >= 2) {
         double progressDelta = 0;
         double progressPerHour = 0;
@@ -174,6 +175,7 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
         // show expected remaining time
         if(remainingMSecs >= 0) {
             ui->expectedTimeLeft->setText(GUIUtil::formatNiceTimeOffset(remainingMSecs / 1000.0));
+            hasValidEstimate = true;
         } else {
             ui->expectedTimeLeft->setText(QObject::tr("calculating..."));
         }
@@ -204,7 +206,15 @@ void ModalOverlay::tipUpdate(int count, const QDateTime& blockDate, double nVeri
         ui->numberOfBlocksLeft->setText(QString::number(bestHeaderHeight - count));
     } else if (bestHeaderHeight > 0) {
         ui->numberOfBlocksLeft->setText(tr("Unknown. Syncing Headers (%1)...").arg(bestHeaderHeight));
-        ui->expectedTimeLeft->setText(tr("calculating..."));
+        // estimateNumHeadersLeft is computed from bestHeaderDate.secsTo(now). During
+        // reindex or disk load, bestHeaderDate is a historical chain-tip timestamp (not
+        // the time headers were last received), so secsTo() returns a large value and
+        // this branch fires even though we already have a valid progress-based estimate.
+        // Only replace the time estimate with "calculating..." when we genuinely have
+        // no valid estimate; otherwise preserve the computed value.
+        if (!hasValidEstimate) {
+            ui->expectedTimeLeft->setText(tr("calculating..."));
+        }
     } else {
         ui->numberOfBlocksLeft->setText(tr("Unknown..."));
     }

@@ -58,13 +58,19 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
     }
     updateInProgress = true;
 
+    // Snapshot the raw pointer on the main thread before entering the background thread.
+    // QPointer is not thread-safe — its null-tracking uses Qt's object system which must
+    // only be accessed from the main thread. The raw snapshot is safe to call getBCTs()
+    // on from the background thread (same pre-existing lifetime assumption as before).
+    WalletModel* walletModelPtr = walletModel.data();
+
     // Move database operations to background thread to prevent GUI hang
     std::thread([=]() {
         try {
             // Load entries from BCTDatabaseSQLite in background thread
             BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
             std::vector<BCTRecord> records;
-            
+
             // Helper lambda to convert wallet BCTs to BCTRecords
             auto convertWalletBCTs = [](const std::vector<CMouseCreationTransactionInfo>& walletBCTs) {
                 std::vector<BCTRecord> result;
@@ -110,20 +116,20 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                           hasCorruptRewardData ? " (corrupt reward data detected)" : "");
 
                 // Fall back to wallet scan if DB is empty or contains corrupt reward data
-                if (records.empty() || hasCorruptRewardData) {
+                if ((records.empty() || hasCorruptRewardData) && walletModelPtr) {
                     LogPrintf("LabyrinthTableModel: %s, falling back to wallet scan\n",
                               records.empty() ? "SQLite database is empty" : "corrupt reward data in SQLite");
                     std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
-                    walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                    walletModelPtr->getBCTs(vMouseCreationTransactions, includeDeadMice);
                     records = convertWalletBCTs(vMouseCreationTransactions);
                     LogPrintf("LabyrinthTableModel: Loaded %zu BCT records from wallet scan\n", records.size());
                 }
-            } else {
+            } else if (walletModelPtr) {
                 // Fallback to wallet scan if database not initialized
-                LogPrintf("LabyrinthTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n", 
+                LogPrintf("LabyrinthTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n",
                           bctDb, bctDb ? bctDb->isInitialized() : false);
                 std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
-                walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                walletModelPtr->getBCTs(vMouseCreationTransactions, includeDeadMice);
                 records = convertWalletBCTs(vMouseCreationTransactions);
             }
             
@@ -243,8 +249,9 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
 
-                // Fire signal
-                Q_EMIT walletModel->newLabyrinthSummaryAvailable();
+                // Fire signal — check QPointer on the main thread before emitting
+                if (walletModel)
+                    Q_EMIT walletModel->newLabyrinthSummaryAvailable();
 
                 // Reset update flag and process any pending request
                 updateInProgress = false;

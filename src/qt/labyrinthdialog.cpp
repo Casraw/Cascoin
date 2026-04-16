@@ -179,6 +179,8 @@ void LabyrinthDialog::setEncryptionStatus(int status) {
 }
 
 void LabyrinthDialog::setAmountField(QLabel *field, CAmount value) {
+    if (!model || !model->getOptionsModel())
+        return;
     field->setText(
         BitcoinUnits::format(model->getOptionsModel()->getDisplayUnit(), value)
         + " "
@@ -403,6 +405,8 @@ void LabyrinthDialog::on_includeDeadMiceCheckbox_stateChanged() {
 }
 
 void LabyrinthDialog::onUpdateTimerTimeout() {
+    if (!model || !clientModel)
+        return;
     // Disable checkbox during update to provide visual feedback
     ui->includeDeadMiceCheckbox->setEnabled(false);
     ui->includeDeadMiceCheckbox->setText(tr("Include expired mice (updating...)"));
@@ -417,6 +421,8 @@ void LabyrinthDialog::onUpdateTimerTimeout() {
 }
 
 void LabyrinthDialog::onPeriodicRefresh() {
+    if (!model || !clientModel)
+        return;
     // Only refresh if dialog is visible to avoid unnecessary background work
     if (!isVisible()) {
         return;
@@ -484,11 +490,13 @@ void LabyrinthDialog::onBlocksChanged() {
         blockUpdateTimer->setSingleShot(true);
         blockUpdateTimer->setInterval(500); // 500ms debounce for block updates
         connect(blockUpdateTimer, &QTimer::timeout, this, [this]() {
+            if (!model || !clientModel)
+                return;
             // Update global summary (lightweight)
             updateData();
-            
+
             // Refresh labyrinth table in background (already threaded in updateBCTs)
-            if (model && model->getLabyrinthTableModel()) {
+            if (model->getLabyrinthTableModel()) {
                 model->getLabyrinthTableModel()->updateBCTs(ui->includeDeadMiceCheckbox->isChecked());
             }
         });
