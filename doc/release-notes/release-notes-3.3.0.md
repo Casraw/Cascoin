@@ -10,6 +10,15 @@ Critical security issues identified and fixed by **fromport**:
 - **Buffer overflow**: Fixed a buffer overflow in network message handling
 - **Memory leak**: Fixed a memory leak in long-running node operations
 
+## Security Fixes (P1)
+
+Additional security hardening by **fromport**:
+
+- **NFT bounds validation**: Added `MAX_NFTS_PER_TX=100` limit to prevent unbounded loop from malicious peers crafting transactions with 255 NFTs
+- **Unsigned char truncation**: Added explicit size validation before `unsigned char` cast to prevent silent truncation of values >255 in NFT length fields
+- **Signed/unsigned mismatch**: Changed count variables from `int` to `size_t` in NFT parsing
+- **Dead code fix**: Fixed `validateWalletOwnership()` non-wallet return value from -1 to 0 so success path is reachable
+
 ## macOS 15 (Sequoia) Compatibility
 
 Cascoin Core now builds and runs on macOS 15 Sequoia. The previous release crashed on startup due to deprecated macOS APIs.
@@ -20,6 +29,7 @@ Cascoin Core now builds and runs on macOS 15 Sequoia. The previous release crash
 - Added `-framework UserNotifications` to the macOS build system
 - Fixed Qt6 `processEvents()` crash in `QCocoaEventDispatcher` on macOS 15 by replacing the blocking initialization loop with a cooperative `QTimer`
 - CI runner updated from `macos-14` to `macos-15`
+- Fixed crash in QCustomPlot / Labyrinth dialog on macOS
 
 ## Labyrinth UI Improvements
 
@@ -31,6 +41,9 @@ Multiple Labyrinth graph and display fixes contributed by **fromport**:
 - Fixed `qRound` truncation issue causing incorrect 100% display
 - Fixed infinite loop caused by near-zero `pctStep` in ticker
 - Fixed OOM on startup caused by uncapped tick count
+- Fixed mouse input field text invisible on dark theme due to white-on-white fallback (fromport)
+- Fixed wallet window opening too small (200×150 instead of 850×550) with resize blocked on startup (fromport)
+- Added `isVisible()` guard to skip expensive Labyrinth disk I/O when tab is not visible (fromport)
 
 ## Sync & Stability Fixes
 
@@ -50,11 +63,21 @@ Multiple Labyrinth graph and display fixes contributed by **fromport**:
 
 - Integrated new checkpoints for improved initial sync performance
 
+## CI & Build
+
+- Upgraded GitHub Actions (checkout, cache, upload/download-artifact) from v4 to v5
+- Fixed mingw-w64 posix thread configuration for Windows builds on Ubuntu Noble
+- Patched `config.site` to use posix-suffixed compiler binaries (`gcc-posix`/`g++-posix`)
+- Invalidated Windows depends caches to prevent win32/posix thread mismatch
+- Added ARM build target to CI (experimental)
+
 ## Upgrade Notes
 
 This is a recommended upgrade for all users, especially macOS users. No database migration is required. Drop-in replacement for 3.2.2.
 
 ## Credits
 
-- fromport — security fixes, Labyrinth UI improvements, sync fixes, codebase cleanup
-- Alexander Bergmann — macOS 15 compatibility, CI updates, checkpoints
+- fromport — security fixes (P0 + P1), Labyrinth UI improvements, sync fixes, codebase cleanup, dark theme fix, wallet window fix
+- Alexander Bergmann — macOS 15 compatibility, CI updates, checkpoints, Windows build fixes, ARM build
+
+Special thanks to **fromport** for sponsoring the ARM CI runner.
