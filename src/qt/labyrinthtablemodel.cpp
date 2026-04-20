@@ -26,13 +26,14 @@ LabyrinthTableModel::LabyrinthTableModel(const PlatformStyle *_platformStyle, CW
     Q_UNUSED(wallet);
 
     // Set column headings
-    columns << tr("Created") << tr("Mouse count") << tr("Mouse status") << tr("Estimated time until status change") << tr("Mouse cost") << tr("Rewards earned");
+    columns << tr("Created") << tr("Mouse count") << tr("Mouse status") << tr("Estimated time until status change") << tr("Mouse cost") << tr("ROI%") << tr("Rewards earned");
 
     sortOrder = Qt::DescendingOrder;
     sortColumn = 0;
 
     rewardsPaid = cost = profit = 0;
     immature = mature = dead = blocksFound = 0;
+    maxROIPercent = 0.0;
     updateInProgress = false;
     pendingUpdate = false;
     lastIncludeDeadMice = false;
@@ -216,6 +217,17 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                     list.prepend(bct);
                 }
 
+                // Compute the highest ROI% across all rows so the background
+                // colour scale can anchor bright green to the best performer.
+                double newMaxROI = 0.0;
+                for (const auto& bct : list) {
+                    if (bct.mouseFeePaid > 0) {
+                        double roi = bct.rewardsPaid * 100.0 / bct.mouseFeePaid;
+                        if (roi > newMaxROI) newMaxROI = roi;
+                    }
+                }
+                maxROIPercent = newMaxROI;
+
                 endResetModel();
 
                 // Now atomically update summary member variables
@@ -346,18 +358,26 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                     return status;
                 }
             case Cost:
-                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->mouseFeePaid) + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit());
+                {
+                    int unit = walletModel->getOptionsModel()->getDisplayUnit();
+                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(unit);
+                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(unit);
+                }
+            case ROI:
+                if (rec->mouseFeePaid == 0)
+                    return QString("–");
+                return QString::number(rec->rewardsPaid * 100.0 / rec->mouseFeePaid, 'f', 1) + "%";
             case Rewards:
                 if (rec->blocksFound == 0)
                     return "No blocks mined";
                 return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->rewardsPaid)
-                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit()) 
+                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit())
                     + " (" + QString::number(rec->blocksFound) + " blocks mined)";
         }
     } else if (role == Qt::TextAlignmentRole) {
         /*if (index.column() == Rewards && rec->blocksFound == 0)
             return (int)(Qt::AlignCenter|Qt::AlignVCenter);
-        else*/ if (index.column() == Cost || index.column() == Rewards || index.column() == Count)
+        else*/ if (index.column() == Cost || index.column() == ROI || index.column() == Rewards || index.column() == Count)
             return (int)(Qt::AlignRight|Qt::AlignVCenter);
         else
             return (int)(Qt::AlignCenter|Qt::AlignVCenter);
@@ -428,6 +448,12 @@ bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransaction
             return pLeft->blocksLeft < pRight->blocksLeft;
         case LabyrinthTableModel::Cost:
             return pLeft->mouseFeePaid < pRight->mouseFeePaid;
+        case LabyrinthTableModel::ROI:
+            {
+                double lRoi = pLeft->mouseFeePaid  > 0 ? pLeft->rewardsPaid  * 1.0 / pLeft->mouseFeePaid  : 0.0;
+                double rRoi = pRight->mouseFeePaid > 0 ? pRight->rewardsPaid * 1.0 / pRight->mouseFeePaid : 0.0;
+                return lRoi < rRoi;
+            }
         case LabyrinthTableModel::Rewards:
             return pLeft->rewardsPaid < pRight->rewardsPaid;
         case LabyrinthTableModel::Created:
