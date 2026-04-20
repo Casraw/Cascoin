@@ -221,6 +221,9 @@ private:
     // Cache management
     void invalidateCache();
     void refreshCache();
+
+    // Reward helpers (internal use only)
+    int getBlocksFoundForBCT(const std::string& bctTxid);
 };
 
 /**
