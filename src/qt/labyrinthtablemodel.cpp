@@ -92,16 +92,26 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 records = bctDb->getAllBCTs(includeDeadMice);
                 LogPrintf("LabyrinthTableModel: Loaded %zu BCT records from SQLite database (includeDeadMice=%d)\n", records.size(), includeDeadMice);
                 
-                // Debug: Count records with rewards
+                // Check for corrupt reward data: blocks_found > 0 but rewards_paid == 0
+                // This can happen after a chain reorg that rolls back reward coinbases
+                // before the bctdb has a chance to recalculate from the rewards table.
                 int recordsWithRewards = 0;
+                bool hasCorruptRewardData = false;
                 for (const auto& r : records) {
-                    if (r.blocksFound > 0) recordsWithRewards++;
+                    if (r.blocksFound > 0) {
+                        recordsWithRewards++;
+                        if (r.rewardsPaid == 0)
+                            hasCorruptRewardData = true;
+                    }
                 }
-                LogPrintf("LabyrinthTableModel: %d of %zu records have blocksFound > 0\n", recordsWithRewards, records.size());
-                
-                // If database is empty, fall back to wallet scan
-                if (records.empty()) {
-                    LogPrintf("LabyrinthTableModel: SQLite database is empty, falling back to wallet scan\n");
+                LogPrintf("LabyrinthTableModel: %d of %zu records have blocksFound > 0%s\n",
+                          recordsWithRewards, records.size(),
+                          hasCorruptRewardData ? " (corrupt reward data detected)" : "");
+
+                // Fall back to wallet scan if DB is empty or contains corrupt reward data
+                if (records.empty() || hasCorruptRewardData) {
+                    LogPrintf("LabyrinthTableModel: %s, falling back to wallet scan\n",
+                              records.empty() ? "SQLite database is empty" : "corrupt reward data in SQLite");
                     std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
                     walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
                     records = convertWalletBCTs(vMouseCreationTransactions);
