@@ -106,13 +106,12 @@ class LabyrinthDialog : public QDialog
 
 public:
     enum ColumnWidths {
-        CREATED_COLUMN_WIDTH = 100,
-        COUNT_COLUMN_WIDTH = 80,
-        STATUS_COLUMN_WIDTH = 120,
-        TIME_COLUMN_WIDTH = 300,
-        COST_COLUMN_WIDTH = 110,
-        REWARDS_COLUMN_WIDTH = 220,
-        LABYRINTH_COL_MIN_WIDTH = 100
+        CREATED_COLUMN_WIDTH = 130,
+        COUNT_COLUMN_WIDTH = 110,
+        STATUS_COLUMN_WIDTH = 110,
+        TIME_COLUMN_WIDTH = 290,
+        COST_COLUMN_WIDTH = 100,
+        ROI_COLUMN_WIDTH = 65
     };
 
     explicit LabyrinthDialog(const PlatformStyle *platformStyle, QWidget *parent = 0);

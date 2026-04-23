@@ -42,7 +42,8 @@ public:
         Status = 2,
         EstimatedTime = 3,
         Cost = 4,
-        Rewards = 5,
+        ROI = 5,
+        Rewards = 6,
         NUMBER_OF_COLUMNS
     };
 
@@ -76,6 +77,7 @@ private:
     Qt::SortOrder sortOrder;
     int immature, mature, dead, blocksFound;
     CAmount cost, rewardsPaid, profit;
+    double maxROIPercent;
     bool updateInProgress;  // Flag to prevent concurrent updates
     bool pendingUpdate;     // If an update was requested while one is running
     bool lastIncludeDeadMice;  // Remember last filter setting for refresh

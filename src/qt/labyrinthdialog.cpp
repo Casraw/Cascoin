@@ -121,17 +121,16 @@ void LabyrinthDialog::setModel(WalletModel *_model) {
         tableView->setAlternatingRowColors(true);
         tableView->setSelectionBehavior(QAbstractItemView::SelectRows);
         tableView->setSelectionMode(QAbstractItemView::ContiguousSelection);
+        QHeaderView *header = tableView->horizontalHeader();
+        header->setSectionResizeMode(QHeaderView::Fixed);
         tableView->setColumnWidth(LabyrinthTableModel::Created, CREATED_COLUMN_WIDTH);
         tableView->setColumnWidth(LabyrinthTableModel::Count, COUNT_COLUMN_WIDTH);
         tableView->setColumnWidth(LabyrinthTableModel::Status, STATUS_COLUMN_WIDTH);
+        header->setSectionResizeMode(LabyrinthTableModel::EstimatedTime, QHeaderView::Interactive);
         tableView->setColumnWidth(LabyrinthTableModel::EstimatedTime, TIME_COLUMN_WIDTH);
         tableView->setColumnWidth(LabyrinthTableModel::Cost, COST_COLUMN_WIDTH);
-        tableView->setColumnWidth(LabyrinthTableModel::Rewards, REWARDS_COLUMN_WIDTH);
-        //tableView->setColumnWidth(LabyrinthTableModel::Profit, PROFIT_COLUMN_WIDTH);
-
-        // Last 2 columns are set by the columnResizingFixer, when the table geometry is ready.
-        //columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, PROFIT_COLUMN_WIDTH, LABYRINTH_COL_MIN_WIDTH, this);
-        columnResizingFixer = new GUIUtil::TableViewLastColumnResizingFixer(tableView, REWARDS_COLUMN_WIDTH, LABYRINTH_COL_MIN_WIDTH, this);
+        tableView->setColumnWidth(LabyrinthTableModel::ROI, ROI_COLUMN_WIDTH);
+        header->setSectionResizeMode(LabyrinthTableModel::Rewards, QHeaderView::Stretch);
 
         // Connect signal to update local summary like OverviewPage
         connect(_model, SIGNAL(newLabyrinthSummaryAvailable()), this, SLOT(updateLabyrinthSummary()));
@@ -601,7 +600,6 @@ void LabyrinthDialog::onMouseMove(QMouseEvent *event) {
 
 void LabyrinthDialog::resizeEvent(QResizeEvent *event) {
     QWidget::resizeEvent(event);
-    columnResizingFixer->stretchColumnWidth(LabyrinthTableModel::Rewards);
 }
 
 void LabyrinthDialog::showEvent(QShowEvent *event) {

@@ -26,13 +26,14 @@ LabyrinthTableModel::LabyrinthTableModel(const PlatformStyle *_platformStyle, CW
     Q_UNUSED(wallet);
 
     // Set column headings
-    columns << tr("Created") << tr("Mouse count") << tr("Mouse status") << tr("Estimated time until status change") << tr("Mouse cost") << tr("Rewards earned");
+    columns << tr("Created") << tr("Mouse count") << tr("Mouse status") << tr("Estimated time until status change") << tr("Mouse cost") << tr("ROI%") << tr("Rewards earned");
 
     sortOrder = Qt::DescendingOrder;
     sortColumn = 0;
 
     rewardsPaid = cost = profit = 0;
     immature = mature = dead = blocksFound = 0;
+    maxROIPercent = 0.0;
     updateInProgress = false;
     pendingUpdate = false;
     lastIncludeDeadMice = false;
@@ -92,16 +93,26 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 records = bctDb->getAllBCTs(includeDeadMice);
                 LogPrintf("LabyrinthTableModel: Loaded %zu BCT records from SQLite database (includeDeadMice=%d)\n", records.size(), includeDeadMice);
                 
-                // Debug: Count records with rewards
+                // Check for corrupt reward data: blocks_found > 0 but rewards_paid == 0
+                // This can happen after a chain reorg that rolls back reward coinbases
+                // before the bctdb has a chance to recalculate from the rewards table.
                 int recordsWithRewards = 0;
+                bool hasCorruptRewardData = false;
                 for (const auto& r : records) {
-                    if (r.blocksFound > 0) recordsWithRewards++;
+                    if (r.blocksFound > 0) {
+                        recordsWithRewards++;
+                        if (r.rewardsPaid == 0)
+                            hasCorruptRewardData = true;
+                    }
                 }
-                LogPrintf("LabyrinthTableModel: %d of %zu records have blocksFound > 0\n", recordsWithRewards, records.size());
-                
-                // If database is empty, fall back to wallet scan
-                if (records.empty()) {
-                    LogPrintf("LabyrinthTableModel: SQLite database is empty, falling back to wallet scan\n");
+                LogPrintf("LabyrinthTableModel: %d of %zu records have blocksFound > 0%s\n",
+                          recordsWithRewards, records.size(),
+                          hasCorruptRewardData ? " (corrupt reward data detected)" : "");
+
+                // Fall back to wallet scan if DB is empty or contains corrupt reward data
+                if (records.empty() || hasCorruptRewardData) {
+                    LogPrintf("LabyrinthTableModel: %s, falling back to wallet scan\n",
+                              records.empty() ? "SQLite database is empty" : "corrupt reward data in SQLite");
                     std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
                     walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
                     records = convertWalletBCTs(vMouseCreationTransactions);
@@ -205,6 +216,17 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                     // Prepend to keep most recent on top before sorting
                     list.prepend(bct);
                 }
+
+                // Compute the highest ROI% across all rows so the background
+                // colour scale can anchor bright green to the best performer.
+                double newMaxROI = 0.0;
+                for (const auto& bct : list) {
+                    if (bct.mouseFeePaid > 0) {
+                        double roi = bct.rewardsPaid * 100.0 / bct.mouseFeePaid;
+                        if (roi > newMaxROI) newMaxROI = roi;
+                    }
+                }
+                maxROIPercent = newMaxROI;
 
                 endResetModel();
 
@@ -336,18 +358,26 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                     return status;
                 }
             case Cost:
-                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->mouseFeePaid) + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit());
+                {
+                    int unit = walletModel->getOptionsModel()->getDisplayUnit();
+                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(unit);
+                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(unit);
+                }
+            case ROI:
+                if (rec->mouseFeePaid == 0)
+                    return QString("–");
+                return QString::number(rec->rewardsPaid * 100.0 / rec->mouseFeePaid, 'f', 1) + "%";
             case Rewards:
                 if (rec->blocksFound == 0)
                     return "No blocks mined";
                 return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->rewardsPaid)
-                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit()) 
+                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit())
                     + " (" + QString::number(rec->blocksFound) + " blocks mined)";
         }
     } else if (role == Qt::TextAlignmentRole) {
         /*if (index.column() == Rewards && rec->blocksFound == 0)
             return (int)(Qt::AlignCenter|Qt::AlignVCenter);
-        else*/ if (index.column() == Cost || index.column() == Rewards || index.column() == Count)
+        else*/ if (index.column() == Cost || index.column() == ROI || index.column() == Rewards || index.column() == Count)
             return (int)(Qt::AlignRight|Qt::AlignVCenter);
         else
             return (int)(Qt::AlignCenter|Qt::AlignVCenter);
@@ -418,6 +448,12 @@ bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransaction
             return pLeft->blocksLeft < pRight->blocksLeft;
         case LabyrinthTableModel::Cost:
             return pLeft->mouseFeePaid < pRight->mouseFeePaid;
+        case LabyrinthTableModel::ROI:
+            {
+                double lRoi = pLeft->mouseFeePaid  > 0 ? pLeft->rewardsPaid  * 1.0 / pLeft->mouseFeePaid  : 0.0;
+                double rRoi = pRight->mouseFeePaid > 0 ? pRight->rewardsPaid * 1.0 / pRight->mouseFeePaid : 0.0;
+                return lRoi < rRoi;
+            }
         case LabyrinthTableModel::Rewards:
             return pLeft->rewardsPaid < pRight->rewardsPaid;
         case LabyrinthTableModel::Created:
