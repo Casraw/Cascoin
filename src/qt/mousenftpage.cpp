@@ -28,6 +28,8 @@
 #include <QDialogButtonBox>
 #include <QSpinBox>
 #include <QFont>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <thread>
 
 MouseNFTPage::MouseNFTPage(const PlatformStyle *_platformStyle, QWidget *parent) :
@@ -486,11 +488,48 @@ void MouseNFTPage::showMouseSelectionDialog(const QString& bctId, const QString&
         try {
             int totalMiceCount = 0;
             QString status = "";
-            
-            // TODO: Load actual BCT data from RPC
-            // For now, use sample data
-            totalMiceCount = 200000; // Sample: 200,000 total mice (realistic)
-            status = "mature";       // Sample status
+            bool dataLoaded = false;
+
+            // Primary: Query BCTDatabaseSQLite for the selected BCT
+            BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+            if (bctDb && bctDb->isInitialized()) {
+                BCTRecord bctRecord = bctDb->getBCT(bctId.toStdString());
+                if (!bctRecord.txid.empty()) {
+                    totalMiceCount = bctRecord.mouseCount;
+                    status = QString::fromStdString(bctRecord.status);
+                    dataLoaded = true;
+                }
+            }
+
+            // Fallback: Query miceavailable RPC if SQLite didn't have the data
+            if (!dataLoaded) {
+                std::string rpcResult;
+                bool rpcOk = RPCConsole::RPCExecuteCommandLine(rpcResult, "miceavailable");
+                if (rpcOk && !rpcResult.empty()) {
+                    QJsonParseError parseError;
+                    QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(rpcResult).toUtf8(), &parseError);
+                    if (parseError.error == QJsonParseError::NoError && doc.isArray()) {
+                        QJsonArray bctArray = doc.array();
+                        for (const QJsonValue& bctValue : bctArray) {
+                            if (!bctValue.isObject()) continue;
+                            QJsonObject bctObj = bctValue.toObject();
+                            if (bctObj["bct_txid"].toString() == bctId) {
+                                totalMiceCount = bctObj["total_mice"].toInt();
+                                status = bctObj["status"].toString();
+                                dataLoaded = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!dataLoaded) {
+                QMetaObject::invokeMethod(infoLabel, [=]() {
+                    infoLabel->setText(tr("Could not load BCT data. Please try again."));
+                }, Qt::QueuedConnection);
+                return;
+            }
             
             // Update UI on main thread
             QMetaObject::invokeMethod(infoLabel, [=]() {
@@ -516,96 +555,6 @@ void MouseNFTPage::showMouseSelectionDialog(const QString& bctId, const QString&
     if (dialog.exec() == QDialog::Accepted) {
         // Execute complete BCT tokenization
         executeCompleteBCTTokenization(bctId, ownerAddress);
-    }
-}
-
-void MouseNFTPage::executeTokenization(const QString& bctId, int mouseIndex, const QString& ownerAddress)
-{
-    QString message = tr("Are you sure you want to tokenize mouse #%1 from BCT %2?\n\n"
-                        "Owner: %3\n\n"
-                        "This will create a transferable NFT for this mouse.")
-                        .arg(mouseIndex)
-                        .arg(bctId.left(12) + "...")
-                        .arg(ownerAddress);
-    
-    QMessageBox::StandardButton reply = QMessageBox::question(this, tr("Confirm Tokenization"), 
-                                                             message,
-                                                             QMessageBox::Yes | QMessageBox::No);
-    
-    if (reply == QMessageBox::Yes) {
-        // Execute RPC command in background thread to avoid GUI blocking
-        std::thread([=]() {
-            try {
-                // Use the native wallet functions instead of RPC for better integration
-                QString result = tr("Tokenization process initiated for mouse #%1 from BCT %2 to address %3")
-                               .arg(mouseIndex).arg(bctId.left(12) + "...").arg(ownerAddress);
-                
-                // Update UI on main thread
-                QMetaObject::invokeMethod(this, [=]() {
-                    QMessageBox::information(this, tr("Tokenization Started"), result);
-                    // Refresh the mice list after tokenization
-                    QTimer::singleShot(2000, this, SLOT(loadAvailableMice()));
-                }, Qt::QueuedConnection);
-                
-            } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
-                    QMessageBox::warning(this, tr("RPC Error"), 
-                                       tr("Failed to execute tokenization: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
-            }
-        }).detach();
-    }
-}
-
-void MouseNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, const QString& ownerAddress)
-{
-    QString message = tr("Are you sure you want to tokenize %1 mice from BCT %2?\n\n"
-                        "Owner: %3\n\n"
-                        "This will create %1 transferable NFTs for these mice.")
-                        .arg(quantity)
-                        .arg(bctId.left(12) + "...")
-                        .arg(ownerAddress);
-    
-    QMessageBox::StandardButton reply = QMessageBox::question(this, tr("Confirm Batch Tokenization"), 
-                                                             message,
-                                                             QMessageBox::Yes | QMessageBox::No);
-    
-    if (reply == QMessageBox::Yes) {
-        // Execute batch tokenization in background thread
-        std::thread([=]() {
-            try {
-                QString result = tr("Batch tokenization started: %1 mice from BCT %2 to address %3\n\n"
-                                   "This may take a few moments to complete...")
-                               .arg(quantity)
-                               .arg(bctId.left(12) + "...")
-                               .arg(ownerAddress);
-                
-                // Update UI on main thread
-                QMetaObject::invokeMethod(this, [=]() {
-                    QMessageBox::information(this, tr("Batch Tokenization Started"), result);
-                    // Refresh the mice list after tokenization
-                    QTimer::singleShot(3000, this, SLOT(loadAvailableMice()));
-                }, Qt::QueuedConnection);
-                
-                // TODO: Implement actual batch tokenization logic
-                // For now, simulate the process
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-                
-                QMetaObject::invokeMethod(this, [=]() {
-                    QString completionMsg = tr("Batch tokenization completed!\n\n"
-                                              "%1 mice from BCT %2 have been tokenized.")
-                                            .arg(quantity)
-                                            .arg(bctId.left(12) + "...");
-                    QMessageBox::information(this, tr("Tokenization Complete"), completionMsg);
-                }, Qt::QueuedConnection);
-                
-            } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
-                    QMessageBox::warning(this, tr("Batch Tokenization Error"), 
-                                       tr("Failed to execute batch tokenization: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
-            }
-        }).detach();
     }
 }
 
@@ -693,15 +642,10 @@ void MouseNFTPage::transferMouseNFT()
                                                              QMessageBox::Yes | QMessageBox::No);
     
     if (reply == QMessageBox::Yes) {
-        // Call RPC to transfer mice NFT
-        QString rpcCommand = QString("micenftransfer \"%1\" \"%2\"")
-                            .arg(mouseNFTId)
-                            .arg(recipientAddress);
-        
         // Execute transfer in background thread to avoid GUI blocking
         std::thread([=]() {
             try {
-                // Execute the real bctnftransfer RPC command
+                // Use bctnftransfer RPC for BCT NFT transfers
                 std::string rpcCommandStr = QString("bctnftransfer \"%1\" \"%2\"")
                                            .arg(mouseNFTId).arg(recipientAddress).toStdString();
                 std::string rpcResult;
@@ -746,30 +690,93 @@ void MouseNFTPage::refreshMouseNFTs()
         return;
     }
     
-    // Refresh mouse NFT list by calling wallet functions
-    std::thread([=]() {
+    // Refresh mouse NFT list by calling micenftlist RPC in background
+    bool showExpired = showExpiredCheckBox->isChecked();
+    std::thread([this, showExpired]() {
         try {
-            // TODO: Implement actual wallet call to get owned NFTs
-            // For now, simulate loading some owned NFTs
-            
-            QMetaObject::invokeMethod(this, [this]() {
-                // Update both the combo and the table view
+            std::string rpcResult;
+            std::string rpcCommand = showExpired ? "micenftlist true" : "micenftlist";
+            bool rpcOk = RPCConsole::RPCExecuteCommandLine(rpcResult, rpcCommand);
+
+            QMetaObject::invokeMethod(this, [this, rpcOk, rpcResult]() {
+                // Update the transfer combo
                 updateMouseNFTCombo();
-                
-                // Also update the table model with sample data (will be replaced with real data)
-                if (mouseNFTModel) {
-                    // Trigger model update which will reload the data
-                    mouseNFTModel->updateMouseNFTs();
-    
-    // Note: Real NFT data will be loaded on demand when user interacts with the NFT system
-    // This prevents startup crashes when no RPC connection is available
+
+                if (!rpcOk) {
+                    // RPC failed — clear the model to show empty state (no crash)
+                    if (mouseNFTModel) {
+                        mouseNFTModel->updateMouseNFTListWithData(QList<MouseNFTRecord>());
+                    }
+                    return;
                 }
+
+                if (!mouseNFTModel) {
+                    return;
+                }
+
+                // Parse the JSON array from the micenftlist RPC result
+                QString jsonString = QString::fromStdString(rpcResult);
+                QJsonParseError parseError;
+                QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &parseError);
+
+                if (parseError.error != QJsonParseError::NoError || !doc.isArray()) {
+                    // JSON parse error — clear the model and warn the user
+                    mouseNFTModel->updateMouseNFTListWithData(QList<MouseNFTRecord>());
+                    QMessageBox::warning(this, tr("Wallet Error"),
+                                       tr("Failed to parse NFT list: %1").arg(parseError.errorString()));
+                    return;
+                }
+
+                QJsonArray nftArray = doc.array();
+
+                if (nftArray.isEmpty()) {
+                    // Empty result — clear the model (informational empty state, no crash)
+                    mouseNFTModel->updateMouseNFTListWithData(QList<MouseNFTRecord>());
+                    return;
+                }
+
+                QList<MouseNFTRecord> records;
+
+                for (const QJsonValue& value : nftArray) {
+                    if (!value.isObject()) continue;
+
+                    QJsonObject nftObj = value.toObject();
+
+                    MouseNFTRecord record;
+                    record.mouseNFTId = nftObj["nft_id"].toString();
+                    if (record.mouseNFTId.isEmpty())
+                        record.mouseNFTId = nftObj["mice_nft_id"].toString();
+                    record.originalBCT = nftObj["original_bct"].toString();
+                    record.mouseIndex = nftObj["mouse_index"].toInt();
+                    record.currentOwner = nftObj["owner"].toString();
+                    record.status = nftObj["status"].toString();
+                    record.maturityHeight = nftObj["maturity_height"].toInt();
+                    record.expiryHeight = nftObj["expiry_height"].toInt();
+                    record.tokenizedHeight = nftObj["tokenized_height"].toInt();
+                    record.blocksLeft = nftObj["blocks_left"].toInt();
+
+                    records.append(record);
+                }
+
+                mouseNFTModel->updateMouseNFTListWithData(records);
             }, Qt::QueuedConnection);
             
         } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(this, [=]() {
+            std::string errMsg = e.what();
+            QMetaObject::invokeMethod(this, [this, errMsg]() {
+                if (mouseNFTModel) {
+                    mouseNFTModel->updateMouseNFTListWithData(QList<MouseNFTRecord>());
+                }
                 QMessageBox::warning(this, tr("Wallet Error"), 
-                                   tr("Failed to refresh NFT list: %1").arg(QString::fromStdString(e.what())));
+                                   tr("Failed to refresh NFT list: %1").arg(QString::fromStdString(errMsg)));
+            }, Qt::QueuedConnection);
+        } catch (...) {
+            QMetaObject::invokeMethod(this, [this]() {
+                if (mouseNFTModel) {
+                    mouseNFTModel->updateMouseNFTListWithData(QList<MouseNFTRecord>());
+                }
+                QMessageBox::warning(this, tr("Wallet Error"),
+                                   tr("Failed to refresh NFT list due to an unexpected error."));
             }, Qt::QueuedConnection);
         }
     }).detach();
@@ -781,9 +788,62 @@ void MouseNFTPage::showMouseNFTDetails()
     if (selection.isEmpty()) {
         return;
     }
-    
-    // TODO: Show detailed mouse NFT information dialog
-    QMessageBox::information(this, tr("Mice NFT Details"), tr("Mice NFT details dialog will be implemented."));
+
+    // Extract the full NFT ID from the selected row (column 0, UserRole for untruncated value)
+    QModelIndex nftIdIndex = selection.first();
+    QModelIndex col0Index = mouseNFTView->model()->index(nftIdIndex.row(), 0);
+    QString nftId = col0Index.data(Qt::UserRole).toString();
+    if (nftId.isEmpty()) {
+        // Fallback: try ToolTipRole which contains the full ID in a formatted string
+        nftId = col0Index.data(Qt::EditRole).toString().remove("...");
+    }
+    if (nftId.isEmpty()) {
+        QMessageBox::warning(this, tr("Error"), tr("Could not determine NFT ID from selection."));
+        return;
+    }
+
+    // Call micenftinfo RPC in a background thread
+    std::thread([this, nftId]() {
+        try {
+            std::string rpcResult;
+            std::string rpcCommand = "micenftinfo \"" + nftId.toStdString() + "\"";
+            bool rpcOk = RPCConsole::RPCExecuteCommandLine(rpcResult, rpcCommand);
+
+            // Pass the result to the main thread for dialog construction (task 7.2)
+            QMetaObject::invokeMethod(this, [this, rpcOk, rpcResult, nftId]() {
+                if (!rpcOk || rpcResult.empty()) {
+                    QMessageBox::warning(this, tr("NFT Details Error"),
+                                       tr("Failed to retrieve details for NFT %1.").arg(nftId));
+                    return;
+                }
+
+                // Parse the JSON response
+                QJsonParseError parseError;
+                QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(rpcResult).toUtf8(), &parseError);
+                if (parseError.error != QJsonParseError::NoError || !doc.isObject()) {
+                    QMessageBox::warning(this, tr("NFT Details Error"),
+                                       tr("Failed to parse NFT details: %1").arg(parseError.errorString()));
+                    return;
+                }
+
+                QJsonObject nftData = doc.object();
+                showMouseNFTDetailsDialog(nftData);
+            }, Qt::QueuedConnection);
+
+        } catch (const std::exception& e) {
+            std::string errMsg = e.what();
+            QMetaObject::invokeMethod(this, [this, errMsg, nftId]() {
+                QMessageBox::warning(this, tr("NFT Details Error"),
+                                   tr("Failed to retrieve details for NFT %1: %2")
+                                   .arg(nftId).arg(QString::fromStdString(errMsg)));
+            }, Qt::QueuedConnection);
+        } catch (...) {
+            QMetaObject::invokeMethod(this, [this, nftId]() {
+                QMessageBox::warning(this, tr("NFT Details Error"),
+                                   tr("An unexpected error occurred while retrieving details for NFT %1.").arg(nftId));
+            }, Qt::QueuedConnection);
+        }
+    }).detach();
 }
 
 void MouseNFTPage::onMouseNFTSelectionChanged()
@@ -803,33 +863,99 @@ void MouseNFTPage::updateMouseNFTCombo()
         return;
     }
     
-    // Load owned BCT NFTs in background thread
+    // Load owned BCT NFTs using bctnftlist or micenftlist RPC
     std::thread([=]() {
         try {
-            // TODO: Call actual RPC to get owned BCT NFTs
-            // For now, simulate some owned NFTs
-            QStringList ownedNFTs;
+            std::string rpcResult;
+            bool success = false;
             
-            // Simulate: Add some sample BCT NFTs that the user "owns"
-            ownedNFTs << "BCT-NFT: abc12345...def (200,000 mice)" << "Sample1";
-            ownedNFTs << "BCT-NFT: fed54321...abc (150,000 mice)" << "Sample2";
-            ownedNFTs << "BCT-NFT: 789abcde...xyz (250,000 mice)" << "Sample3";
+            // Try bctnftlist first, then fall back to micenftlist
+            try {
+                success = RPCConsole::RPCExecuteCommandLine(rpcResult, "micenftlist");
+            } catch (...) {
+                success = false;
+            }
             
             // Update UI on main thread
             QMetaObject::invokeMethod(this, [=]() {
-                for (int i = 0; i < ownedNFTs.size(); i += 2) {
-                    if (i + 1 < ownedNFTs.size()) {
-                        QString displayText = ownedNFTs[i];
-                        QString nftId = ownedNFTs[i + 1];
-                        mouseNFTCombo->addItem(displayText, nftId);
+                if (success && !rpcResult.empty() && rpcResult != "[\n]\n" && rpcResult != "[]") {
+                    // Parse JSON result
+                    QJsonParseError error;
+                    QJsonDocument doc = QJsonDocument::fromJson(QString::fromStdString(rpcResult).toUtf8(), &error);
+                    
+                    if (error.error == QJsonParseError::NoError && doc.isArray()) {
+                        QJsonArray nftArray = doc.array();
+                        for (const QJsonValue& value : nftArray) {
+                            if (value.isObject()) {
+                                QJsonObject nftObj = value.toObject();
+                                QString nftId = nftObj["mice_nft_id"].toString();
+                                if (nftId.isEmpty()) nftId = nftObj["nft_id"].toString();
+                                QString bctId = nftObj["original_bct"].toString();
+                                int totalMice = nftObj["total_mice"].toInt();
+                                QString status = nftObj["status"].toString();
+                                
+                                if (!nftId.isEmpty() && status != "expired") {
+                                    QString displayText = QString("BCT-NFT: %1 (%2 mice, %3)")
+                                                         .arg(nftId.left(12) + "...")
+                                                         .arg(totalMice)
+                                                         .arg(status);
+                                    mouseNFTCombo->addItem(displayText, nftId);
+                                }
+                            }
+                        }
                     }
                 }
                 
-                if (mouseNFTCombo->count() == 1) {
+                // If no NFTs found from RPC, scan wallet for NFT transactions
+                if (mouseNFTCombo->count() <= 1 && walletModel) {
+                    // Scan wallet transactions for CASTOK outputs we own
+                    std::string scanResult;
+                    bool scanOk = false;
+                    try {
+                        scanOk = RPCConsole::RPCExecuteCommandLine(scanResult, "miceavailable");
+                    } catch (...) {
+                        scanOk = false;
+                    }
+                    
+                    if (scanOk && !scanResult.empty()) {
+                        QJsonParseError scanError;
+                        QJsonDocument scanDoc = QJsonDocument::fromJson(QString::fromStdString(scanResult).toUtf8(), &scanError);
+                        if (scanError.error == QJsonParseError::NoError && scanDoc.isArray()) {
+                            QJsonArray bctArray = scanDoc.array();
+                            for (const QJsonValue& bctValue : bctArray) {
+                                if (!bctValue.isObject()) continue;
+                                QJsonObject bct = bctValue.toObject();
+                                QString bctTxid = bct["bct_txid"].toString();
+                                int totalMice = bct["total_mice"].toInt();
+                                
+                                // Check for tokenized mice in this BCT
+                                QJsonArray availableMice = bct["available_mice"].toArray();
+                                for (const QJsonValue& mouseValue : availableMice) {
+                                    if (!mouseValue.isObject()) continue;
+                                    QJsonObject mouse = mouseValue.toObject();
+                                    bool alreadyTokenized = mouse["already_tokenized"].toBool();
+                                    if (alreadyTokenized) {
+                                        QString tokenTxid = mouse["token_txid"].toString();
+                                        int miceIndex = mouse["mouse_index"].toInt();
+                                        if (!tokenTxid.isEmpty()) {
+                                            QString displayText = QString("BCT-NFT: %1 (mouse #%2 from BCT %3)")
+                                                                 .arg(tokenTxid.left(12) + "...")
+                                                                 .arg(miceIndex)
+                                                                 .arg(bctTxid.left(8) + "...");
+                                            mouseNFTCombo->addItem(displayText, tokenTxid);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (mouseNFTCombo->count() <= 1) {
                     mouseNFTCombo->addItem(tr("No BCT NFTs owned yet"), "");
                 }
                 
-                transferButton->setEnabled(mouseNFTCombo->count() > 2);
+                transferButton->setEnabled(mouseNFTCombo->count() > 1);
             }, Qt::QueuedConnection);
             
         } catch (const std::exception& e) {
@@ -916,6 +1042,88 @@ void MouseNFTPage::updateTableModelWithRealData(const QString& jsonString)
     
     // Update the model with real data
     mouseNFTModel->updateMouseNFTListWithData(newRecords);
+}
+
+void MouseNFTPage::showMouseNFTDetailsDialog(const QJsonObject& nftData)
+{
+    QDialog *dialog = new QDialog(this);
+    dialog->setWindowTitle(tr("Mouse NFT Details"));
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->resize(520, 0); // width hint; height will adjust to content
+
+    QVBoxLayout *mainLayout = new QVBoxLayout(dialog);
+
+    // --- Grid of NFT fields ---
+    QGridLayout *grid = new QGridLayout();
+    int row = 0;
+
+    auto addField = [&](const QString& label, const QString& value) {
+        QLabel *lbl = new QLabel(QString("<b>%1:</b>").arg(label));
+        QLabel *val = new QLabel(value);
+        val->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        val->setWordWrap(true);
+        grid->addWidget(lbl, row, 0, Qt::AlignTop);
+        grid->addWidget(val, row, 1);
+        ++row;
+        return val; // return so caller can style it
+    };
+
+    addField(tr("NFT ID"),          nftData["mice_nft_id"].toString());
+    addField(tr("Original BCT"),    nftData["original_bct"].toString());
+    addField(tr("Mouse Index"),     QString::number(nftData["mouse_index"].toInt()));
+    addField(tr("Current Owner"),   nftData["current_owner"].toString());
+
+    // Status with color coding
+    QString status = nftData["status"].toString();
+    QLabel *statusLabel = addField(tr("Status"), status);
+    if (status == "mature") {
+        statusLabel->setStyleSheet("QLabel { color: green; font-weight: bold; }");
+    } else if (status == "immature") {
+        statusLabel->setStyleSheet("QLabel { color: #cc8800; font-weight: bold; }"); // yellow/orange
+    } else if (status == "expired") {
+        statusLabel->setStyleSheet("QLabel { color: red; font-weight: bold; }");
+    }
+
+    addField(tr("Maturity Height"), QString::number(nftData["maturity_height"].toInt()));
+    addField(tr("Expiry Height"),   QString::number(nftData["expiry_height"].toInt()));
+    addField(tr("Blocks Remaining"),QString::number(nftData["blocks_left"].toInt()));
+
+    mainLayout->addLayout(grid);
+
+    // --- Transfer history table (if present) ---
+    if (nftData.contains("transfer_history") && nftData["transfer_history"].isArray()) {
+        QJsonArray history = nftData["transfer_history"].toArray();
+        if (!history.isEmpty()) {
+            QLabel *historyLabel = new QLabel(tr("<b>Transfer History</b>"));
+            mainLayout->addSpacing(8);
+            mainLayout->addWidget(historyLabel);
+
+            QTableWidget *table = new QTableWidget(history.size(), 4, dialog);
+            table->setHorizontalHeaderLabels({tr("From"), tr("To"), tr("Height"), tr("TxID")});
+            table->horizontalHeader()->setStretchLastSection(true);
+            table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+            table->setSelectionBehavior(QAbstractItemView::SelectRows);
+            table->verticalHeader()->setVisible(false);
+
+            for (int i = 0; i < history.size(); ++i) {
+                QJsonObject entry = history[i].toObject();
+                table->setItem(i, 0, new QTableWidgetItem(entry["from"].toString()));
+                table->setItem(i, 1, new QTableWidgetItem(entry["to"].toString()));
+                table->setItem(i, 2, new QTableWidgetItem(QString::number(entry["height"].toInt())));
+                table->setItem(i, 3, new QTableWidgetItem(entry["txid"].toString()));
+            }
+
+            table->resizeColumnsToContents();
+            mainLayout->addWidget(table);
+        }
+    }
+
+    // --- Close button ---
+    QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Close);
+    connect(buttonBox, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
+    mainLayout->addWidget(buttonBox);
+
+    dialog->exec();
 }
 
 void MouseNFTPage::loadRealNFTData()

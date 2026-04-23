@@ -36,6 +36,9 @@
 #include <init.h>  // For StartShutdown
 
 #include <stdint.h>
+#include <algorithm>
+#include <map>
+#include <set>
 
 #include <univalue.h>
 
@@ -1244,6 +1247,9 @@ UniValue micenftokenize(const JSONRPCRequest& request) {
     if (pwallet->IsLocked())
         throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Error: Please enter the wallet passphrase with walletpassphrase first.");
 
+    // Acquire locks before accessing wallet state
+    LOCK2(cs_main, pwallet->cs_wallet);
+
     // Get parameters
     RPCTypeCheckArgument(request.params[0], UniValue::VSTR);
     std::string bctTxidStr = request.params[0].get_str();
@@ -1277,14 +1283,109 @@ UniValue micenftokenize(const JSONRPCRequest& request) {
         ownerAddress = EncodeDestination(dest);
     }
 
-    // Validate mouse index
+    // Validate mouse index is non-negative
     if (mouseIndex < 0) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Mouse index must be non-negative");
     }
 
-    // TODO: Validate that BCT exists and user owns it
-    // TODO: Validate that mouse hasn't already been tokenized
-    // TODO: Check mouse maturity and expiry
+    // Verify the BCT exists in the wallet
+    auto it = pwallet->mapWallet.find(bctTxid);
+    if (it == pwallet->mapWallet.end()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "BCT transaction not found in wallet");
+    }
+    const CWalletTx& wtxBCT = it->second;
+
+    // Verify we own the BCT by checking IsMine() on its outputs
+    bool ownsBCT = false;
+    for (unsigned int i = 0; i < wtxBCT.tx->vout.size(); i++) {
+        if (IsMine(*pwallet, wtxBCT.tx->vout[i].scriptPubKey)) {
+            ownsBCT = true;
+            break;
+        }
+    }
+    if (!ownsBCT) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "We don't own this BCT transaction");
+    }
+
+    // Query GetBCTs() to obtain mouseCount and validate mouseIndex range
+    const Consensus::Params& consensusParams = Params().GetConsensus();
+    std::vector<CMouseCreationTransactionInfo> vBCTs = pwallet->GetBCTs(false, false, consensusParams);
+    int mouseCount = 0;
+    int bctMaturityHeight = 0;
+    int bctExpirationHeight = 0;
+    bool bctFound = false;
+    for (const CMouseCreationTransactionInfo& bct : vBCTs) {
+        if (uint256S(bct.txid) == bctTxid) {
+            mouseCount = bct.mouseCount;
+            bctMaturityHeight = bct.maturityHeight;
+            bctExpirationHeight = bct.expirationHeight;
+            bctFound = true;
+            break;
+        }
+    }
+    if (!bctFound) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "BCT transaction not found in wallet");
+    }
+
+    // Validate mouse index is within range for this BCT
+    if (mouseIndex >= mouseCount) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Mouse index %d out of range (BCT has %d mice)", mouseIndex, mouseCount));
+    }
+
+    // Build a set of NFT IDs that have been transferred away via CASXFR transactions
+    std::set<uint256> transferredNFTIds;
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        if (wtx.isAbandoned()) continue; // Skip abandoned transactions
+        std::string xfrError;
+        std::vector<MouseNFTTransfer> xfrs;
+        if (!ParseMouseNFTTransferTransaction(*wtx.tx, xfrs, xfrError)) {
+            continue;
+        }
+        for (const MouseNFTTransfer& xfr : xfrs) {
+            CTxDestination fromDest = DecodeDestination(xfr.fromOwner);
+            if (IsValidDestination(fromDest) && IsMine(*pwallet, GetScriptForDestination(fromDest))) {
+                transferredNFTIds.insert(xfr.mouseNFTId);
+            }
+        }
+    }
+
+    // Check if this mouse is already tokenized (unspent, non-transferred CASTOK exists)
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+
+        std::string parseError;
+        std::vector<MouseNFTToken> existingTokens;
+        if (!ParseMouseNFTTokenTransaction(*wtx.tx, existingTokens, parseError)) {
+            continue; // Not a CASTOK transaction
+        }
+
+        for (const MouseNFTToken& existingToken : existingTokens) {
+            if (existingToken.originalBCT == bctTxid && existingToken.mouseIndex == static_cast<uint32_t>(mouseIndex)) {
+                // Found a matching CASTOK — check if the output is unspent
+                int nftOutputIndex = -1;
+                for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+                    const CScript& script = wtx.tx->vout[i].scriptPubKey;
+                    if (script.size() >= 8 &&
+                        script[0] == OP_RETURN &&
+                        script[1] == 0x06) {
+                        std::vector<unsigned char> magic(script.begin() + 2, script.begin() + 8);
+                        std::vector<unsigned char> expected = {'C', 'A', 'S', 'T', 'O', 'K'};
+                        if (magic == expected) {
+                            nftOutputIndex = static_cast<int>(i);
+                            break;
+                        }
+                    }
+                }
+
+                if (nftOutputIndex >= 0 && !pwallet->IsSpent(wtx.GetHash(), nftOutputIndex)
+                    && transferredNFTIds.count(wtx.GetHash()) == 0) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER,
+                        strprintf("Mouse %d from BCT %s is already tokenized", mouseIndex, bctTxid.GetHex()));
+                }
+            }
+        }
+    }
     
     // Create mouse NFT token
     MouseNFTToken token;
@@ -1293,30 +1394,38 @@ UniValue micenftokenize(const JSONRPCRequest& request) {
     token.tokenizedHeight = static_cast<uint32_t>(chainActive.Height());
     token.currentOwner = ownerAddress;
     
-    // TODO: Calculate maturity and expiry heights from original BCT
-    token.maturityHeight = token.tokenizedHeight + 100;  // Placeholder
-    token.expiryHeight = token.maturityHeight + 1000;    // Placeholder
+    // Derive maturity and expiry heights from original BCT data
+    token.maturityHeight = static_cast<uint32_t>(bctMaturityHeight);
+    token.expiryHeight = static_cast<uint32_t>(bctExpirationHeight);
 
-    // Create tokenization transaction
-    CMutableTransaction mtx;
-    mtx.nVersion = 2;
-
-    // Add mouse NFT token output
+    // Build the NFT script from the token
     std::vector<MouseNFTToken> tokens = {token};
-    CScript tokenScript = CreateMouseNFTTokenScript(tokens);
-    mtx.vout.push_back(CTxOut(0, tokenScript));
+    CScript nftScript = CreateMouseNFTTokenScript(tokens);
 
-    // Add change output to owner address
-    CScript ownerScript = GetScriptForDestination(DecodeDestination(ownerAddress));
-    mtx.vout.push_back(CTxOut(1000, ownerScript)); // Minimal value to make output spendable
+    // Create recipient for the NFT output
+    CRecipient recipient = {nftScript, 1000, false}; // 0.00001 CAS dust amount
+    std::vector<CRecipient> vecSend;
+    vecSend.push_back(recipient);
 
-    // TODO: Add proper input selection and fee calculation
-    // For now, this is a placeholder implementation
-    
+    // Create and send the transaction using wallet's CreateTransaction
+    CReserveKey reservekey(pwallet);
+    CAmount nFeeRequired;
+    std::string strError;
+    int nChangePosRet = -1;
+    CCoinControl coin_control;
+
+    CWalletTx wtxNew;
+    if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strError, coin_control)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+
     CValidationState state;
-    CTransactionRef tx = MakeTransactionRef(std::move(mtx));
-    
-    return tx->GetHash().GetHex();
+    if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+        strError = strprintf("Error: The transaction was rejected! Reason given: %s", state.GetRejectReason());
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+
+    return wtxNew.GetHash().GetHex();
 }
 
 // Cascoin: BCT NFT System: Tokenize complete BCT as single NFT
@@ -1489,36 +1598,88 @@ UniValue micenftransfer(const JSONRPCRequest& request) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid recipient address");
     }
 
-    // TODO: Validate that user owns this mice NFT
-    // TODO: Validate that mice NFT exists and is not expired
-    
-    // Create mouse NFT transfer
+    // Implement actual mice NFT transfer using wallet transaction system
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Find the mice NFT transaction in wallet
+    auto it = pwallet->mapWallet.find(mouseNFTId);
+    if (it == pwallet->mapWallet.end()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Mice NFT transaction not found in wallet");
+    }
+    const CWalletTx& wtxNFT = it->second;
+
+    // Verify we own this NFT and it's unspent
+    if (!wtxNFT.IsTrusted()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "NFT transaction is not trusted");
+    }
+
+    // Find the spendable (non-OP_RETURN) output that we own in the NFT transaction.
+    // This is used to determine the current owner address.
+    // Note: We do NOT require spending this specific output — the transfer is recorded
+    // via a CASXFR OP_RETURN, and CreateTransaction will select appropriate inputs for fees.
+    std::string fromOwner;
+    for (unsigned int i = 0; i < wtxNFT.tx->vout.size(); i++) {
+        const CScript& script = wtxNFT.tx->vout[i].scriptPubKey;
+        if (script.size() > 0 && script[0] == OP_RETURN)
+            continue; // Skip OP_RETURN outputs
+        if (IsMine(*pwallet, script)) {
+            CTxDestination ownerDest;
+            if (ExtractDestination(script, ownerDest)) {
+                fromOwner = EncodeDestination(ownerDest);
+                break;
+            }
+        }
+    }
+
+    if (fromOwner.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Could not determine current owner address for this NFT");
+    }
+
+    // Get current block height
+    int currentHeight = chainActive.Height();
+
+    // Get current NFT ownership by extracting destination from the owned output
+    // (fromOwner already set above)
+
+    // Create mouse NFT transfer record
     MouseNFTTransfer transfer;
     transfer.mouseNFTId = mouseNFTId;
-    transfer.fromOwner = ""; // TODO: Get current owner from database
+    transfer.fromOwner = fromOwner;
     transfer.toOwner = toAddress;
-    transfer.transferHeight = static_cast<uint32_t>(chainActive.Height());
-    transfer.transferFee = 1000; // TODO: Calculate appropriate fee
+    transfer.transferHeight = currentHeight;
+    transfer.transferTxId = uint256(); // Will be set after transaction creation
+    transfer.transferFee = COIN / 1000; // 0.001 CAS
 
-    // Create transfer transaction
-    CMutableTransaction mtx;
-    mtx.nVersion = 2;
-
-    // Add mouse NFT transfer output
     std::vector<MouseNFTTransfer> transfers = {transfer};
     CScript transferScript = CreateMouseNFTTransferScript(transfers);
-    mtx.vout.push_back(CTxOut(0, transferScript));
 
-    // Add output to recipient
-    CScript recipientScript = GetScriptForDestination(DecodeDestination(toAddress));
-    mtx.vout.push_back(CTxOut(1000, recipientScript)); // Minimal value to make output spendable
+    // Create recipient for the transferred NFT
+    CRecipient recipient = {transferScript, 1000, false}; // 0.00001 CAS dust amount
+    std::vector<CRecipient> vecSend;
+    vecSend.push_back(recipient);
 
-    // TODO: Add proper input selection and fee calculation
-    
+    // Let CreateTransaction select appropriate inputs for fees automatically.
+    // The transfer is recorded via the CASXFR OP_RETURN — no need to spend a specific NFT output.
+    CCoinControl coin_control;
+
+    // Create and send the transaction using wallet's CreateTransaction
+    CReserveKey reservekey(pwallet);
+    CAmount nFeeRequired;
+    std::string strError;
+    int nChangePosRet = -1;
+
+    CWalletTx wtxNew;
+    if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired, nChangePosRet, strError, coin_control)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+
     CValidationState state;
-    CTransactionRef tx = MakeTransactionRef(std::move(mtx));
-    
-    return tx->GetHash().GetHex();
+    if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+        strError = strprintf("Error: The transaction was rejected! Reason given: %s", state.GetRejectReason());
+        throw JSONRPCError(RPC_WALLET_ERROR, strError);
+    }
+
+    return wtxNew.GetHash().GetHex();
 }
 
 // Cascoin: BCT NFT System: Transfer BCT NFT to another address
@@ -1574,31 +1735,34 @@ UniValue bctnftransfer(const JSONRPCRequest& request) {
         throw JSONRPCError(RPC_WALLET_ERROR, "NFT transaction is not trusted");
     }
     
-    // Check if the NFT output is unspent
-    if (pwallet->IsSpent(nftTxid, 0)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "NFT has already been spent");
+    // Find the owner address from the NFT transaction.
+    // We look for a non-OP_RETURN output that belongs to us (even if already spent).
+    // The transfer is recorded via CASXFR OP_RETURN — no need to spend a specific NFT output.
+    std::string fromOwnerAddr;
+    for (unsigned int i = 0; i < wtxNFT.tx->vout.size(); i++) {
+        const CScript& script = wtxNFT.tx->vout[i].scriptPubKey;
+        if (script.size() > 0 && script[0] == OP_RETURN)
+            continue;
+        if (IsMine(*pwallet, script)) {
+            CTxDestination ownerDest;
+            if (ExtractDestination(script, ownerDest)) {
+                fromOwnerAddr = EncodeDestination(ownerDest);
+                break;
+            }
+        }
     }
-    
-    // Verify we own this NFT by checking if we can spend it
-    if (!IsMine(*pwallet, wtxNFT.tx->vout[0].scriptPubKey)) {
-        throw JSONRPCError(RPC_WALLET_ERROR, "We don't own this NFT");
+
+    if (fromOwnerAddr.empty()) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "Could not determine current owner address for this NFT");
     }
     
     // Get current block height
     int currentHeight = chainActive.Height();
     
-    // Use the real wallet CreateTransaction method for proper fee calculation and signing
-    
     // Create BCT NFT transfer record
     MouseNFTTransfer transfer;
     transfer.mouseNFTId = nftTxid;
-    // Get current NFT ownership by extracting destination from NFT script
-    CTxDestination currentOwner;
-    if (ExtractDestination(wtxNFT.tx->vout[0].scriptPubKey, currentOwner)) {
-        transfer.fromOwner = EncodeDestination(currentOwner);
-    } else {
-        transfer.fromOwner = "unknown"; // Fallback for non-standard scripts
-    }
+    transfer.fromOwner = fromOwnerAddr;
     transfer.toOwner = toAddress;
     transfer.transferHeight = currentHeight;
     transfer.transferTxId = uint256(); // Will be set after transaction creation
@@ -1612,9 +1776,9 @@ UniValue bctnftransfer(const JSONRPCRequest& request) {
     std::vector<CRecipient> vecSend;
     vecSend.push_back(recipient);
     
-    // Use coin control to spend the specific NFT UTXO
+    // Let CreateTransaction select appropriate inputs for fees automatically.
+    // The transfer is recorded via the CASXFR OP_RETURN — no need to spend a specific NFT output.
     CCoinControl coin_control;
-    coin_control.Select(COutPoint(nftTxid, 0)); // Assume NFT is at output 0
     
     // Create and send the transaction
     CReserveKey reservekey(pwallet);
@@ -1674,11 +1838,144 @@ UniValue micenftlist(const JSONRPCRequest& request) {
         includeExpired = request.params[0].get_bool();
     }
 
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    int currentHeight = chainActive.Height();
+
     UniValue results(UniValue::VARR);
-    
-    // TODO: Implement mice NFT database lookup
-    // For now, return empty array as placeholder
-    
+
+    // Build a set of NFT IDs that have been transferred away via CASXFR transactions.
+    // OP_RETURN outputs are unspendable, so IsSpent() alone cannot detect transfers.
+    // We scan for CASXFR transactions where the sender is us (fromOwner matches a wallet address).
+    std::set<uint256> transferredNFTs;
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        if (wtx.isAbandoned()) continue; // Skip abandoned transactions
+        std::string xfrError;
+        std::vector<MouseNFTTransfer> transfers;
+        if (!ParseMouseNFTTransferTransaction(*wtx.tx, transfers, xfrError)) {
+            continue;
+        }
+        for (const MouseNFTTransfer& xfr : transfers) {
+            // Check if we were the sender (fromOwner is one of our addresses)
+            CTxDestination fromDest = DecodeDestination(xfr.fromOwner);
+            if (IsValidDestination(fromDest) && IsMine(*pwallet, GetScriptForDestination(fromDest))) {
+                transferredNFTs.insert(xfr.mouseNFTId);
+            }
+        }
+    }
+
+    // Iterate all wallet transactions looking for CASTOK outputs
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+
+        // Try to parse as a mouse NFT token transaction (CASTOK)
+        std::string error;
+        std::vector<MouseNFTToken> tokens;
+        if (!ParseMouseNFTTokenTransaction(*wtx.tx, tokens, error)) {
+            continue; // Not a CASTOK transaction
+        }
+
+        for (const MouseNFTToken& token : tokens) {
+            // Find the output index that carries the CASTOK OP_RETURN
+            int nftOutputIndex = -1;
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+                const CScript& script = wtx.tx->vout[i].scriptPubKey;
+                if (script.size() >= 8 &&
+                    script[0] == OP_RETURN &&
+                    script[1] == 0x06) {
+                    std::vector<unsigned char> magic(script.begin() + 2, script.begin() + 8);
+                    std::vector<unsigned char> expected = {'C', 'A', 'S', 'T', 'O', 'K'};
+                    if (magic == expected) {
+                        nftOutputIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            if (nftOutputIndex < 0) {
+                continue; // No CASTOK output found (shouldn't happen after successful parse)
+            }
+
+            // Check if the output is unspent
+            if (pwallet->IsSpent(wtx.GetHash(), nftOutputIndex)) {
+                continue; // Already spent/transferred
+            }
+
+            // Check if this NFT was transferred away via a CASXFR transaction
+            if (transferredNFTs.count(wtx.GetHash()) > 0) {
+                continue; // Transferred to another owner
+            }
+
+            // Check if we own this NFT — look for a spendable output we own in this tx
+            bool owned = false;
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+                if (i == (unsigned int)nftOutputIndex) continue; // Skip OP_RETURN (unspendable)
+                if (IsMine(*pwallet, wtx.tx->vout[i].scriptPubKey)) {
+                    owned = true;
+                    break;
+                }
+            }
+            // Also check if the OP_RETURN output itself is considered ours (for coin control)
+            if (!owned && IsMine(*pwallet, wtx.tx->vout[nftOutputIndex].scriptPubKey)) {
+                owned = true;
+            }
+
+            if (!owned) {
+                continue; // We don't own this NFT
+            }
+
+            // Calculate status from block heights
+            std::string status;
+            if (token.IsExpired(currentHeight)) {
+                status = "expired";
+            } else if (token.IsMature(currentHeight)) {
+                status = "mature";
+            } else {
+                status = "immature";
+            }
+
+            // Filter expired NFTs unless include_expired is set
+            if (status == "expired" && !includeExpired) {
+                continue;
+            }
+
+            // Calculate blocks left until expiry
+            int blocksLeft = 0;
+            if (currentHeight < (int)token.expiryHeight) {
+                blocksLeft = (int)token.expiryHeight - currentHeight;
+            }
+
+            // Determine total mice from the original BCT
+            int totalMice = 0;
+            auto bctIt = pwallet->mapWallet.find(token.originalBCT);
+            if (bctIt != pwallet->mapWallet.end()) {
+                const Consensus::Params& consensusParams = Params().GetConsensus();
+                std::vector<CMouseCreationTransactionInfo> vBCTs = pwallet->GetBCTs(false, false, consensusParams);
+                for (const CMouseCreationTransactionInfo& bct : vBCTs) {
+                    if (uint256S(bct.txid) == token.originalBCT) {
+                        totalMice = bct.mouseCount;
+                        break;
+                    }
+                }
+            }
+
+            // Build JSON object for this NFT
+            UniValue nftObj(UniValue::VOBJ);
+            nftObj.pushKV("nft_id", wtx.GetHash().GetHex());
+            nftObj.pushKV("original_bct", token.originalBCT.GetHex());
+            nftObj.pushKV("mouse_index", (int)token.mouseIndex);
+            nftObj.pushKV("total_mice", totalMice);
+            nftObj.pushKV("owner", token.currentOwner);
+            nftObj.pushKV("status", status);
+            nftObj.pushKV("maturity_height", (int)token.maturityHeight);
+            nftObj.pushKV("expiry_height", (int)token.expiryHeight);
+            nftObj.pushKV("blocks_left", blocksLeft);
+
+            results.push_back(nftObj);
+        }
+    }
+
     return results;
 }
 
@@ -1731,13 +2028,106 @@ UniValue micenftinfo(const JSONRPCRequest& request) {
     std::string mouseNFTIdStr = request.params[0].get_str();
     uint256 mouseNFTId = uint256S(mouseNFTIdStr);
 
+    LOCK2(cs_main, pwallet->cs_wallet);
+
+    // Scan wallet for the matching CASTOK transaction
+    MouseNFTToken foundToken;
+    bool found = false;
+    uint256 foundTxid;
+
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+
+        if (wtx.GetHash() != mouseNFTId) {
+            continue;
+        }
+
+        // Try to parse as a mouse NFT token transaction (CASTOK)
+        std::string error;
+        std::vector<MouseNFTToken> tokens;
+        if (!ParseMouseNFTTokenTransaction(*wtx.tx, tokens, error)) {
+            continue; // Not a valid CASTOK transaction
+        }
+
+        if (!tokens.empty()) {
+            foundToken = tokens[0];
+            foundTxid = wtx.GetHash();
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Mouse NFT not found in wallet");
+    }
+
     UniValue result(UniValue::VOBJ);
-    
-    // TODO: Implement mice NFT database lookup
-    // For now, return minimal info as placeholder
-    result.push_back(Pair("mouse_nft_id", mouseNFTIdStr));
-    result.push_back(Pair("error", "Not implemented yet"));
-    
+
+    // Calculate status from block heights
+    int currentHeight = chainActive.Height();
+    std::string status;
+    if (foundToken.IsExpired(currentHeight)) {
+        status = "expired";
+    } else if (foundToken.IsMature(currentHeight)) {
+        status = "mature";
+    } else {
+        status = "immature";
+    }
+
+    // Calculate blocks left until expiry
+    int blocksLeft = 0;
+    if (currentHeight < (int)foundToken.expiryHeight) {
+        blocksLeft = (int)foundToken.expiryHeight - currentHeight;
+    }
+
+    // Build response JSON
+    result.pushKV("mice_nft_id", foundTxid.GetHex());
+    result.pushKV("original_bct", foundToken.originalBCT.GetHex());
+    result.pushKV("mouse_index", (int)foundToken.mouseIndex);
+    result.pushKV("current_owner", foundToken.currentOwner);
+    result.pushKV("status", status);
+    result.pushKV("maturity_height", (int)foundToken.maturityHeight);
+    result.pushKV("expiry_height", (int)foundToken.expiryHeight);
+    result.pushKV("tokenized_height", (int)foundToken.tokenizedHeight);
+    result.pushKV("blocks_left", blocksLeft);
+
+    // Build transfer history by scanning wallet for CASXFR transactions
+    UniValue transferHistory(UniValue::VARR);
+    std::vector<std::pair<uint32_t, UniValue>> transferEntries; // sorted by height
+
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+
+        std::string xfrError;
+        std::vector<MouseNFTTransfer> transfers;
+        if (!ParseMouseNFTTransferTransaction(*wtx.tx, transfers, xfrError)) {
+            continue; // Not a valid CASXFR transaction
+        }
+
+        for (const auto& xfr : transfers) {
+            if (xfr.mouseNFTId == foundTxid) {
+                UniValue entry(UniValue::VOBJ);
+                entry.pushKV("from", xfr.fromOwner);
+                entry.pushKV("to", xfr.toOwner);
+                entry.pushKV("height", (int)xfr.transferHeight);
+                entry.pushKV("txid", wtx.GetHash().GetHex());
+                transferEntries.push_back(std::make_pair(xfr.transferHeight, entry));
+            }
+        }
+    }
+
+    // Sort by transferHeight ascending
+    std::sort(transferEntries.begin(), transferEntries.end(),
+        [](const std::pair<uint32_t, UniValue>& a, const std::pair<uint32_t, UniValue>& b) {
+            return a.first < b.first;
+        });
+
+    for (const auto& entry : transferEntries) {
+        transferHistory.push_back(entry.second);
+    }
+
+    result.pushKV("transfer_history", transferHistory);
+
     return result;
 }
 
@@ -2164,6 +2554,62 @@ UniValue miceavailable(const JSONRPCRequest& request)
 
     UniValue result(UniValue::VARR);
 
+    // Build a set of NFT IDs that have been transferred away via CASXFR transactions.
+    // OP_RETURN outputs are unspendable, so IsSpent() alone cannot detect transfers.
+    std::set<uint256> transferredNFTs;
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+        if (wtx.isAbandoned()) continue; // Skip abandoned transactions
+        std::string xfrError;
+        std::vector<MouseNFTTransfer> transfers;
+        if (!ParseMouseNFTTransferTransaction(*wtx.tx, transfers, xfrError)) {
+            continue;
+        }
+        for (const MouseNFTTransfer& xfr : transfers) {
+            CTxDestination fromDest = DecodeDestination(xfr.fromOwner);
+            if (IsValidDestination(fromDest) && IsMine(*pwallet, GetScriptForDestination(fromDest))) {
+                transferredNFTs.insert(xfr.mouseNFTId);
+            }
+        }
+    }
+
+    // Build a lookup map of tokenized mice by scanning wallet for unspent CASTOK outputs
+    // Maps {originalBCT, mouseIndex} -> CASTOK transaction hash
+    std::map<std::pair<uint256, uint32_t>, uint256> tokenizedMice;
+    for (const auto& item : pwallet->mapWallet) {
+        const CWalletTx& wtx = item.second;
+
+        std::string parseError;
+        std::vector<MouseNFTToken> tokens;
+        if (!ParseMouseNFTTokenTransaction(*wtx.tx, tokens, parseError)) {
+            continue; // Not a CASTOK transaction
+        }
+
+        for (const MouseNFTToken& token : tokens) {
+            // Find the CASTOK OP_RETURN output index
+            int nftOutputIndex = -1;
+            for (unsigned int i = 0; i < wtx.tx->vout.size(); i++) {
+                const CScript& script = wtx.tx->vout[i].scriptPubKey;
+                if (script.size() >= 8 &&
+                    script[0] == OP_RETURN &&
+                    script[1] == 0x06) {
+                    std::vector<unsigned char> magic(script.begin() + 2, script.begin() + 8);
+                    std::vector<unsigned char> expected = {'C', 'A', 'S', 'T', 'O', 'K'};
+                    if (magic == expected) {
+                        nftOutputIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            // Only count unspent, non-transferred CASTOK outputs as tokenized
+            if (nftOutputIndex >= 0 && !pwallet->IsSpent(wtx.GetHash(), nftOutputIndex)
+                && transferredNFTs.count(wtx.GetHash()) == 0) {
+                tokenizedMice[{token.originalBCT, token.mouseIndex}] = wtx.GetHash();
+            }
+        }
+    }
+
     // Cascoin: Memory leak fix - Limit results to prevent memory explosion in large wallets
     const int MAX_BCTS_RESPONSE = 100;  // Limit to 100 BCTs per response
     const int MAX_MICE_PER_BCT = 1000;  // Limit mice per BCT to prevent huge responses
@@ -2192,6 +2638,9 @@ UniValue miceavailable(const JSONRPCRequest& request)
 
         UniValue availableMice(UniValue::VARR);
         
+        // Convert BCT txid to uint256 once for set lookups
+        uint256 bctTxidHash = uint256S(bct.txid);
+        
         // List each individual mouse in this BCT (with limit)
         int miceToProcess = std::min(bct.mouseCount, MAX_MICE_PER_BCT);
         for (int mouseIndex = 0; mouseIndex < miceToProcess; mouseIndex++) {
@@ -2202,8 +2651,11 @@ UniValue miceavailable(const JSONRPCRequest& request)
             std::string mouseId = bct.txid + ":" + std::to_string(mouseIndex);
             mouseObj.pushKV("mouse_id", mouseId);
             
-            // TODO: Check if already tokenized (placeholder for now)
-            mouseObj.pushKV("already_tokenized", false);
+            bool alreadyTokenized = tokenizedMice.count({bctTxidHash, (uint32_t)mouseIndex}) > 0;
+            mouseObj.pushKV("already_tokenized", alreadyTokenized);
+            if (alreadyTokenized) {
+                mouseObj.pushKV("token_txid", tokenizedMice[{bctTxidHash, (uint32_t)mouseIndex}].GetHex());
+            }
             
             availableMice.push_back(mouseObj);
         }

@@ -95,6 +95,18 @@ QVariant MouseNFTTableModel::data(const QModelIndex &index, int role) const
         case ExpiryHeight:
             return rec.expiryHeight;
         }
+    } else if (role == Qt::UserRole) {
+        // Return raw, untruncated data for programmatic access
+        switch(index.column()) {
+        case MouseNFTId:
+            return rec.mouseNFTId;
+        case OriginalBCT:
+            return rec.originalBCT;
+        case Owner:
+            return rec.currentOwner;
+        default:
+            return QVariant();
+        }
     } else if (role == Qt::TextAlignmentRole) {
         return column_alignments[index.column()];
     } else if (role == Qt::ToolTipRole) {

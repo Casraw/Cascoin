@@ -19,6 +19,7 @@
 #include <QCheckBox>
 #include <QProgressBar>
 #include <QTimer>
+#include <QJsonObject>
 
 #include <bctdb.h>  // For BCTDatabaseSQLite
 
@@ -89,11 +90,10 @@ private:
     
     void setupUI();
     void showMouseSelectionDialog(const QString& bctId, const QString& ownerAddress);
-    void executeTokenization(const QString& bctId, int mouseIndex, const QString& ownerAddress);
-    void executeTokenizationBatch(const QString& bctId, int quantity, const QString& ownerAddress);
     void executeCompleteBCTTokenization(const QString& bctId, const QString& ownerAddress);
     void updateTableModelWithRealData(const QString& jsonString);
     void loadRealNFTData();
+    void showMouseNFTDetailsDialog(const QJsonObject& nftData);
 };
 
 #endif // CASCOIN_QT_MOUSENFTPAGE_H

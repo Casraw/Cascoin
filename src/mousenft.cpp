@@ -101,20 +101,23 @@ bool IsValidMouseNFTTokenTransaction(const CTransaction& tx, std::string& error)
 
 // Validate a mouse NFT transfer transaction
 bool IsValidMouseNFTTransferTransaction(const CTransaction& tx, std::string& error) {
-    // Must have at least one OP_RETURN output with OP_MOUSE_TRANSFER
+    // Must have at least one OP_RETURN output with CASXFR magic bytes
     bool foundMouseTransfer = false;
     
     for (const CTxOut& txout : tx.vout) {
-        // Check for NFT transfer magic bytes "MOUSEXFR" instead of opcode
-        if (txout.scriptPubKey.size() >= 8 && 
-            txout.scriptPubKey[0] == OP_RETURN) {
-            std::vector<unsigned char> transferMagic(txout.scriptPubKey.begin() + 1, txout.scriptPubKey.begin() + 7);
+        // Check for NFT transfer magic bytes "CASXFR"
+        // Format: OP_RETURN (0x6a) + PUSH(6) (0x06) + "CASXFR" + PUSH(len) + data
+        // (Same format as CASTOK - CScript << operator adds push-length prefix)
+        if (txout.scriptPubKey.size() >= 10 && 
+            txout.scriptPubKey[0] == OP_RETURN &&
+            txout.scriptPubKey[1] == 0x06) {
+            std::vector<unsigned char> transferMagic(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
             std::vector<unsigned char> expectedTransfer = {'C', 'A', 'S', 'X', 'F', 'R'};
             if (transferMagic == expectedTransfer) {
                 foundMouseTransfer = true;
                 
                 // Validate OP_RETURN data size (magic bytes + data)
-                if (txout.scriptPubKey.size() > MOUSE_NFT_MAX_DATA_SIZE + 7) {
+                if (txout.scriptPubKey.size() > MOUSE_NFT_MAX_DATA_SIZE + 10) {
                     error = "Mouse NFT transfer data exceeds maximum size";
                     return false;
                 }
@@ -245,30 +248,42 @@ bool ParseMouseNFTTransferTransaction(const CTransaction& tx, std::vector<MouseN
     transfers.clear();
     
     for (const CTxOut& txout : tx.vout) {
-        // Check for NFT transfer magic bytes "MOUSEXFR" instead of opcode
-        if (txout.scriptPubKey.size() >= 8 && 
-            txout.scriptPubKey[0] == OP_RETURN) {
-            std::vector<unsigned char> transferMagic(txout.scriptPubKey.begin() + 1, txout.scriptPubKey.begin() + 7);
+        // Check for NFT transfer magic bytes "CASXFR"
+        // Format: OP_RETURN (0x6a) + PUSH(6) (0x06) + "CASXFR" + OP_PUSHDATA1/PUSH(len) + data
+        // (Same format as CASTOK - CScript << operator adds push-length prefix)
+        if (txout.scriptPubKey.size() >= 10 && 
+            txout.scriptPubKey[0] == OP_RETURN &&
+            txout.scriptPubKey[1] == 0x06) {
+            std::vector<unsigned char> transferMagic(txout.scriptPubKey.begin() + 2, txout.scriptPubKey.begin() + 8);
             std::vector<unsigned char> expectedTransfer = {'C', 'A', 'S', 'X', 'F', 'R'};
             if (transferMagic == expectedTransfer) {
             
-                // Extract data after OP_RETURN + magic bytes
-                if (txout.scriptPubKey.size() < 9) {
-                    error = "Mouse NFT transfer data too short";
-                    return false;
+                // Check for OP_PUSHDATA1 (0x4c) or direct push length
+                size_t dataStart;
+                size_t dataLen;
+                if (txout.scriptPubKey[8] == 0x4c) {
+                    // OP_PUSHDATA1: next byte is length
+                    if (txout.scriptPubKey.size() < 10) {
+                        error = "Mouse NFT transfer data too short";
+                        return false;
+                    }
+                    dataLen = txout.scriptPubKey[9];
+                    dataStart = 10;
+                } else {
+                    // Direct push: byte at [8] is the length
+                    dataLen = txout.scriptPubKey[8];
+                    dataStart = 9;
                 }
-            
-                // Get data length (after magic bytes)
-                unsigned char dataLen = txout.scriptPubKey[7];
-                if (static_cast<size_t>(dataLen + 8) > txout.scriptPubKey.size()) {
+                
+                if (dataStart + dataLen > txout.scriptPubKey.size()) {
                     error = "Invalid mouse NFT transfer data length";
                     return false;
                 }
                 
-                // Extract raw data (after magic bytes + length)
+                // Extract raw data
                 std::vector<unsigned char> rawData(
-                    txout.scriptPubKey.begin() + 8,
-                    txout.scriptPubKey.begin() + 8 + dataLen
+                    txout.scriptPubKey.begin() + dataStart,
+                    txout.scriptPubKey.begin() + dataStart + dataLen
                 );
             
                 // Parse transfer data
