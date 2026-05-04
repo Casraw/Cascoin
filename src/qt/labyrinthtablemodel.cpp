@@ -376,7 +376,7 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
             case ROI:
                 if (rec->mouseFeePaid == 0)
                     return QString("–");
-                return QString::number(rec->rewardsPaid * 100.0 / rec->mouseFeePaid, 'f', 1) + "%";
+                return QString::number(qRound(rec->rewardsPaid * 100.0 / rec->mouseFeePaid)) + "%";
             case Rewards:
                 {
                     if (rec->blocksFound == 0)
