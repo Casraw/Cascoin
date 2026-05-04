@@ -11,6 +11,7 @@
 #include <wallet/wallet.h>
 
 #include <QAbstractTableModel>
+#include <QPointer>
 #include <QStringList>
 #include <QDateTime>
 
@@ -70,7 +71,7 @@ private:
     void loadFromSQLiteDatabase(bool includeDeadMice);  // Load data from BCTDatabaseSQLite
 
     const PlatformStyle *platformStyle;
-    WalletModel *walletModel;
+    QPointer<WalletModel> walletModel;
     QStringList columns;
     QList<CMouseCreationTransactionInfo> list;
     int sortColumn;

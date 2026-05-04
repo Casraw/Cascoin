@@ -58,13 +58,19 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
     }
     updateInProgress = true;
 
+    // Snapshot the raw pointer on the main thread before entering the background thread.
+    // QPointer is not thread-safe — its null-tracking uses Qt's object system which must
+    // only be accessed from the main thread. The raw snapshot is safe to call getBCTs()
+    // on from the background thread (same pre-existing lifetime assumption as before).
+    WalletModel* walletModelPtr = walletModel.data();
+
     // Move database operations to background thread to prevent GUI hang
     std::thread([=]() {
         try {
             // Load entries from BCTDatabaseSQLite in background thread
             BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
             std::vector<BCTRecord> records;
-            
+
             // Helper lambda to convert wallet BCTs to BCTRecords
             auto convertWalletBCTs = [](const std::vector<CMouseCreationTransactionInfo>& walletBCTs) {
                 std::vector<BCTRecord> result;
@@ -110,20 +116,20 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                           hasCorruptRewardData ? " (corrupt reward data detected)" : "");
 
                 // Fall back to wallet scan if DB is empty or contains corrupt reward data
-                if (records.empty() || hasCorruptRewardData) {
+                if ((records.empty() || hasCorruptRewardData) && walletModelPtr) {
                     LogPrintf("LabyrinthTableModel: %s, falling back to wallet scan\n",
                               records.empty() ? "SQLite database is empty" : "corrupt reward data in SQLite");
                     std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
-                    walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                    walletModelPtr->getBCTs(vMouseCreationTransactions, includeDeadMice);
                     records = convertWalletBCTs(vMouseCreationTransactions);
                     LogPrintf("LabyrinthTableModel: Loaded %zu BCT records from wallet scan\n", records.size());
                 }
-            } else {
+            } else if (walletModelPtr) {
                 // Fallback to wallet scan if database not initialized
-                LogPrintf("LabyrinthTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n", 
+                LogPrintf("LabyrinthTableModel: BCTDatabaseSQLite not initialized (bctDb=%p, initialized=%d), falling back to wallet scan\n",
                           bctDb, bctDb ? bctDb->isInitialized() : false);
                 std::vector<CMouseCreationTransactionInfo> vMouseCreationTransactions;
-                walletModel->getBCTs(vMouseCreationTransactions, includeDeadMice);
+                walletModelPtr->getBCTs(vMouseCreationTransactions, includeDeadMice);
                 records = convertWalletBCTs(vMouseCreationTransactions);
             }
             
@@ -243,8 +249,9 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 // Maintain correct sorting
                 sort(sortColumn, sortOrder);
 
-                // Fire signal
-                Q_EMIT walletModel->newLabyrinthSummaryAvailable();
+                // Fire signal — check QPointer on the main thread before emitting
+                if (walletModel)
+                    Q_EMIT walletModel->newLabyrinthSummaryAvailable();
 
                 // Reset update flag and process any pending request
                 updateInProgress = false;
@@ -325,6 +332,8 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                 return LabyrinthDialog::formatLargeNoLocale(rec->mouseCount);
             case Status:
                 {
+                    if (rec->mouseStatus.empty())
+                        return QVariant();
                     QString status = QString::fromStdString(rec->mouseStatus);
                     status[0] = status[0].toUpper();
                     return status;
@@ -359,20 +368,25 @@ QVariant LabyrinthTableModel::data(const QModelIndex &index, int role) const {
                 }
             case Cost:
                 {
-                    int unit = walletModel->getOptionsModel()->getDisplayUnit();
-                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(unit);
-                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(unit);
+                    OptionsModel* opts = walletModel ? walletModel->getOptionsModel() : nullptr;
+                    if (!opts) return QVariant();
+                    double val = (double)rec->mouseFeePaid / BitcoinUnits::factor(opts->getDisplayUnit());
+                    return QString::number(val, 'f', 2) + " " + BitcoinUnits::shortName(opts->getDisplayUnit());
                 }
             case ROI:
                 if (rec->mouseFeePaid == 0)
                     return QString("–");
                 return QString::number(rec->rewardsPaid * 100.0 / rec->mouseFeePaid, 'f', 1) + "%";
             case Rewards:
-                if (rec->blocksFound == 0)
-                    return "No blocks mined";
-                return BitcoinUnits::format(walletModel->getOptionsModel()->getDisplayUnit(), rec->rewardsPaid)
-                    + " " + BitcoinUnits::shortName(this->walletModel->getOptionsModel()->getDisplayUnit())
-                    + " (" + QString::number(rec->blocksFound) + " blocks mined)";
+                {
+                    if (rec->blocksFound == 0)
+                        return "No blocks mined";
+                    OptionsModel* opts = walletModel ? walletModel->getOptionsModel() : nullptr;
+                    if (!opts) return QVariant();
+                    return BitcoinUnits::format(opts->getDisplayUnit(), rec->rewardsPaid)
+                        + " " + BitcoinUnits::shortName(opts->getDisplayUnit())
+                        + " (" + QString::number(rec->blocksFound) + " blocks mined)";
+                }
         }
     } else if (role == Qt::TextAlignmentRole) {
         /*if (index.column() == Rewards && rec->blocksFound == 0)
@@ -431,7 +445,8 @@ void LabyrinthTableModel::sort(int column, Qt::SortOrder order) {
     sortColumn = column;
     sortOrder = order;
     std::sort(list.begin(), list.end(), CMouseCreationTransactionInfoLessThan(column, order));
-    Q_EMIT dataChanged(index(0, 0, QModelIndex()), index(list.size() - 1, NUMBER_OF_COLUMNS - 1, QModelIndex()));
+    if (!list.isEmpty())
+        Q_EMIT dataChanged(index(0, 0, QModelIndex()), index(list.size() - 1, NUMBER_OF_COLUMNS - 1, QModelIndex()));
 }
 
 bool CMouseCreationTransactionInfoLessThan::operator()(CMouseCreationTransactionInfo &left, CMouseCreationTransactionInfo &right) const {
