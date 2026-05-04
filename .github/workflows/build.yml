@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          bins=(src/qt/*-qt src/*coind src/*coin-cli)
+          bins=(src/qt/*-qt src/*coind src/*coin-cli src/*coin-tx)
           for b in "${bins[@]}"; do
             if [[ -x "$b" ]]; then
               echo "Processing $b"
@@ -456,7 +456,7 @@ jobs:
         shell: bash
         run: |
           shopt -s nullglob
-          bins=(src/qt/*-qt src/*coind src/*coin-cli)
+          bins=(src/qt/*-qt src/*coind src/*coin-cli src/*coin-tx)
           for b in "${bins[@]}"; do
             if [[ -x "$b" ]]; then
               echo "Processing $b"
