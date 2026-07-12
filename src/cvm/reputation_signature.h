@@ -24,7 +24,8 @@ struct ReputationStateProof {
     int block_height;                   // Block height at proof time
     uint256 state_root;                 // Merkle root of reputation state
     std::vector<uint256> merkle_proof;  // Merkle proof path
-    std::vector<uint8_t> signature;     // Signature over proof data
+    std::vector<uint8_t> signature;     // Validator ECDSA signature over proof data
+    std::vector<uint8_t> signer_pubkey; // Serialized validator public key (signer)
     
     ReputationStateProof() 
         : reputation_score(0), timestamp(0), block_height(0) {}
@@ -40,6 +41,7 @@ struct ReputationStateProof {
         READWRITE(state_root);
         READWRITE(merkle_proof);
         READWRITE(signature);
+        READWRITE(signer_pubkey);
     }
     
     // Get hash of proof data (for signing)
@@ -200,8 +202,22 @@ public:
     static constexpr int PROOF_EXPIRY_BLOCKS = 144; // ~6 hours at 2.5 min blocks
     
 private:
-    // Build merkle proof for reputation state
-    std::vector<uint256> BuildMerkleProof(const uint160& address, uint32_t reputation) const;
+    // Derive a deterministic commit timestamp for a committed reputation entry.
+    // Depends only on the committed state (address, reputation, height) — NOT on
+    // wall-clock time — so the derived state root is time-independent.
+    int64_t DeriveCommitTimestamp(
+        const uint160& address, uint32_t reputation, int block_height) const;
+
+    // Derive the deterministic sibling hash for a committed reputation entry's
+    // merkle path. Depends only on committed state (no wall-clock time).
+    uint256 ComputeCommittedSibling(
+        const uint160& address, uint32_t reputation, int block_height) const;
+
+    // Build merkle proof for a committed reputation entry against the tree
+    // rooted at ComputeStateRoot(...).
+    std::vector<uint256> BuildMerkleProof(
+        const uint160& address, uint32_t reputation,
+        int64_t timestamp, int block_height) const;
     
     // Verify merkle proof
     bool VerifyMerkleProof(
@@ -210,8 +226,11 @@ private:
         const uint256& leaf
     ) const;
     
-    // Compute reputation state root
-    uint256 ComputeStateRoot() const;
+    // Compute the reputation state root for a committed entry from the
+    // committed reputation state tree (deterministic, time-independent).
+    uint256 ComputeStateRoot(
+        const uint160& address, uint32_t reputation,
+        int64_t timestamp, int block_height) const;
 };
 
 /**

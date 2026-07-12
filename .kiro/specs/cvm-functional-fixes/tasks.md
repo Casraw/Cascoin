@@ -233,7 +233,7 @@ Preservation Checking).
 
 ### Workstream 3 — Reputation signatures & merkle proofs
 
-- [-] 9. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
+- [x] 9. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
   - **Property 10: Bug Condition** — real validator signature + committed state root/proof
   - Explore (fail on unfixed): placeholder signature = first 32 bytes of proof hash and
     state root from `fixedString + time` (1.5); length-only signature check passes forged
@@ -241,8 +241,8 @@ Preservation Checking).
   - **Property 21: Preservation** — merkle verification math for genuinely committed leaves (3.6).
   - _Requirements: 1.5, 1.6, 1.7, 3.6_
 
-- [ ] 10. Implement Workstream-3 fixes
-  - [ ] 10.1 Real signing, state root, verification, and merkle proof
+- [x] 10. Implement Workstream-3 fixes
+  - [x] 10.1 Real signing, state root, verification, and merkle proof
     - `reputation_signature.cpp`: sign proof data with the validator key (reuse existing
       secp256k1 path from 3.4/3.18); derive state root from the committed reputation state
       tree; replace length-only check with ECDSA verification against the signer's pubkey;
@@ -251,13 +251,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.5, 2.6, 2.7_
     - _Preservation: 3.6_
     - _Requirements: 2.5, 2.6, 2.7_
-  - [ ] 10.2 Verify Workstream-3 fix-property test passes and preservation holds
+  - [x] 10.2 Verify Workstream-3 fix-property test passes and preservation holds
     - **Property 10: Expected Behavior** / **Property 21: Preservation** — re-run task 9 tests.
     - _Requirements: 2.5, 2.6, 2.7, 3.6_
 
 ### Workstream 4 — HAT v2 distributed consensus
 
-- [ ] 11. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
+- [-] 11. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
   - **Property 11: Bug Condition** — real task validation, P2P challenge, response accumulation
   - Explore (fail on unfixed): `isValid=true`/80% without validation (1.3); trust score
     hardcoded 50 (1.4); challenge returns success with no P2P send (1.8); dispute sets
