@@ -129,6 +129,14 @@ bool ReputationSystem::UpdateReputation(const uint160& address, const Reputation
 bool ReputationSystem::ApplyVote(const uint160& voterAddress, 
                                 const ReputationVoteTx& vote, 
                                 int64_t timestamp) {
+    // Bugfix 2.18: a reputation vote must be attributed to a resolved voter.
+    // Reject votes from a null/zero voter address (an unresolved voter) rather
+    // than silently applying them to the zero address.
+    if (voterAddress.IsNull()) {
+        LogPrintf("Rejecting reputation vote from unresolved (zero) voter address\n");
+        return false;
+    }
+
     std::string error;
     if (!vote.IsValid(error)) {
         LogPrintf("Invalid reputation vote: %s\n", error);

@@ -246,13 +246,67 @@ bool CheckCoinbaseValidatorPayments(const CBlock& block, CAmount blockRewardWith
         }
     }
     
-    // For now, we don't strictly validate the 70/30 split
-    // This is because the validator participation data may not be available
-    // during block validation (it's stored after block processing)
-    // TODO: Implement strict validation after validator participation tracking is complete
+    // Enforce the 70/30 validator payment split (bugfix 2.22).
+    //
+    // Determine how much of this block's gas fees is owed to validators. For
+    // every gas-fee-bearing contract transaction (deploy/call), 30% of its gas
+    // fee must be paid out to validators via the coinbase. Web-of-Trust and
+    // standard transactions carry no gas-fee split (ExtractGasInfo returns
+    // false for them), so their fees legitimately go 100% to the miner.
+    CAmount expectedValidatorShare = 0;
+    for (size_t i = 1; i < block.vtx.size(); i++) {
+        const CTransaction& tx = *block.vtx[i];
+        
+        uint64_t gasUsed = 0;
+        CAmount gasCost = 0;
+        if (!CVM::ConsensusValidator::ExtractGasInfo(tx, gasUsed, gasCost)) {
+            // Not a gas-fee-bearing contract transaction -> no validator share.
+            continue;
+        }
+        if (gasUsed == 0 || gasCost <= 0) {
+            continue;
+        }
+        
+        // The validator share is the 30% remainder of the gas fee, computed the
+        // same way as CalculateGasFeeDistribution (miner share truncated so the
+        // split is exact). This is independent of whether validator
+        // participation data is available: a block that levies contract gas fees
+        // always owes the 30% share to validators, so a coinbase that pays it
+        // 100% to the miner must be rejected.
+        CAmount minerShare = static_cast<CAmount>(gasCost * MINER_SHARE_RATIO);
+        CAmount validatorShare = gasCost - minerShare;
+        expectedValidatorShare += validatorShare;
+    }
     
-    LogPrint(BCLog::CVM, "CheckCoinbaseValidatorPayments: Validation successful (Total=%s)\n",
-        FormatMoney(totalCoinbaseOutput));
+    // No contract gas fees in this block -> nothing is owed to validators and
+    // the coinbase legitimately pays everything to the miner. Accept.
+    if (expectedValidatorShare <= 0) {
+        LogPrint(BCLog::CVM, "CheckCoinbaseValidatorPayments: No validator share owed; validation successful (Total=%s)\n",
+            FormatMoney(totalCoinbaseOutput));
+        return true;
+    }
+    
+    // Sum the validator payment outputs. By construction (see
+    // CreateCoinbaseWithValidatorPayments) output 0 is the miner payment and any
+    // subsequent outputs are validator payments.
+    CAmount actualValidatorPayments = 0;
+    for (size_t o = 1; o < coinbase.vout.size(); o++) {
+        actualValidatorPayments += coinbase.vout[o].nValue;
+    }
+    
+    // The coinbase must allocate at least the owed 30% validator share to
+    // validator outputs. Allow a small tolerance for integer-division rounding
+    // across multiple validators.
+    CAmount shortfall = expectedValidatorShare - actualValidatorPayments;
+    if (shortfall > 10) {
+        return error("CheckCoinbaseValidatorPayments: coinbase under-pays validators "
+                     "(70/30 split not honoured: expected validator share %s, coinbase "
+                     "validator outputs %s)",
+                     FormatMoney(expectedValidatorShare), FormatMoney(actualValidatorPayments));
+    }
+    
+    LogPrint(BCLog::CVM, "CheckCoinbaseValidatorPayments: Validation successful (Total=%s, validatorShare=%s)\n",
+        FormatMoney(totalCoinbaseOutput), FormatMoney(actualValidatorPayments));
     
     return true;
 }

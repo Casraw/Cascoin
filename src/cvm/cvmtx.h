@@ -52,6 +52,19 @@ bool CheckCVMTransaction(const CTransaction& tx, CValidationState& state,
                          int height, const Consensus::Params& params);
 
 /**
+ * Get the maximum aggregate gas subsidy allowed per block.
+ *
+ * Derived directly from the block gas cap (cvmMaxGasPerBlock) so the subsidy
+ * budget stays reconciled with the block gas limit: at most a fixed fraction of
+ * the block's gas capacity may be subsidized. Used to enforce the per-block
+ * subsidy maximum during block validation (bugfix 2.1).
+ *
+ * @param params Consensus parameters
+ * @return Maximum accumulated subsidy (in gas units) permitted per block
+ */
+uint64_t GetMaxSubsidyPerBlock(const Consensus::Params& params);
+
+/**
  * Execute CVM operations in a block
  * Called during block validation
  * 

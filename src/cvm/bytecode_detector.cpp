@@ -499,8 +499,12 @@ bool BytecodeDetector::HasCVMOpcodes(const std::vector<uint8_t>& bytecode) const
 }
 
 bool BytecodeDetector::HasCVMRegisterPattern(const std::vector<uint8_t>& bytecode) const {
-    // Look for CVM PUSH pattern (opcode + size + data)
-    for (size_t i = 0; i < bytecode.size() - 2; ++i) {
+    // Look for CVM PUSH pattern (opcode + size + data).
+    // Guard the bound with addition rather than "size() - 2" so a bytecode
+    // shorter than 3 bytes does not underflow the unsigned length (which would
+    // otherwise iterate out of bounds); the two forms are equivalent for
+    // size >= 3 and this leaves detection of real bytecode unchanged.
+    for (size_t i = 0; i + 2 < bytecode.size(); ++i) {
         if (bytecode[i] == 0x01) { // OP_PUSH
             uint8_t size = bytecode[i + 1];
             if (size > 0 && size <= 32 && i + 2 + size <= bytecode.size()) {

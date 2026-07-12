@@ -62,7 +62,8 @@ public:
     static void ProcessTransaction(
         const CTransaction& tx,
         int height,
-        CVMDatabase& db
+        CVMDatabase& db,
+        const uint256& blockHash = uint256()
     );
     
     /**
@@ -112,7 +113,8 @@ private:
         const CVMDeployData& deployData,
         const CTransaction& tx,
         int height,
-        CVMDatabase& db
+        CVMDatabase& db,
+        const uint256& blockHash
     );
     
     /**
@@ -127,7 +129,8 @@ private:
         const CVMCallData& callData,
         const CTransaction& tx,
         int height,
-        CVMDatabase& db
+        CVMDatabase& db,
+        const uint256& blockHash
     );
     
     /**

@@ -100,10 +100,12 @@ bool CreateCoinbaseWithValidatorPayments(
  * Validate coinbase validator payments
  * 
  * Verifies that the coinbase transaction total output equals the expected
- * block reward plus transaction fees.
- * 
- * Note: The 70/30 split validation is currently relaxed because validator
- * participation data may not be available during block validation.
+ * block reward plus transaction fees, and enforces the 70/30 validator payment
+ * split: when the block contains gas-fee-bearing contract transactions, the
+ * coinbase MUST allocate the 30% validator share to validator outputs. A
+ * coinbase that pays 100% to the miner for such a block is rejected. Blocks
+ * with no contract gas fees (standard/Web-of-Trust transactions) pay 100% to
+ * the miner and are accepted.
  * 
  * @param block The block to validate
  * @param blockRewardWithFees The expected block reward (subsidy) + transaction fees

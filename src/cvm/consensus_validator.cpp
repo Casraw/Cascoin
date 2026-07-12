@@ -509,12 +509,14 @@ bool ConsensusValidator::ExtractGasInfo(const CTransaction& tx, uint64_t& gasUse
                 CVMDeployData deployData;
                 if (deployData.Deserialize(data)) {
                     gasUsed = deployData.gasLimit;
-                    // Gas cost is calculated from gas used and gas price
-                    // For now, use a simple calculation (1 satoshi per gas unit)
-                    gasCost = static_cast<CAmount>(gasUsed);
+                    // Gas cost = gasUsed * gasPrice. The deploy data does not
+                    // carry an explicit per-tx gas price, so we apply the
+                    // deterministic consensus gas price (satoshis per gas) that
+                    // all nodes agree on, rather than the old hardcoded 1:1 rate.
+                    gasCost = static_cast<CAmount>(gasUsed * DEFAULT_GAS_PRICE_SATOSHIS);
                     
-                    LogPrint(BCLog::CVM, "ConsensusValidator: Extracted deploy gas info - gasLimit=%d\n",
-                             gasUsed);
+                    LogPrint(BCLog::CVM, "ConsensusValidator: Extracted deploy gas info - gasLimit=%d, gasPrice=%d, gasCost=%d\n",
+                             gasUsed, DEFAULT_GAS_PRICE_SATOSHIS, gasCost);
                     return true;
                 }
                 break;
@@ -525,11 +527,13 @@ bool ConsensusValidator::ExtractGasInfo(const CTransaction& tx, uint64_t& gasUse
                 CVMCallData callData;
                 if (callData.Deserialize(data)) {
                     gasUsed = callData.gasLimit;
-                    // Gas cost is calculated from gas used and gas price
-                    gasCost = static_cast<CAmount>(gasUsed);
+                    // Gas cost = gasUsed * gasPrice, using the deterministic
+                    // consensus gas price (satoshis per gas) rather than the old
+                    // hardcoded 1:1 rate.
+                    gasCost = static_cast<CAmount>(gasUsed * DEFAULT_GAS_PRICE_SATOSHIS);
                     
-                    LogPrint(BCLog::CVM, "ConsensusValidator: Extracted call gas info - gasLimit=%d\n",
-                             gasUsed);
+                    LogPrint(BCLog::CVM, "ConsensusValidator: Extracted call gas info - gasLimit=%d, gasPrice=%d, gasCost=%d\n",
+                             gasUsed, DEFAULT_GAS_PRICE_SATOSHIS, gasCost);
                     return true;
                 }
                 break;
@@ -598,8 +602,11 @@ bool ConsensusValidator::ExtractGasInfo(const CTransaction& tx, uint64_t& gasUse
         
         // Default gas for EVM transactions if not found
         gasUsed = 21000;  // Base transaction gas
-        gasCost = static_cast<CAmount>(gasUsed);
-        LogPrint(BCLog::CVM, "ConsensusValidator: Using default gas for EVM transaction\n");
+        // Gas cost = gasUsed * gasPrice using the deterministic consensus gas
+        // price rather than the old hardcoded 1:1 rate.
+        gasCost = static_cast<CAmount>(gasUsed * DEFAULT_GAS_PRICE_SATOSHIS);
+        LogPrint(BCLog::CVM, "ConsensusValidator: Using default gas for EVM transaction (gasUsed=%d, gasCost=%d)\n",
+                 gasUsed, gasCost);
         return true;
     }
     

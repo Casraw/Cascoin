@@ -41,6 +41,11 @@ void CVMBlockProcessor::ProcessBlock(
     CVMDatabase& db
 ) {
     int cvmTxCount = 0;
+
+    // The real block hash is threaded into contract execution so the Enhanced
+    // VM sees the correct BLOCKHASH/block context during block processing
+    // (bugfix 2.60), instead of an empty uint256().
+    const uint256 blockHash = block.GetHash();
     
     // Process all transactions in block
     for (const auto& tx : block.vtx) {
@@ -53,7 +58,7 @@ void CVMBlockProcessor::ProcessBlock(
         int cvmOutputIndex = FindCVMOpReturn(*tx);
         
         if (cvmOutputIndex >= 0) {
-            ProcessTransaction(*tx, height, db);
+            ProcessTransaction(*tx, height, db, blockHash);
             cvmTxCount++;
         }
     }
@@ -67,10 +72,31 @@ void CVMBlockProcessor::ProcessBlock(
     }
 }
 
+// Extract the value carried by a CVM transaction that is made available to the
+// executing contract as CALLVALUE (bugfix 2.60). This is the total spendable
+// value locked in the transaction's outputs other than the CVM OP_RETURN marker
+// output (which carries no spendable value). A zero-value transaction (e.g. a
+// pure OP_RETURN deploy) therefore yields CALLVALUE == 0, unchanged
+// (preservation 3.22).
+static uint64_t ExtractTransactionValue(const CTransaction& tx, int cvmOutputIndex)
+{
+    CAmount total = 0;
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (static_cast<int>(i) == cvmOutputIndex) {
+            continue;
+        }
+        if (tx.vout[i].nValue > 0) {
+            total += tx.vout[i].nValue;
+        }
+    }
+    return static_cast<uint64_t>(total);
+}
+
 void CVMBlockProcessor::ProcessTransaction(
     const CTransaction& tx,
     int height,
-    CVMDatabase& db
+    CVMDatabase& db,
+    const uint256& blockHash
 ) {
     // Find CVM OP_RETURN output
     int cvmOutputIndex = FindCVMOpReturn(tx);
@@ -104,7 +130,7 @@ void CVMBlockProcessor::ProcessTransaction(
         case CVMOpType::CONTRACT_DEPLOY: {
             CVMDeployData deployData;
             if (deployData.Deserialize(data)) {
-                ProcessDeploy(deployData, tx, height, db);
+                ProcessDeploy(deployData, tx, height, db, blockHash);
             } else {
                 LogPrintf("CVM Warning: Invalid deploy data in tx %s\n", 
                           tx.GetHash().ToString());
@@ -115,7 +141,7 @@ void CVMBlockProcessor::ProcessTransaction(
         case CVMOpType::CONTRACT_CALL: {
             CVMCallData callData;
             if (callData.Deserialize(data)) {
-                ProcessCall(callData, tx, height, db);
+                ProcessCall(callData, tx, height, db, blockHash);
             } else {
                 LogPrintf("CVM Warning: Invalid call data in tx %s\n", 
                           tx.GetHash().ToString());
@@ -205,7 +231,8 @@ void CVMBlockProcessor::ProcessDeploy(
     const CVMDeployData& deployData,
     const CTransaction& tx,
     int height,
-    CVMDatabase& db
+    CVMDatabase& db,
+    const uint256& blockHash
 ) {
     LogPrint(BCLog::CVM, "CVM: Processing contract deployment: hash=%s\n", 
              deployData.codeHash.ToString());
@@ -267,23 +294,52 @@ void CVMBlockProcessor::ProcessDeploy(
             }
         }
         
+        // Derive the contract address from the deployer and nonce using the
+        // canonical GenerateContractAddress(deployer, nonce) scheme, consistent
+        // with every other CVM path (reconciliation / bugfix 2.16). The current
+        // (pre-increment) nonce is used so the first deploy for a fresh deployer
+        // lands at nonce 0; the nonce is advanced after a successful deploy.
+        uint64_t nonce = 0;
+        db.ReadNonce(deployer, nonce);
+        uint160 contractAddr = GenerateContractAddress(deployer, nonce);
+
+        // Pass the ACTUAL transaction value and the REAL block hash to the
+        // Enhanced VM so CALLVALUE and BLOCKHASH/block context are correct during
+        // block processing (bugfix 2.60), instead of a hardcoded 0 / uint256().
+        uint64_t deployValue = ExtractTransactionValue(tx, FindCVMOpReturn(tx));
+
         // Initialize Enhanced VM with blockchain state
         // Note: In full integration, would pass CCoinsViewCache and CBlockIndex
         auto enhanced_vm = std::make_unique<EnhancedVM>(&db, trust_ctx);
         
-        // Deploy contract using Enhanced VM
-        auto result = enhanced_vm->DeployContract(
+        // Execute the constructor at the canonical contract address. The Enhanced
+        // VM flushes pending contract-state writes durably via
+        // CommitExecutionState (bugfix 2.61) on success, so any SSTORE performed
+        // by the constructor is persisted.
+        auto result = enhanced_vm->Execute(
             bytecode,
-            deployData.constructorData,
             deployData.gasLimit,
+            contractAddr,
             deployer,
-            0, // deploy value (would come from transaction)
+            deployValue,
+            deployData.constructorData,
             height,
-            uint256(), // block hash (would come from block)
+            blockHash,
             GetTime()
         );
         
         if (result.success) {
+            // Persist the deployed contract at the canonical address with the
+            // resolved deployer recorded, and advance the deployer's nonce.
+            Contract contract;
+            contract.address = contractAddr;
+            contract.deployer = deployer;
+            contract.code = bytecode;
+            contract.deploymentHeight = height;
+            contract.deploymentTx = tx.GetHash();
+            db.WriteContract(contractAddr, contract);
+            db.WriteNonce(deployer, nonce + 1);
+
             // Deduct gas from allowance if using free gas
             if (useFreeGas) {
                 g_gasAllowanceTracker.DeductGas(deployer, result.gas_used, height);
@@ -309,17 +365,8 @@ void CVMBlockProcessor::ProcessDeploy(
             }
             
             LogPrintf("CVM: Contract deployed successfully - Address: %s, GasUsed: %d, FreeGas: %s, Subsidy: %s, Height: %d\n",
-                      deployData.codeHash.ToString(), result.gas_used, 
+                      contractAddr.ToString(), result.gas_used, 
                       useFreeGas ? "yes" : "no", isBeneficial ? "yes" : "no", height);
-            
-            // Contract is already stored by Enhanced VM
-            // Update deployment metadata
-            Contract contract;
-            if (db.ReadContract(deployer, contract)) { // Get the deployed contract
-                contract.deploymentHeight = height;
-                contract.deploymentTx = tx.GetHash();
-                db.WriteContract(contract.address, contract);
-            }
         } else {
             LogPrintf("CVM Warning: Contract deployment failed - Error: %s, Tx: %s\n",
                       result.error, tx.GetHash().ToString());
@@ -335,7 +382,8 @@ void CVMBlockProcessor::ProcessCall(
     const CVMCallData& callData,
     const CTransaction& tx,
     int height,
-    CVMDatabase& db
+    CVMDatabase& db,
+    const uint256& blockHash
 ) {
     LogPrint(BCLog::CVM, "CVM: Processing contract call to %s\n", 
              callData.contractAddress.ToString());
@@ -382,15 +430,22 @@ void CVMBlockProcessor::ProcessCall(
         // Note: In full integration, would pass CCoinsViewCache and CBlockIndex
         auto enhanced_vm = std::make_unique<EnhancedVM>(&db, trust_ctx);
         
-        // Execute contract call using Enhanced VM
+        // Pass the ACTUAL transaction value and the REAL block hash to the
+        // Enhanced VM so CALLVALUE and BLOCKHASH/block context are correct during
+        // block processing (bugfix 2.60), instead of a hardcoded 0 / uint256().
+        uint64_t callValue = ExtractTransactionValue(tx, FindCVMOpReturn(tx));
+
+        // Execute contract call using Enhanced VM. The Enhanced VM flushes
+        // pending contract-state writes durably via CommitExecutionState
+        // (bugfix 2.61) on success.
         auto result = enhanced_vm->CallContract(
             callData.contractAddress,
             callData.callData,
             callData.gasLimit,
             caller,
-            0, // call value (would come from transaction)
+            callValue,
             height,
-            uint256(), // block hash (would come from block)
+            blockHash,
             GetTime()
         );
         

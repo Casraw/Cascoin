@@ -182,6 +182,13 @@ EnhancedExecutionResult EnhancedVM::Execute(
     stats.total_executions++;
     stats.total_gas_used += result.gas_used;
     stats.total_gas_saved_by_reputation += result.reputation_gas_discount;
+
+    // Durably persist any contract-state writes made during a successful
+    // execution (bugfix 2.61). Reconciles both block-processing paths on a
+    // single, real state-commit point.
+    if (result.success) {
+        CommitExecutionState();
+    }
     
     return result;
 }
@@ -794,12 +801,17 @@ void EnhancedVM::RestoreExecutionState() {
 }
 
 void EnhancedVM::CommitExecutionState() {
-    // Commit execution state changes to database
-    // This would typically be called after successful execution
-    
+    // Commit execution state changes to the database (bugfix 2.61).
+    //
+    // Contract-state writes (SSTORE) performed during execution are applied to
+    // the CVM database as they happen; this flushes those pending writes so the
+    // committed execution results are durably persisted rather than merely
+    // logged. Previously this was a log-only no-op, leaving results unpersisted.
     if (database) {
-        // Flush any pending database writes
-        // The actual implementation would depend on the database interface
+        if (!database->Flush()) {
+            LogExecution("ERROR", "Failed to flush execution state to database");
+            return;
+        }
         TraceExecution("Committed execution state to database");
     } else {
         LogExecution("WARNING", "Cannot commit execution state - no database available");

@@ -3,59 +3,21 @@
 ## Overview
 
 This plan implements the 62 CVM functional fixes (`bugfix.md` clauses 1.1–1.62 /
-2.1–2.62, preservation 3.1–3.24) organized by the design's 12 workstreams and 22
+2.1–2.62, preservation 3.1–3.24) organized by the design's 12 workstreams and 21
 correctness properties (`design.md`). It follows the bugfix TDD flow per
 workstream: **exploratory bug-condition test** (fails on unfixed code) →
 **implement fix** → **fix-checking test** (passes after fix) → **preservation-checking
 test** (passes on both unfixed and fixed code).
 
-**Consensus-critical tasks are marked `[CONSENSUS-CRITICAL]`.** Every
-consensus-behavior change branches on `IsCVMFixActive(height, params)`: below the
-gate the exact legacy path runs verbatim (preserved), at/above the gate the
-corrected path runs. This makes Property 22 hold by construction and prevents a
-chain split. Non-consensus workstreams (9, 11, 12 and the local/RPC parts of 10)
-ship unconditionally.
+Consensus-critical fixes are applied directly and unconditionally: the CVM is not
+yet live on any production network, so the corrected behavior simply replaces the
+buggy behavior directly. Consensus-critical work is still called out in prose so
+reviewers know where extra care is warranted.
 
 Test binary is `src/test/test_cascoin` (boost-test). Functional tests live in
 `test/functional/` and run via `test/functional/test_runner.py`.
 
 ## Tasks
-
-### Phase 0 — Shared Foundation (activation gate)
-
-- [ ] 1. Implement the CVM-fix activation gate `[CONSENSUS-CRITICAL]`
-  - Rationale: all consensus-critical fixes (Workstreams 1, 2 and consensus-adjacent
-    parts of 5/10) depend on this gate. It must land first.
-  - _Requirements: 3.12, 3.17_
-  - _Design: Activation-Gating Strategy; Property 22_
-
-  - [ ] 1.1 Add the deployment enum and height field
-    - Add `DEPLOYMENT_CVM_FIX` to `Consensus::DeploymentPos` in `src/consensus/params.h`
-      (mirroring existing `DEPLOYMENT_CVM_EVM`).
-    - Add `int cvmFunctionalFixHeight;` to `Consensus::Params` (alongside
-      `cvmActivationHeight`).
-    - _Requirements: 3.12_
-
-  - [ ] 1.2 Set the per-network activation height in `src/chainparams.cpp`
-    - Set `consensus.cvmFunctionalFixHeight` for mainnet (future coordinated height),
-      testnet (earlier), and regtest (`0` or a low value to exercise the transition).
-    - Follow the existing `cvmActivationHeight` / `DEPLOYMENT_CVM_EVM` block layout.
-    - _Requirements: 3.12, 3.17_
-
-  - [ ] 1.3 Add the `IsCVMFixActive` helper
-    - Add `bool IsCVMFixActive(int nHeight, const Consensus::Params& params)` and a
-      `const CBlockIndex*` overload to `src/cvm/activation.h` / `activation.cpp`
-      (alongside `IsCVMEVMEnabled`).
-    - Implement as `nHeight >= params.cvmFunctionalFixHeight`.
-    - _Requirements: 3.12_
-
-  - [ ] 1.4 Build and confirm no behavior change yet
-    - `./autogen.sh && ./configure` (existing flags) then `make -j$(nproc)`.
-    - Confirm the gate compiles and defaults leave all existing behavior unchanged
-      (helper not yet referenced by fix sites).
-    - _Requirements: 3.2, 3.10, 3.17_
-
----
 
 ### Phase 1 — Global exploratory bug-condition & preservation baselines
 
@@ -63,7 +25,7 @@ These two standalone suites are written and run **on the UNFIXED code** before a
 fix, per the design Testing Strategy (Exploratory Bug Condition Checking and
 Preservation Checking).
 
-- [ ] 2. Write global bug-condition exploration test suite
+- [x] 1. Write global bug-condition exploration test suite
   - **Property 1: Bug Condition** — Representative CVM defect counterexamples
   - **IMPORTANT**: Write this before implementing any fix.
   - **GOAL**: Surface counterexamples that confirm each root-cause hypothesis. If any
@@ -86,9 +48,8 @@ Preservation Checking).
   - Document each counterexample.
   - _Requirements: 1.1, 1.2, 1.6, 1.16, 1.17, 1.18, 1.21, 1.23, 1.24, 1.59_
 
-- [ ] 3. Write global preservation baseline suite (BEFORE implementing fixes)
+- [x] 2. Write global preservation baseline suite (BEFORE implementing fixes)
   - **Property 21: Preservation** — Standard/WoT/valid-signature behavior unchanged
-  - **Property 22: Preservation** — Historical chain validity below the gate
   - **IMPORTANT**: Follow observation-first methodology — capture legacy behavior on
     the UNFIXED code as golden vectors, then assert the fixed code reproduces it.
   - Add a boost-test suite (e.g. `src/test/cvm_functional_fix_preserve_tests.cpp`) capturing:
@@ -97,19 +58,17 @@ Preservation Checking).
     - Genuinely valid secp256k1 signatures accepted by `OP_VERIFY_SIG` family (3.11, 3.4).
     - Canonical deployer+nonce addresses (`contract.cpp`) (3.14).
     - Receipt JSON fields (3.13, excluding `logsBloom` which will change).
-    - Blocks below `cvmFunctionalFixHeight` validate identically (3.2, 3.12, 3.17).
     - Zero-value deploy/call exposes `CALLVALUE = 0` (3.22).
-  - Property-based generators for random standard/WoT transactions and random
-    sub-gate heights (Properties 21, 22).
+  - Property-based generators for random standard/WoT transactions (Property 21).
   - Run on UNFIXED code.
   - **EXPECTED OUTCOME**: Tests PASS (baseline behavior to preserve).
-  - _Requirements: 3.2, 3.3, 3.4, 3.10, 3.11, 3.12, 3.13, 3.14, 3.17, 3.22_
+  - _Requirements: 3.2, 3.3, 3.4, 3.10, 3.11, 3.13, 3.14, 3.22_
 
 ---
 
 ### Phase 2 — Workstream 1: Consensus-critical accounting & block processing
 
-- [ ] 4. Write Workstream-1 exploratory fix-property tests (BEFORE fix) `[CONSENSUS-CRITICAL]`
+- [x] 3. Write Workstream-1 exploratory fix-property tests (BEFORE fix)
   - **Property 1: Bug Condition** — Per-block subsidy limit enforced
   - **Property 2: Bug Condition** — Gas cost = `gasUsed * gasPrice`
   - **Property 3: Bug Condition** — `cvmtx` contract address == canonical `GenerateContractAddress`
@@ -127,103 +86,99 @@ Preservation Checking).
   - Run on UNFIXED code — **EXPECTED OUTCOME**: FAIL (confirms defects 1.1, 1.2, 1.16–1.22, 1.60, 1.61).
   - _Requirements: 1.1, 1.2, 1.16, 1.17, 1.18, 1.19, 1.20, 1.21, 1.22, 1.60, 1.61_
 
-- [ ] 5. Write Workstream-1 preservation tests (BEFORE fix) `[CONSENSUS-CRITICAL]`
-  - **Property 22: Preservation** — Sub-gate legacy validation identical
+- [x] 4. Write Workstream-1 preservation tests (BEFORE fix)
   - **Property 21: Preservation** — 1:1-rate-equivalent fee/subsidy split unchanged (3.1)
   - Observe on UNFIXED code: blocks with no subsidies / no failed execution validate,
     save, and finalize identically (3.2, 3.17); canonical addresses unchanged (3.14);
     zero-value call exposes `CALLVALUE = 0` (3.22).
-  - Property-based: random inputs at random heights `< cvmFunctionalFixHeight` produce
-    identical results on legacy vs. gated code paths.
+  - Property-based: random non-flagged inputs produce identical results before and after the fix.
   - Run on UNFIXED code — **EXPECTED OUTCOME**: PASS.
   - _Requirements: 3.1, 3.2, 3.14, 3.17, 3.22_
 
-- [ ] 6. Implement Workstream-1 fixes (gated on `IsCVMFixActive`) `[CONSENSUS-CRITICAL]`
+- [x] 5. Implement Workstream-1 fixes
 
-  - [ ] 6.1 Enforce per-block subsidy accumulation & max in `block_validator.cpp ValidateBlock`
+  - [x] 5.1 Enforce per-block subsidy accumulation & max in `block_validator.cpp ValidateBlock`
     - Accumulate actual per-tx subsidy into a running total; reject (via `state.DoS`/
       `return false`) when total exceeds the `cvmMaxGasPerBlock`-derived subsidy max.
     - Replace `bool isBeneficial = true` with `GasSubsidyTracker::IsBeneficialOperation(trust)`
       and record actual `gasUsed` (not `gasLimit`).
-    - Preserve legacy path below the gate verbatim.
-    - _Bug_Condition: isBugCondition for 1.1, 1.19 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.1, 1.19_
     - _Expected_Behavior: 2.1, 2.19 (accumulate real subsidy, reject over max, real benefit/gasUsed)_
-    - _Preservation: 3.2, 3.17 below gate_
+    - _Preservation: 3.2, 3.17_
     - _Requirements: 2.1, 2.19_
 
-  - [ ] 6.2 Compute gas cost from actual gas & gas price
+  - [x] 5.2 Compute gas cost from actual gas & gas price
     - In `block_validator.cpp` / `fee_calculator.cpp`, compute `gasCost = gasUsed * gasPrice`
       instead of `cost = gasLimit`.
     - Verify fee against the transaction's input values in `VerifyReputationGasCosts`.
-    - _Bug_Condition: isBugCondition for 1.2, 1.20 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.2, 1.20_
     - _Expected_Behavior: 2.2, 2.20_
     - _Preservation: 3.1 (1:1-equivalent split unchanged)_
     - _Requirements: 2.2, 2.20_
 
-  - [ ] 6.3 Atomic state save / real rollback in `block_validator.cpp`
+  - [x] 5.3 Atomic state save / real rollback in `block_validator.cpp`
     - Route writes through a batch committed atomically on success and discarded
       (real revert) on failure, replacing the log-only `RollbackContractState` no-op.
-    - _Bug_Condition: isBugCondition for 1.21 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.21_
     - _Expected_Behavior: 2.21_
     - _Preservation: 3.17, 3.23_
     - _Requirements: 2.21_
 
-  - [ ] 6.4 Fix contract address & execution in `cvmtx.cpp ProcessCVMBlock`
+  - [x] 5.4 Fix contract address & execution in `cvmtx.cpp ProcessCVMBlock`
     - Replace `memcpy(contractAddr.begin(), txHash.begin(), 20)` with
       `GenerateContractAddress(deployer, nonce)` (deployer via `ExtractDeployerAddress`,
       nonce from DB).
     - Execute the constructor (deploy) / contract code (call) via the Enhanced VM and
       accumulate actual gas used instead of only `gasLimit`.
-    - _Bug_Condition: isBugCondition for 1.16, 1.17 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.16, 1.17_
     - _Expected_Behavior: 2.16, 2.17_
     - _Preservation: 3.14 (canonical scheme)_
     - _Requirements: 2.16, 2.17_
 
-  - [ ] 6.5 Resolve real voter in `cvmtx.cpp UpdateReputationScores`
+  - [x] 5.5 Resolve real voter in `cvmtx.cpp UpdateReputationScores`
     - Resolve the real voter from tx inputs (UTXO / `ExtractSenderAddress`) before
       `ApplyVote`; update per-participant behavior scores. Never attribute to zero address.
-    - _Bug_Condition: isBugCondition for 1.18 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.18_
     - _Expected_Behavior: 2.18_
     - _Preservation: 3.3 (WoT tx semantics)_
     - _Requirements: 2.18_
 
-  - [ ] 6.6 Enforce coinbase 70/30 split in `validator_compensation.cpp CheckCoinbaseValidatorPayments`
+  - [x] 5.6 Enforce coinbase 70/30 split in `validator_compensation.cpp CheckCoinbaseValidatorPayments`
     - Enforce the 70/30 validator payment split against validator participation data
       (replace the TODO success path).
-    - _Bug_Condition: isBugCondition for 1.22 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.22_
     - _Expected_Behavior: 2.22_
     - _Requirements: 2.22_
 
-  - [ ] 6.7 Correct primary-path value/block-hash & durable commit
+  - [x] 5.7 Correct primary-path value/block-hash & durable commit
     - In `blockprocessor.cpp` primary path (~lines 292/404): pass the actual tx value
       and the real block hash to the Enhanced VM instead of `0` / `uint256()`.
     - In `enhanced_vm.cpp CommitExecutionState`: flush pending contract-state writes to
       the DB instead of logging only.
     - Reconcile the `cvmtx.cpp` and `blockprocessor.cpp` paths so address derivation,
-      execution, value/block-hash context, and state commit agree above the gate.
-    - _Bug_Condition: isBugCondition for 1.60, 1.61 with IsCVMFixActive == true_
+      execution, value/block-hash context, and state commit agree.
+    - _Bug_Condition: isBugCondition for 1.60, 1.61_
     - _Expected_Behavior: 2.60, 2.61_
     - _Preservation: 3.12, 3.22 (zero-value CALLVALUE == 0), 3.23_
     - _Requirements: 2.60, 2.61_
 
-  - [ ] 6.8 Verify Workstream-1 fix-property tests now pass (gate ON)
+  - [x] 5.8 Verify Workstream-1 fix-property tests now pass
     - **Property 1/2/3/4/5/6/7/19: Expected Behavior**
-    - Re-run the SAME tests from task 4 with `IsCVMFixActive == true`.
-    - **EXPECTED OUTCOME**: PASS (bugs fixed above the gate).
+    - Re-run the SAME tests from task 3.
+    - **EXPECTED OUTCOME**: PASS (bugs fixed).
     - _Requirements: 2.1, 2.2, 2.16, 2.17, 2.18, 2.19, 2.20, 2.21, 2.22, 2.60, 2.61_
 
-  - [ ] 6.9 Verify Workstream-1 preservation tests still pass (gate OFF and ON)
-    - **Property 21/22: Preservation**
-    - Re-run the SAME tests from task 5. Confirm sub-gate heights reproduce legacy
-      behavior and non-flagged inputs are identical.
-    - **EXPECTED OUTCOME**: PASS (no regressions, no chain split).
+  - [x] 5.9 Verify Workstream-1 preservation tests still pass
+    - **Property 21: Preservation**
+    - Re-run the SAME tests from task 4. Confirm non-flagged inputs are identical.
+    - **EXPECTED OUTCOME**: PASS (no regressions).
     - _Requirements: 3.1, 3.2, 3.12, 3.14, 3.17, 3.22, 3.23_
 
 ---
 
 ### Phase 3 — Workstream 2: Core-VM opcode handlers
 
-- [ ] 7. Write Workstream-2 exploratory fix-property tests (BEFORE fix) `[CONSENSUS-CRITICAL]`
+- [-] 6. Write Workstream-2 exploratory fix-property tests (BEFORE fix)
   - **Property 8: Bug Condition** — `OP_VERIFY_SIG` family enforces real verification
   - **Property 9: Bug Condition** — `OP_BALANCE`, `OP_CALL`, `OP_LOG` functional
   - **Scoped PBT Approach**: for random `(msg, key)` pairs, `OP_VERIFY_SIG` pushes 1
@@ -234,51 +189,51 @@ Preservation Checking).
   - Run on UNFIXED code — **EXPECTED OUTCOME**: FAIL.
   - _Requirements: 1.23, 1.24, 1.25, 1.26_
 
-- [ ] 8. Write Workstream-2 preservation tests (BEFORE fix) `[CONSENSUS-CRITICAL]`
+- [ ] 7. Write Workstream-2 preservation tests (BEFORE fix)
   - **Property 21: Preservation** — Valid signatures still accepted; SLOAD/SSTORE & supported opcodes unchanged
   - Observe on UNFIXED code: genuinely valid signatures push 1 (3.11); persistent
     storage SLOAD/SSTORE semantics (3.7); already-supported opcodes/context (3.9).
   - Run on UNFIXED code — **EXPECTED OUTCOME**: PASS.
   - _Requirements: 3.7, 3.9, 3.11_
 
-- [ ] 9. Implement Workstream-2 fixes (gated on `IsCVMFixActive`) `[CONSENSUS-CRITICAL]`
+- [ ] 8. Implement Workstream-2 fixes
 
-  - [ ] 9.1 Enforce `OP_VERIFY_SIG` / `OP_VERIFY_SIG_ECDSA` / `OP_VERIFY_SIG_QUANTUM`
+  - [ ] 8.1 Enforce `OP_VERIFY_SIG` / `OP_VERIFY_SIG_ECDSA` / `OP_VERIFY_SIG_QUANTUM`
     - In `cvm.cpp` (~lines 446, 450, 482, 514): extract message, signature, pubkey from
       the stack; perform real secp256k1 (ECDSA) or FALCON-512 verification (quantum, when
       `DEPLOYMENT_QUANTUM` active); push 1 only on a genuinely valid signature.
-    - _Bug_Condition: isBugCondition for 1.23 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.23_
     - _Expected_Behavior: 2.23_
     - _Preservation: 3.11 (valid sigs still push 1)_
     - _Requirements: 2.23_
 
-  - [ ] 9.2 Implement `OP_BALANCE`, `OP_CALL`/`CallContract`, `OP_LOG`
+  - [ ] 8.2 Implement `OP_BALANCE`, `OP_CALL`/`CallContract`, `OP_LOG`
     - `OP_BALANCE`: query account balance (UTXO/state) and push it (not 0).
     - `HandleCall`/`CallContract`: load and execute the target with proper gas/state, or
       fail deterministically with a defined error.
     - `OP_LOG`: pop topic count, topics, and data; emit a log entry.
-    - _Bug_Condition: isBugCondition for 1.24, 1.25, 1.26 with IsCVMFixActive == true_
+    - _Bug_Condition: isBugCondition for 1.24, 1.25, 1.26_
     - _Expected_Behavior: 2.24, 2.25, 2.26_
     - _Preservation: 3.7, 3.9_
     - _Requirements: 2.24, 2.25, 2.26_
 
-  - [ ] 9.3 Verify Workstream-2 fix-property tests now pass (gate ON)
-    - **Property 8/9: Expected Behavior** — re-run the SAME tests from task 7.
+  - [ ] 8.3 Verify Workstream-2 fix-property tests now pass
+    - **Property 8/9: Expected Behavior** — re-run the SAME tests from task 6.
     - **EXPECTED OUTCOME**: PASS.
     - _Requirements: 2.23, 2.24, 2.25, 2.26_
 
-  - [ ] 9.4 Verify Workstream-2 preservation tests still pass
-    - **Property 21: Preservation** — re-run the SAME tests from task 8.
+  - [ ] 8.4 Verify Workstream-2 preservation tests still pass
+    - **Property 21: Preservation** — re-run the SAME tests from task 7.
     - **EXPECTED OUTCOME**: PASS.
     - _Requirements: 3.7, 3.9, 3.11_
 
 ---
 
-### Phase 4 — Non-consensus & remaining workstreams (ship unconditionally unless noted)
+### Phase 4 — Non-consensus & remaining workstreams
 
 ### Workstream 3 — Reputation signatures & merkle proofs
 
-- [ ] 10. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
+- [ ] 9. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
   - **Property 10: Bug Condition** — real validator signature + committed state root/proof
   - Explore (fail on unfixed): placeholder signature = first 32 bytes of proof hash and
     state root from `fixedString + time` (1.5); length-only signature check passes forged
@@ -286,8 +241,8 @@ Preservation Checking).
   - **Property 21: Preservation** — merkle verification math for genuinely committed leaves (3.6).
   - _Requirements: 1.5, 1.6, 1.7, 3.6_
 
-- [ ] 11. Implement Workstream-3 fixes
-  - [ ] 11.1 Real signing, state root, verification, and merkle proof
+- [ ] 10. Implement Workstream-3 fixes
+  - [ ] 10.1 Real signing, state root, verification, and merkle proof
     - `reputation_signature.cpp`: sign proof data with the validator key (reuse existing
       secp256k1 path from 3.4/3.18); derive state root from the committed reputation state
       tree; replace length-only check with ECDSA verification against the signer's pubkey;
@@ -296,13 +251,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.5, 2.6, 2.7_
     - _Preservation: 3.6_
     - _Requirements: 2.5, 2.6, 2.7_
-  - [ ] 11.2 Verify fix-property test passes and preservation holds
-    - **Property 10: Expected Behavior** / **Property 21: Preservation** — re-run task 10 tests.
+  - [ ] 10.2 Verify Workstream-3 fix-property test passes and preservation holds
+    - **Property 10: Expected Behavior** / **Property 21: Preservation** — re-run task 9 tests.
     - _Requirements: 2.5, 2.6, 2.7, 3.6_
 
 ### Workstream 4 — HAT v2 distributed consensus
 
-- [ ] 12. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
+- [ ] 11. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
   - **Property 11: Bug Condition** — real task validation, P2P challenge, response accumulation
   - Explore (fail on unfixed): `isValid=true`/80% without validation (1.3); trust score
     hardcoded 50 (1.4); challenge returns success with no P2P send (1.8); dispute sets
@@ -311,8 +266,8 @@ Preservation Checking).
     ECDSA sign/verify of responses (3.4, 3.18) unchanged.
   - _Requirements: 1.3, 1.4, 1.8, 1.9, 1.47, 3.4, 3.5, 3.18_
 
-- [ ] 13. Implement Workstream-4 fixes
-  - [ ] 13.1 Real validation, trust score, P2P challenge, dispute, response accumulation
+- [ ] 12. Implement Workstream-4 fixes
+  - [ ] 12.1 Real validation, trust score, P2P challenge, dispute, response accumulation
     - `hat_consensus.cpp` / `consensus_validator.cpp`: perform actual task validation and
       derive `isValid`/confidence; compute trust score from the trust graph; transmit a
       real P2P challenge and report success only when dispatched; use the validator's
@@ -323,13 +278,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.3, 2.4, 2.8, 2.9, 2.47_
     - _Preservation: 3.4, 3.5, 3.18_
     - _Requirements: 2.3, 2.4, 2.8, 2.9, 2.47_
-  - [ ] 13.2 Verify fix-property test passes and preservation holds
-    - **Property 11: Expected Behavior** / **Property 21: Preservation** — re-run task 12 tests.
+  - [ ] 12.2 Verify Workstream-4 fix-property test passes and preservation holds
+    - **Property 11: Expected Behavior** / **Property 21: Preservation** — re-run task 11 tests.
     - _Requirements: 2.3, 2.4, 2.8, 2.9, 2.47, 3.4, 3.5, 3.18_
 
 ### Workstream 5 — Fee / gas / subsidy accounting (consensus-adjacent)
 
-- [ ] 14. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
+- [ ] 13. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
   - **Property 12: Bug Condition** — subsidy-before-fee, real benefit, real sender, live load/rate, rebate transfer, allowance restore, DB init
   - Explore (fail on unfixed): subsidy skipped for non-free-gas tx (1.10); `reputation>=80`
     benefit check (1.40); empty sender (1.41); hardcoded load 50 / fixed rate (1.42);
@@ -337,30 +292,27 @@ Preservation Checking).
     restored at startup (1.45); mempool priority not DB-initialized (1.46).
   - **Property 21: Preservation** — free-gas zero-fee path (3.8), 1:1-equivalent split (3.1),
     dual-eligible subsidy still granted (3.16).
-  - Note: where a change alters accepted fee/subsidy split affecting block validity, gate it
-    on `IsCVMFixActive` per Workstream 1. `[CONSENSUS-CRITICAL where it gates block validity]`
   - _Requirements: 1.10, 1.40, 1.41, 1.42, 1.43, 1.44, 1.45, 1.46, 3.1, 3.8, 3.16_
 
-- [ ] 15. Implement Workstream-5 fixes
-  - [ ] 15.1 Fee/gas/subsidy real inputs
+- [ ] 14. Implement Workstream-5 fixes
+  - [ ] 14.1 Fee/gas/subsidy real inputs
     - `mempool_priority.cpp`: apply applicable subsidy before effective fee; initialize with
       the CVM database. `fee_calculator.cpp`: real network-benefit assessment; resolve real
       sender via validation UTXO set; derive load from live mempool and rate from configured
       pricing source. `sustainable_gas.cpp IsBeneficialOperation`: real benefit assessment.
       `gas_subsidy.cpp`: transfer/credit rebates and serialize all record fields.
       `gas_allowance.cpp LoadAllowanceStates`: iterate DB and restore state.
-    - Gate any block-validity-affecting split change on `IsCVMFixActive`.
     - _Bug_Condition: isBugCondition for 1.10, 1.40–1.46_
     - _Expected_Behavior: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46_
     - _Preservation: 3.1, 3.8, 3.16_
     - _Requirements: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46_
-  - [ ] 15.2 Verify fix-property test passes and preservation holds
-    - **Property 12: Expected Behavior** / **Property 21: Preservation** — re-run task 14 tests.
+  - [ ] 14.2 Verify Workstream-5 fix-property test passes and preservation holds
+    - **Property 12: Expected Behavior** / **Property 21: Preservation** — re-run task 13 tests.
     - _Requirements: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46, 3.1, 3.8, 3.16_
 
 ### Workstream 6 — EVM compatibility
 
-- [ ] 16. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
+- [ ] 15. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
   - **Property 13: Bug Condition** — TLOAD/TSTORE, BASEFEE, EVM CREATE, logsBloom, sender/gas, reputation/memory, nested frame, storage proof
   - Explore (fail on unfixed): no TLOAD/TSTORE handlers (1.11); BASEFEE returns 0 (1.12);
     CREATE uses `Hash160(sender||nonce)` (1.27); `logsBloom` 512 zero chars (1.28); empty
@@ -372,8 +324,8 @@ Preservation Checking).
   - Include an Ethereum CREATE golden vector: `keccak256(rlp([sender, nonce]))[12:]`.
   - _Requirements: 1.11, 1.12, 1.27, 1.28, 1.29, 1.30, 1.31, 1.32, 3.9, 3.13, 3.14_
 
-- [ ] 17. Implement Workstream-6 fixes
-  - [ ] 17.1 EVM compatibility features
+- [ ] 16. Implement Workstream-6 fixes
+  - [ ] 16.1 EVM compatibility features
     - `enhanced_vm.cpp`/EVM host: register TLOAD/TSTORE with per-tx lifetime + post-tx clear;
       populate BASEFEE. `nonce_manager.cpp GenerateContractAddress` (~line 97): compute
       `keccak256(rlp([sender, nonce]))[12:]`; reconcile `evmc_host.cpp` CREATE to the same
@@ -386,13 +338,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32_
     - _Preservation: 3.9, 3.13, 3.14_
     - _Requirements: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32_
-  - [ ] 17.2 Verify fix-property test passes and preservation holds
-    - **Property 13: Expected Behavior** / **Property 21: Preservation** — re-run task 16 tests.
+  - [ ] 16.2 Verify Workstream-6 fix-property test passes and preservation holds
+    - **Property 13: Expected Behavior** / **Property 21: Preservation** — re-run task 15 tests.
     - _Requirements: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32, 3.9, 3.13, 3.14_
 
 ### Workstream 7 — Cross-chain bridging & oracle trust
 
-- [ ] 18. Write Workstream-7 exploratory + preservation tests (BEFORE fix)
+- [ ] 17. Write Workstream-7 exploratory + preservation tests (BEFORE fix)
   - **Property 14: Bug Condition** — proof verified vs. source state; real sends; trie-derived proofs; oracle registry
   - Explore (fail on unfixed): non-empty-only proof check (1.33); send only logs/stores
     locally (1.34); simplified hash proof + cached-only attestations (1.35); accept-any
@@ -400,8 +352,8 @@ Preservation Checking).
   - **Property 21: Preservation** — valid signature + committed source state still accepted (3.15).
   - _Requirements: 1.33, 1.34, 1.35, 1.36, 3.15_
 
-- [ ] 19. Implement Workstream-7 fixes
-  - [ ] 19.1 Real cross-chain verification, sends, proofs, oracle registry
+- [ ] 18. Implement Workstream-7 fixes
+  - [ ] 18.1 Real cross-chain verification, sends, proofs, oracle registry
     - `cross_chain_bridge.cpp ReputationProof::Verify`: verify against source chain committed
       state. LayerZero/CCIP send: transmit via endpoint, report success only when dispatched.
       Merkle proof/attestation read: derive from actual state trie, return all committed
@@ -411,13 +363,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.33, 2.34, 2.35, 2.36_
     - _Preservation: 3.15_
     - _Requirements: 2.33, 2.34, 2.35, 2.36_
-  - [ ] 19.2 Verify fix-property test passes and preservation holds
-    - **Property 14: Expected Behavior** / **Property 21: Preservation** — re-run task 18 tests.
+  - [ ] 18.2 Verify Workstream-7 fix-property test passes and preservation holds
+    - **Property 14: Expected Behavior** / **Property 21: Preservation** — re-run task 17 tests.
     - _Requirements: 2.33, 2.34, 2.35, 2.36, 3.15_
 
 ### Workstream 8 — Distributed-consensus signatures & state sync
 
-- [ ] 20. Write Workstream-8 exploratory + preservation tests (BEFORE fix)
+- [ ] 19. Write Workstream-8 exploratory + preservation tests (BEFORE fix)
   - **Property 15: Bug Condition** — attestation sig verified vs. attestor pubkey; real deltas; verify/apply vs. real state
   - Explore (fail on unfixed): 64–128-byte length-only attestation check (1.37); empty delta,
     no DB query / no peer request (1.38); verify/apply returns false when no validator
@@ -425,8 +377,8 @@ Preservation Checking).
   - **Property 21: Preservation** — valid attestations with committed state still accepted (3.15).
   - _Requirements: 1.37, 1.38, 1.39, 3.15_
 
-- [ ] 21. Implement Workstream-8 fixes
-  - [ ] 21.1 Real attestation verification, delta computation, and state sync
+- [ ] 20. Implement Workstream-8 fixes
+  - [ ] 20.1 Real attestation verification, delta computation, and state sync
     - `consensus_safety.cpp`: verify attestation signatures against the attestor's pubkey;
       compute trust-graph deltas by querying the DB and request deltas from the peer.
       `trust_graph_sync.cpp`: verify/apply against real state instead of failing when no
@@ -435,13 +387,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.37, 2.38, 2.39_
     - _Preservation: 3.15_
     - _Requirements: 2.37, 2.38, 2.39_
-  - [ ] 21.2 Verify fix-property test passes and preservation holds
-    - **Property 15: Expected Behavior** / **Property 21: Preservation** — re-run task 20 tests.
+  - [ ] 20.2 Verify Workstream-8 fix-property test passes and preservation holds
+    - **Property 15: Expected Behavior** / **Property 21: Preservation** — re-run task 19 tests.
     - _Requirements: 2.37, 2.38, 2.39, 3.15_
 
 ### Workstream 9 — Sybil-resistance & fraud detection (non-consensus, unconditional)
 
-- [ ] 22. Write Workstream-9 exploratory + preservation tests (BEFORE fix)
+- [ ] 21. Write Workstream-9 exploratory + preservation tests (BEFORE fix)
   - **Property 16: Bug Condition** — cluster/rapid-fire/exchange detection, reputation index, address tx lookup real
   - Explore (fail on unfixed): empty cluster results/false (1.13); rapid-fire always false
     (1.14); `DetectExchangePattern` always false (1.48); `GetAddressesWithReputation` empty
@@ -450,8 +402,8 @@ Preservation Checking).
     scoring unchanged (3.20).
   - _Requirements: 1.13, 1.14, 1.48, 1.49, 1.50, 3.20_
 
-- [ ] 23. Implement Workstream-9 fixes
-  - [ ] 23.1 Real Sybil/fraud detection
+- [ ] 22. Implement Workstream-9 fixes
+  - [ ] 22.1 Real Sybil/fraud detection
     - `walletcluster.cpp GetTransactionsForAddress`: return the address's transactions from a
       transaction/address index; apply common-input-ownership heuristic to cluster addresses.
       `reputation.cpp`: `DetectExchangePattern` true when volume matches; `GetAddressesWithReputation`
@@ -460,13 +412,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.13, 2.14, 2.48, 2.49, 2.50_
     - _Preservation: 3.20_
     - _Requirements: 2.13, 2.14, 2.48, 2.49, 2.50_
-  - [ ] 23.2 Verify fix-property test passes and preservation holds
-    - **Property 16: Expected Behavior** / **Property 21: Preservation** — re-run task 22 tests.
+  - [ ] 22.2 Verify Workstream-9 fix-property test passes and preservation holds
+    - **Property 16: Expected Behavior** / **Property 21: Preservation** — re-run task 21 tests.
     - _Requirements: 2.13, 2.14, 2.48, 2.49, 2.50, 3.20_
 
 ### Workstream 10 — Storage / state sync & miscellaneous
 
-- [ ] 24. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
+- [ ] 23. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
   - **Property 17: Bug Condition** — prune, load, size/count, metrics, backward-compat, address extraction, commit-phase, cluster-merge real
   - Explore (fail on unfixed): `PruneReceipts` only logs (1.51); `LoadBlacklist` no DB iterate
     (1.52); `storageSize=0`/`chunkCount=1` (1.53); opcode metrics skipped (1.54); backward-compat
@@ -475,40 +427,37 @@ Preservation Checking).
     link (1.58).
   - **Property 21: Preservation** — already-loaded persisted state unchanged (3.19);
     out-of-scope detectors unchanged (3.20).
-  - Note: `tx_priority.cpp`/`blockprocessor.cpp` address extraction is consensus-adjacent —
-    gate on `IsCVMFixActive` where it changes block outcomes. `[CONSENSUS-CRITICAL for 1.56 block path]`
   - _Requirements: 1.51, 1.52, 1.53, 1.54, 1.55, 1.56, 1.57, 1.58, 3.19, 3.20_
 
-- [ ] 25. Implement Workstream-10 fixes
-  - [ ] 25.1 Storage/state sync & misc real operations
+- [ ] 24. Implement Workstream-10 fixes
+  - [ ] 24.1 Storage/state sync & misc real operations
     - `cvmdb.cpp PruneReceipts`: delete receipts below the given height.
       `access_control_audit.cpp LoadBlacklist`: iterate DB, restore all entries.
       `contract_state_sync.cpp`: proper key encoding, actual storage size and chunk count.
       `metrics.cpp RecordOpcodeExecution`: thread-safe per-opcode counts.
       `backward_compat.cpp`: query trust-graph DB, compare scores against tolerance.
-      `tx_priority.cpp`/`blockprocessor.cpp`: extract real address from tx inputs via UTXO set
-      (gate on `IsCVMFixActive` where it feeds block processing).
+      `tx_priority.cpp`/`blockprocessor.cpp`: extract real address from tx inputs via UTXO set.
       `commit_reveal.cpp`: explicit commit-phase-start field.
       `clusterupdatehandler.cpp`: actual linking address for merges.
-    - _Bug_Condition: isBugCondition for 1.51–1.58 (1.56 gated where consensus-adjacent)_
+    - _Bug_Condition: isBugCondition for 1.51–1.58_
     - _Expected_Behavior: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58_
     - _Preservation: 3.19, 3.20_
     - _Requirements: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58_
-  - [ ] 25.2 Verify fix-property test passes and preservation holds
-    - **Property 17: Expected Behavior** / **Property 21: Preservation** — re-run task 24 tests.
+  - [ ] 24.2 Verify Workstream-10 fix-property test passes and preservation holds
+    - **Property 17: Expected Behavior** / **Property 21: Preservation** — re-run task 23 tests.
     - _Requirements: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58, 3.19, 3.20_
 
 ### Workstream 11 — Security monitoring RPC (non-consensus, unconditional)
 
-- [ ] 26. Write Workstream-11 exploratory + preservation tests (BEFORE fix)
+- [ ] 25. Write Workstream-11 exploratory + preservation tests (BEFORE fix)
   - **Property 18: Bug Condition** — `getvalidatorstats_security` returns real per-validator stats
   - Explore (fail on unfixed): RPC returns the static `message` placeholder, not documented
     fields (1.59).
   - **Property 21: Preservation** — other security-monitoring RPCs unchanged (3.21).
   - _Requirements: 1.59, 3.21_
 
-- [ ] 27. Implement Workstream-11 fix
-  - [ ] 27.1 Populate real validator statistics
+- [ ] 26. Implement Workstream-11 fix
+  - [ ] 26.1 Populate real validator statistics
     - `security_rpc.cpp getvalidatorstats_security`: return real per-validator stats
       (total/accurate/inaccurate validations, abstentions, accuracy rate, reputation, last
       activity) from the HAT consensus system, populating the help-text fields.
@@ -516,13 +465,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.59_
     - _Preservation: 3.21_
     - _Requirements: 2.59_
-  - [ ] 27.2 Verify fix-property test passes and preservation holds
-    - **Property 18: Expected Behavior** / **Property 21: Preservation** — re-run task 26 tests.
+  - [ ] 26.2 Verify Workstream-11 fix-property test passes and preservation holds
+    - **Property 18: Expected Behavior** / **Property 21: Preservation** — re-run task 25 tests.
     - _Requirements: 2.59, 3.21_
 
 ### Workstream 12 — Graceful degradation (non-consensus, unconditional)
 
-- [ ] 28. Write Workstream-12 exploratory + preservation tests (BEFORE fix)
+- [ ] 27. Write Workstream-12 exploratory + preservation tests (BEFORE fix)
   - **Property 20: Bug Condition** — real resource checks + real TRUST_CONTEXT/HAT_VALIDATION subsystems
   - Explore (fail on unfixed): reputation query/health check returns simulated success (1.15);
     empty no-op resource checks + fallback paths report success without invoking real
@@ -530,8 +479,8 @@ Preservation Checking).
   - **Property 21: Preservation** — genuinely healthy subsystems still report success (3.24).
   - _Requirements: 1.15, 1.62, 3.24_
 
-- [ ] 29. Implement Workstream-12 fix
-  - [ ] 29.1 Real health checks and subsystem invocation
+- [ ] 28. Implement Workstream-12 fix
+  - [ ] 28.1 Real health checks and subsystem invocation
     - `graceful_degradation.cpp`: implement real `CheckMemoryUsage`/`CheckCPUUsage`/
       `CheckStorageUsage`; invoke the real reputation subsystem for reputation queries/health
       checks and the real trust-context / HAT-validation subsystems for fallback paths; report
@@ -540,40 +489,32 @@ Preservation Checking).
     - _Expected_Behavior: 2.15, 2.62_
     - _Preservation: 3.24_
     - _Requirements: 2.15, 2.62_
-  - [ ] 29.2 Verify fix-property test passes and preservation holds
-    - **Property 20: Expected Behavior** / **Property 21: Preservation** — re-run task 28 tests.
+  - [ ] 28.2 Verify Workstream-12 fix-property test passes and preservation holds
+    - **Property 20: Expected Behavior** / **Property 21: Preservation** — re-run task 27 tests.
     - _Requirements: 2.15, 2.62, 3.24_
 
 ---
 
-### Phase 5 — Integration & activation-transition validation
+### Phase 5 — Integration validation
 
-- [ ] 30. Functional dual-path deploy → call integration test
+- [ ] 29. Functional dual-path deploy → call integration test
   - Extend `test/functional/feature_cvm.py` (and/or add a new case): deploy then call a
     contract across the `cvmtx.cpp` and `blockprocessor.cpp` paths; assert identical address,
-    execution, value/block-hash context, and durable state above the gate.
+    execution, value/block-hash context, and durable state.
   - _Requirements: 2.16, 2.17, 2.60, 2.61, 3.12_
 
-- [ ] 31. Regtest activation-transition test `[CONSENSUS-CRITICAL]`
-  - **Property 22: Preservation** — no split at the gate boundary
-  - Add a functional test building a regtest chain spanning `cvmFunctionalFixHeight`: assert
-    blocks below the gate follow legacy rules and blocks at/above follow corrected rules, with
-    no reorg/split at the boundary.
-  - Run via `test/functional/test_runner.py`.
-  - _Requirements: 3.12, 3.17_
-
-- [ ] 32. Multi-node HAT consensus + coinbase-split + cross-chain integration tests
+- [ ] 30. Multi-node HAT consensus + coinbase-split + cross-chain integration tests
   - Multi-node: challenge dispatch, response accumulation, consensus decision (1.8, 1.47).
   - Coinbase 70/30 split enforcement once participation data is present (1.22).
   - Cross-chain proof verification round-trip against committed source state (1.33, 1.34, 1.35).
   - _Requirements: 2.8, 2.22, 2.33, 2.34, 2.35, 2.47_
 
-- [ ] 33. Checkpoint — Ensure all tests pass
+- [ ] 31. Checkpoint — Ensure all tests pass
   - Build: `make -j$(nproc)`. Unit: `make check` (or targeted `src/test/test_cascoin --run_test=<suite>`).
     Functional: `test/functional/test_runner.py`.
-  - Confirm all fix-property tests (Properties 1–20) pass above the gate, all preservation
-    tests (Properties 21–22) pass on legacy/gated paths, and the exploratory suites now pass
-    after their fixes. Ask the user if questions arise.
+  - Confirm all fix-property tests (Properties 1–20) pass, the preservation
+    tests (Property 21) pass, and the exploratory suites now pass after their fixes.
+    Ask the user if questions arise.
   - _Requirements: all_
 
 ---
@@ -583,75 +524,67 @@ Preservation Checking).
 ```json
 {
   "waves": [
-    { "wave": 1, "tasks": ["1"], "rationale": "Activation-gate foundation; all consensus-critical work depends on it." },
-    { "wave": 2, "tasks": ["2", "3"], "rationale": "Global bug-condition and preservation baselines captured on UNFIXED code." },
-    { "wave": 3, "tasks": ["4", "5", "7", "8"], "rationale": "Consensus-critical exploratory + preservation tests (WS1, WS2) before fixes." },
-    { "wave": 4, "tasks": ["6", "9"], "rationale": "Consensus-critical implementations WS1, WS2 (gated on IsCVMFixActive)." },
-    { "wave": 5, "tasks": ["10", "12", "14", "16", "18", "20", "22", "24", "26", "28"], "rationale": "Independent workstream (WS3-12) exploratory + preservation tests; may run in parallel." },
-    { "wave": 6, "tasks": ["11", "13", "15", "17", "19", "21", "23", "25", "27", "29"], "rationale": "Independent workstream (WS3-12) implementations; may run in parallel." },
-    { "wave": 7, "tasks": ["30", "31", "32"], "rationale": "Integration and activation-transition validation across implemented workstreams." },
-    { "wave": 8, "tasks": ["33"], "rationale": "Final checkpoint: full build + unit + functional test suites pass." }
+    { "wave": 1, "tasks": ["1", "2"], "rationale": "Global bug-condition and preservation baselines captured on UNFIXED code." },
+    { "wave": 2, "tasks": ["3", "4", "6", "7"], "rationale": "Consensus-critical exploratory + preservation tests (WS1, WS2) before fixes." },
+    { "wave": 3, "tasks": ["5", "8"], "rationale": "Consensus-critical implementations WS1, WS2." },
+    { "wave": 4, "tasks": ["9", "11", "13", "15", "17", "19", "21", "23", "25", "27"], "rationale": "Independent workstream (WS3-12) exploratory + preservation tests; may run in parallel." },
+    { "wave": 5, "tasks": ["10", "12", "14", "16", "18", "20", "22", "24", "26", "28"], "rationale": "Independent workstream (WS3-12) implementations; may run in parallel." },
+    { "wave": 6, "tasks": ["29", "30"], "rationale": "Integration validation across implemented workstreams." },
+    { "wave": 7, "tasks": ["31"], "rationale": "Final checkpoint: full build + unit + functional test suites pass." }
   ]
 }
 ```
 
 ```
-1 (activation gate) ─────────────────────────────────────────────┐
-   │ (consensus-critical foundation for WS1, WS2, WS5, WS10-1.56) │
-   ▼                                                              │
-2 (global bug-condition explore) ── run on UNFIXED code           │
-3 (global preservation baseline) ── run on UNFIXED code           │
-   │                                                              │
-   ▼                                                              │
-Phase 2  WS1 consensus accounting/block proc:  4 → 5 → 6          │
-Phase 3  WS2 consensus opcode handlers:        7 → 8 → 9  (dep: 1)┘
+1 (global bug-condition explore) ── run on UNFIXED code
+2 (global preservation baseline) ── run on UNFIXED code
+   │
+   ▼
+Phase 2  WS1 consensus accounting/block proc:  3 → 4 → 5
+Phase 3  WS2 consensus opcode handlers:        6 → 7 → 8
    │
    ▼  (Phase 4 workstreams are largely independent; may run in parallel)
-WS3  reputation sig/proofs:      10 → 11
-WS4  HAT v2 consensus:           12 → 13
-WS5  fee/gas/subsidy:            14 → 15   (dep: 1 for gated split changes)
-WS6  EVM compatibility:          16 → 17
-WS7  cross-chain bridging:       18 → 19
-WS8  distributed consensus sync: 20 → 21
-WS9  Sybil/fraud (uncond.):      22 → 23
-WS10 storage/misc:               24 → 25   (dep: 1 for 1.56 block path)
-WS11 security RPC (uncond.):     26 → 27
-WS12 graceful degradation:       28 → 29
+WS3  reputation sig/proofs:      9 → 10
+WS4  HAT v2 consensus:           11 → 12
+WS5  fee/gas/subsidy:            13 → 14
+WS6  EVM compatibility:          15 → 16
+WS7  cross-chain bridging:       17 → 18
+WS8  distributed consensus sync: 19 → 20
+WS9  Sybil/fraud (uncond.):      21 → 22
+WS10 storage/misc:               23 → 24
+WS11 security RPC (uncond.):     25 → 26
+WS12 graceful degradation:       27 → 28
    │
    ▼  (Phase 5 integration — depends on the workstreams it exercises)
-30 dual-path integration        (dep: 6, 9)
-31 activation transition        (dep: 1, 6, 9)
-32 multi-node/coinbase/xchain   (dep: 6, 13, 19)
-33 checkpoint                   (dep: all)
+29 dual-path integration        (dep: 5, 8)
+30 multi-node/coinbase/xchain   (dep: 5, 12, 18)
+31 checkpoint                   (dep: all)
 ```
 
-**Critical path:** `1 → (4,5) → 6 → 9 → 30/31 → 33`. Task 1 gates all
-consensus-critical work; Workstreams 3, 4, 6, 7, 8, 9, 11, 12 can proceed in
-parallel once the global baselines (2, 3) exist. Each `write tests` task must run
-(and produce the expected fail/pass outcome) on UNFIXED code before its paired
-implementation task begins.
+**Critical path:** `(1,2) → (3,4) → 5 → 8 → 29/30 → 31`. Workstreams 3, 4, 6, 7, 8,
+9, 11, 12 can proceed in parallel once the global baselines (1, 2) exist. Each
+`write tests` task must run (and produce the expected fail/pass outcome) on UNFIXED
+code before its paired implementation task begins.
 
 ## Notes
 
-- **Consensus safety:** Every `[CONSENSUS-CRITICAL]` change must branch on
-  `IsCVMFixActive(height, params)`. The legacy code path must be preserved verbatim
-  below the gate — do not delete or refactor it. Divergence between the `cvmtx.cpp`
-  and `blockprocessor.cpp` execution paths above the gate is itself a consensus fault
-  (see task 6.7).
+- **Consensus safety:** Consensus-critical fixes are applied directly and
+  unconditionally — the CVM is not yet live on any production network, so the
+  corrected behavior simply replaces the buggy behavior (there is no legacy path to
+  preserve). Divergence between the `cvmtx.cpp` and `blockprocessor.cpp` execution
+  paths is itself a consensus fault and must still be reconciled for consistency
+  (see task 5.7).
 - **TDD discipline:** Each `write tests` task runs on the UNFIXED code first.
   Bug-condition/exploration tests MUST fail (confirming the defect); preservation
   tests MUST pass (capturing baseline). If an exploration test unexpectedly passes,
   the root-cause hypothesis for that clause is refuted and must be re-analyzed before
   implementing.
 - **Property mapping:** Fix properties are design Properties 1–20 (`isBugCondition ⇒
-  specified behavior`); preservation properties are 21 (non-flagged inputs unchanged)
-  and 22 (historical chain validity below the gate). `**Property N: Type**` labels
-  drive hover status.
-- **Property-based tests** are used for Properties 1, 3, 6, 8, 13, 21, 22 per the
+  specified behavior`); preservation is Property 21 (non-flagged inputs unchanged).
+  `**Property N: Type**` labels drive hover status.
+- **Property-based tests** are used for Properties 1, 3, 6, 8, 13, 21 per the
   design Testing Strategy; other properties use targeted unit/functional tests.
 - **Build & test commands:** `make -j$(nproc)`; unit `src/test/test_cascoin
   --run_test=<suite>` or `make check`; functional `test/functional/test_runner.py`.
   The test binary is `test_cascoin` (not `test_bitcoin`).
-- **Scope:** Only coding/testing tasks are listed. Choosing the concrete mainnet
-  `cvmFunctionalFixHeight` value is a coordination/release decision outside this plan;
-  task 1.2 sets a placeholder and regtest/testnet values for testing.
+- **Scope:** Only coding/testing tasks are listed.

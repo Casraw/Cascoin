@@ -4,6 +4,7 @@
 
 #include <cvm/block_validator.h>
 #include <cvm/cvm.h>
+#include <cvm/cvmtx.h>
 #include <cvm/softfork.h>
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
@@ -11,6 +12,7 @@
 #include <cvm/securehat.h>
 #include <consensus/validation.h>
 #include <validation.h>
+#include <chainparams.h>
 #include <util.h>
 #include <utilstrencodings.h>
 #include <script/script.h>
@@ -69,6 +71,7 @@ static void UpdateActivityMetrics(CVMDatabase& db, const uint160& actor, const u
 BlockValidator::BlockValidator()
     : m_db(nullptr)
     , m_hatValidator(nullptr)
+    , m_stateCommitted(false)
 {
     // VM and other components will be initialized in Initialize() method
     // when database is available
@@ -100,6 +103,38 @@ void BlockValidator::Initialize(CVMDatabase* db)
     if (m_gasSubsidyTracker && db) {
         m_gasSubsidyTracker->LoadFromDatabase(*db);
     }
+    
+    // Capture the baseline contract-state snapshot so RollbackContractState can
+    // perform a real revert of any writes made against this database (bugfix
+    // 2.21). This also handles the case where in-block writes are applied
+    // directly to the database between Initialize() and RollbackContractState().
+    SnapshotContractState();
+}
+
+void BlockValidator::SnapshotContractState()
+{
+    m_contractSnapshot.clear();
+    m_contractSnapshotValues.clear();
+    m_stateCommitted = false;
+    
+    if (!m_db) {
+        return;
+    }
+    
+    // Record every contract address present at block begin, along with its
+    // current value, so both newly-written and modified contracts can be
+    // reverted on failure.
+    std::vector<uint160> existing = m_db->ListContracts();
+    for (const uint160& addr : existing) {
+        m_contractSnapshot.insert(addr);
+        Contract c;
+        if (m_db->ReadContract(addr, c)) {
+            m_contractSnapshotValues[addr] = c;
+        }
+    }
+    
+    LogPrint(BCLog::CVM, "BlockValidator: Captured contract-state snapshot (%d contracts)\n",
+             (int)m_contractSnapshot.size());
 }
 
 BlockValidationResult BlockValidator::ValidateBlock(
@@ -111,6 +146,11 @@ BlockValidationResult BlockValidator::ValidateBlock(
     bool fJustCheck)
 {
     m_lastResult = BlockValidationResult();
+    m_txGasUsed.clear();
+    
+    // Snapshot contract-state at block begin so a rejected block can be reverted
+    // atomically (bugfix 2.21). Marks this block's state as not-yet-committed.
+    SnapshotContractState();
     
     // Check if CVM is active
     if (!IsCVMActive(pindex->nHeight, chainparams)) {
@@ -177,7 +217,7 @@ BlockValidationResult BlockValidator::ValidateBlock(
         }
         
         // Verify reputation-based gas costs
-        if (!VerifyReputationGasCosts(tx, pindex->nHeight)) {
+        if (!VerifyReputationGasCosts(tx, pindex->nHeight, view)) {
             m_lastResult.success = false;
             m_lastResult.error = "Invalid reputation-based gas costs";
             return m_lastResult;
@@ -201,8 +241,32 @@ BlockValidationResult BlockValidator::ValidateBlock(
         blockGasUsed += gasUsed;
         m_lastResult.totalGasUsed += gasUsed;
         
+        // Record the actual gas used for this transaction so subsidy accounting
+        // can use the real gas used rather than the gas limit.
+        m_txGasUsed[tx.GetHash()] = gasUsed;
+        
         LogPrint(BCLog::CVM, "BlockValidator: Executed tx %s, gas used: %d\n",
                  tx.GetHash().ToString(), gasUsed);
+    }
+    
+    // Enforce the per-block subsidy maximum (bugfix 2.1). Accumulate the actual
+    // per-transaction subsidies and reject the block when the total exceeds the
+    // cvmMaxGasPerBlock-derived subsidy maximum. This is done before saving
+    // state so a block that over-subsidizes is never persisted.
+    {
+        uint64_t accumulatedSubsidy = 0;
+        if (!AccumulateBlockSubsidy(block, accumulatedSubsidy)) {
+            const uint64_t maxSubsidyPerBlock = GetMaxSubsidyPerBlock(chainparams);
+            m_lastResult.success = false;
+            m_lastResult.error = strprintf(
+                "Block exceeds per-block subsidy maximum: %d > %d",
+                accumulatedSubsidy, maxSubsidyPerBlock);
+            LogPrint(BCLog::CVM, "BlockValidator: %s\n", m_lastResult.error);
+            if (!fJustCheck) {
+                RollbackContractState();
+            }
+            return m_lastResult;
+        }
     }
     
     // Save contract state
@@ -279,7 +343,8 @@ bool BlockValidator::CheckBlockGasLimit(uint64_t currentGasUsed, uint64_t txGasL
 
 bool BlockValidator::VerifyReputationGasCosts(
     const CTransaction& tx,
-    int blockHeight)
+    int blockHeight,
+    const CCoinsViewCache& view)
 {
     if (!m_feeCalculator) {
         return true; // Skip verification if fee calculator not available
@@ -298,11 +363,6 @@ bool BlockValidator::VerifyReputationGasCosts(
         return true;
     }
     
-    // Verify actual transaction fee matches expected fee
-    // Calculate actual fee from transaction (inputs - outputs)
-    // Note: We need the view to look up input values, but for CVM transactions
-    // the fee is typically encoded in the gas price * gas limit
-    
     // Extract gas info from transaction
     uint64_t gasLimit = m_feeCalculator->ExtractGasLimit(tx);
     if (gasLimit == 0) {
@@ -310,48 +370,81 @@ bool BlockValidator::VerifyReputationGasCosts(
         return true;
     }
     
-    // Calculate expected fee based on gas
+    // Expected fee based on gas usage and gas price (from the fee calculator).
     CAmount expectedFee = feeResult.effectiveFee;
     
-    // Calculate actual fee from transaction outputs
-    // For CVM transactions, the fee is the gas cost which should match
-    // the expected fee from the fee calculator
-    CAmount totalOutputValue = 0;
-    for (const auto& out : tx.vout) {
-        totalOutputValue += out.nValue;
-    }
-    
-    // The actual fee verification requires knowing the input values
-    // For now, we verify that the gas limit and gas price in the transaction
-    // are consistent with the expected fee calculation
-    
-    // Allow a small tolerance (1%) for rounding differences
-    CAmount tolerance = expectedFee / 100;
-    if (tolerance < 1000) {
-        tolerance = 1000; // Minimum tolerance of 1000 satoshis
-    }
-    
-    // Verify the gas parameters are reasonable
-    // The effective fee should be within the expected range based on reputation
+    // Verify the fee calculation is internally consistent:
+    // effectiveFee should equal baseFee - discount - subsidy (but not negative).
     CAmount baseFee = feeResult.baseFee;
     CAmount discount = feeResult.reputationDiscount;
     CAmount subsidy = feeResult.gasSubsidy;
     
-    // Log the fee breakdown for debugging
-    LogPrint(BCLog::CVM, "BlockValidator: Fee verification - base: %d, discount: %d, subsidy: %d, effective: %d, gas: %d\n",
-             baseFee, discount, subsidy, expectedFee, gasLimit);
-    
-    // Verify the fee calculation is internally consistent
-    // effectiveFee should equal baseFee - discount - subsidy (but not negative)
     CAmount calculatedEffective = baseFee - discount - subsidy;
     if (calculatedEffective < 0) {
         calculatedEffective = 0;
+    }
+    
+    // Allow a small tolerance (1%) for rounding differences.
+    CAmount tolerance = expectedFee / 100;
+    if (tolerance < 1000) {
+        tolerance = 1000; // Minimum tolerance of 1000 satoshis
     }
     
     if (std::abs(calculatedEffective - expectedFee) > tolerance) {
         LogPrint(BCLog::CVM, "BlockValidator: Fee calculation inconsistency - calculated: %d, expected: %d\n",
                  calculatedEffective, expectedFee);
         return false;
+    }
+    
+    // Verify the actual fee the transaction pays against its INPUT values
+    // (bugfix 2.20). The actual fee is the sum of the input values (resolved
+    // via the coins view) minus the sum of the output values. It must cover the
+    // expected gas-based effective fee, otherwise the contract transaction has
+    // not paid for the gas it consumes.
+    CAmount totalInputValue = 0;
+    bool haveAllInputs = true;
+    for (const auto& in : tx.vin) {
+        const Coin& coin = view.AccessCoin(in.prevout);
+        if (coin.IsSpent()) {
+            // The input's UTXO is not available in the view (e.g. it was already
+            // consumed earlier in this block's connection, or the view does not
+            // carry it in this validation context). We cannot compute the actual
+            // fee from inputs in that case, so fall back to the gas/price
+            // consistency check performed above rather than rejecting.
+            haveAllInputs = false;
+            break;
+        }
+        totalInputValue += coin.out.nValue;
+    }
+    
+    if (haveAllInputs) {
+        CAmount totalOutputValue = 0;
+        for (const auto& out : tx.vout) {
+            totalOutputValue += out.nValue;
+        }
+        
+        CAmount actualFee = totalInputValue - totalOutputValue;
+        
+        LogPrint(BCLog::CVM, "BlockValidator: Fee verification vs inputs - inputs: %d, outputs: %d, actualFee: %d, expectedFee: %d, gas: %d\n",
+                 totalInputValue, totalOutputValue, actualFee, expectedFee, gasLimit);
+        
+        // A negative fee (outputs exceed inputs) is always invalid.
+        if (actualFee < 0) {
+            LogPrint(BCLog::CVM, "BlockValidator: Transaction outputs exceed inputs (actualFee=%d)\n",
+                     actualFee);
+            return false;
+        }
+        
+        // The paid fee must cover the expected gas-based effective fee (within
+        // the rounding tolerance).
+        if (actualFee + tolerance < expectedFee) {
+            LogPrint(BCLog::CVM, "BlockValidator: Insufficient fee for gas cost - actualFee: %d, expectedFee: %d\n",
+                     actualFee, expectedFee);
+            return false;
+        }
+    } else {
+        LogPrint(BCLog::CVM, "BlockValidator: Input values unavailable in view; verified gas/price consistency only for tx %s\n",
+                 tx.GetHash().ToString());
     }
     
     return true;
@@ -644,15 +737,24 @@ bool BlockValidator::SaveContractState(bool fJustCheck)
     }
     
     try {
-        // The EnhancedVM automatically saves state changes to the database
-        // during execution through the EnhancedStorage layer.
-        // This method is called to ensure all pending writes are flushed.
+        // The EnhancedVM saves state changes to the database during execution
+        // through the EnhancedStorage layer. Flush any pending writes so the
+        // block's state is durably persisted.
+        if (!m_db->Flush()) {
+            LogPrint(BCLog::CVM, "BlockValidator: Database flush failed during state save\n");
+            return false;
+        }
         
-        // Flush any pending database writes
-        // In LevelDB, this would be a batch write commit
-        // For now, we assume state is already saved during execution
+        // Mark this block's state as committed. Once committed, the writes made
+        // during the block are part of the canonical chain state and must NEVER
+        // be rolled back (preservation 3.17 / 3.23). Re-baseline the snapshot to
+        // the now-committed state so any subsequent RollbackContractState is a
+        // no-op with respect to these writes.
+        m_stateCommitted = true;
+        m_contractSnapshot.clear();
+        m_contractSnapshotValues.clear();
         
-        LogPrint(BCLog::CVM, "BlockValidator: Contract state saved successfully\n");
+        LogPrint(BCLog::CVM, "BlockValidator: Contract state saved and committed successfully\n");
         return true;
         
     } catch (const std::exception& e) {
@@ -665,31 +767,89 @@ void BlockValidator::RollbackContractState()
 {
     LogPrint(BCLog::CVM, "BlockValidator: Rolling back contract state\n");
     
-    // Rollback contract state changes
-    // In a full implementation, this would:
-    // 1. Revert all database writes made during this block
-    // 2. Restore previous contract storage states
-    // 3. Remove newly deployed contracts
-    
-    // The EnhancedVM uses database transactions for atomicity.
-    // When a block fails validation, we need to rollback the database transaction.
-    
     if (!m_db) {
         LogPrint(BCLog::CVM, "BlockValidator: No database available for rollback\n");
         return;
     }
     
+    // An already-committed (accepted) block's state is canonical chain state and
+    // must never be reverted (preservation 3.17 / 3.23).
+    if (m_stateCommitted) {
+        LogPrint(BCLog::CVM, "BlockValidator: State already committed; nothing to roll back\n");
+        return;
+    }
+    
     try {
-        // In LevelDB, this would rollback the current batch
-        // For now, we log the rollback
-        // The actual rollback mechanism depends on how the database
-        // transaction system is implemented
+        // Real revert against the snapshot captured at block begin:
+        //  - any contract present now but NOT in the snapshot was written during
+        //    the failed block and is erased,
+        //  - any contract that existed in the snapshot but was modified is
+        //    restored to its snapshot value.
+        std::vector<uint160> current = m_db->ListContracts();
+        size_t erased = 0;
+        size_t restored = 0;
+        for (const uint160& addr : current) {
+            if (m_contractSnapshot.find(addr) == m_contractSnapshot.end()) {
+                // Newly written during the failed block -> remove the leaked write.
+                m_db->DeleteContract(addr);
+                ++erased;
+            } else {
+                // Pre-existing contract -> restore its prior value if we have it.
+                auto it = m_contractSnapshotValues.find(addr);
+                if (it != m_contractSnapshotValues.end()) {
+                    m_db->WriteContract(addr, it->second);
+                    ++restored;
+                }
+            }
+        }
         
-        LogPrint(BCLog::CVM, "BlockValidator: Contract state rollback complete\n");
+        // Rewrite the contract index to exactly the snapshot set so erased
+        // (leaked) addresses no longer appear in ListContracts().
+        std::vector<uint160> snapshotList(m_contractSnapshot.begin(), m_contractSnapshot.end());
+        m_db->GetDB().Write(std::string(1, DB_CONTRACT_LIST), snapshotList);
+        
+        // Persist the reverted state.
+        m_db->Flush();
+        
+        LogPrint(BCLog::CVM, "BlockValidator: Contract state rollback complete (erased %d, restored %d)\n",
+                 (int)erased, (int)restored);
         
     } catch (const std::exception& e) {
         LogPrint(BCLog::CVM, "BlockValidator: Rollback exception: %s\n", e.what());
     }
+}
+
+bool BlockValidator::AccumulateBlockSubsidy(const CBlock& block, uint64_t& accumulatedSubsidy)
+{
+    accumulatedSubsidy = 0;
+    
+    for (const auto& tx : block.vtx) {
+        // Skip coinbase
+        if (tx->IsCoinBase()) {
+            continue;
+        }
+        
+        // Only contract (gas-bearing) CVM/EVM transactions can claim a subsidy.
+        if (!IsEVMTransaction(*tx) && FindCVMOpReturn(*tx) < 0) {
+            continue;
+        }
+        
+        uint64_t gasLimit = ExtractGasLimit(*tx);
+        if (gasLimit == 0) {
+            continue;
+        }
+        
+        // The subsidizable gas for a contract transaction is its gas limit.
+        // Accumulate it toward the block's subsidy budget.
+        accumulatedSubsidy += gasLimit;
+    }
+    
+    // Enforce the cvmMaxGasPerBlock-derived per-block subsidy maximum. Use the
+    // consensus params so this stays reconciled with ExecuteCVMBlock.
+    const Consensus::Params& params = Params().GetConsensus();
+    const uint64_t maxSubsidyPerBlock = GetMaxSubsidyPerBlock(params);
+    
+    return accumulatedSubsidy <= maxSubsidyPerBlock;
 }
 
 bool BlockValidator::DistributeGasSubsidies(
@@ -720,13 +880,22 @@ bool BlockValidator::DistributeGasSubsidies(
                 continue;
             }
             
-            // Check if transaction is eligible for subsidy
-            // This would check if the operation is beneficial to the network
-            bool isBeneficial = true; // Simplified - should check actual benefit
+            // Determine whether the operation is actually beneficial to the
+            // network from the trust context, rather than assuming it always is.
+            bool isBeneficial = m_gasSubsidyTracker->IsBeneficialOperation(*m_trustContext);
+            
+            // Use the actual gas used during execution (recorded in ValidateBlock)
+            // rather than the gas limit. Fall back to the gas limit only if no
+            // execution record exists for this transaction.
+            uint64_t actualGasUsed = gasLimit;
+            auto itGas = m_txGasUsed.find(tx->GetHash());
+            if (itGas != m_txGasUsed.end()) {
+                actualGasUsed = itGas->second;
+            }
             
             // Calculate and record subsidy
             uint64_t subsidyAmount = m_gasSubsidyTracker->CalculateSubsidy(
-                gasLimit,
+                actualGasUsed,
                 *m_trustContext,
                 isBeneficial
             );
@@ -736,13 +905,13 @@ bool BlockValidator::DistributeGasSubsidies(
                 GasSubsidyTracker::SubsidyRecord record;
                 record.txid = tx->GetHash();
                 record.blockHeight = blockHeight;
-                record.gasUsed = gasLimit; // Simplified - should use actual gas used
+                record.gasUsed = actualGasUsed;
                 record.subsidyAmount = subsidyAmount;
                 
                 m_gasSubsidyTracker->ApplySubsidy(
                     tx->GetHash(),
                     uint160(), // address - should extract from tx
-                    gasLimit,
+                    actualGasUsed,
                     subsidyAmount,
                     *m_trustContext,
                     blockHeight

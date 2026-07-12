@@ -224,6 +224,14 @@ public:
      */
     void Clear();
     
+    /**
+     * Check if operation is beneficial to network
+     * 
+     * @param trust Trust context
+     * @return true if beneficial
+     */
+    bool IsBeneficialOperation(const TrustContext& trust);
+    
 private:
     // Subsidy records by address
     std::map<uint160, std::vector<SubsidyRecord>> subsidyRecords;
@@ -239,14 +247,6 @@ private:
     
     // Total rebates distributed
     uint64_t totalRebatesDistributed;
-    
-    /**
-     * Check if operation is beneficial to network
-     * 
-     * @param trust Trust context
-     * @return true if beneficial
-     */
-    bool IsBeneficialOperation(const TrustContext& trust);
 };
 
 } // namespace CVM

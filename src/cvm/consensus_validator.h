@@ -215,6 +215,17 @@ namespace ConsensusConstants {
     // Subsidy limits
     constexpr uint64_t MAX_SUBSIDY_PER_TX = 100000;        // Max subsidy per transaction
     constexpr uint64_t MAX_SUBSIDY_PER_BLOCK = 10000000;   // Max total subsidies per block
+
+    // Consensus gas price (satoshis per gas unit).
+    //
+    // Gas cost for a contract deploy/call is computed deterministically as
+    //   gasCost = gasUsed * DEFAULT_GAS_PRICE_SATOSHIS
+    // by every node, replacing the previous hardcoded 1:1 (1 satoshi-per-gas)
+    // rate. This mirrors the FeeCalculator's configured pricing source
+    // (DEFAULT_GAS_TO_SATOSHI_RATE) so all nodes agree on the fee that is owed
+    // for a given amount of gas. It MUST be > 1 so the extracted gas cost
+    // reflects the real gas price rather than the raw gas amount.
+    constexpr uint64_t DEFAULT_GAS_PRICE_SATOSHIS = 100;   // 100 satoshis per gas unit
 }
 
 } // namespace CVM

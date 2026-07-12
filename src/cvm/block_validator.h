@@ -15,6 +15,9 @@
 #include <cvm/fee_calculator.h>
 #include <cvm/gas_subsidy.h>
 #include <cvm/receipt.h>
+#include <cvm/contract.h>
+#include <map>
+#include <set>
 
 class CValidationState;
 class CBlockIndex;
@@ -156,11 +159,15 @@ public:
      * 
      * @param tx Transaction
      * @param blockHeight Block height
+     * @param view Coins view used to resolve the transaction's input values so
+     *             the actual fee (inputs - outputs) can be verified against the
+     *             expected gas-based fee
      * @return true if gas costs are valid
      */
     bool VerifyReputationGasCosts(
         const CTransaction& tx,
-        int blockHeight
+        int blockHeight,
+        const CCoinsViewCache& view
     );
     
     // ===== Contract Deployment =====
@@ -246,6 +253,20 @@ public:
      */
     bool ProcessGasRebates(int blockHeight);
     
+    /**
+     * Accumulate the total gas subsidy claimed by a block and check it against
+     * the per-block subsidy maximum (bugfix 2.1).
+     * 
+     * Every subsidy-eligible contract transaction contributes its subsidizable
+     * gas toward the block's subsidy budget.
+     * 
+     * @param block Block to evaluate
+     * @param accumulatedSubsidy Output: total accumulated subsidy for the block
+     * @return true if the accumulated subsidy is within the per-block maximum,
+     *         false if it exceeds the maximum (the block must be rejected)
+     */
+    bool AccumulateBlockSubsidy(const CBlock& block, uint64_t& accumulatedSubsidy);
+    
     // ===== Statistics =====
     
     /**
@@ -309,6 +330,32 @@ private:
     class HATConsensusValidator* m_hatValidator;  // HAT consensus validator
     
     BlockValidationResult m_lastResult;
+    
+    // ===== Atomic state save / rollback journal (bugfix 1.21 / 2.21) =====
+    // Snapshot of the contract-state present at block begin (captured in
+    // Initialize and at the start of ValidateBlock). RollbackContractState uses
+    // it to perform a REAL revert of any writes leaked by a failed block:
+    //  - contracts written during the block that were NOT in the snapshot are
+    //    erased (newly-created contracts removed),
+    //  - contracts that existed before the block but were modified are restored
+    //    to their snapshot value.
+    // m_stateCommitted is set true by SaveContractState on a successful block so
+    // an accepted (committed) block's state is NEVER rolled back (preservation
+    // 3.17 / 3.23).
+    std::set<uint160> m_contractSnapshot;
+    std::map<uint160, Contract> m_contractSnapshotValues;
+    bool m_stateCommitted;
+    
+    /**
+     * Capture a snapshot of the current contract-state so a failed block can be
+     * reverted. Clears the committed flag (a fresh block starts uncommitted).
+     */
+    void SnapshotContractState();
+    
+    // Actual gas used per transaction during this block's execution, keyed by
+    // txid. Populated in ValidateBlock so DistributeGasSubsidies can record the
+    // real gas used (rather than the gas limit) for each subsidy.
+    std::map<uint256, uint64_t> m_txGasUsed;
     
     // Gas limit constants
     static constexpr uint64_t MAX_BLOCK_GAS = 10000000; // 10M gas per block
