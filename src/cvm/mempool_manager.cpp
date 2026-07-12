@@ -680,17 +680,22 @@ bool MempoolManager::ProcessValidatorResponse(const ValidationResponse& response
         return false;
     }
     
-    // Process response through HAT validator
+    // Process response through HAT validator (accumulates it in the session).
     if (!m_hatValidator->ProcessValidatorResponse(response)) {
         return false;
     }
-    
-    // Check if we have enough responses to determine consensus
-    // This would require accessing the validation session
-    // For now, just log the response
-    LogPrint(BCLog::CVM, "MempoolManager: Processed validator response for tx %s from %s\n",
-             response.txHash.ToString(), response.validatorAddress.ToString());
-    
+
+    // Fix for bugfix.md 1.47 / Expected-Behavior 2.47: after accumulating the
+    // response, evaluate consensus and advance the transaction state instead of
+    // only logging. Once the minimum number of responses is reached this drives
+    // the transaction to VALIDATED / REJECTED / DISPUTED.
+    ConsensusResult result = m_hatValidator->EvaluateConsensus(response.txHash);
+
+    LogPrint(BCLog::CVM, "MempoolManager: Processed validator response for tx %s from %s "
+             "(consensusReached=%d, approved=%d)\n",
+             response.txHash.ToString(), response.validatorAddress.ToString(),
+             result.consensusReached, result.approved);
+
     return true;
 }
 

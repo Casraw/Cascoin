@@ -291,6 +291,12 @@ public:
     
     // ========== Local Node Participation ==========
     
+    // Perform actual validation of a task and derive the verdict/confidence from
+    // real local state (trust-graph standing, known selection, validator pool)
+    // rather than reporting a fixed placeholder. Returns the derived verdict.
+    bool ValidateTask(const uint256& taskHash, int64_t blockHeight,
+                      bool& isValidOut, uint8_t& confidenceOut);
+
     // Called when local node is selected - generate response
     ValidationResponse GenerateValidationResponse(const uint256& taskHash, bool isValid, uint8_t confidence);
     

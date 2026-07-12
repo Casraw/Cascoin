@@ -355,12 +355,37 @@ bool CVM::HATConsensusValidator::SendValidationChallenge(
     const uint160& validator,
     const ValidationRequest& request)
 {
-    // TODO: Implement P2P message sending
-    // This will be implemented in Phase 2.5.4 (Network Protocol Integration)
-    
-    LogPrint(BCLog::CVM, "HAT Consensus: Sending validation challenge to %s for tx %s\n",
-             validator.ToString(), request.txHash.ToString());
-    
+    // Fix for bugfix.md 1.8 / Expected-Behavior 2.8: transmit the challenge as a
+    // real P2P message and report success ONLY when it is actually dispatched to a
+    // connected peer. When no P2P transport is available (e.g. unit tests) or
+    // there are no connected peers, the challenge cannot be dispatched, so we
+    // report failure instead of an unconditional bare success.
+    if (!g_connman) {
+        LogPrint(BCLog::CVM, "HAT Consensus: No P2P transport available; cannot dispatch "
+                 "validation challenge to %s for tx %s\n",
+                 validator.ToString(), request.txHash.ToString());
+        return false;
+    }
+
+    uint32_t dispatched = 0;
+    g_connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected) {
+            g_connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::VALCHALLENGE, request));
+            dispatched++;
+        }
+    });
+
+    if (dispatched == 0) {
+        LogPrint(BCLog::CVM, "HAT Consensus: No connected peers to dispatch validation "
+                 "challenge to %s for tx %s\n",
+                 validator.ToString(), request.txHash.ToString());
+        return false;
+    }
+
+    LogPrint(BCLog::CVM, "HAT Consensus: Dispatched validation challenge to %u peer(s) for "
+             "validator %s tx %s\n",
+             dispatched, validator.ToString(), request.txHash.ToString());
     return true;
 }
 
@@ -420,6 +445,41 @@ bool CVM::HATConsensusValidator::ProcessValidatorResponse(const ValidationRespon
              response.validatorAddress.ToString(), session.responses.size(), MIN_VALIDATORS);
     
     return true;
+}
+
+ConsensusResult CVM::HATConsensusValidator::EvaluateConsensus(const uint256& txHash) {
+    // Fix for bugfix.md 1.47 / Expected-Behavior 2.47: once responses have been
+    // accumulated in the validation session, evaluate consensus and advance the
+    // transaction state instead of leaving it in PENDING_VALIDATION forever.
+    ConsensusResult result;
+    result.txHash = txHash;
+
+    ValidationSession session;
+    if (!ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session)) {
+        return result;
+    }
+
+    // Wait until enough validators have responded before deciding.
+    if (session.responses.size() < static_cast<size_t>(MIN_VALIDATORS)) {
+        return result;
+    }
+
+    result = DetermineConsensus(session.responses);
+
+    if (result.consensusReached) {
+        UpdateMempoolState(txHash, result.approved ? TransactionState::VALIDATED
+                                                   : TransactionState::REJECTED);
+        session.completed = true;
+        WriteToDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, txHash), session);
+        LogPrint(BCLog::CVM, "HAT Consensus: Consensus reached for tx %s -> %s\n",
+                 txHash.ToString(), result.approved ? "VALIDATED" : "REJECTED");
+    } else if (result.requiresDAOReview) {
+        UpdateMempoolState(txHash, TransactionState::DISPUTED);
+        LogPrint(BCLog::CVM, "HAT Consensus: No consensus for tx %s -> DISPUTED\n",
+                 txHash.ToString());
+    }
+
+    return result;
 }
 
 ConsensusResult HATConsensusValidator::DetermineConsensus(
@@ -503,10 +563,20 @@ DisputeCase HATConsensusValidator::CreateDisputeCase(
     dispute.disputeId = tx.GetHash();  // Use tx hash as dispute ID
     dispute.txHash = tx.GetHash();
     
-    // Extract sender address from first response
-    if (!responses.empty()) {
+    // Fix for bugfix.md 1.9 / Expected-Behavior 2.9: record the sender's ACTUAL
+    // self-reported score (captured in the validation session) so that a
+    // discrepancy between the self-reported and validator-calculated scores can be
+    // detected. The previous code copied the validators' calculated score into
+    // selfReportedScore, making any discrepancy invisible.
+    ValidationSession session;
+    if (ReadFromDatabase(database, MakeDBKey(DB_VALIDATION_SESSION, tx.GetHash()), session)) {
+        dispute.senderAddress = session.request.senderAddress;
+        dispute.selfReportedScore = session.request.selfReportedScore;
+    } else if (!responses.empty()) {
+        // No session available (e.g. session expired) -- fall back to the sender
+        // address derived from the responses.
         dispute.senderAddress = responses[0].calculatedScore.address;
-        dispute.selfReportedScore = responses[0].calculatedScore;  // TODO: Get actual self-reported score
+        dispute.selfReportedScore = responses[0].calculatedScore;
     }
     
     dispute.validatorResponses = responses;

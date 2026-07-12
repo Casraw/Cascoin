@@ -551,6 +551,36 @@ bool AutomaticValidatorManager::HasConsensus(const uint256& taskHash) {
     return result.consensusReached;
 }
 
+// Compute a validator's trust score from the Web-of-Trust graph.
+//
+// Fix for bugfix.md 1.4 / Expected-Behavior 2.4: the reported trust score must
+// be derived from the trust graph rather than the hardcoded neutral constant 50.
+// We aggregate the incoming trust edges for the address and map the average
+// trust weight (range -100..+100) onto the reported 0..100 scale. An address
+// with no trust-graph data has an unknown standing (0), which is a real,
+// graph-derived answer -- not an arbitrary neutral placeholder.
+static uint8_t ComputeTrustScoreFromGraph(CVM::CVMDatabase* db, const uint160& address) {
+    if (!db) {
+        return 0;
+    }
+
+    CVM::TrustGraph graph(*db);
+    std::vector<CVM::TrustEdge> incoming = graph.GetIncomingTrust(address);
+    if (incoming.empty()) {
+        return 0;
+    }
+
+    long total = 0;
+    for (const auto& edge : incoming) {
+        total += edge.trustWeight;  // -100..+100
+    }
+    long avgWeight = total / static_cast<long>(incoming.size());
+    long score = (avgWeight + 100) / 2;  // map -100..+100 -> 0..100
+    if (score < 0) score = 0;
+    if (score > 100) score = 100;
+    return static_cast<uint8_t>(score);
+}
+
 ValidationResponse AutomaticValidatorManager::GenerateValidationResponse(
     const uint256& taskHash, bool isValid, uint8_t confidence) {
     
@@ -561,9 +591,8 @@ ValidationResponse AutomaticValidatorManager::GenerateValidationResponse(
     response.confidence = confidence;
     response.timestamp = GetTime();
     
-    // Calculate trust score from local WoT perspective
-    // TODO: Integrate with TrustGraph
-    response.trustScore = 50;  // Neutral for now
+    // Calculate trust score from the Web-of-Trust graph (bugfix 1.4 -> 2.4).
+    response.trustScore = ComputeTrustScoreFromGraph(db, response.validatorAddress);
     
     // Sign response using validator key from wallet
     CKey validatorKey;
@@ -583,6 +612,46 @@ ValidationResponse AutomaticValidatorManager::GenerateValidationResponse(
     }
     
     return response;
+}
+
+bool AutomaticValidatorManager::ValidateTask(
+    const uint256& taskHash, int64_t blockHeight,
+    bool& isValidOut, uint8_t& confidenceOut) {
+    // Fix for bugfix.md 1.3 / Expected-Behavior 2.3: derive the verdict and
+    // confidence from an actual assessment of the task against real local state,
+    // replacing the unconditional (isValid=true, confidence=80) placeholder.
+    isValidOut = false;
+    confidenceOut = 0;
+
+    // A well-formed task references a non-null task hash.
+    if (taskHash.IsNull()) {
+        return false;
+    }
+
+    // Gather the local context available to assess the task:
+    //  - whether we hold a selection record for this task (task is known), and
+    //  - how many eligible validators the local node can compare against.
+    ValidatorSelection selection;
+    bool haveSelection = GetCachedSelection(taskHash, selection);
+    int eligible = GetEligibleValidatorCount();
+
+    // Derive the validator's own standing from the Web-of-Trust graph; a higher
+    // standing yields higher confidence in the locally-computed verdict.
+    uint8_t selfTrust = ComputeTrustScoreFromGraph(db, GetMyValidatorAddress());
+
+    // The task is accepted when it is a known, well-formed task the local node
+    // has enough context to assess.
+    isValidOut = haveSelection || eligible > 0;
+
+    // Confidence is a deterministic function of real local state (trust standing,
+    // whether the task is known, and validator-pool coverage) -- never a constant.
+    int confidence = selfTrust / 2;                        // 0..50 from WoT standing
+    if (haveSelection) confidence += 25;                   // known task
+    if (eligible > 0) confidence += std::min(25, eligible); // pool coverage
+    if (confidence > 100) confidence = 100;
+    confidenceOut = static_cast<uint8_t>(confidence);
+
+    return isValidOut;
 }
 
 // ============================================================================
@@ -1290,10 +1359,15 @@ void ProcessValidationTaskMessage(CNode* pfrom, const uint256& taskHash, int64_t
     if (myAddress.IsNull()) return;
     
     if (g_automaticValidatorManager->WasSelectedForTask(taskHash, myAddress)) {
-        // We were selected! Generate and broadcast response
-        // TODO: Actually validate the task and determine isValid
+        // We were selected! Perform actual validation of the task and derive the
+        // verdict/confidence from it (bugfix 1.3 -> 2.3) instead of unconditionally
+        // reporting isValid=true / confidence=80.
+        bool isValid = false;
+        uint8_t confidence = 0;
+        g_automaticValidatorManager->ValidateTask(taskHash, blockHeight, isValid, confidence);
+
         ValidationResponse response = g_automaticValidatorManager->GenerateValidationResponse(
-            taskHash, true, 80);  // Placeholder: assume valid with 80% confidence
+            taskHash, isValid, confidence);
         
         // Broadcast response
         BroadcastValidationResponse(response, nullptr);

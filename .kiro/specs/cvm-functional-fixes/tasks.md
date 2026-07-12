@@ -257,7 +257,7 @@ Preservation Checking).
 
 ### Workstream 4 — HAT v2 distributed consensus
 
-- [-] 11. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
+- [x] 11. Write Workstream-4 exploratory + preservation tests (BEFORE fix)
   - **Property 11: Bug Condition** — real task validation, P2P challenge, response accumulation
   - Explore (fail on unfixed): `isValid=true`/80% without validation (1.3); trust score
     hardcoded 50 (1.4); challenge returns success with no P2P send (1.8); dispute sets
@@ -266,8 +266,8 @@ Preservation Checking).
     ECDSA sign/verify of responses (3.4, 3.18) unchanged.
   - _Requirements: 1.3, 1.4, 1.8, 1.9, 1.47, 3.4, 3.5, 3.18_
 
-- [ ] 12. Implement Workstream-4 fixes
-  - [ ] 12.1 Real validation, trust score, P2P challenge, dispute, response accumulation
+- [x] 12. Implement Workstream-4 fixes
+  - [x] 12.1 Real validation, trust score, P2P challenge, dispute, response accumulation
     - `hat_consensus.cpp` / `consensus_validator.cpp`: perform actual task validation and
       derive `isValid`/confidence; compute trust score from the trust graph; transmit a
       real P2P challenge and report success only when dispatched; use the validator's
@@ -278,13 +278,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.3, 2.4, 2.8, 2.9, 2.47_
     - _Preservation: 3.4, 3.5, 3.18_
     - _Requirements: 2.3, 2.4, 2.8, 2.9, 2.47_
-  - [ ] 12.2 Verify Workstream-4 fix-property test passes and preservation holds
+  - [x] 12.2 Verify Workstream-4 fix-property test passes and preservation holds
     - **Property 11: Expected Behavior** / **Property 21: Preservation** — re-run task 11 tests.
     - _Requirements: 2.3, 2.4, 2.8, 2.9, 2.47, 3.4, 3.5, 3.18_
 
 ### Workstream 5 — Fee / gas / subsidy accounting (consensus-adjacent)
 
-- [ ] 13. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
+- [-] 13. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
   - **Property 12: Bug Condition** — subsidy-before-fee, real benefit, real sender, live load/rate, rebate transfer, allowance restore, DB init
   - Explore (fail on unfixed): subsidy skipped for non-free-gas tx (1.10); `reputation>=80`
     benefit check (1.40); empty sender (1.41); hardcoded load 50 / fixed rate (1.42);

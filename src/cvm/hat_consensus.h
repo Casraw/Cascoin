@@ -510,6 +510,18 @@ public:
     ConsensusResult DetermineConsensus(
         const std::vector<ValidationResponse>& responses
     );
+
+    /**
+     * Evaluate consensus for a transaction's accumulated validator responses.
+     *
+     * Reads the transaction's validation session, and once the minimum number of
+     * responses has been collected, evaluates consensus and advances the
+     * transaction state (VALIDATED / REJECTED / DISPUTED) accordingly.
+     *
+     * @param txHash Transaction hash
+     * @return Consensus result (consensusReached=false if not yet decidable)
+     */
+    ConsensusResult EvaluateConsensus(const uint256& txHash);
     
     /**
      * Create dispute case for DAO review
