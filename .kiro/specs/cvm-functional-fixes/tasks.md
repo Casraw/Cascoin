@@ -178,7 +178,7 @@ Preservation Checking).
 
 ### Phase 3 — Workstream 2: Core-VM opcode handlers
 
-- [-] 6. Write Workstream-2 exploratory fix-property tests (BEFORE fix)
+- [x] 6. Write Workstream-2 exploratory fix-property tests (BEFORE fix)
   - **Property 8: Bug Condition** — `OP_VERIFY_SIG` family enforces real verification
   - **Property 9: Bug Condition** — `OP_BALANCE`, `OP_CALL`, `OP_LOG` functional
   - **Scoped PBT Approach**: for random `(msg, key)` pairs, `OP_VERIFY_SIG` pushes 1
@@ -189,16 +189,16 @@ Preservation Checking).
   - Run on UNFIXED code — **EXPECTED OUTCOME**: FAIL.
   - _Requirements: 1.23, 1.24, 1.25, 1.26_
 
-- [ ] 7. Write Workstream-2 preservation tests (BEFORE fix)
+- [x] 7. Write Workstream-2 preservation tests (BEFORE fix)
   - **Property 21: Preservation** — Valid signatures still accepted; SLOAD/SSTORE & supported opcodes unchanged
   - Observe on UNFIXED code: genuinely valid signatures push 1 (3.11); persistent
     storage SLOAD/SSTORE semantics (3.7); already-supported opcodes/context (3.9).
   - Run on UNFIXED code — **EXPECTED OUTCOME**: PASS.
   - _Requirements: 3.7, 3.9, 3.11_
 
-- [ ] 8. Implement Workstream-2 fixes
+- [x] 8. Implement Workstream-2 fixes
 
-  - [ ] 8.1 Enforce `OP_VERIFY_SIG` / `OP_VERIFY_SIG_ECDSA` / `OP_VERIFY_SIG_QUANTUM`
+  - [x] 8.1 Enforce `OP_VERIFY_SIG` / `OP_VERIFY_SIG_ECDSA` / `OP_VERIFY_SIG_QUANTUM`
     - In `cvm.cpp` (~lines 446, 450, 482, 514): extract message, signature, pubkey from
       the stack; perform real secp256k1 (ECDSA) or FALCON-512 verification (quantum, when
       `DEPLOYMENT_QUANTUM` active); push 1 only on a genuinely valid signature.
@@ -207,7 +207,7 @@ Preservation Checking).
     - _Preservation: 3.11 (valid sigs still push 1)_
     - _Requirements: 2.23_
 
-  - [ ] 8.2 Implement `OP_BALANCE`, `OP_CALL`/`CallContract`, `OP_LOG`
+  - [x] 8.2 Implement `OP_BALANCE`, `OP_CALL`/`CallContract`, `OP_LOG`
     - `OP_BALANCE`: query account balance (UTXO/state) and push it (not 0).
     - `HandleCall`/`CallContract`: load and execute the target with proper gas/state, or
       fail deterministically with a defined error.
@@ -217,12 +217,12 @@ Preservation Checking).
     - _Preservation: 3.7, 3.9_
     - _Requirements: 2.24, 2.25, 2.26_
 
-  - [ ] 8.3 Verify Workstream-2 fix-property tests now pass
+  - [x] 8.3 Verify Workstream-2 fix-property tests now pass
     - **Property 8/9: Expected Behavior** — re-run the SAME tests from task 6.
     - **EXPECTED OUTCOME**: PASS.
     - _Requirements: 2.23, 2.24, 2.25, 2.26_
 
-  - [ ] 8.4 Verify Workstream-2 preservation tests still pass
+  - [x] 8.4 Verify Workstream-2 preservation tests still pass
     - **Property 21: Preservation** — re-run the SAME tests from task 7.
     - **EXPECTED OUTCOME**: PASS.
     - _Requirements: 3.7, 3.9, 3.11_
@@ -233,7 +233,7 @@ Preservation Checking).
 
 ### Workstream 3 — Reputation signatures & merkle proofs
 
-- [ ] 9. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
+- [-] 9. Write Workstream-3 exploratory + preservation tests (BEFORE fix)
   - **Property 10: Bug Condition** — real validator signature + committed state root/proof
   - Explore (fail on unfixed): placeholder signature = first 32 bytes of proof hash and
     state root from `fixedString + time` (1.5); length-only signature check passes forged

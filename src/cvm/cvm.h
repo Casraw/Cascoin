@@ -96,6 +96,7 @@ private:
     bool HandleCrypto(OpCode opcode, VMState& state);
     bool HandleContext(OpCode opcode, VMState& state, ContractStorage* storage);
     bool HandleCall(const std::vector<uint8_t>& code, VMState& state, ContractStorage* storage);
+    bool HandleLog(VMState& state);
     
     // Helper functions
     arith_uint256 ReadImmediate(const std::vector<uint8_t>& code, size_t& pc, size_t bytes);

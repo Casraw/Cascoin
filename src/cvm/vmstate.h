@@ -72,6 +72,17 @@ public:
     
     void SetTimestamp(int64_t ts) { timestamp = ts; }
     int64_t GetTimestamp() const { return timestamp; }
+
+    // Account balances (source for OP_BALANCE).
+    // The core VM executes against a ContractStorage/VMState pair; the balance
+    // source is carried on the state so a funded account reports its real
+    // balance instead of a hardcoded 0 (bugfix 2.24). Higher layers (block
+    // processing / EnhancedVM) populate these from the UTXO/account state.
+    void SetBalance(const uint160& addr, uint64_t amount) { balances[addr] = amount; }
+    uint64_t GetBalance(const uint160& addr) const {
+        auto it = balances.find(addr);
+        return it == balances.end() ? 0 : it->second;
+    }
     
     // Execution state
     // Undefine Windows ERROR macro to avoid conflicts
@@ -159,6 +170,9 @@ private:
     int blockHeight;
     uint256 blockHash;
     int64_t timestamp;
+
+    // Account balances keyed by address (source for OP_BALANCE).
+    std::map<uint160, uint64_t> balances;
     
     // Execution status
     Status status;
