@@ -5,7 +5,11 @@
 #include <cvm/consensus_safety.h>
 #include <cvm/cvmdb.h>
 #include <cvm/trustgraph.h>
+#include <cvm/trust_attestation.h>
 #include <hash.h>
+#include <pubkey.h>
+#include <streams.h>
+#include <clientversion.h>
 #include <util.h>
 #include <validation.h>
 #include <chain.h>
@@ -439,13 +443,53 @@ std::vector<TrustEdge> ConsensusSafetyValidator::GetTrustGraphDelta(int sinceBlo
     }
     
     try {
-        // Query database for trust edges modified since sinceBlock
-        std::string prefix = "trust_delta_";
-        std::vector<std::pair<std::string, std::vector<uint8_t>>> entries;
-        
-        // In a real implementation, we would query the database for changes
-        // For now, return empty delta
-        
+        // Determine a cutoff timestamp for the requested block, if a chain is
+        // available. Trust edges record the wall-clock time at which they were
+        // committed, so we translate "since block" into "since block time" and
+        // return every committed edge that changed at or after that point.
+        // sinceBlock <= 0 means "return the full committed graph".
+        uint32_t sinceTime = 0;
+        if (sinceBlock > 0) {
+            LOCK(cs_main);
+            if (sinceBlock <= chainActive.Height()) {
+                CBlockIndex* pindex = chainActive[sinceBlock];
+                if (pindex) {
+                    sinceTime = static_cast<uint32_t>(pindex->GetBlockTime());
+                }
+            }
+        }
+
+        // Enumerate all forward trust edges stored in the database. Forward
+        // edges are keyed "trust_<from>_<to>"; the reverse index is keyed
+        // "trust_in_<to>_<from>" and must be skipped so each edge appears once.
+        std::vector<std::string> keys = database->ListKeysWithPrefix("trust_");
+        for (const std::string& key : keys) {
+            if (key.compare(0, 9, "trust_in_") == 0) {
+                continue; // reverse-index entry
+            }
+
+            std::vector<uint8_t> data;
+            if (!database->ReadGeneric(key, data)) {
+                continue;
+            }
+
+            try {
+                TrustEdge edge;
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ss >> edge;
+
+                if (edge.timestamp >= sinceTime) {
+                    delta.push_back(edge);
+                }
+            } catch (const std::exception& e) {
+                LogPrintf("ConsensusSafetyValidator: Failed to deserialize trust edge for key %s: %s\n",
+                          key, e.what());
+            }
+        }
+
+        LogPrintf("ConsensusSafetyValidator: Computed trust graph delta since block %d: %zu edges\n",
+                  sinceBlock, delta.size());
+
     } catch (const std::exception& e) {
         LogPrintf("ConsensusSafetyValidator: Exception in GetTrustGraphDelta: %s\n", e.what());
     }
@@ -615,27 +659,30 @@ uint256 ConsensusSafetyValidator::CalculateAttestationHash(const TrustAttestatio
 }
 
 bool ConsensusSafetyValidator::VerifyAttestationSignature(const TrustAttestation& attestation) {
-    // Verify the attestation signature
-    if (attestation.signature.empty()) {
+    // Reject empty signatures / missing attestor key material outright.
+    if (attestation.signature.empty() || attestation.attestorPubKey.empty()) {
         return false;
     }
-    
-    // Calculate the message hash that was signed
+
+    // Reconstruct the attestor's public key from the stored bytes.
+    CPubKey attestorPubKey(attestation.attestorPubKey.begin(), attestation.attestorPubKey.end());
+    if (!attestorPubKey.IsValid()) {
+        return false;
+    }
+
+    // Calculate the message hash that was signed. This MUST match exactly what
+    // the attestor signed over: Hash(address, trustScore, timestamp, sourceChainId).
     CHashWriter ss(SER_GETHASH, 0);
     ss << attestation.address;
     ss << attestation.trustScore;
     ss << attestation.timestamp;
     ss << attestation.sourceChainId;
     uint256 messageHash = ss.GetHash();
-    
-    // In a real implementation, we would verify the signature against
-    // the attestor's public key. For now, we just check that the
-    // signature is not empty and has a reasonable length.
-    if (attestation.signature.size() < 64 || attestation.signature.size() > 128) {
-        return false;
-    }
-    
-    return true;
+
+    // Cryptographically verify the signature against the attestor's public key.
+    // A forged or malformed signature will fail DER parsing or ECDSA verification
+    // and be rejected here, regardless of its length.
+    return attestorPubKey.Verify(messageHash, attestation.signature);
 }
 
 // ========== Utility Methods ==========

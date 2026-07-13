@@ -9,6 +9,9 @@
 #include <net.h>
 #include <netmessagemaker.h>
 #include <protocol.h>
+#include <hash.h>
+#include <streams.h>
+#include <clientversion.h>
 #include <util.h>
 #include <validation.h>
 #include <chain.h>
@@ -271,28 +274,153 @@ TrustGraphSyncState TrustGraphSyncManager::GetCurrentState() const {
     if (consensusValidator) {
         return consensusValidator->GetTrustGraphState();
     }
-    return TrustGraphSyncState();
+    // Fallback: derive the state directly from the local DB + trust graph so
+    // synchronization works even when no consensus validator is configured.
+    return ComputeLocalState();
 }
 
 bool TrustGraphSyncManager::VerifyState(const uint256& expectedHash) const {
     if (consensusValidator) {
         return consensusValidator->VerifyTrustGraphState(expectedHash);
     }
-    return false;
+    // Fallback: verify against the real committed state hash.
+    if (!trustGraph) {
+        return false;
+    }
+    uint256 currentHash = ComputeLocalStateHash();
+    bool matches = (currentHash == expectedHash);
+    LogPrintf("TrustGraphSyncManager: State verification (no validator): %s (expected=%s, current=%s)\n",
+              matches ? "PASS" : "FAIL", expectedHash.ToString(), currentHash.ToString());
+    return matches;
 }
 
 bool TrustGraphSyncManager::ApplyDelta(const std::vector<TrustEdge>& delta) {
     if (consensusValidator) {
         return consensusValidator->ApplyTrustGraphDelta(delta);
     }
-    return false;
+    // Fallback: apply the delta against the real trust graph.
+    if (!trustGraph) {
+        return false;
+    }
+    try {
+        for (const auto& edge : delta) {
+            if (edge.slashed) {
+                // Slashed edges are not re-applied to the local graph.
+                continue;
+            }
+            trustGraph->AddTrustEdge(
+                edge.fromAddress,
+                edge.toAddress,
+                edge.trustWeight,
+                edge.bondAmount,
+                edge.bondTxHash,
+                edge.reason
+            );
+        }
+        LogPrintf("TrustGraphSyncManager: Applied %zu trust graph delta entries (no validator)\n",
+                  delta.size());
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraphSyncManager: Exception in ApplyDelta: %s\n", e.what());
+        return false;
+    }
 }
 
 std::vector<TrustEdge> TrustGraphSyncManager::GetDeltaSinceBlock(int sinceBlock) const {
     if (consensusValidator) {
         return consensusValidator->GetTrustGraphDelta(sinceBlock);
     }
-    return std::vector<TrustEdge>();
+    // Fallback: enumerate committed edges directly from the local DB.
+    return ComputeLocalDelta(sinceBlock);
+}
+
+// ========== Local (validator-less) State Helpers ==========
+
+uint256 TrustGraphSyncManager::ComputeLocalStateHash() const {
+    // Mirrors ConsensusSafetyValidator::CalculateTrustGraphStateHash so that a
+    // self-consistent verify round-trip holds and hashes are comparable across
+    // nodes regardless of whether a validator is wired up.
+    CHashWriter ss(SER_GETHASH, 0);
+    if (!trustGraph) {
+        return ss.GetHash();
+    }
+    try {
+        std::map<std::string, uint64_t> stats = trustGraph->GetGraphStats();
+        ss << stats["total_trust_edges"];
+        ss << stats["total_votes"];
+        ss << stats["total_disputes"];
+        ss << stats["slashed_votes"];
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraphSyncManager: Exception in ComputeLocalStateHash: %s\n", e.what());
+    }
+    return ss.GetHash();
+}
+
+TrustGraphSyncState TrustGraphSyncManager::ComputeLocalState() const {
+    TrustGraphSyncState state;
+    if (!trustGraph) {
+        return state;
+    }
+    try {
+        state.stateHash = ComputeLocalStateHash();
+        std::map<std::string, uint64_t> stats = trustGraph->GetGraphStats();
+        state.edgeCount = stats["total_trust_edges"];
+        state.nodeCount = stats["total_votes"];
+        {
+            LOCK(cs_main);
+            int height = chainActive.Height();
+            state.lastSyncBlock = height > 0 ? static_cast<uint64_t>(height) : 0;
+        }
+        state.isSynchronized = true;
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraphSyncManager: Exception in ComputeLocalState: %s\n", e.what());
+        state.isSynchronized = false;
+    }
+    return state;
+}
+
+std::vector<TrustEdge> TrustGraphSyncManager::ComputeLocalDelta(int sinceBlock) const {
+    std::vector<TrustEdge> delta;
+    if (!database) {
+        return delta;
+    }
+    try {
+        uint32_t sinceTime = 0;
+        if (sinceBlock > 0) {
+            LOCK(cs_main);
+            if (sinceBlock <= chainActive.Height()) {
+                CBlockIndex* pindex = chainActive[sinceBlock];
+                if (pindex) {
+                    sinceTime = static_cast<uint32_t>(pindex->GetBlockTime());
+                }
+            }
+        }
+
+        std::vector<std::string> keys = database->ListKeysWithPrefix("trust_");
+        for (const std::string& key : keys) {
+            if (key.compare(0, 9, "trust_in_") == 0) {
+                continue; // reverse-index entry
+            }
+            std::vector<uint8_t> data;
+            if (!database->ReadGeneric(key, data)) {
+                continue;
+            }
+            try {
+                TrustEdge edge;
+                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+                ss >> edge;
+                if (edge.timestamp >= sinceTime) {
+                    delta.push_back(edge);
+                }
+            } catch (const std::exception& e) {
+                LogPrintf("TrustGraphSyncManager: Failed to deserialize trust edge for key %s: %s\n",
+                          key, e.what());
+            }
+        }
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraphSyncManager: Exception in ComputeLocalDelta: %s\n", e.what());
+    }
+    return delta;
 }
 
 // ========== Peer Management ==========

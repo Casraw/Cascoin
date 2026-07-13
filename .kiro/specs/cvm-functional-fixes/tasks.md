@@ -369,7 +369,7 @@ Preservation Checking).
 
 ### Workstream 8 — Distributed-consensus signatures & state sync
 
-- [ ] 19. Write Workstream-8 exploratory + preservation tests (BEFORE fix)
+- [x] 19. Write Workstream-8 exploratory + preservation tests (BEFORE fix)
   - **Property 15: Bug Condition** — attestation sig verified vs. attestor pubkey; real deltas; verify/apply vs. real state
   - Explore (fail on unfixed): 64–128-byte length-only attestation check (1.37); empty delta,
     no DB query / no peer request (1.38); verify/apply returns false when no validator
@@ -377,8 +377,8 @@ Preservation Checking).
   - **Property 21: Preservation** — valid attestations with committed state still accepted (3.15).
   - _Requirements: 1.37, 1.38, 1.39, 3.15_
 
-- [ ] 20. Implement Workstream-8 fixes
-  - [ ] 20.1 Real attestation verification, delta computation, and state sync
+- [x] 20. Implement Workstream-8 fixes
+  - [x] 20.1 Real attestation verification, delta computation, and state sync
     - `consensus_safety.cpp`: verify attestation signatures against the attestor's pubkey;
       compute trust-graph deltas by querying the DB and request deltas from the peer.
       `trust_graph_sync.cpp`: verify/apply against real state instead of failing when no
@@ -387,13 +387,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.37, 2.38, 2.39_
     - _Preservation: 3.15_
     - _Requirements: 2.37, 2.38, 2.39_
-  - [ ] 20.2 Verify Workstream-8 fix-property test passes and preservation holds
+  - [x] 20.2 Verify Workstream-8 fix-property test passes and preservation holds
     - **Property 15: Expected Behavior** / **Property 21: Preservation** — re-run task 19 tests.
     - _Requirements: 2.37, 2.38, 2.39, 3.15_
 
 ### Workstream 9 — Sybil-resistance & fraud detection (non-consensus, unconditional)
 
-- [ ] 21. Write Workstream-9 exploratory + preservation tests (BEFORE fix)
+- [x] 21. Write Workstream-9 exploratory + preservation tests (BEFORE fix)
   - **Property 16: Bug Condition** — cluster/rapid-fire/exchange detection, reputation index, address tx lookup real
   - Explore (fail on unfixed): empty cluster results/false (1.13); rapid-fire always false
     (1.14); `DetectExchangePattern` always false (1.48); `GetAddressesWithReputation` empty
@@ -402,8 +402,8 @@ Preservation Checking).
     scoring unchanged (3.20).
   - _Requirements: 1.13, 1.14, 1.48, 1.49, 1.50, 3.20_
 
-- [ ] 22. Implement Workstream-9 fixes
-  - [ ] 22.1 Real Sybil/fraud detection
+- [x] 22. Implement Workstream-9 fixes
+  - [x] 22.1 Real Sybil/fraud detection
     - `walletcluster.cpp GetTransactionsForAddress`: return the address's transactions from a
       transaction/address index; apply common-input-ownership heuristic to cluster addresses.
       `reputation.cpp`: `DetectExchangePattern` true when volume matches; `GetAddressesWithReputation`
@@ -412,13 +412,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.13, 2.14, 2.48, 2.49, 2.50_
     - _Preservation: 3.20_
     - _Requirements: 2.13, 2.14, 2.48, 2.49, 2.50_
-  - [ ] 22.2 Verify Workstream-9 fix-property test passes and preservation holds
+  - [x] 22.2 Verify Workstream-9 fix-property test passes and preservation holds
     - **Property 16: Expected Behavior** / **Property 21: Preservation** — re-run task 21 tests.
     - _Requirements: 2.13, 2.14, 2.48, 2.49, 2.50, 3.20_
 
 ### Workstream 10 — Storage / state sync & miscellaneous
 
-- [ ] 23. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
+- [-] 23. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
   - **Property 17: Bug Condition** — prune, load, size/count, metrics, backward-compat, address extraction, commit-phase, cluster-merge real
   - Explore (fail on unfixed): `PruneReceipts` only logs (1.51); `LoadBlacklist` no DB iterate
     (1.52); `storageSize=0`/`chunkCount=1` (1.53); opcode metrics skipped (1.54); backward-compat

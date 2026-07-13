@@ -100,6 +100,17 @@ public:
      * Useful for user-provided information or external chain analysis
      */
     virtual void LinkAddresses(const uint160& addr1, const uint160& addr2);
+
+    /**
+     * Record a transaction's input addresses into the transaction/address index
+     * that feeds common-input-ownership clustering (clauses 2.13, 2.50).
+     *
+     * This persists both a tx -> input-addresses record and a per-address
+     * -> tx-list record, giving BuildClusters() and GetAddressTransactions() a
+     * real data source to operate on independently of a full chain replay.
+     */
+    virtual void RecordTransactionInputs(const uint256& txid,
+                                         const std::vector<uint160>& inputAddresses);
     
     /**
      * Calculate shared reputation for a cluster
@@ -150,6 +161,9 @@ private:
     
     // Helper: Get all transactions involving an address
     std::vector<uint256> GetAddressTransactions(const uint160& address);
+
+    // Helper: Get the input addresses recorded for a transaction in the index
+    std::vector<uint160> GetTransactionInputAddresses(const uint256& txid);
 };
 
 } // namespace CVM

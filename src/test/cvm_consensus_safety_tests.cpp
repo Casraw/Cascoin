@@ -11,8 +11,35 @@
 #include <test/test_bitcoin.h>
 #include <uint256.h>
 #include <hash.h>
+#include <key.h>
+#include <pubkey.h>
 
 #include <boost/test/unit_test.hpp>
+
+namespace {
+
+// Sign an attestation with a real key over the exact message hash that
+// ConsensusSafetyValidator::VerifyAttestationSignature verifies against
+// (Hash(address, trustScore, timestamp, sourceChainId)), and populate the
+// attestor public key. Produces a genuinely valid attestation.
+void SignAttestation(CVM::TrustAttestation& att, const CKey& key)
+{
+    CPubKey pub = key.GetPubKey();
+    att.attestorPubKey.assign(pub.begin(), pub.end());
+
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << att.address;
+    ss << att.trustScore;
+    ss << att.timestamp;
+    ss << att.sourceChainId;
+    uint256 msgHash = ss.GetHash();
+
+    std::vector<unsigned char> sig;
+    key.Sign(msgHash, sig);
+    att.signature = sig;
+}
+
+} // anonymous namespace
 
 BOOST_FIXTURE_TEST_SUITE(cvm_consensus_safety_tests, BasicTestingSetup)
 
@@ -250,45 +277,62 @@ BOOST_AUTO_TEST_CASE(attestation_hash_determinism)
 BOOST_AUTO_TEST_CASE(attestation_signature_validation)
 {
     CVM::ConsensusSafetyValidator validator;
-    
-    // Create test attestation with valid signature length
+
+    CKey key;
+    key.MakeNewKey(/*fCompressed=*/true);
+
+    // Create test attestation with a genuine signature over its message hash.
     CVM::TrustAttestation validAttestation;
     validAttestation.address.SetHex("0x1234567890abcdef1234567890abcdef12345678");
     validAttestation.trustScore = 75;
     validAttestation.timestamp = 1700000000;
     validAttestation.sourceChainId.SetHex("0x0000000000000000000000000000000000000000000000000000000000000001");
-    validAttestation.signature = std::vector<uint8_t>(64, 0xAB);  // Valid length
-    
-    // Should pass basic validation
+    SignAttestation(validAttestation, key);
+
+    // A genuine signature must verify against the attestor's public key.
     BOOST_CHECK(validator.VerifyAttestationSignature(validAttestation));
-    
+
     // Empty signature should fail
     CVM::TrustAttestation emptySignature = validAttestation;
     emptySignature.signature.clear();
     BOOST_CHECK(!validator.VerifyAttestationSignature(emptySignature));
-    
+
+    // A forged signature of valid length (not produced by the attestor key)
+    // must be REJECTED now that signatures are cryptographically verified.
+    CVM::TrustAttestation forgedSignature = validAttestation;
+    forgedSignature.signature = std::vector<uint8_t>(72, 0xAB);
+    BOOST_CHECK(!validator.VerifyAttestationSignature(forgedSignature));
+
     // Too short signature should fail
     CVM::TrustAttestation shortSignature = validAttestation;
     shortSignature.signature = std::vector<uint8_t>(32, 0xAB);  // Too short
     BOOST_CHECK(!validator.VerifyAttestationSignature(shortSignature));
-    
+
     // Too long signature should fail
     CVM::TrustAttestation longSignature = validAttestation;
     longSignature.signature = std::vector<uint8_t>(256, 0xAB);  // Too long
     BOOST_CHECK(!validator.VerifyAttestationSignature(longSignature));
+
+    // A genuine signature tampered by mutating a signed field must fail.
+    CVM::TrustAttestation tampered = validAttestation;
+    tampered.trustScore = 80;  // changes the message hash, invalidating the sig
+    BOOST_CHECK(!validator.VerifyAttestationSignature(tampered));
 }
 
 BOOST_AUTO_TEST_CASE(cross_chain_attestation_validation)
 {
     CVM::ConsensusSafetyValidator validator;
     
-    // Create valid attestation
+    CKey key;
+    key.MakeNewKey(/*fCompressed=*/true);
+
+    // Create valid attestation with a genuine signature over its message hash.
     CVM::TrustAttestation validAttestation;
     validAttestation.address.SetHex("0x1234567890abcdef1234567890abcdef12345678");
     validAttestation.trustScore = 75;
     validAttestation.timestamp = GetTime();  // Current time
     validAttestation.sourceChainId.SetHex("0x0000000000000000000000000000000000000000000000000000000000000001");
-    validAttestation.signature = std::vector<uint8_t>(64, 0xAB);
+    SignAttestation(validAttestation, key);
     
     CVM::CrossChainAttestationResult result = validator.ValidateCrossChainAttestation(validAttestation);
     

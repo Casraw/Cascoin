@@ -15,6 +15,8 @@
 #include <pubkey.h>
 #include <keystore.h>
 #include <base58.h>
+#include <streams.h>
+#include <algorithm>
 
 namespace CVM {
 
@@ -32,53 +34,97 @@ void WalletClusterer::BuildClusters()
     address_to_cluster.clear();
     clusters.clear();
     
-    // Check if blockchain is initialized
-    if (!chainActive.Tip()) {
-        LogPrintf("WalletClusterer: No blockchain data yet, skipping cluster building\n");
-        return;
-    }
-    
-    // Iterate through all blocks and analyze transactions
-    CBlockIndex* pindex = chainActive.Genesis();
-    int analyzed_count = 0;
-    int block_count = 0;
-    
-    // Get consensus params once (safer if Params() is not yet initialized)
-    const Consensus::Params* consensusParams = nullptr;
-    try {
-        consensusParams = &(Params().GetConsensus());
-    } catch (...) {
-        LogPrintf("WalletClusterer: Chain params not initialized yet, cannot build clusters\n");
-        return;
-    }
-    
-    while (pindex) {
+    // ---- Chain-based analysis (when a live chain is available) ------------
+    // Iterate through all blocks and analyze transactions from the active chain.
+    if (chainActive.Tip()) {
+        // Get consensus params once (safer if Params() is not yet initialized)
+        const Consensus::Params* consensusParams = nullptr;
         try {
-            CBlock block;
-            if (ReadBlockFromDisk(block, pindex, *consensusParams)) {
-                block_count++;
-                for (const CTransactionRef& tx : block.vtx) {
-                    // Skip coinbase
-                    if (tx->IsCoinBase()) {
-                        continue;  // Don't increment pindex here!
+            consensusParams = &(Params().GetConsensus());
+        } catch (...) {
+            consensusParams = nullptr;
+            LogPrintf("WalletClusterer: Chain params not initialized yet, skipping chain analysis\n");
+        }
+
+        if (consensusParams) {
+            CBlockIndex* pindex = chainActive.Genesis();
+            int analyzed_count = 0;
+            int block_count = 0;
+
+            while (pindex) {
+                try {
+                    CBlock block;
+                    if (ReadBlockFromDisk(block, pindex, *consensusParams)) {
+                        block_count++;
+                        for (const CTransactionRef& tx : block.vtx) {
+                            // Skip coinbase
+                            if (tx->IsCoinBase()) {
+                                continue;
+                            }
+
+                            // Analyze transaction for clustering
+                            AnalyzeTransaction(tx->GetHash());
+                            analyzed_count++;
+                        }
                     }
-                    
-                    // Analyze transaction for clustering
-                    AnalyzeTransaction(tx->GetHash());
-                    analyzed_count++;
+                } catch (const std::exception& e) {
+                    LogPrintf("WalletClusterer: Error analyzing block: %s\n", e.what());
+                }
+
+                // Move to next block
+                pindex = chainActive.Next(pindex);
+            }
+
+            LogPrintf("WalletClusterer: Analyzed %d blocks, %d transactions from chain\n",
+                      block_count, analyzed_count);
+        }
+    } else {
+        LogPrintf("WalletClusterer: No active chain; using transaction/address index only\n");
+    }
+
+    // ---- Index-based analysis (transaction/address index) ------------------
+    // Clause 2.13/2.50: cluster addresses using the common-input-ownership
+    // heuristic over the persisted transaction/address index. This is the data
+    // source that GetAddressTransactions() reads from, letting clustering
+    // operate on real data even without a full chain replay.
+    {
+        std::vector<std::string> addrKeys = database.ListKeysWithPrefix("txcluster_addr_");
+        const std::string addrPrefix = "txcluster_addr_";
+        std::set<uint256> processedTxs;
+
+        for (const std::string& key : addrKeys) {
+            if (key.size() <= addrPrefix.size()) {
+                continue;
+            }
+            std::string addrStr = key.substr(addrPrefix.size());
+            uint160 address;
+            address.SetHex(addrStr);
+            if (address.IsNull()) {
+                continue;
+            }
+
+            // Fetch the address's transactions from the index (clause 2.50).
+            std::vector<uint256> txids = GetAddressTransactions(address);
+            for (const uint256& txid : txids) {
+                if (!processedTxs.insert(txid).second) {
+                    continue;  // Already processed this transaction
+                }
+
+                // Common-input-ownership heuristic: all input addresses of a
+                // single transaction are grouped into the same cluster.
+                std::vector<uint160> inputs = GetTransactionInputAddresses(txid);
+                if (inputs.size() > 1) {
+                    for (size_t i = 1; i < inputs.size(); ++i) {
+                        UnionClusters(inputs[0], inputs[i]);
+                    }
                 }
             }
-        } catch (const std::exception& e) {
-            LogPrintf("WalletClusterer: Error analyzing block: %s\n", e.what());
         }
-        
-        // Move to next block
-        pindex = chainActive.Next(pindex);
     }
-    
-    LogPrintf("WalletClusterer: Analyzed %d blocks, %d transactions, found %d clusters\n", 
-              block_count, analyzed_count, clusters.size());
-    
+
+    LogPrintf("WalletClusterer: Cluster building complete, found %d clusters\n",
+              clusters.size());
+
     cache_valid = true;
     SaveClusters();
 }
@@ -462,11 +508,74 @@ void WalletClusterer::LoadClusters()
 std::vector<uint256> WalletClusterer::GetAddressTransactions(const uint160& address)
 {
     std::vector<uint256> txids;
-    
-    // This would need to query a transaction index
-    // For now, return empty - this is a placeholder for future implementation
-    
+
+    // Clause 2.50: return the address's transactions from the persisted
+    // transaction/address index so clustering can operate on real data.
+    std::string key = "txcluster_addr_" + address.ToString();
+    std::vector<uint8_t> data;
+    if (database.ReadGeneric(key, data)) {
+        try {
+            CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+            ss >> txids;
+        } catch (const std::exception& e) {
+            LogPrintf("WalletClusterer: Failed to deserialize address tx index for %s: %s\n",
+                      address.ToString().c_str(), e.what());
+            txids.clear();
+        }
+    }
+
     return txids;
+}
+
+std::vector<uint160> WalletClusterer::GetTransactionInputAddresses(const uint256& txid)
+{
+    std::vector<uint160> inputs;
+
+    std::string key = "txcluster_tx_" + txid.ToString();
+    std::vector<uint8_t> data;
+    if (database.ReadGeneric(key, data)) {
+        try {
+            CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+            ss >> inputs;
+        } catch (const std::exception& e) {
+            LogPrintf("WalletClusterer: Failed to deserialize tx input index for %s: %s\n",
+                      txid.ToString().c_str(), e.what());
+            inputs.clear();
+        }
+    }
+
+    return inputs;
+}
+
+void WalletClusterer::RecordTransactionInputs(const uint256& txid,
+                                              const std::vector<uint160>& inputAddresses)
+{
+    // Persist tx -> input addresses (used by the common-input heuristic).
+    try {
+        CDataStream ss(SER_DISK, CLIENT_VERSION);
+        ss << inputAddresses;
+        std::vector<uint8_t> data(ss.begin(), ss.end());
+        database.WriteGeneric("txcluster_tx_" + txid.ToString(), data);
+    } catch (const std::exception& e) {
+        LogPrintf("WalletClusterer: Failed to persist tx input index: %s\n", e.what());
+        return;
+    }
+
+    // Update per-address -> tx-list index for each input address.
+    for (const uint160& addr : inputAddresses) {
+        std::vector<uint256> txids = GetAddressTransactions(addr);
+        if (std::find(txids.begin(), txids.end(), txid) == txids.end()) {
+            txids.push_back(txid);
+        }
+        try {
+            CDataStream ss(SER_DISK, CLIENT_VERSION);
+            ss << txids;
+            std::vector<uint8_t> data(ss.begin(), ss.end());
+            database.WriteGeneric("txcluster_addr_" + addr.ToString(), data);
+        } catch (const std::exception& e) {
+            LogPrintf("WalletClusterer: Failed to persist address tx index: %s\n", e.what());
+        }
+    }
 }
 
 bool WalletClusterer::IsLikelyChangeAddress(const uint160& address)

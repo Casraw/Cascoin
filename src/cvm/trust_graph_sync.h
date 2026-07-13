@@ -362,6 +362,26 @@ private:
      * Check if peer state is stale
      */
     bool IsPeerStateStale(NodeId nodeId) const;
+
+    /**
+     * Compute the trust graph state hash directly from the local DB + trust
+     * graph. Used as a fallback when no ConsensusSafetyValidator is configured
+     * so that verify/apply operate against real committed state instead of
+     * failing. Mirrors ConsensusSafetyValidator::CalculateTrustGraphStateHash.
+     */
+    uint256 ComputeLocalStateHash() const;
+
+    /**
+     * Build the current trust graph sync state directly from the local DB +
+     * trust graph (fallback when no validator is configured).
+     */
+    TrustGraphSyncState ComputeLocalState() const;
+
+    /**
+     * Enumerate committed trust edges directly from the local DB (fallback
+     * when no validator is configured).
+     */
+    std::vector<TrustEdge> ComputeLocalDelta(int sinceBlock) const;
 };
 
 // Global trust graph sync manager instance

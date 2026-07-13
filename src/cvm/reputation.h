@@ -180,9 +180,14 @@ private:
 class PatternDetector {
 public:
     /**
-     * Detect rapid-fire transactions (possible spam)
+     * Detect rapid-fire transactions (possible spam).
+     *
+     * Consults the per-address transaction-history index maintained via
+     * RecordAddressActivity() and returns true when the address's activity
+     * matches the rapid-fire pattern (many transactions within a small block
+     * window) at or before the supplied block height. (Bugfix 2.14)
      */
-    static bool DetectRapidFire(const uint160& address, int blockHeight);
+    static bool DetectRapidFire(const uint160& address, int blockHeight, CVMDatabase& db);
     
     /**
      * Detect mixer-like behavior
@@ -195,9 +200,18 @@ public:
     static bool DetectDusting(const CTransaction& tx);
     
     /**
-     * Detect address reuse patterns that indicate exchange
+     * Detect address reuse patterns that indicate exchange.
+     *
+     * Consults the address's committed reputation record and returns true when
+     * its transaction volume / count matches the exchange pattern. (Bugfix 2.48)
      */
-    static bool DetectExchangePattern(const uint160& address);
+    static bool DetectExchangePattern(const uint160& address, CVMDatabase& db);
+
+    /**
+     * Record an address's on-chain activity (block height) into the
+     * transaction-history index consulted by DetectRapidFire().
+     */
+    static void RecordAddressActivity(const uint160& address, int blockHeight, CVMDatabase& db);
 };
 
 } // namespace CVM
