@@ -5,6 +5,7 @@
 #include <cvm/sustainable_gas.h>
 #include <cvm/trust_context.h>
 #include <cvm/cvmdb.h>
+#include <cvm/opcodes.h>
 #include <cvm/reputation.h>
 #include <algorithm>
 #include <cmath>
@@ -205,12 +206,27 @@ void SustainableGasSystem::ProcessGasRebate(const uint160& address, uint64_t amo
 
 bool SustainableGasSystem::IsNetworkBeneficialOperation(uint8_t opcode, const CVM::TrustContext& trust)
 {
-    // Get caller reputation
+    // Requirement 2.43: assess actual network benefit based on WHAT the operation
+    // does, not on caller reputation alone. Operations that create or maintain
+    // shared network state, enable contract interaction, or emit observable
+    // events contribute to network utility and are considered beneficial;
+    // trivial compute, stack shuffling, and halts do not.
+    bool operationIsBeneficial = false;
+    switch (static_cast<CVM::OpCode>(opcode)) {
+        case CVM::OpCode::OP_SSTORE:   // persistent contract state write
+        case CVM::OpCode::OP_CALL:     // contract-to-contract interaction
+        case CVM::OpCode::OP_LOG:      // event emission
+            operationIsBeneficial = true;
+            break;
+        default:
+            operationIsBeneficial = false;
+            break;
+    }
+
+    // A beneficial classification requires both a genuinely beneficial operation
+    // and a caller in good standing (guards against abuse of the subsidy path).
     uint8_t callerReputation = static_cast<uint8_t>(trust.GetCallerReputation());
-    
-    // Operations that improve network health
-    // For now, consider high-reputation contract calls as beneficial
-    return callerReputation >= 70;
+    return operationIsBeneficial && callerReputation >= 50;
 }
 
 // ===== Community Gas Pools =====

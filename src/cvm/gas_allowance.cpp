@@ -136,12 +136,48 @@ void GasAllowanceTracker::RenewIfNeeded(
 
 void GasAllowanceTracker::LoadFromDatabase(CVMDatabase& db)
 {
-    // Load all gas allowance states from database
-    // Key format: "gas_allowance_<address>"
-    
-    // Note: This would require iterating through database keys
-    // For now, we'll load on-demand when addresses are accessed
-    LogPrint(BCLog::CVM, "GasAllowance: Loaded allowance states from database\n");
+    // Requirement 2.45: iterate the database and restore all persisted allowance
+    // states at startup rather than relying solely on on-demand creation.
+    // Key format: "gas_allowance_<address>" (address is the hex representation).
+    static const std::string kPrefix = "gas_allowance_";
+
+    std::vector<std::string> keys = db.ListKeysWithPrefix(kPrefix);
+    size_t restored = 0;
+    for (const std::string& key : keys) {
+        std::vector<uint8_t> data;
+        if (!db.ReadGeneric(key, data)) {
+            continue;
+        }
+
+        // Serialized layout (see SaveToDatabase): dailyAllowance (8),
+        // usedToday (8), lastRenewalBlock (8), reputation (1) = 25 bytes.
+        if (data.size() < 25) {
+            continue;
+        }
+
+        size_t off = 0;
+        auto readU64 = [&](uint64_t& v) {
+            v = 0;
+            for (int i = 0; i < 8; ++i) v |= (static_cast<uint64_t>(data[off++]) << (i * 8));
+        };
+
+        AllowanceState state;
+        uint64_t tmp = 0;
+        readU64(tmp); state.dailyAllowance = tmp;
+        readU64(tmp); state.usedToday = tmp;
+        readU64(tmp); state.lastRenewalBlock = static_cast<int64_t>(tmp);
+        state.reputation = data[off++];
+
+        // Reconstruct the address from the hex key suffix.
+        std::string hex = key.substr(kPrefix.size());
+        uint160 address;
+        address.SetHex(hex);
+
+        allowanceCache[address] = state;
+        ++restored;
+    }
+
+    LogPrint(BCLog::CVM, "GasAllowance: Loaded %d allowance states from database\n", restored);
 }
 
 void GasAllowanceTracker::SaveToDatabase(CVMDatabase& db)

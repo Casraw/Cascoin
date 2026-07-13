@@ -4,9 +4,14 @@
 
 #include <cvm/fee_calculator.h>
 #include <cvm/cvm.h>
+#include <cvm/opcodes.h>
 #include <cvm/trust_context.h>
 #include <cvm/reputation.h>
 #include <policy/fees.h>
+#include <policy/policy.h>
+#include <coins.h>
+#include <script/standard.h>
+#include <txmempool.h>
 #include <validation.h>
 #include <util.h>
 #include <utilstrencodings.h>
@@ -14,7 +19,7 @@
 namespace CVM {
 
 FeeCalculator::FeeCalculator()
-    : m_db(nullptr)
+    : m_db(nullptr), m_coinsView(nullptr)
 {
     m_trustContext = std::make_shared<TrustContext>();
     m_gasSystem = std::make_unique<cvm::SustainableGasSystem>();
@@ -220,16 +225,41 @@ CAmount FeeCalculator::CalculateGasSubsidy(
     uint64_t gasLimit,
     uint8_t reputation)
 {
-    if (!m_gasSubsidyTracker || !m_trustContext) {
+    if (!m_gasSubsidyTracker || !m_gasSystem) {
         return 0;
     }
-    
-    // Check if operation is beneficial
-    bool isBeneficial = (reputation >= 80); // Simplified check
-    
-    // Calculate subsidy based on gas used and trust context
-    uint64_t subsidyGas = m_gasSubsidyTracker->CalculateSubsidy(gasLimit, *m_trustContext, isBeneficial);
-    
+
+    // Requirement 2.40: build a trust context that reflects the caller's ACTUAL
+    // reputation so the subsidy pipeline is wired with real inputs (the shared
+    // m_trustContext carries no per-transaction reputation).
+    TrustContext trust;
+    trust.SetCallerReputation(reputation);
+
+    // Requirement 2.40: assess actual network benefit based on the operation the
+    // transaction performs (deploy/call) rather than a bare reputation gate.
+    // Map the CVM/EVM operation to a representative opcode and delegate to the
+    // gas system's benefit assessment.
+    uint8_t representativeOpcode = static_cast<uint8_t>(OpCode::OP_STOP);
+    int opReturnIndex = FindCVMOpReturn(tx);
+    if (opReturnIndex >= 0) {
+        CVMOpType opType;
+        std::vector<uint8_t> data;
+        if (ParseCVMOpReturn(tx.vout[opReturnIndex], opType, data)) {
+            if (opType == CVMOpType::CONTRACT_DEPLOY || opType == CVMOpType::EVM_DEPLOY) {
+                // A deploy creates persistent contract state.
+                representativeOpcode = static_cast<uint8_t>(OpCode::OP_SSTORE);
+            } else if (opType == CVMOpType::CONTRACT_CALL || opType == CVMOpType::EVM_CALL) {
+                // A call is a contract interaction.
+                representativeOpcode = static_cast<uint8_t>(OpCode::OP_CALL);
+            }
+        }
+    }
+
+    bool isBeneficial = m_gasSystem->IsNetworkBeneficialOperation(representativeOpcode, trust);
+
+    // Calculate subsidy based on gas used and the (real) trust context.
+    uint64_t subsidyGas = m_gasSubsidyTracker->CalculateSubsidy(gasLimit, trust, isBeneficial);
+
     // Convert gas subsidy to satoshis
     uint64_t networkLoad = GetNetworkLoad();
     uint64_t gasPrice = EstimateGasPrice(reputation, networkLoad);
@@ -385,44 +415,38 @@ uint160 FeeCalculator::GetSenderAddress(const CTransaction& tx)
     if (tx.vin.empty()) {
         return uint160();
     }
-    
-    // Look up the input's previous output from UTXO set
-    // In Bitcoin-based systems, we need access to CCoinsViewCache to look up previous outputs
-    // Since we don't have direct access here, we'll use a simplified approach
-    
-    // For CVM/EVM transactions, the sender is typically encoded in the transaction
-    // or we need to look it up from the blockchain state
-    
-    // Try to extract from CVM OP_RETURN data first
-    int opReturnIndex = FindCVMOpReturn(tx);
-    if (opReturnIndex >= 0) {
-        CVMOpType opType;
-        std::vector<uint8_t> data;
-        if (ParseCVMOpReturn(tx.vout[opReturnIndex], opType, data)) {
-            // For deploy operations
-            if (opType == CVMOpType::CONTRACT_DEPLOY || opType == CVMOpType::EVM_DEPLOY) {
-                CVMDeployData deployData;
-                if (deployData.Deserialize(data)) {
-                    // Deployer address is typically the first input's address
-                    // We'll need to look this up from the UTXO set in a full implementation
-                    // For now, return empty - this will be filled in by validation.cpp
-                    // which has access to CCoinsViewCache
-                    return uint160();
-                }
+
+    // Requirement 2.41: resolve the real spending address from the transaction's
+    // inputs via the UTXO set (coins view) supplied by validation. Each input
+    // spends a previous output whose scriptPubKey encodes the owner address.
+    if (m_coinsView) {
+        for (const CTxIn& txin : tx.vin) {
+            const Coin& coin = m_coinsView->AccessCoin(txin.prevout);
+            if (coin.IsSpent()) {
+                continue;
             }
-            // For call operations
-            else if (opType == CVMOpType::CONTRACT_CALL || opType == CVMOpType::EVM_CALL) {
-                CVMCallData callData;
-                if (callData.Deserialize(data)) {
-                    // Caller address needs to be looked up from UTXO set
-                    return uint160();
-                }
+
+            CTxDestination dest;
+            if (!ExtractDestination(coin.out.scriptPubKey, dest)) {
+                continue;
+            }
+
+            // Pay-to-pubkey-hash / pay-to-witness-pubkey-hash resolve to a key id.
+            if (const CKeyID* keyid = boost::get<CKeyID>(&dest)) {
+                return uint160(*keyid);
+            }
+            // Pay-to-script-hash resolves to a script id.
+            if (const CScriptID* scriptid = boost::get<CScriptID>(&dest)) {
+                return uint160(*scriptid);
             }
         }
+
+        LogPrint(BCLog::CVM, "FeeCalculator::GetSenderAddress: no resolvable "
+                 "destination in inputs for tx %s\n", tx.GetHash().ToString());
     }
-    
-    // Fallback: return empty address
-    // The caller (validation.cpp) should provide the address when it has access to UTXO set
+
+    // No coins view available (e.g. context that has not wired the UTXO set):
+    // return empty and let the caller supply the address.
     return uint160();
 }
 
@@ -481,71 +505,52 @@ uint8_t FeeCalculator::GetReputation(const uint160& address)
 
 uint64_t FeeCalculator::GetNetworkLoad()
 {
-    // Calculate current network load based on mempool size and block fullness
-    // Returns value from 0 (empty) to 100 (full)
-    
-    // Access global mempool if available
-    // Note: In Bitcoin Core, mempool is typically accessed via a global pointer
-    // We'll use a simplified calculation based on available metrics
-    
-    uint64_t load = 50; // Default moderate load
-    
-    try {
-        // Try to access mempool statistics
-        // In a full implementation, we would:
-        // 1. Get mempool size (number of transactions)
-        // 2. Get mempool memory usage
-        // 3. Get recent block fullness
-        // 4. Calculate load as percentage of capacity
-        
-        // For now, we'll use a heuristic based on sustainable gas system
-        if (m_gasSystem) {
-            // Check if we have congestion data
-            // The sustainable gas system tracks network congestion
-            // We can infer load from gas price trends
-            
-            // Get current gas price for medium reputation
-            uint64_t currentPrice = m_gasSystem->GetPredictableGasPrice(50, 50);
-            uint64_t basePrice = m_gasSystem->GetGasParameters().baseGasPrice;
-            
-            // Calculate load based on price ratio
-            // If current price is 2x base price, network is at 100% load
-            if (basePrice > 0) {
-                uint64_t priceRatio = (currentPrice * 100) / basePrice;
-                
-                // Map price ratio to load percentage
-                // 100% ratio = 0% load (base price)
-                // 200% ratio = 100% load (2x base price)
-                if (priceRatio >= 100) {
-                    load = (priceRatio - 100);
-                    if (load > 100) load = 100;
-                } else {
-                    load = 0; // Below base price means no load
-                }
-                
-                LogPrint(BCLog::CVM, "FeeCalculator::GetNetworkLoad: currentPrice=%d basePrice=%d ratio=%d load=%d\n",
-                         currentPrice, basePrice, priceRatio, load);
-                
-                return load;
-            }
-        }
-        
-        // Fallback: check if we can access mempool size
-        // This would require access to the global mempool object
-        // For now, return moderate load
-        LogPrint(BCLog::CVM, "FeeCalculator::GetNetworkLoad: Using default load=%d\n", load);
-        
-    } catch (const std::exception& e) {
-        LogPrint(BCLog::CVM, "FeeCalculator::GetNetworkLoad: Error calculating load: %s\n", e.what());
+    // Requirement 2.42: derive network load from the actual live mempool state,
+    // not a hardcoded/heuristic constant. Load is the fraction of the configured
+    // mempool memory limit currently in use, expressed as a 0-100 percentage.
+    //
+    // An empty mempool therefore yields a load of 0.
+    unsigned long txCount = mempool.size();
+    if (txCount == 0) {
+        return 0;
     }
-    
+
+    size_t usage = mempool.DynamicMemoryUsage();
+
+    // Configured mempool capacity (-maxmempool, in MB) is the pricing/sizing
+    // source for the load fraction.
+    int64_t maxMemBytes = gArgs.GetArg("-maxmempool", DEFAULT_MAX_MEMPOOL_SIZE) * 1000000;
+    if (maxMemBytes <= 0) {
+        // Capacity unknown: any non-empty mempool is at least minimal load.
+        return 1;
+    }
+
+    uint64_t load = (static_cast<uint64_t>(usage) * 100) / static_cast<uint64_t>(maxMemBytes);
+    if (load > 100) {
+        load = 100;
+    }
+
+    LogPrint(BCLog::CVM, "FeeCalculator::GetNetworkLoad: txCount=%d usage=%d maxMem=%d load=%d\n",
+             txCount, usage, maxMemBytes, load);
+
     return load;
 }
 
 uint64_t FeeCalculator::GetGasToSatoshiRate()
 {
-    // This would be dynamically adjusted based on CAS/USD price
-    // For now, return default rate
+    // Requirement 2.42: derive the conversion rate from the configured pricing
+    // source (the sustainable gas system's base gas price) rather than a fixed
+    // constant. Fall back to the default rate when no pricing source is wired.
+    if (m_gasSystem) {
+        uint64_t basePrice = m_gasSystem->GetGasParameters().baseGasPrice;
+        if (basePrice > 0) {
+            // Scale the base gas price into a satoshi-per-gas rate using the same
+            // wei->satoshi factor as GasToSatoshis (divide by 1e10), with a floor
+            // of 1 satoshi per gas unit.
+            uint64_t rate = basePrice / 10000000000ULL;
+            return rate > 0 ? rate : 1;
+        }
+    }
     return DEFAULT_GAS_TO_SATOSHI_RATE;
 }
 

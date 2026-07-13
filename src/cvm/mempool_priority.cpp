@@ -4,6 +4,7 @@
 
 #include <cvm/mempool_priority.h>
 #include <cvm/cvm.h>
+#include <cvm/cvmdb.h>
 #include <util.h>
 
 namespace CVM {
@@ -12,8 +13,12 @@ namespace CVM {
 
 CompareTxMemPoolEntryByReputationPriority::CompareTxMemPoolEntryByReputationPriority()
 {
-    // Initialize priority manager and fee calculator
-    // TODO: Initialize with CVM database when available
+    // Requirement 2.46: initialize the fee calculator with the CVM database so
+    // priority decisions (reputation lookups, sender resolution) have database
+    // context instead of running without it.
+    if (g_cvmdb) {
+        m_feeCalculator.Initialize(g_cvmdb.get());
+    }
 }
 
 bool CompareTxMemPoolEntryByReputationPriority::operator()(

@@ -284,7 +284,7 @@ Preservation Checking).
 
 ### Workstream 5 — Fee / gas / subsidy accounting (consensus-adjacent)
 
-- [-] 13. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
+- [x] 13. Write Workstream-5 exploratory + preservation tests (BEFORE fix)
   - **Property 12: Bug Condition** — subsidy-before-fee, real benefit, real sender, live load/rate, rebate transfer, allowance restore, DB init
   - Explore (fail on unfixed): subsidy skipped for non-free-gas tx (1.10); `reputation>=80`
     benefit check (1.40); empty sender (1.41); hardcoded load 50 / fixed rate (1.42);
@@ -294,8 +294,8 @@ Preservation Checking).
     dual-eligible subsidy still granted (3.16).
   - _Requirements: 1.10, 1.40, 1.41, 1.42, 1.43, 1.44, 1.45, 1.46, 3.1, 3.8, 3.16_
 
-- [ ] 14. Implement Workstream-5 fixes
-  - [ ] 14.1 Fee/gas/subsidy real inputs
+- [x] 14. Implement Workstream-5 fixes
+  - [x] 14.1 Fee/gas/subsidy real inputs
     - `mempool_priority.cpp`: apply applicable subsidy before effective fee; initialize with
       the CVM database. `fee_calculator.cpp`: real network-benefit assessment; resolve real
       sender via validation UTXO set; derive load from live mempool and rate from configured
@@ -306,13 +306,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46_
     - _Preservation: 3.1, 3.8, 3.16_
     - _Requirements: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46_
-  - [ ] 14.2 Verify Workstream-5 fix-property test passes and preservation holds
+  - [x] 14.2 Verify Workstream-5 fix-property test passes and preservation holds
     - **Property 12: Expected Behavior** / **Property 21: Preservation** — re-run task 13 tests.
     - _Requirements: 2.10, 2.40, 2.41, 2.42, 2.43, 2.44, 2.45, 2.46, 3.1, 3.8, 3.16_
 
 ### Workstream 6 — EVM compatibility
 
-- [ ] 15. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
+- [-] 15. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
   - **Property 13: Bug Condition** — TLOAD/TSTORE, BASEFEE, EVM CREATE, logsBloom, sender/gas, reputation/memory, nested frame, storage proof
   - Explore (fail on unfixed): no TLOAD/TSTORE handlers (1.11); BASEFEE returns 0 (1.12);
     CREATE uses `Hash160(sender||nonce)` (1.27); `logsBloom` 512 zero chars (1.28); empty

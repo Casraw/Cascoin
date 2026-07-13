@@ -6,6 +6,8 @@
 #include <cvm/cvmdb.h>
 #include <cvm/trust_context.h>
 #include <cvm/sustainable_gas.h>
+#include <clientversion.h>
+#include <streams.h>
 #include <util.h>
 
 namespace CVM {
@@ -103,9 +105,21 @@ int GasSubsidyTracker::DistributePendingRebates(int64_t currentHeight)
     while (it != pendingRebates.end()) {
         // Distribute after 10 block confirmation
         if (currentHeight - it->blockHeight >= 10) {
-            // In production, would actually transfer funds or credit account
+            // Requirement 2.44: credit the rebate amount to the recipient's
+            // accumulated subsidy balance (a transfer/credit), not merely bump a
+            // counter. The credit is recorded as a subsidy record so it is
+            // reflected in GetTotalSubsidies and persisted by SaveToDatabase.
+            SubsidyRecord record;
+            record.address = it->address;
+            record.subsidyAmount = it->amount;
+            record.gasUsed = 0;
+            record.reputation = 0;
+            record.isBeneficial = true;
+            record.blockHeight = currentHeight;
+            subsidyRecords[it->address].push_back(record);
+
             totalRebatesDistributed += it->amount;
-            
+
             LogPrint(BCLog::CVM, "GasSubsidy: Distributed rebate - Address: %s, Amount: %d\n",
                      it->address.ToString(), it->amount);
             
@@ -246,25 +260,102 @@ uint64_t GasSubsidyTracker::GetPendingRebates(const uint160& address)
 
 void GasSubsidyTracker::LoadFromDatabase(CVMDatabase& db)
 {
-    // Load subsidy records, gas pools, and pending rebates from database
+    // Requirement 2.44: restore persisted subsidy records completely so a
+    // save/load round-trip preserves all subsidy state.
     // Key formats:
-    // - "gas_subsidy_<address>" -> subsidy records
-    // - "gas_pool_<poolId>" -> pool info
-    // - "pending_rebates" -> rebate list
-    
-    LogPrint(BCLog::CVM, "GasSubsidy: Loaded subsidy data from database\n");
+    // - "gas_subsidy_<address>" -> subsidy records for the address
+    // - "gas_pool_<poolId>"     -> pool info
+
+    static const std::string kSubsidyPrefix = "gas_subsidy_";
+    std::vector<std::string> subsidyKeys = db.ListKeysWithPrefix(kSubsidyPrefix);
+    for (const std::string& key : subsidyKeys) {
+        std::vector<uint8_t> data;
+        if (!db.ReadGeneric(key, data) || data.empty()) {
+            continue;
+        }
+
+        try {
+            CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+            uint64_t count = 0;
+            ss >> count;
+
+            std::vector<SubsidyRecord> records;
+            for (uint64_t i = 0; i < count; ++i) {
+                SubsidyRecord rec;
+                uint8_t beneficial = 0;
+                ss >> rec.txid;
+                ss >> rec.address;
+                ss >> rec.gasUsed;
+                ss >> rec.subsidyAmount;
+                ss >> rec.reputation;
+                ss >> beneficial;
+                ss >> rec.blockHeight;
+                rec.isBeneficial = (beneficial != 0);
+                records.push_back(rec);
+                totalSubsidiesDistributed += rec.subsidyAmount;
+            }
+
+            if (!records.empty()) {
+                // The address is stored inside every record; use it as the key.
+                subsidyRecords[records.front().address] = std::move(records);
+            }
+        } catch (const std::exception& e) {
+            LogPrint(BCLog::CVM, "GasSubsidy: Failed to deserialize subsidy records for key %s: %s\n",
+                     key, e.what());
+        }
+    }
+
+    // Restore gas pools.
+    static const std::string kPoolPrefix = "gas_pool_";
+    std::vector<std::string> poolKeys = db.ListKeysWithPrefix(kPoolPrefix);
+    for (const std::string& key : poolKeys) {
+        std::vector<uint8_t> data;
+        if (!db.ReadGeneric(key, data) || data.size() < 33) {
+            continue;
+        }
+
+        GasPool pool;
+        pool.poolId = key.substr(kPoolPrefix.size());
+        size_t off = 0;
+        auto readU64 = [&](uint64_t& v) {
+            v = 0;
+            for (int i = 0; i < 8; ++i) v |= (static_cast<uint64_t>(data[off++]) << (i * 8));
+        };
+        readU64(pool.totalContributed);
+        readU64(pool.totalUsed);
+        readU64(pool.remaining);
+        pool.minReputation = data[off++];
+        uint64_t createdHeight = 0;
+        readU64(createdHeight);
+        pool.createdHeight = static_cast<int64_t>(createdHeight);
+        gasPools[pool.poolId] = pool;
+    }
+
+    LogPrint(BCLog::CVM, "GasSubsidy: Loaded subsidy data from database - Addresses: %d, Pools: %d\n",
+             subsidyRecords.size(), gasPools.size());
 }
 
 void GasSubsidyTracker::SaveToDatabase(CVMDatabase& db)
 {
-    // Save subsidy records
+    // Requirement 2.44: serialize ALL subsidy record fields so persisted state
+    // survives a save/load round-trip.
     for (const auto& entry : subsidyRecords) {
         std::string key = "gas_subsidy_" + entry.first.ToString();
-        
-        // Serialize records (simplified)
-        std::vector<uint8_t> data;
-        // In production, would properly serialize all records
-        
+
+        CDataStream ss(SER_DISK, CLIENT_VERSION);
+        uint64_t count = static_cast<uint64_t>(entry.second.size());
+        ss << count;
+        for (const SubsidyRecord& rec : entry.second) {
+            ss << rec.txid;
+            ss << rec.address;
+            ss << rec.gasUsed;
+            ss << rec.subsidyAmount;
+            ss << rec.reputation;
+            ss << static_cast<uint8_t>(rec.isBeneficial ? 1 : 0);
+            ss << rec.blockHeight;
+        }
+
+        std::vector<uint8_t> data(ss.begin(), ss.end());
         db.WriteGeneric(key, data);
     }
     

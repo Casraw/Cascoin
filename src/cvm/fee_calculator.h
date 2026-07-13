@@ -13,6 +13,8 @@
 #include <cvm/gas_allowance.h>
 #include <cvm/gas_subsidy.h>
 
+class CCoinsViewCache;
+
 namespace CVM {
 
 // Forward declarations
@@ -66,6 +68,16 @@ public:
      * @param db CVM database
      */
     void Initialize(CVMDatabase* db);
+
+    /**
+     * Provide the UTXO set (coins view) used to resolve transaction senders.
+     *
+     * Validation supplies its CCoinsViewCache so GetSenderAddress can resolve
+     * the real spending address from a transaction's inputs (Requirement 2.41).
+     *
+     * @param view Coins view (UTXO set); may be nullptr to clear
+     */
+    void SetCoinsView(const CCoinsViewCache* view) { m_coinsView = view; }
     
     // ===== Main Fee Calculation =====
     
@@ -325,6 +337,7 @@ public:
     
 private:
     CVMDatabase* m_db;
+    const CCoinsViewCache* m_coinsView;
     std::shared_ptr<TrustContext> m_trustContext;
     std::unique_ptr<cvm::SustainableGasSystem> m_gasSystem;
     std::unique_ptr<GasAllowanceTracker> m_gasAllowanceTracker;

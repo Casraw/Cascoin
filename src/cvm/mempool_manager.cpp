@@ -6,6 +6,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/reputation.h>
 #include <cvm/cvm.h>
+#include <cvm/opcodes.h>
 #include <cvm/trust_context.h>
 #include <cvm/hat_consensus.h>
 #include <cvm/dos_protection.h>
@@ -181,9 +182,40 @@ MempoolManager::ValidationResult MempoolManager::ValidateTransaction(
     
     // Check for gas subsidy
     if (!result.isFreeGas) {
-        // TODO: Check for applicable gas subsidies
-        // For now, calculate normal fee with reputation discount
-        result.effectiveFee = CalculateEffectiveFee(tx, gasLimit, result.reputation);
+        // Requirement 2.10: apply any applicable gas subsidy BEFORE setting the
+        // effective fee, rather than only charging a reputation-discounted fee.
+        CAmount normalFee = CalculateEffectiveFee(tx, gasLimit, result.reputation);
+
+        CAmount subsidy = 0;
+        if (m_gasSubsidyManager && m_gasSystem) {
+            TrustContext trust(m_db);
+            trust.SetCallerReputation(result.reputation);
+
+            // Assess actual network benefit of the operation being performed.
+            uint8_t representativeOpcode = static_cast<uint8_t>(OpCode::OP_STOP);
+            if (isDeployment) {
+                representativeOpcode = static_cast<uint8_t>(OpCode::OP_SSTORE);
+            } else {
+                representativeOpcode = static_cast<uint8_t>(OpCode::OP_CALL);
+            }
+            bool isBeneficial = m_gasSystem->IsNetworkBeneficialOperation(representativeOpcode, trust);
+
+            uint64_t subsidyGas = m_gasSubsidyManager->CalculateSubsidy(gasLimit, trust, isBeneficial);
+            // Convert the subsidized gas into the same fee units as normalFee.
+            CAmount gasPrice = GetGasPrice();
+            subsidy = static_cast<CAmount>(subsidyGas) * gasPrice / 1000000;
+            if (subsidy > normalFee) {
+                subsidy = normalFee;
+            }
+        }
+
+        result.effectiveFee = normalFee - subsidy;
+        if (result.effectiveFee < 0) {
+            result.effectiveFee = 0;
+        }
+        if (subsidy > 0) {
+            m_subsidizedTransactions++;
+        }
     }
     
     // Validate minimum fee
