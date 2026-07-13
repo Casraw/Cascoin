@@ -67,6 +67,7 @@
 #include <test/test_bitcoin.h>
 #include <boost/test/unit_test.hpp>
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -128,6 +129,26 @@ void PushWord(std::vector<uint8_t>& code, const std::vector<uint8_t>& bytes)
     code.push_back(static_cast<uint8_t>(CVM::OpCode::OP_PUSH));
     code.push_back(static_cast<uint8_t>(bytes.size()));
     code.insert(code.end(), bytes.begin(), bytes.end());
+}
+
+// Emit a length-prefixed variable-length byte field for the OP_VERIFY_SIG
+// family, matching the encoding decoded by PopVarBytes in cvm.cpp (and mirroring
+// EmitPushVarBytes in cvm_workstream2_preserve_tests.cpp):
+//   push word_0, word_1, ... word_{W-1}, then the byte length (W=ceil(L/32)).
+// Each word_c carries field bytes [c*32, min((c+1)*32, L)) big-endian, exactly
+// as OP_PUSH folds them. The length word is pushed last so the handler pops it
+// first, then reconstructs the field from the words below.
+void PushVarBytes(std::vector<uint8_t>& code, const std::vector<uint8_t>& field)
+{
+    const size_t L = field.size();
+    const size_t W = (L + 31) / 32;
+    for (size_t c = 0; c < W; ++c) {
+        const size_t start = c * 32;
+        const size_t chunkLen = std::min<size_t>(32, L - start);
+        std::vector<uint8_t> chunk(field.begin() + start, field.begin() + start + chunkLen);
+        PushWord(code, chunk);
+    }
+    PushWord(code, std::vector<uint8_t>{static_cast<uint8_t>(L)});
 }
 
 } // anonymous namespace
@@ -281,40 +302,44 @@ BOOST_AUTO_TEST_CASE(preserve_3_4_secp256k1_sign_verify_roundtrip)
 
 // ===========================================================================
 // 3.11  Genuinely valid signatures are still accepted by the OP_VERIFY_SIG
-//       family (push 1). We drive the opcodes with inputs derived from a real
-//       secp256k1 signature (message hash on the stack, ECDSA-sized signature
-//       size indicator, pubkey word). On the unfixed code this trivially holds;
-//       after the fix, a valid signature must still push 1.
+//       family (push 1). We drive the opcodes with a real secp256k1 signature
+//       encoded in the deterministic length-prefixed multi-word form decoded by
+//       PopVarBytes in cvm.cpp (mirroring MakeValidSignatureScenario /
+//       EmitPushVarBytes in cvm_workstream2_preserve_tests.cpp): the 32-byte
+//       message word, then the genuine DER signature as a length-prefixed field,
+//       then the genuine public key as a length-prefixed field (pushed last so
+//       the handler pops pubkey, signature, message in that order). Ground truth
+//       that the scenario is genuinely valid is established with real secp256k1
+//       (CPubKey::Verify == true), independent of the VM encoding. After the fix
+//       a genuinely valid signature must still push 1.
 // ===========================================================================
 BOOST_AUTO_TEST_CASE(preserve_3_11_valid_sig_accepted_by_op_verify_sig)
 {
     CKey key;
     key.MakeNewKey(true);
     CPubKey pub = key.GetPubKey();
+    BOOST_REQUIRE(pub.IsValid());
     uint256 msgHash = InsecureRand256();
     std::vector<uint8_t> sig;
     BOOST_REQUIRE(key.Sign(msgHash, sig));
-    BOOST_REQUIRE(pub.Verify(msgHash, sig)); // genuinely valid
+    BOOST_REQUIRE(pub.Verify(msgHash, sig)); // genuinely valid (secp256k1 ground truth)
 
     // ECDSA signatures are <= 72 bytes; that size routes to the ECDSA path in
-    // both OP_VERIFY_SIG (auto-detect, <=100) and OP_VERIFY_SIG_ECDSA (<=72).
+    // both OP_VERIFY_SIG (auto-detect) and OP_VERIFY_SIG_ECDSA.
     BOOST_REQUIRE_MESSAGE(sig.size() <= 72,
         "sanity: DER ECDSA signature should be <= 72 bytes, got " +
         std::to_string(sig.size()));
 
-    std::vector<uint8_t> msgWord(msgHash.begin(), msgHash.end());
-    std::vector<uint8_t> sizeWord = {static_cast<uint8_t>(sig.size())}; // size indicator
-    // The stack-based OP_VERIFY_SIG interface reads 256-bit stack words, so the
-    // pubkey is represented by its 20-byte key id (the identity the fixed code
-    // will resolve for verification). Words must be <= 32 bytes (OP_PUSH limit).
-    CKeyID keyId = pub.GetID();
-    std::vector<uint8_t> pubWord(keyId.begin(), keyId.end());
+    // The full genuine signature and public-key bytes are supplied in the new
+    // multi-word encoding so real secp256k1 verification succeeds inside the
+    // handler and the opcode pushes 1.
+    std::vector<uint8_t> pubBytes(pub.begin(), pub.end());
 
     for (CVM::OpCode op : {CVM::OpCode::OP_VERIFY_SIG, CVM::OpCode::OP_VERIFY_SIG_ECDSA}) {
         std::vector<uint8_t> code;
-        PushWord(code, msgWord);   // message hash
-        PushWord(code, sizeWord);  // signature (size indicator => ECDSA)
-        PushWord(code, pubWord);   // pubkey
+        PushWord(code, std::vector<uint8_t>(msgHash.begin(), msgHash.end())); // 32-byte message word
+        PushVarBytes(code, sig);       // genuine signature (length-prefixed)
+        PushVarBytes(code, pubBytes);  // genuine pubkey (length-prefixed, on top)
         code.push_back(static_cast<uint8_t>(op));
         code.push_back(static_cast<uint8_t>(CVM::OpCode::OP_STOP));
 

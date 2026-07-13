@@ -3,11 +3,40 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cvm/receipt.h>
+#include <cvm/keccak256.h>
 #include <univalue.h>
 #include <utilstrencodings.h>
 #include <tinyformat.h>
 
+#include <array>
+
 namespace CVM {
+
+namespace {
+
+// Ethereum log bloom is a 2048-bit (256-byte) filter.
+static constexpr size_t kBloomByteLength = 256;
+
+// Fold one item (a log address or a topic) into the bloom filter using the
+// standard Ethereum algorithm: hash the item with keccak256, then for each of
+// the three low-order 11-bit indices taken from byte pairs (0,1), (2,3), (4,5)
+// set the corresponding bit.
+void BloomAdd(std::array<uint8_t, kBloomByteLength>& bloom, const uint8_t* item, size_t len)
+{
+    uint8_t hash[32];
+    Keccak256(item, len, hash);
+
+    for (int i = 0; i < 3; ++i) {
+        unsigned int bit = ((static_cast<unsigned int>(hash[2 * i]) << 8) |
+                            static_cast<unsigned int>(hash[2 * i + 1])) & 0x7FF;
+        // Byte index measured from the most-significant end of the 2048-bit field.
+        size_t byteIndex = kBloomByteLength - 1 - (bit >> 3);
+        uint8_t bitMask = static_cast<uint8_t>(1u << (bit & 0x7));
+        bloom[byteIndex] |= bitMask;
+    }
+}
+
+} // anonymous namespace
 
 UniValue TransactionReceipt::ToJSON() const
 {
@@ -49,8 +78,29 @@ UniValue TransactionReceipt::ToJSON() const
     }
     result.pushKV("logs", logsArray);
     
-    // Bloom filter (simplified - just empty for now)
-    result.pushKV("logsBloom", "0x" + std::string(512, '0'));
+    // Logs bloom filter (2048-bit / 256-byte) computed from every log's address
+    // and topics. Empty logs yield an all-zero bloom.
+    std::array<uint8_t, kBloomByteLength> bloom;
+    bloom.fill(0);
+    for (const LogEntry& log : logs) {
+        // The emitting contract address (20 big-endian bytes). uint160 stores
+        // bytes little-endian, so reverse into display/big-endian order first.
+        uint8_t addrBE[20];
+        for (int i = 0; i < 20; ++i) {
+            addrBE[i] = log.address.begin()[19 - i];
+        }
+        BloomAdd(bloom, addrBE, sizeof(addrBE));
+
+        // Each topic (32 big-endian bytes).
+        for (const uint256& topic : log.topics) {
+            uint8_t topicBE[32];
+            for (int i = 0; i < 32; ++i) {
+                topicBE[i] = topic.begin()[31 - i];
+            }
+            BloomAdd(bloom, topicBE, sizeof(topicBE));
+        }
+    }
+    result.pushKV("logsBloom", "0x" + HexStr(bloom.begin(), bloom.end()));
     
     // Revert reason if failed
     if (status == 0 && !revertReason.empty()) {

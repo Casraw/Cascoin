@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <numeric>
 #include <cmath>
+#include <set>
 
 namespace CVM {
 
@@ -781,27 +782,41 @@ bool TrustContext::VerifyCCIPAttestation(const CrossChainAttestation& attestatio
 }
 
 bool TrustContext::IsKnownLayerZeroOracle(const CPubKey& pubkey, uint16_t chainId) const {
-    // Check if the public key belongs to a known LayerZero oracle for the given chain
-    // In production, this would query a registry of trusted oracles
-    
-    // Get the key ID (address) from the public key
-    CKeyID oracleKeyId = pubkey.GetID();
-    
-    // Check against known oracle addresses per chain
-    // These would be loaded from configuration or a trusted registry
-    std::map<uint16_t, std::vector<CKeyID>> knownOracles;
-    
-    // For now, accept any valid public key as we don't have a real oracle registry
-    // In production, this would verify against a whitelist of trusted oracle addresses
+    // An oracle key is trusted only when it appears in the trusted-oracle
+    // registry for the given chain. Accepting any valid public key is not
+    // sufficient (2.36).
     if (!pubkey.IsValid()) {
         return false;
     }
     
-    // Log the oracle verification attempt
-    LogPrint(BCLog::CVM, "TrustContext: Verifying LayerZero oracle %s for chain %d\n",
-             oracleKeyId.ToString(), chainId);
+    CKeyID oracleKeyId = pubkey.GetID();
     
-    return true;
+    // 1) Persistent per-chain registry, populated by governance/configuration.
+    //    Key layout: "lz_oracle_" + chainId + "_" + keyId
+    if (database) {
+        std::string regKey = "lz_oracle_" + std::to_string(chainId) + "_" + oracleKeyId.ToString();
+        std::vector<uint8_t> entry;
+        if (database->ReadGeneric(regKey, entry)) {
+            LogPrint(BCLog::CVM, "TrustContext: LayerZero oracle %s trusted for chain %d (registry)\n",
+                     oracleKeyId.ToString(), chainId);
+            return true;
+        }
+    }
+    
+    // 2) Built-in default registry of trusted oracle key IDs per chain. Empty
+    //    until the network registers oracles; a key absent from the registry is
+    //    treated as unknown and rejected.
+    static const std::map<uint16_t, std::set<std::string>> kDefaultTrustedOracles = {};
+    auto it = kDefaultTrustedOracles.find(chainId);
+    if (it != kDefaultTrustedOracles.end() && it->second.count(oracleKeyId.ToString()) > 0) {
+        LogPrint(BCLog::CVM, "TrustContext: LayerZero oracle %s trusted for chain %d (default registry)\n",
+                 oracleKeyId.ToString(), chainId);
+        return true;
+    }
+    
+    LogPrint(BCLog::CVM, "TrustContext: LayerZero oracle %s not in trusted registry for chain %d\n",
+             oracleKeyId.ToString(), chainId);
+    return false;
 }
 
 bool TrustContext::IsKnownLayerZeroRelayer(const CPubKey& pubkey, uint16_t chainId) const {

@@ -39,6 +39,7 @@ BITCOIN_TESTS =\
   test/cvm_workstream4_tests.cpp \
   test/cvm_workstream5_tests.cpp \
   test/cvm_workstream6_tests.cpp \
+  test/cvm_workstream7_tests.cpp \
   test/cvm_integration_tests.cpp \
   test/cvm_quantum_tests.cpp \
   test/cvm_sustainable_gas_tests.cpp \

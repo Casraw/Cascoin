@@ -113,10 +113,15 @@ public:
     void CleanupExpiredStorage(uint64_t currentBlock);
     void CleanupLowReputationStorage(uint8_t minReputation, uint64_t currentBlock);
     
-    // Storage proofs for light clients
+    // Storage proofs for light clients (Merkle proof bound to the committed
+    // storage root of the contract)
     std::vector<uint256> GenerateStorageProof(const uint160& contractAddr, const uint256& key);
     bool VerifyStorageProof(const std::vector<uint256>& proof, const uint256& root, 
                            const uint160& contractAddr, const uint256& key, const uint256& value);
+    // Compute the committed storage root for a contract (Merkle root over all of
+    // its committed key/value slots). A generated proof verifies against this
+    // root and against no unrelated root.
+    uint256 GetStorageRoot(const uint160& contractAddr);
     
     // Atomic operations across contract calls
     void BeginAtomicOperation();
@@ -184,6 +189,12 @@ private:
     std::string MakeStorageKey(const uint160& contractAddr, const uint256& key) const;
     std::string MakeTrustTaggedKey(const uint160& contractAddr, const std::string& regionId, 
                                   const uint256& key) const;
+
+    // Collect the Merkle leaf commitments for all committed storage slots of a
+    // contract (optionally returning the corresponding storage keys). Used to
+    // build and verify root-bound storage proofs.
+    std::vector<uint256> CollectStorageLeaves(const uint160& contractAddr,
+                                              std::vector<uint256>* outKeys);
 };
 
 } // namespace CVM

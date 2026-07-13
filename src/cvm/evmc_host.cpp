@@ -8,6 +8,7 @@
 
 #include <cvm/evmc_host.h>
 #include <cvm/contract.h>
+#include <cvm/keccak256.h>
 #include <evmone/evmone.h>
 #include <util.h>
 #include <hash.h>
@@ -43,8 +44,8 @@ const evmc_host_interface EVMCHost::host_interface = {
     EVMCHost::emit_log_fn,
     EVMCHost::access_account_fn,
     EVMCHost::access_storage_fn,
-    nullptr, // get_transient_storage (not implemented yet)
-    nullptr  // set_transient_storage (not implemented yet)
+    EVMCHost::get_transient_storage_fn, // EIP-1153 TLOAD
+    EVMCHost::set_transient_storage_fn  // EIP-1153 TSTORE
 };
 
 EVMCHost::EVMCHost(CVMDatabase* db, const TrustContext& trust_ctx,
@@ -67,6 +68,11 @@ EVMCHost::EVMCHost(CVMDatabase* db, const TrustContext& trust_ctx,
     // Chain ID for Cascoin (use a default value, can be configured)
     block_context.chain_id = uint256(); // Initialize to zero
     block_context.chain_id.begin()[0] = 1; // Set chain ID to 1
+    // EIP-1559 base fee: Cascoin's minimum gas price floor (1 satoshi/gas). This
+    // is the base fee exposed to the BASEFEE opcode; block processing can raise
+    // it via SetBaseFee() when a fee market is configured.
+    block_context.base_fee = uint256();
+    block_context.base_fee.begin()[0] = 1;
     
     // Initialize transaction context
     tx_context.hash = uint256();
@@ -102,7 +108,15 @@ evmc_result EVMCHost::Execute(const evmc_message& msg, const uint8_t* code, size
     InjectTrustContext(adjusted_msg);
     
     // Execute via EVMC
-    return vm_instance->execute(vm_instance, &host_interface, reinterpret_cast<evmc_host_context*>(&host_ctx), EVMC_LONDON, &adjusted_msg, code, code_size);
+    evmc_result result = vm_instance->execute(vm_instance, &host_interface, reinterpret_cast<evmc_host_context*>(&host_ctx), EVMC_LONDON, &adjusted_msg, code, code_size);
+
+    // EIP-1153: transient storage lives only for the duration of the top-level
+    // transaction. Clear it once the outermost call frame returns.
+    if (adjusted_msg.depth == 0) {
+        ClearTransientStorage();
+    }
+
+    return result;
 }
 
 void EVMCHost::SetBlockContext(int64_t timestamp, int64_t number, const uint256& hash, 
@@ -201,7 +215,7 @@ struct evmc_tx_context EVMCHost::get_tx_context_fn(evmc_host_context* context) {
     tx_ctx.block_gas_limit = ctx->host->GetBlockGasLimit();
     // block_difficulty removed in newer EVMC versions (replaced by prevrandao)
     tx_ctx.chain_id = ctx->host->GetChainId();
-    tx_ctx.block_base_fee = {}; // EIP-1559 base fee (not implemented yet)
+    tx_ctx.block_base_fee = ctx->host->GetBaseFee(); // EIP-1559 base fee for the current block
     
     return tx_ctx;
 }
@@ -226,6 +240,16 @@ enum evmc_access_status EVMCHost::access_account_fn(evmc_host_context* context, 
 enum evmc_access_status EVMCHost::access_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key) {
     EVMCHostContext* ctx = reinterpret_cast<EVMCHostContext*>(context);
     return ctx->host->AccessStorage(*address, *key);
+}
+
+evmc_bytes32 EVMCHost::get_transient_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key) {
+    EVMCHostContext* ctx = reinterpret_cast<EVMCHostContext*>(context);
+    return ctx->host->GetTransientStorage(*address, *key);
+}
+
+void EVMCHost::set_transient_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key, const evmc_bytes32* value) {
+    EVMCHostContext* ctx = reinterpret_cast<EVMCHostContext*>(context);
+    ctx->host->SetTransientStorage(*address, *key, *value);
 }
 
 // Host Implementation Methods
@@ -445,6 +469,28 @@ evmc_uint256be EVMCHost::GetBlockDifficulty() {
 
 evmc_uint256be EVMCHost::GetChainId() {
     return Uint256ToEvmcUint256be(block_context.chain_id);
+}
+
+evmc_uint256be EVMCHost::GetBaseFee() {
+    return Uint256ToEvmcUint256be(block_context.base_fee);
+}
+
+evmc_bytes32 EVMCHost::GetTransientStorage(const evmc_address& addr, const evmc_bytes32& key) {
+    auto it = transient_storage.find(std::make_pair(addr, key));
+    if (it != transient_storage.end()) {
+        return it->second;
+    }
+    // Unset transient slots read as zero.
+    evmc_bytes32 zero = {};
+    return zero;
+}
+
+void EVMCHost::SetTransientStorage(const evmc_address& addr, const evmc_bytes32& key, const evmc_bytes32& value) {
+    transient_storage[std::make_pair(addr, key)] = value;
+}
+
+void EVMCHost::ClearTransientStorage() {
+    transient_storage.clear();
 }
 
 void EVMCHost::EmitLog(const evmc_address& addr, const uint8_t* data, size_t data_size,
@@ -808,17 +854,18 @@ void EVMCHost::InjectTrustContext(evmc_message& msg) {
 }
 
 uint160 EVMCHost::GenerateContractAddress(const uint160& sender, uint64_t nonce) {
-    // Ethereum-style contract address generation: address = keccak256(rlp([sender, nonce]))[12:]
-    // For Cascoin, we use a simpler approach: hash(sender || nonce)
-    CHashWriter hasher(SER_GETHASH, 0);
-    hasher << sender;
-    hasher << nonce;
-    uint256 hash = hasher.GetHash();
-    
-    // Take the last 160 bits (20 bytes) of the hash
+    // Ethereum-compatible CREATE: address = keccak256(rlp([sender, nonce]))[12:]
+    //
+    // Within the EVMC host, uint160 addresses use the same big-endian byte order
+    // as evmc_address (begin()[0] is the most significant byte — see
+    // EvmcAddressToUint160/Uint160ToEvmcAddress), so the raw bytes are already in
+    // the big-endian order expected by the RLP/keccak pipeline.
+    uint8_t addr_be[20];
+    EthCreateAddressBytes(sender.begin(), nonce, addr_be);
+
     uint160 contract_addr;
-    std::memcpy(contract_addr.begin(), hash.begin(), 20);
-    
+    std::memcpy(contract_addr.begin(), addr_be, 20);
+
     LogPrint(BCLog::CVM, "EVMCHost: Generated contract address %s from sender %s and nonce %d\n",
              contract_addr.ToString(), sender.ToString(), nonce);
     

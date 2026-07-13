@@ -775,15 +775,28 @@ EnhancedExecutionResult EnhancedVM::HandleCrossFormatCall(
 }
 
 void EnhancedVM::SaveExecutionState() {
+    // Backward-compatible entry point: push a real frame carrying the running
+    // call depth when no explicit context is supplied.
+    SaveExecutionState(uint160(), uint160(), BytecodeFormat::UNKNOWN, 0);
+}
+
+void EnhancedVM::SaveExecutionState(const uint160& contract_address, const uint160& caller_address,
+                                    BytecodeFormat format, uint64_t gas_remaining) {
     // Save current execution state to stack for nested calls
     if (execution_stack.size() >= MAX_CALL_DEPTH) {
         LogExecution("ERROR", "Maximum call depth exceeded");
         return;
     }
     
+    // Capture the real execution context for this frame so RestoreExecutionState
+    // can reinstate it when the nested call returns.
     ExecutionFrame frame;
-    // Frame will be populated by caller with current execution context
-    // This is a placeholder for state management
+    frame.contract_address = contract_address;
+    frame.caller_address = caller_address;
+    frame.format = format;
+    frame.gas_remaining = gas_remaining;
+    frame.call_depth = execution_stack.size();
+    execution_stack.push_back(frame);
     
     TraceExecution("Saved execution state (depth: " + std::to_string(execution_stack.size()) + ")");
 }

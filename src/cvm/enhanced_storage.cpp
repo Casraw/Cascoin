@@ -7,6 +7,9 @@
 #include <utilstrencodings.h>
 #include <hash.h>
 
+#include <algorithm>
+#include <cstring>
+
 namespace CVM {
 
 // Default storage quota: 1MB base + reputation bonus
@@ -415,6 +418,100 @@ void EnhancedStorage::CleanupLowReputationStorage(uint8_t minReputation, uint64_
 }
 
 // Storage proofs
+//
+// The proof is a Merkle branch that is cryptographically bound to the contract's
+// committed storage root: verification recomputes the root from the supplied
+// (address, key, value) leaf and the sibling path and only succeeds when the
+// recomputed root equals the root argument. This means a proof verifies against
+// the genuinely committed storage root and fails against any unrelated root.
+
+namespace {
+
+// Leaf commitment for a single storage slot.
+uint256 StorageLeaf(const uint160& contractAddr, const uint256& key, const uint256& value)
+{
+    CHashWriter hasher(SER_GETHASH, 0);
+    hasher << contractAddr << key << value;
+    return hasher.GetHash();
+}
+
+// Combine two nodes order-independently (smaller hash first) so a proof path can
+// be folded without carrying left/right position bits.
+uint256 CombineNodes(const uint256& a, const uint256& b)
+{
+    CHashWriter hasher(SER_GETHASH, 0);
+    if (a < b) {
+        hasher << a << b;
+    } else {
+        hasher << b << a;
+    }
+    return hasher.GetHash();
+}
+
+// Reduce one Merkle level to the next (duplicating the last node when odd).
+std::vector<uint256> NextLevel(const std::vector<uint256>& level)
+{
+    std::vector<uint256> next;
+    for (size_t i = 0; i < level.size(); i += 2) {
+        if (i + 1 < level.size()) {
+            next.push_back(CombineNodes(level[i], level[i + 1]));
+        } else {
+            next.push_back(CombineNodes(level[i], level[i]));
+        }
+    }
+    return next;
+}
+
+uint256 MerkleRootFromLeaves(std::vector<uint256> leaves)
+{
+    if (leaves.empty()) {
+        return uint256();
+    }
+    std::sort(leaves.begin(), leaves.end());
+    while (leaves.size() > 1) {
+        leaves = NextLevel(leaves);
+    }
+    return leaves[0];
+}
+
+} // anonymous namespace
+
+std::vector<uint256> EnhancedStorage::CollectStorageLeaves(const uint160& contractAddr,
+                                                           std::vector<uint256>* outKeys)
+{
+    std::vector<uint256> leaves;
+    if (!database) {
+        return leaves;
+    }
+
+    // Storage keys are stored as: DB_STORAGE + 20-byte address + 32-byte key.
+    std::string prefix = std::string(1, DB_STORAGE) +
+                         std::string((const char*)contractAddr.begin(), 20);
+
+    std::vector<std::string> keys = database->ListKeysWithPrefix(prefix);
+    for (const std::string& dbKey : keys) {
+        if (dbKey.size() != prefix.size() + 32) {
+            continue; // Not a storage-slot key of the expected layout.
+        }
+        uint256 storageKey;
+        std::memcpy(storageKey.begin(), dbKey.data() + prefix.size(), 32);
+
+        uint256 value;
+        if (!Load(contractAddr, storageKey, value)) {
+            continue;
+        }
+        leaves.push_back(StorageLeaf(contractAddr, storageKey, value));
+        if (outKeys) {
+            outKeys->push_back(storageKey);
+        }
+    }
+    return leaves;
+}
+
+uint256 EnhancedStorage::GetStorageRoot(const uint160& contractAddr)
+{
+    return MerkleRootFromLeaves(CollectStorageLeaves(contractAddr, nullptr));
+}
 
 std::vector<uint256> EnhancedStorage::GenerateStorageProof(const uint160& contractAddr, 
                                                            const uint256& key)
@@ -432,28 +529,44 @@ std::vector<uint256> EnhancedStorage::GenerateStorageProof(const uint160& contra
         LogPrint(BCLog::CVM, "EnhancedStorage: Cannot generate proof - key not found\n");
         return proof;
     }
-    
-    // Generate a simple proof structure
-    // In a full implementation, this would create a Merkle Patricia Trie proof
-    // For now, we create a basic proof with the contract address, key, and value hash
-    
-    // Proof element 1: Hash of contract address
-    uint256 contractHash = Hash(contractAddr.begin(), contractAddr.end());
-    proof.push_back(contractHash);
-    
-    // Proof element 2: Hash of key
-    uint256 keyHash = Hash(key.begin(), key.end());
-    proof.push_back(keyHash);
-    
-    // Proof element 3: Hash of value
-    uint256 valueHash = Hash(value.begin(), value.end());
-    proof.push_back(valueHash);
-    
-    // Proof element 4: Combined hash for verification
-    CHashWriter hasher(SER_GETHASH, 0);
-    hasher << contractAddr << key << value;
-    uint256 combinedHash = hasher.GetHash();
-    proof.push_back(combinedHash);
+
+    // Build the sorted leaf set over all committed slots of this contract.
+    std::vector<uint256> leaves = CollectStorageLeaves(contractAddr, nullptr);
+    std::sort(leaves.begin(), leaves.end());
+
+    uint256 targetLeaf = StorageLeaf(contractAddr, key, value);
+
+    // Locate the target leaf within the sorted level.
+    size_t idx = 0;
+    bool found = false;
+    for (size_t i = 0; i < leaves.size(); ++i) {
+        if (leaves[i] == targetLeaf) {
+            idx = i;
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        // Should not happen (the slot was just loaded), but guard anyway.
+        LogPrint(BCLog::CVM, "EnhancedStorage: Cannot generate proof - leaf not in committed set\n");
+        return proof;
+    }
+
+    // proof[0] is the target leaf; the remaining elements are the sibling path.
+    proof.push_back(targetLeaf);
+
+    std::vector<uint256> level = leaves;
+    while (level.size() > 1) {
+        size_t sibIdx;
+        if (idx % 2 == 0) {
+            sibIdx = (idx + 1 < level.size()) ? idx + 1 : idx; // duplicated when odd
+        } else {
+            sibIdx = idx - 1;
+        }
+        proof.push_back(level[sibIdx]);
+        level = NextLevel(level);
+        idx /= 2;
+    }
     
     LogPrint(BCLog::CVM, "EnhancedStorage: Generated storage proof for %s key %s (%d elements)\n", 
              contractAddr.ToString(), key.ToString(), proof.size());
@@ -467,44 +580,32 @@ bool EnhancedStorage::VerifyStorageProof(const std::vector<uint256>& proof,
                                         const uint256& key, 
                                         const uint256& value)
 {
-    // Basic proof verification
-    // In a full implementation, this would verify a Merkle Patricia Trie proof
-    
-    if (proof.size() < 4) {
-        LogPrint(BCLog::CVM, "EnhancedStorage: Invalid proof - insufficient elements\n");
+    // A valid proof always carries at least the leaf element.
+    if (proof.empty()) {
+        LogPrint(BCLog::CVM, "EnhancedStorage: Invalid proof - no elements\n");
         return false;
     }
-    
-    // Verify contract address hash
-    uint256 expectedContractHash = Hash(contractAddr.begin(), contractAddr.end());
-    if (proof[0] != expectedContractHash) {
-        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - contract hash mismatch\n");
+
+    // Recompute the leaf and confirm it matches the proof's leaf element.
+    uint256 leaf = StorageLeaf(contractAddr, key, value);
+    if (proof[0] != leaf) {
+        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - leaf mismatch\n");
         return false;
     }
-    
-    // Verify key hash
-    uint256 expectedKeyHash = Hash(key.begin(), key.end());
-    if (proof[1] != expectedKeyHash) {
-        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - key hash mismatch\n");
+
+    // Fold the leaf up through the sibling path to recompute the storage root.
+    uint256 current = leaf;
+    for (size_t i = 1; i < proof.size(); ++i) {
+        current = CombineNodes(current, proof[i]);
+    }
+
+    // The proof is valid only when the recomputed root equals the committed root
+    // supplied by the caller. An unrelated/bogus root will not match.
+    if (current != root) {
+        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - root mismatch\n");
         return false;
     }
-    
-    // Verify value hash
-    uint256 expectedValueHash = Hash(value.begin(), value.end());
-    if (proof[2] != expectedValueHash) {
-        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - value hash mismatch\n");
-        return false;
-    }
-    
-    // Verify combined hash
-    CHashWriter hasher(SER_GETHASH, 0);
-    hasher << contractAddr << key << value;
-    uint256 expectedCombinedHash = hasher.GetHash();
-    if (proof[3] != expectedCombinedHash) {
-        LogPrint(BCLog::CVM, "EnhancedStorage: Proof verification failed - combined hash mismatch\n");
-        return false;
-    }
-    
+
     LogPrint(BCLog::CVM, "EnhancedStorage: Storage proof verified successfully for %s\n", 
              contractAddr.ToString());
     

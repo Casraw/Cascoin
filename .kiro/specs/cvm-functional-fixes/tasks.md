@@ -312,7 +312,7 @@ Preservation Checking).
 
 ### Workstream 6 — EVM compatibility
 
-- [-] 15. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
+- [x] 15. Write Workstream-6 exploratory + preservation tests (BEFORE fix)
   - **Property 13: Bug Condition** — TLOAD/TSTORE, BASEFEE, EVM CREATE, logsBloom, sender/gas, reputation/memory, nested frame, storage proof
   - Explore (fail on unfixed): no TLOAD/TSTORE handlers (1.11); BASEFEE returns 0 (1.12);
     CREATE uses `Hash160(sender||nonce)` (1.27); `logsBloom` 512 zero chars (1.28); empty
@@ -324,8 +324,8 @@ Preservation Checking).
   - Include an Ethereum CREATE golden vector: `keccak256(rlp([sender, nonce]))[12:]`.
   - _Requirements: 1.11, 1.12, 1.27, 1.28, 1.29, 1.30, 1.31, 1.32, 3.9, 3.13, 3.14_
 
-- [ ] 16. Implement Workstream-6 fixes
-  - [ ] 16.1 EVM compatibility features
+- [x] 16. Implement Workstream-6 fixes
+  - [x] 16.1 EVM compatibility features
     - `enhanced_vm.cpp`/EVM host: register TLOAD/TSTORE with per-tx lifetime + post-tx clear;
       populate BASEFEE. `nonce_manager.cpp GenerateContractAddress` (~line 97): compute
       `keccak256(rlp([sender, nonce]))[12:]`; reconcile `evmc_host.cpp` CREATE to the same
@@ -338,13 +338,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32_
     - _Preservation: 3.9, 3.13, 3.14_
     - _Requirements: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32_
-  - [ ] 16.2 Verify Workstream-6 fix-property test passes and preservation holds
+  - [x] 16.2 Verify Workstream-6 fix-property test passes and preservation holds
     - **Property 13: Expected Behavior** / **Property 21: Preservation** — re-run task 15 tests.
     - _Requirements: 2.11, 2.12, 2.27, 2.28, 2.29, 2.30, 2.31, 2.32, 3.9, 3.13, 3.14_
 
 ### Workstream 7 — Cross-chain bridging & oracle trust
 
-- [ ] 17. Write Workstream-7 exploratory + preservation tests (BEFORE fix)
+- [x] 17. Write Workstream-7 exploratory + preservation tests (BEFORE fix)
   - **Property 14: Bug Condition** — proof verified vs. source state; real sends; trie-derived proofs; oracle registry
   - Explore (fail on unfixed): non-empty-only proof check (1.33); send only logs/stores
     locally (1.34); simplified hash proof + cached-only attestations (1.35); accept-any
@@ -352,8 +352,8 @@ Preservation Checking).
   - **Property 21: Preservation** — valid signature + committed source state still accepted (3.15).
   - _Requirements: 1.33, 1.34, 1.35, 1.36, 3.15_
 
-- [ ] 18. Implement Workstream-7 fixes
-  - [ ] 18.1 Real cross-chain verification, sends, proofs, oracle registry
+- [x] 18. Implement Workstream-7 fixes
+  - [x] 18.1 Real cross-chain verification, sends, proofs, oracle registry
     - `cross_chain_bridge.cpp ReputationProof::Verify`: verify against source chain committed
       state. LayerZero/CCIP send: transmit via endpoint, report success only when dispatched.
       Merkle proof/attestation read: derive from actual state trie, return all committed
@@ -363,7 +363,7 @@ Preservation Checking).
     - _Expected_Behavior: 2.33, 2.34, 2.35, 2.36_
     - _Preservation: 3.15_
     - _Requirements: 2.33, 2.34, 2.35, 2.36_
-  - [ ] 18.2 Verify Workstream-7 fix-property test passes and preservation holds
+  - [x] 18.2 Verify Workstream-7 fix-property test passes and preservation holds
     - **Property 14: Expected Behavior** / **Property 21: Preservation** — re-run task 17 tests.
     - _Requirements: 2.33, 2.34, 2.35, 2.36, 3.15_
 

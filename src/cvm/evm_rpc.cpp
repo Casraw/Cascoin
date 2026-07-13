@@ -244,9 +244,43 @@ UniValue cas_estimateGas(const JSONRPCRequest& request)
         baseGas += (byte == 0) ? 4 : 68; // Zero bytes cost 4 gas, non-zero cost 68
     }
     
-    // If this is a contract call or deployment, add execution gas
-    if (!toStr.empty() || data.size() > 0) {
-        // Estimate execution gas (simplified)
+    // If this is a contract call, estimate execution gas by actually executing
+    // the target contract and measuring the gas consumed. Fall back to a
+    // heuristic when the contract cannot be executed (e.g. deployment, or the
+    // target does not exist).
+    bool measuredExecutionGas = false;
+    if (!toStr.empty() && CVM::g_cvmdb) {
+        try {
+            uint160 contractAddr = ParseAddress(toStr);
+            uint160 callerAddr = fromStr.empty() ? uint160() : ParseAddress(fromStr);
+
+            LOCK(cs_main);
+            if (chainActive.Tip()) {
+                int blockHeight = chainActive.Height();
+                uint256 blockHash = chainActive.Tip()->GetBlockHash();
+                int64_t timestamp = chainActive.Tip()->GetBlockTime();
+
+                auto trustContext = std::make_shared<CVM::TrustContext>(CVM::g_cvmdb.get());
+                CVM::EnhancedVM vm(CVM::g_cvmdb.get(), trustContext);
+
+                CVM::EnhancedExecutionResult result = vm.CallContract(
+                    contractAddr, data, CVM::MAX_GAS_PER_TX, callerAddr, value,
+                    blockHeight, blockHash, timestamp);
+
+                if (result.success) {
+                    // Actual execution gas plus a safety buffer for state-write
+                    // variance between estimation and inclusion.
+                    baseGas += result.gas_used + result.gas_used / 10;
+                    measuredExecutionGas = true;
+                }
+            }
+        } catch (...) {
+            // Fall through to the heuristic estimate below.
+        }
+    }
+
+    if (!measuredExecutionGas && (!toStr.empty() || data.size() > 0)) {
+        // Heuristic execution gas when real execution is unavailable.
         baseGas += 50000; // Base contract execution cost
         baseGas += data.size() * 100; // Additional cost for data processing
     }

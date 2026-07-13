@@ -779,12 +779,21 @@ void EVMEngine::InjectCallerReputation(evmc_message& msg, const uint160& caller)
         return;
     }
     
-    // Store caller reputation in a way that can be accessed during execution
-    // This could be through special storage slots or message flags
+    // Resolve the caller's reputation and make it available to execution by
+    // recording it on the trust context and the EVMC host, and by tagging the
+    // caller as the current context. Trust-tagged memory access and reputation
+    // gates read this during execution.
     uint32_t reputation = trust_context->GetReputation(caller);
-    
-    // For now, we'll rely on the EVMC host to provide reputation context
-    // Future enhancement: modify message structure to include reputation directly
+    trust_context->SetCallerReputation(reputation);
+
+    if (evmc_host) {
+        // Keep the host's trust context in sync so host callbacks (storage,
+        // memory policy, gas adjustment) observe the injected reputation.
+        evmc_host->SetTrustContext(*trust_context);
+    }
+
+    LogPrint(BCLog::CVM, "EVMEngine: Injected caller reputation %d for %s\n",
+             reputation, caller.ToString());
 }
 
 // Trust-enhanced arithmetic operations implementation

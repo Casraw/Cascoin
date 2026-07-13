@@ -536,7 +536,9 @@ BOOST_AUTO_TEST_CASE(preserve_3_13_receipt_json_fields_golden)
     BOOST_REQUIRE(cascoin.isObject());
     BOOST_CHECK_EQUAL(cascoin["senderReputation"].get_int(), (int)r.senderReputation);
     BOOST_CHECK_EQUAL(cascoin["reputationDiscount"].get_int64(), (int64_t)r.reputationDiscount);
-    BOOST_CHECK_EQUAL(cascoin["usedFreeGas"].get_bool(), r.usedFreeGas);
+    // usedFreeGas is emitted as a JSON number (univalue has no bool pushKV
+    // overload, so the bool promotes to int) — capture that as-is for preservation.
+    BOOST_CHECK_EQUAL(cascoin["usedFreeGas"].get_int(), r.usedFreeGas ? 1 : 0);
 
     // logsBloom must exist and keep its 514-char ("0x" + 512 hex) width — its
     // VALUE is corrected by the fix, so it is NOT pinned here.

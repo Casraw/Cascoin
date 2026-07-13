@@ -212,6 +212,7 @@ BITCOIN_CORE_H = \
   cvm/clustertrustquery.h \
   cvm/cvmtx.h \
   cvm/evmc_host.h \
+  cvm/keccak256.h \
   cvm/trust_context.h \
   cvm/bytecode_detector.h \
   cvm/enhanced_vm.h \
@@ -366,6 +367,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/clustertrustquery.cpp \
   cvm/cvmtx.cpp \
   cvm/evmc_host.cpp \
+  cvm/keccak256.cpp \
   cvm/trust_context.cpp \
   cvm/bytecode_detector.cpp \
   cvm/enhanced_vm.cpp \

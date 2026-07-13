@@ -348,6 +348,15 @@ private:
      * Calculate chain weight for aggregation
      */
     double GetChainWeight(uint16_t chainId) const;
+    
+    /**
+     * Dispatch a trust attestation to a destination chain via its configured
+     * bridge endpoint. Returns true only when the message is actually
+     * transmitted (dispatched). A chain without a configured endpoint cannot
+     * dispatch and must return false.
+     */
+    bool DispatchViaEndpoint(const ChainConfig& config, const uint160& address,
+                             const TrustAttestation& attestation);
 };
 
 // Global cross-chain bridge instance

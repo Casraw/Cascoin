@@ -63,6 +63,15 @@ public:
     void SetBlockContext(int64_t timestamp, int64_t number, const uint256& hash, 
                         const uint256& difficulty, int64_t gas_limit);
     void SetTxContext(const uint256& tx_hash, const uint160& tx_origin, int64_t gas_price);
+
+    // EIP-1559 base fee for the current block (BASEFEE opcode)
+    void SetBaseFee(const uint256& base_fee) { block_context.base_fee = base_fee; }
+    evmc_uint256be GetBaseFee();
+
+    // EIP-1153 transient storage (TLOAD/TSTORE) — per-transaction lifetime
+    evmc_bytes32 GetTransientStorage(const evmc_address& addr, const evmc_bytes32& key);
+    void SetTransientStorage(const evmc_address& addr, const evmc_bytes32& key, const evmc_bytes32& value);
+    void ClearTransientStorage();
     
     // Trust context integration
     void SetTrustContext(const TrustContext& ctx) { trust_context = ctx; }
@@ -134,6 +143,8 @@ private:
     static void emit_log_fn(evmc_host_context* context, const evmc_address* address, const uint8_t* data, size_t data_size, const evmc_bytes32 topics[], size_t topics_count);
     static enum evmc_access_status access_account_fn(evmc_host_context* context, const evmc_address* address);
     static enum evmc_access_status access_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key);
+    static evmc_bytes32 get_transient_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key);
+    static void set_transient_storage_fn(evmc_host_context* context, const evmc_address* address, const evmc_bytes32* key, const evmc_bytes32* value);
     
     // Trust-aware operations
     uint64_t ApplyTrustBasedGasAdjustment(uint64_t base_gas, const evmc_address& caller);
@@ -156,6 +167,7 @@ private:
         uint256 difficulty;
         int64_t gas_limit;
         uint256 chain_id;
+        uint256 base_fee;
     } block_context;
     
     // Transaction context
@@ -168,6 +180,10 @@ private:
     // Access tracking for EIP-2929
     std::map<evmc_address, bool> accessed_accounts;
     std::map<std::pair<evmc_address, evmc_bytes32>, bool> accessed_storage;
+
+    // EIP-1153 transient storage — lives for the duration of a transaction and
+    // is cleared once the top-level call frame returns.
+    std::map<std::pair<evmc_address, evmc_bytes32>, evmc_bytes32> transient_storage;
     
     // Event logs
     std::vector<VMState::LogEntry> logs;

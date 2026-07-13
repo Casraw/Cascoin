@@ -216,6 +216,10 @@ private:
     
     // State management
     void SaveExecutionState();
+    // Save the real execution context for a nested call frame so it can be
+    // restored on return.
+    void SaveExecutionState(const uint160& contract_address, const uint160& caller_address,
+                            BytecodeFormat format, uint64_t gas_remaining);
     void RestoreExecutionState();
     void CommitExecutionState();
     

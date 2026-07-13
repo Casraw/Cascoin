@@ -5,6 +5,7 @@
 #include <cvm/nonce_manager.h>
 #include <cvm/cvmdb.h>
 #include <cvm/softfork.h>
+#include <cvm/keccak256.h>
 #include <hash.h>
 #include <util.h>
 #include <script/standard.h>
@@ -95,20 +96,26 @@ bool NonceManager::DecrementNonce(const uint160& address) {
 }
 
 uint160 NonceManager::GenerateContractAddress(const uint160& sender, uint64_t nonce) {
-    // Ethereum CREATE: address = keccak256(rlp([sender, nonce]))[12:]
-    // Simplified implementation using Hash160
-    
-    std::vector<uint8_t> data;
-    data.insert(data.end(), sender.begin(), sender.end());
-    
-    // Append nonce (big-endian)
-    for (int i = 7; i >= 0; i--) {
-        data.push_back((nonce >> (i * 8)) & 0xFF);
+    // Ethereum-compatible CREATE: address = keccak256(rlp([sender, nonce]))[12:]
+    //
+    // uint160 stores its bytes in little-endian order (begin()[0] is the least
+    // significant byte), while GetHex()/SetHex() present the value big-endian.
+    // Ethereum computes the address over the sender's big-endian (display) byte
+    // order, so we reverse the raw bytes before feeding them into the RLP/keccak
+    // pipeline and reverse the result back into the uint160 layout.
+    uint8_t senderBE[20];
+    for (int i = 0; i < 20; ++i) {
+        senderBE[i] = sender.begin()[19 - i];
     }
-    
-    // Hash and take last 20 bytes
-    uint160 contractAddr = Hash160(data.begin(), data.end());
-    
+
+    uint8_t addrBE[20];
+    EthCreateAddressBytes(senderBE, nonce, addrBE);
+
+    uint160 contractAddr;
+    for (int i = 0; i < 20; ++i) {
+        contractAddr.begin()[i] = addrBE[19 - i];
+    }
+
     LogPrint(BCLog::CVM, "NonceManager: Generated contract address %s from sender %s nonce %d\n",
              contractAddr.ToString(), sender.ToString(), nonce);
     
