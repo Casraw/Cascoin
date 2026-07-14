@@ -179,6 +179,23 @@ void EmitPush1(std::vector<uint8_t>& code, uint8_t value)
     code.push_back(value);
 }
 
+// Replicate the deployer-address derivation used by the block-processing deploy
+// path (cvmtx.cpp ResolveDeployerAddress) when the first-input UTXO cannot be
+// resolved: Hash(SER_GETHASH, first-input prevout)[0:20]. In these unit tests
+// the deploy tx spends a random prevout that is absent from the (empty) UTXO
+// set, so this fallback is always taken.
+uint160 BlockProcessorDeployer(const CTransactionRef& tx)
+{
+    uint160 deployer;
+    if (!tx->vin.empty()) {
+        CHashWriter hw(SER_GETHASH, 0);
+        hw << tx->vin[0].prevout;
+        uint256 h = hw.GetHash();
+        std::memcpy(deployer.begin(), h.begin(), 20);
+    }
+    return deployer;
+}
+
 } // anonymous namespace
 
 BOOST_FIXTURE_TEST_SUITE(cvm_functional_fix_explore_tests, BasicTestingSetup)
@@ -328,14 +345,25 @@ BOOST_AUTO_TEST_CASE(explore_1_17_deploy_not_executed)
 
     BOOST_REQUIRE(CVM::ExecuteCVMBlock(block, &index, view, params));
 
-    // Read the contract at the address the (buggy) code used.
-    uint256 txHash = deployTx->GetHash();
-    uint160 txHashAddr;
-    std::memcpy(txHashAddr.begin(), txHash.begin(), 20);
+    // Read the contract at the CANONICAL address the production code
+    // (ExecuteCVMBlock via cvmtx.cpp) now derives for this deploy — the same
+    // GenerateContractAddress(deployer, nonce) scheme every CVM path uses
+    // (bugfix 2.16/2.17), NOT the old txHash[0:20] location:
+    //   deployer = ResolveDeployerAddress(tx). This deploy tx spends a random
+    //     prevout that is absent from the (empty) UTXO set, so the address
+    //     cannot be resolved and ResolveDeployerAddress falls back to
+    //     Hash(SER_GETHASH, first-input prevout)[0:20] == BlockProcessorDeployer.
+    //   nonce    = g_cvmdb->GetNextNonce(deployer) == 1 for a fresh deployer
+    //     (the stored nonce starts at 0, is incremented, persisted and returned).
+    //   addr     = GenerateContractAddress(deployer, 1).
+    uint160 deployer = BlockProcessorDeployer(deployTx);
+    uint160 canonicalAddr = CVM::GenerateContractAddress(deployer, 1);
 
     CVM::Contract stored;
-    BOOST_REQUIRE_MESSAGE(CVM::g_cvmdb->ReadContract(txHashAddr, stored),
-                          "deploy did not store a contract to inspect");
+    BOOST_REQUIRE_MESSAGE(
+        CVM::g_cvmdb->ReadContract(canonicalAddr, stored),
+        "deploy did not store a contract at the canonical address "
+        "GenerateContractAddress(deployer, 1) to inspect");
 
     // EXPECTED (post-fix): a proper deploy resolves and records the deployer
     // (and runs the constructor). UNFIXED code leaves the deployer null and
@@ -494,6 +522,12 @@ BOOST_AUTO_TEST_CASE(explore_1_24_balance_always_zero)
     uint160 addr;
     addr.SetHex("0123456789abcdef0123456789abcdef01234567");
     state.SetContractAddress(addr);
+    // Fund the account through the VM's balance API (wired by the Workstream-2
+    // fix). A funded account must report a non-zero balance from OP_BALANCE.
+    // The funding is part of the test SETUP; the assertion below (balance != 0)
+    // is unchanged.
+    const uint64_t funded = 1234567;
+    state.SetBalance(addr, funded);
 
     bool ok = vm.Execute(code, state, /*storage=*/nullptr);
     BOOST_REQUIRE_MESSAGE(ok, "bytecode execution did not complete");

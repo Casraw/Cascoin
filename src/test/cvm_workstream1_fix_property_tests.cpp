@@ -641,8 +641,15 @@ BOOST_AUTO_TEST_CASE(p19_primary_path_blockhash_context_property)
         CVM::CVMBlockProcessor::ProcessBlock(block, height, db);
 
         // Canonical deploy address = GenerateContractAddress(deployer, nonce=0),
-        // deployer derived exactly as ProcessDeploy does.
-        uint160 deployer = BlockProcessorDeployer(deployTx);
+        // deployer derived exactly as the current ProcessDeploy does.
+        //
+        // ProcessDeploy resolves the deployer from the tx inputs via the UTXO
+        // set (ResolveInputSenderAddress, bugfix 2.56). In this in-memory unit
+        // test pcoinsTip does not contain the (random) prevout UTXO, so the
+        // resolution fails and the deployer stays NULL (uint160()); the nonce
+        // read for a fresh/null deployer is 0. The contract is therefore stored
+        // at GenerateContractAddress(uint160(), 0). Mirror that here.
+        uint160 deployer; // null — matches production resolution in this harness
         uint160 contractAddr = CVM::GenerateContractAddress(deployer, 0);
 
         // Read storage slot 0 (key == 0).

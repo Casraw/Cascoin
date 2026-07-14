@@ -4,10 +4,13 @@
 
 #include <cvm/backward_compat.h>
 #include <cvm/cvm.h>
+#include <cvm/cvmdb.h>
+#include <cvm/reputation.h>
 #include <cvm/softfork.h>
 #include <test/test_bitcoin.h>
 #include <utilstrencodings.h>
 #include <chainparams.h>
+#include <fs.h>
 
 #include <boost/test/unit_test.hpp>
 
@@ -195,13 +198,40 @@ BOOST_AUTO_TEST_CASE(reputation_hatv2_compatibility)
 
 BOOST_AUTO_TEST_CASE(reputation_score_preservation)
 {
+    // VerifyScorePreservation (clause 2.55) now performs a real query: it reads
+    // the address's reputation from the global CVM database (g_cvmdb) via
+    // ReputationSystem, normalises the stored score from the internal
+    // -10000..+10000 scale to the public 0..100 scale (normalised = score/100,
+    // clamped to [0,100]), and returns |normalised - expected| <= tolerance.
+    //
+    // Install an in-memory CVM database and seed a reputation record for the
+    // address whose normalised score is 50, so the preservation check passes.
+    // A raw stored score of 5000 maps to 5000/100 = 50 on the public scale.
+    CVM::g_cvmdb.reset(new CVM::CVMDatabase(
+        fs::temp_directory_path() / fs::unique_path(),
+        1 << 20, /*fMemory=*/true, /*fWipe=*/true));
+
     CVM::ReputationCompatChecker checker;
-    
+
     uint160 address;
     address.SetHex("0000000000000000000000000000000000000001");
-    
-    // Verify score preservation with tolerance
+
+    CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
+    CVM::ReputationScore seeded;
+    seeded.address = address;
+    seeded.score = 5000; // -10000..10000 internal scale -> 50 on the 0..100 scale
+    seeded.category = "normal";
+    BOOST_REQUIRE(repSystem.UpdateReputation(address, seeded));
+
+    // The seeded score (normalised 50) is preserved within tolerance of the
+    // expected value 50.
     BOOST_CHECK(checker.VerifyScorePreservation(address, 50, 5));
+
+    // Negative: a mismatched expected value beyond tolerance is NOT preserved.
+    // The real query normalises to 50, so expecting 90 (|50-90| = 40 > 5) fails.
+    BOOST_CHECK(!checker.VerifyScorePreservation(address, 90, 5));
+
+    CVM::g_cvmdb.reset();
 }
 
 // ============================================================================

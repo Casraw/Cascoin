@@ -348,8 +348,11 @@ void PrometheusMetricsExporter::RecordStorageOperation(bool isWrite, uint64_t by
 
 void PrometheusMetricsExporter::RecordOpcodeExecution(uint8_t opcode)
 {
-    // Note: This would need thread-safe map access in production
-    // For now, we skip detailed opcode tracking
+    // Track per-opcode execution counts. The map is guarded by m_cs so that
+    // inserting a new opcode entry is thread-safe; the per-opcode value itself
+    // is an atomic counter.
+    LOCK(m_cs);
+    m_evmMetrics.opcodeExecutions[opcode]++;
 }
 
 void PrometheusMetricsExporter::RecordTrustContextInjection(bool success)

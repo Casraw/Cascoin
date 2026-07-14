@@ -9,6 +9,10 @@
 #include <hash.h>
 #include <util.h>
 #include <timedata.h>
+#include <validation.h>
+#include <coins.h>
+#include <script/standard.h>
+#include <pubkey.h>
 
 namespace CVM {
 
@@ -184,20 +188,52 @@ void TransactionPriorityManager::UpdateNetworkCongestion(size_t mempoolSize, siz
 
 bool TransactionPriorityManager::ExtractSenderAddress(const CTransaction& tx, uint160& senderAddr)
 {
-    // Extract sender from first input
-    // This is simplified - in production would need proper address extraction
     if (tx.vin.empty()) {
         return false;
     }
-    
-    // Hash the prevout to get a pseudo-address
-    // In production, would extract actual address from scriptSig or witness
-    CHashWriter hw(SER_GETHASH, 0);
-    hw << tx.vin[0].prevout;
-    uint256 hash = hw.GetHash();
-    memcpy(senderAddr.begin(), hash.begin(), 20);
-    
-    return true;
+
+    // Resolve the REAL sender address from the UTXO set by looking up each
+    // input's prevout and extracting the destination from its scriptPubKey.
+    // We must NOT synthesize a pseudo-address by hashing the prevout: doing so
+    // attributes reputation to an address that no one controls (bugfix 2.56).
+    // When the UTXO set is unavailable (e.g. at unit-test level) or the output
+    // is non-standard, the real sender cannot be resolved and we return false
+    // so the caller treats the transaction as having no sender (reputation 0).
+    LOCK(cs_main);
+    if (!pcoinsTip) {
+        return false;
+    }
+
+    for (const CTxIn& txin : tx.vin) {
+        if (txin.prevout.IsNull()) {
+            continue;
+        }
+
+        Coin coin;
+        if (!pcoinsTip->GetCoin(txin.prevout, coin) || coin.IsSpent()) {
+            continue;
+        }
+
+        CTxDestination dest;
+        if (!ExtractDestination(coin.out.scriptPubKey, dest)) {
+            continue;
+        }
+
+        if (const CKeyID* keyID = boost::get<CKeyID>(&dest)) {
+            senderAddr = uint160(*keyID);
+            return true;
+        }
+        if (const CScriptID* scriptID = boost::get<CScriptID>(&dest)) {
+            senderAddr = uint160(*scriptID);
+            return true;
+        }
+        if (const WitnessV0KeyHash* witnessKeyHash = boost::get<WitnessV0KeyHash>(&dest)) {
+            memcpy(senderAddr.begin(), witnessKeyHash->begin(), 20);
+            return true;
+        }
+    }
+
+    return false;
 }
 
 } // namespace CVM

@@ -311,16 +311,30 @@ bool CommitRevealManager::GetDisputeInfo(const uint256& disputeId,
     CDataStream ss(data, SER_DISK, CLIENT_VERSION);
     DAODispute dispute;
     ss >> dispute;
-    
-    // For now, use createdTime as commitPhaseStart
-    // The extended DAODispute struct will have explicit fields
-    commitPhaseStart = dispute.createdTime;
-    revealPhaseStart = commitPhaseStart + config.commitPhaseDuration;
-    
-    // Check if this dispute uses commit-reveal
-    // For backward compatibility, assume new disputes use it if config enables it
-    useCommitReveal = config.enableCommitReveal;
-    
+
+    // Use the explicit commit-phase-start field from the dispute rather than
+    // its createdTime. createdTime is a timestamp, not a block height, so using
+    // it as the phase start produced incorrect phase calculations. Legacy
+    // disputes that predate the explicit field (commitPhaseStart == 0) fall
+    // back to createdTime for backward compatibility.
+    if (dispute.commitPhaseStart != 0) {
+        commitPhaseStart = dispute.commitPhaseStart;
+    } else {
+        commitPhaseStart = dispute.createdTime;
+    }
+
+    // Prefer the explicit reveal-phase-start field when present; otherwise
+    // derive it from the commit phase start and configured duration.
+    if (dispute.revealPhaseStart != 0) {
+        revealPhaseStart = dispute.revealPhaseStart;
+    } else {
+        revealPhaseStart = commitPhaseStart + config.commitPhaseDuration;
+    }
+
+    // Honour the dispute's own commit-reveal flag; fall back to the config
+    // setting for legacy disputes that did not record the flag.
+    useCommitReveal = dispute.useCommitReveal || config.enableCommitReveal;
+
     return true;
 }
 

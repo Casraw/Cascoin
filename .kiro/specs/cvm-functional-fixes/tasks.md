@@ -418,7 +418,7 @@ Preservation Checking).
 
 ### Workstream 10 — Storage / state sync & miscellaneous
 
-- [-] 23. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
+- [x] 23. Write Workstream-10 exploratory + preservation tests (BEFORE fix)
   - **Property 17: Bug Condition** — prune, load, size/count, metrics, backward-compat, address extraction, commit-phase, cluster-merge real
   - Explore (fail on unfixed): `PruneReceipts` only logs (1.51); `LoadBlacklist` no DB iterate
     (1.52); `storageSize=0`/`chunkCount=1` (1.53); opcode metrics skipped (1.54); backward-compat
@@ -429,8 +429,8 @@ Preservation Checking).
     out-of-scope detectors unchanged (3.20).
   - _Requirements: 1.51, 1.52, 1.53, 1.54, 1.55, 1.56, 1.57, 1.58, 3.19, 3.20_
 
-- [ ] 24. Implement Workstream-10 fixes
-  - [ ] 24.1 Storage/state sync & misc real operations
+- [x] 24. Implement Workstream-10 fixes
+  - [x] 24.1 Storage/state sync & misc real operations
     - `cvmdb.cpp PruneReceipts`: delete receipts below the given height.
       `access_control_audit.cpp LoadBlacklist`: iterate DB, restore all entries.
       `contract_state_sync.cpp`: proper key encoding, actual storage size and chunk count.
@@ -443,21 +443,21 @@ Preservation Checking).
     - _Expected_Behavior: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58_
     - _Preservation: 3.19, 3.20_
     - _Requirements: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58_
-  - [ ] 24.2 Verify Workstream-10 fix-property test passes and preservation holds
+  - [x] 24.2 Verify Workstream-10 fix-property test passes and preservation holds
     - **Property 17: Expected Behavior** / **Property 21: Preservation** — re-run task 23 tests.
     - _Requirements: 2.51, 2.52, 2.53, 2.54, 2.55, 2.56, 2.57, 2.58, 3.19, 3.20_
 
 ### Workstream 11 — Security monitoring RPC (non-consensus, unconditional)
 
-- [ ] 25. Write Workstream-11 exploratory + preservation tests (BEFORE fix)
+- [x] 25. Write Workstream-11 exploratory + preservation tests (BEFORE fix)
   - **Property 18: Bug Condition** — `getvalidatorstats_security` returns real per-validator stats
   - Explore (fail on unfixed): RPC returns the static `message` placeholder, not documented
     fields (1.59).
   - **Property 21: Preservation** — other security-monitoring RPCs unchanged (3.21).
   - _Requirements: 1.59, 3.21_
 
-- [ ] 26. Implement Workstream-11 fix
-  - [ ] 26.1 Populate real validator statistics
+- [x] 26. Implement Workstream-11 fix
+  - [x] 26.1 Populate real validator statistics
     - `security_rpc.cpp getvalidatorstats_security`: return real per-validator stats
       (total/accurate/inaccurate validations, abstentions, accuracy rate, reputation, last
       activity) from the HAT consensus system, populating the help-text fields.
@@ -465,13 +465,13 @@ Preservation Checking).
     - _Expected_Behavior: 2.59_
     - _Preservation: 3.21_
     - _Requirements: 2.59_
-  - [ ] 26.2 Verify Workstream-11 fix-property test passes and preservation holds
+  - [x] 26.2 Verify Workstream-11 fix-property test passes and preservation holds
     - **Property 18: Expected Behavior** / **Property 21: Preservation** — re-run task 25 tests.
     - _Requirements: 2.59, 3.21_
 
 ### Workstream 12 — Graceful degradation (non-consensus, unconditional)
 
-- [ ] 27. Write Workstream-12 exploratory + preservation tests (BEFORE fix)
+- [x] 27. Write Workstream-12 exploratory + preservation tests (BEFORE fix)
   - **Property 20: Bug Condition** — real resource checks + real TRUST_CONTEXT/HAT_VALIDATION subsystems
   - Explore (fail on unfixed): reputation query/health check returns simulated success (1.15);
     empty no-op resource checks + fallback paths report success without invoking real
@@ -479,8 +479,8 @@ Preservation Checking).
   - **Property 21: Preservation** — genuinely healthy subsystems still report success (3.24).
   - _Requirements: 1.15, 1.62, 3.24_
 
-- [ ] 28. Implement Workstream-12 fix
-  - [ ] 28.1 Real health checks and subsystem invocation
+- [x] 28. Implement Workstream-12 fix
+  - [x] 28.1 Real health checks and subsystem invocation
     - `graceful_degradation.cpp`: implement real `CheckMemoryUsage`/`CheckCPUUsage`/
       `CheckStorageUsage`; invoke the real reputation subsystem for reputation queries/health
       checks and the real trust-context / HAT-validation subsystems for fallback paths; report
@@ -489,7 +489,7 @@ Preservation Checking).
     - _Expected_Behavior: 2.15, 2.62_
     - _Preservation: 3.24_
     - _Requirements: 2.15, 2.62_
-  - [ ] 28.2 Verify Workstream-12 fix-property test passes and preservation holds
+  - [x] 28.2 Verify Workstream-12 fix-property test passes and preservation holds
     - **Property 20: Expected Behavior** / **Property 21: Preservation** — re-run task 27 tests.
     - _Requirements: 2.15, 2.62, 3.24_
 
@@ -497,19 +497,19 @@ Preservation Checking).
 
 ### Phase 5 — Integration validation
 
-- [ ] 29. Functional dual-path deploy → call integration test
+- [x] 29. Functional dual-path deploy → call integration test
   - Extend `test/functional/feature_cvm.py` (and/or add a new case): deploy then call a
     contract across the `cvmtx.cpp` and `blockprocessor.cpp` paths; assert identical address,
     execution, value/block-hash context, and durable state.
   - _Requirements: 2.16, 2.17, 2.60, 2.61, 3.12_
 
-- [ ] 30. Multi-node HAT consensus + coinbase-split + cross-chain integration tests
+- [x] 30. Multi-node HAT consensus + coinbase-split + cross-chain integration tests
   - Multi-node: challenge dispatch, response accumulation, consensus decision (1.8, 1.47).
   - Coinbase 70/30 split enforcement once participation data is present (1.22).
   - Cross-chain proof verification round-trip against committed source state (1.33, 1.34, 1.35).
   - _Requirements: 2.8, 2.22, 2.33, 2.34, 2.35, 2.47_
 
-- [ ] 31. Checkpoint — Ensure all tests pass
+- [x] 31. Checkpoint — Ensure all tests pass
   - Build: `make -j$(nproc)`. Unit: `make check` (or targeted `src/test/test_cascoin --run_test=<suite>`).
     Functional: `test/functional/test_runner.py`.
   - Confirm all fix-property tests (Properties 1–20) pass, the preservation

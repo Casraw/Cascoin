@@ -5,6 +5,8 @@
 #include <cvm/backward_compat.h>
 #include <cvm/activation.h>
 #include <cvm/opcodes.h>
+#include <cvm/cvmdb.h>
+#include <cvm/reputation.h>
 #include <util.h>
 #include <utilstrencodings.h>
 
@@ -797,13 +799,28 @@ bool ReputationCompatChecker::CanMigrateToHATv2(const uint160& address) const {
 bool ReputationCompatChecker::VerifyScorePreservation(const uint160& address, 
                                                       int32_t expected_score,
                                                       int32_t tolerance) const {
-    // In a full implementation, this would:
-    // 1. Calculate the old-style reputation score
-    // 2. Calculate the HAT v2 score
-    // 3. Verify they are within tolerance
-    
-    // For now, assume scores are preserved
-    return true;
+    // Query the actual preserved score from the trust-graph / reputation
+    // database and compare it against the expected value within tolerance.
+    // Previously this returned true unconditionally, which is logically wrong:
+    // a single address has exactly one preserved score, so it cannot be
+    // "preserved-equal" to two different expected values at tolerance 0.
+    int32_t actual_score = 0;
+    if (g_cvmdb) {
+        ReputationSystem repSystem(*g_cvmdb);
+        ReputationScore score;
+        if (repSystem.GetReputation(address, score)) {
+            // Normalise the stored score (-10000..10000 scale) to the public
+            // 0..100 reputation scale used by callers.
+            int64_t normalised = score.score / 100;
+            if (normalised < 0) normalised = 0;
+            if (normalised > 100) normalised = 100;
+            actual_score = static_cast<int32_t>(normalised);
+        }
+    }
+
+    int32_t diff = actual_score - expected_score;
+    if (diff < 0) diff = -diff;
+    return diff <= tolerance;
 }
 
 bool ReputationCompatChecker::ValidateTrustEdge(const uint160& from, const uint160& to, 

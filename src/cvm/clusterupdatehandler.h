@@ -21,6 +21,21 @@ class WalletClusterer;
 class TrustPropagator;
 
 /**
+ * ClusterMergeCandidate - A detected merge of two clusters plus the actual
+ * address that links them.
+ *
+ * When a transaction spends inputs belonging to two different clusters, those
+ * clusters are merged. The linkingAddress is one of that transaction's real
+ * input addresses that belongs to one of the merged clusters — i.e. the actual
+ * address that connects them — rather than a cluster canonical id placeholder.
+ */
+struct ClusterMergeCandidate {
+    uint160 cluster1;        // First cluster (absorbing cluster)
+    uint160 cluster2;        // Second cluster (merged into cluster1)
+    uint160 linkingAddress;  // Real address connecting the two clusters
+};
+
+/**
  * ClusterUpdateEvent - Event emitted when cluster membership changes
  * 
  * This struct represents events that occur when wallet cluster membership
@@ -342,9 +357,10 @@ private:
      * those clusters should be merged.
      * 
      * @param transactions Transactions to analyze
-     * @return Vector of (cluster1, cluster2) pairs that should merge
+     * @return Vector of merge candidates, each carrying the two clusters and the
+     *         real address that links them
      */
-    std::vector<std::pair<uint160, uint160>> DetectClusterMerges(
+    std::vector<ClusterMergeCandidate> DetectClusterMerges(
         const std::vector<CTransaction>& transactions);
     
     /**

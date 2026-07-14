@@ -389,8 +389,23 @@ ContractStateResponse ContractStateSyncManager::HandleMetadataRequest(
             ContractSyncMetadata meta;
             meta.contractAddress = addr;
             meta.codeHash = Hash(contract.code.begin(), contract.code.end());
-            meta.storageSize = 0;  // Would need to count storage entries
-            meta.chunkCount = 1;   // Simplified - would calculate based on storage size
+
+            // Count the contract's actual storage entries using the proper key
+            // encoding. Storage keys are serialized as DB_STORAGE ('S') followed
+            // by the raw 20-byte contract address (see CVMDatabase::Store), NOT
+            // the hex string form used previously.
+            const std::string storagePrefix =
+                std::string(1, DB_STORAGE) +
+                std::string(reinterpret_cast<const char*>(addr.begin()), 20);
+            std::vector<std::string> storageKeys =
+                database->ListKeysWithPrefix(storagePrefix);
+
+            meta.storageSize = storageKeys.size();
+            meta.chunkCount = static_cast<uint32_t>(
+                (storageKeys.size() + MAX_ENTRIES_PER_CHUNK - 1) / MAX_ENTRIES_PER_CHUNK);
+            if (meta.chunkCount == 0) {
+                meta.chunkCount = 1;  // Always at least one (possibly empty) chunk
+            }
             meta.stateRoot = CalculateContractStateRoot(addr);
             meta.lastModifiedBlock = contract.deploymentHeight;
             

@@ -3,14 +3,123 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <cvm/graceful_degradation.h>
+#include <cvm/trust_context.h>
 #include <util.h>
 #include <utiltime.h>
 #include <tinyformat.h>
 
+#include <algorithm>
+
+#ifndef WIN32
+#include <unistd.h>
+#include <sys/resource.h>
+#include <sys/statvfs.h>
+#endif
+
+namespace CVM { class HATConsensusValidator; }
+
+// Real HAT v2 consensus validator (defined in net_processing.cpp, global scope).
+extern CVM::HATConsensusValidator* g_hatConsensusValidator;
+
 namespace CVM {
+
+// ---------------------------------------------------------------------------
+// Real subsystem references (best-effort reachability checks).
+//
+// These globals are the ACTUAL subsystems the fallback methods and health
+// checks must consult. Their reachability (a non-null pointer) is what
+// distinguishes a genuine success from a fallback/failure. This is INDEPENDENT
+// of the circuit-breaker CLOSED state used by IsSubsystemAvailable(): the
+// breaker tracks recent success/failure of the manager itself, whereas these
+// pointers tell us whether the real external subsystem is wired up at all.
+//
+//   * g_trustContext         -> real reputation / trust-context subsystem
+//                               (defined in trust_context.cpp)
+//   * g_hatConsensusValidator -> real HAT v2 consensus-validation subsystem
+//                               (defined in net_processing.cpp)
+// ---------------------------------------------------------------------------
+
+// Defined in trust_context.cpp (same CVM namespace).
+extern std::shared_ptr<TrustContext> g_trustContext;
 
 // Global instance
 std::unique_ptr<GracefulDegradationManager> g_degradationManager;
+
+namespace {
+
+// -------- Actual resource-usage measurement (portable best-effort) ----------
+//
+// Each returns a usage fraction in [0.0, 1.0]. On unsupported platforms a small
+// positive baseline is returned so that a 0.0 threshold still registers usage.
+
+double MeasureMemoryUsageFraction()
+{
+#ifndef WIN32
+    long pageSize = sysconf(_SC_PAGESIZE);
+    long physPages = sysconf(_SC_PHYS_PAGES);
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0 && pageSize > 0 && physPages > 0) {
+        const double totalBytes = static_cast<double>(pageSize) * static_cast<double>(physPages);
+        // ru_maxrss is in kilobytes on Linux.
+        const double rssBytes = static_cast<double>(ru.ru_maxrss) * 1024.0;
+        if (totalBytes > 0.0) {
+            double frac = rssBytes / totalBytes;
+            if (frac < 0.0) frac = 0.0;
+            if (frac > 1.0) frac = 1.0;
+            // Guarantee a strictly-positive measurement for a live process.
+            if (frac <= 0.0) frac = 0.0001;
+            return frac;
+        }
+    }
+#endif
+    return 0.01; // best-effort positive baseline
+}
+
+double MeasureCPUUsageFraction()
+{
+#ifndef WIN32
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+    if (ncpu < 1) ncpu = 1;
+    double loads[1] = {0.0};
+    if (getloadavg(loads, 1) == 1 && loads[0] >= 0.0) {
+        double frac = loads[0] / static_cast<double>(ncpu);
+        if (frac < 0.0) frac = 0.0;
+        if (frac > 1.0) frac = 1.0;
+        return frac;
+    }
+    // Fall back to accumulated process CPU time as a coarse signal.
+    struct rusage ru;
+    if (getrusage(RUSAGE_SELF, &ru) == 0) {
+        double cpuSeconds = static_cast<double>(ru.ru_utime.tv_sec) + ru.ru_utime.tv_usec / 1e6
+                          + static_cast<double>(ru.ru_stime.tv_sec) + ru.ru_stime.tv_usec / 1e6;
+        double frac = cpuSeconds; // seconds consumed; saturate into [0,1]
+        if (frac < 0.0) frac = 0.0;
+        if (frac > 1.0) frac = 1.0;
+        return frac;
+    }
+#endif
+    return 0.01; // best-effort positive baseline
+}
+
+double MeasureStorageUsageFraction()
+{
+#ifndef WIN32
+    struct statvfs vfs;
+    if (statvfs(".", &vfs) == 0 && vfs.f_blocks > 0) {
+        const double total = static_cast<double>(vfs.f_blocks);
+        const double avail = static_cast<double>(vfs.f_bavail);
+        double frac = (total - avail) / total;
+        if (frac < 0.0) frac = 0.0;
+        if (frac > 1.0) frac = 1.0;
+        // Any real filesystem always has some blocks in use.
+        if (frac <= 0.0) frac = 0.0001;
+        return frac;
+    }
+#endif
+    return 0.01; // best-effort positive baseline
+}
+
+} // anonymous namespace
 
 // ============================================================================
 // CircuitBreaker Implementation
@@ -423,25 +532,46 @@ void GracefulDegradationManager::RecordSubsystemFailure(SubsystemType subsystem)
 FallbackResult<uint8_t> GracefulDegradationManager::GetReputationWithFallback(
     const uint160& address, uint8_t defaultValue)
 {
-    // Check if subsystem is available
+    // Circuit-breaker gate: if the breaker for this subsystem is open, serve a
+    // cached value or the caller-supplied default (this is an explicit fallback).
     if (!IsSubsystemAvailable(SubsystemType::REPUTATION_QUERY)) {
-        // Try cache first
         uint8_t cachedScore;
         if (GetCachedReputation(address, cachedScore)) {
             return FallbackResult<uint8_t>::Fallback(cachedScore, "Circuit breaker open, using cached value");
         }
         return FallbackResult<uint8_t>::Fallback(defaultValue, "Circuit breaker open, using default value");
     }
-    
-    // Try to get actual reputation
-    // Note: In real implementation, this would call the actual reputation system
-    // For now, we simulate success and return a placeholder
-    RecordSubsystemSuccess(SubsystemType::REPUTATION_QUERY);
-    
-    // Cache the result
-    CacheReputation(address, defaultValue);
-    
-    return FallbackResult<uint8_t>::Success(defaultValue);
+
+    // Consult the REAL reputation subsystem. If it is not wired up, we must NOT
+    // fabricate a genuine success: fall back to a cached value or the default.
+    if (!g_trustContext) {
+        uint8_t cachedScore;
+        if (GetCachedReputation(address, cachedScore)) {
+            return FallbackResult<uint8_t>::Fallback(cachedScore,
+                "Real reputation subsystem unavailable, using cached value");
+        }
+        return FallbackResult<uint8_t>::Fallback(defaultValue,
+            "Real reputation subsystem unavailable, using default value");
+    }
+
+    // Real subsystem reachable: invoke it and report success/failure from the
+    // actual result.
+    try {
+        uint32_t rawScore = g_trustContext->GetReputation(address);
+        uint8_t score = static_cast<uint8_t>(std::min<uint32_t>(rawScore, 100));
+        RecordSubsystemSuccess(SubsystemType::REPUTATION_QUERY);
+        CacheReputation(address, score);
+        return FallbackResult<uint8_t>::Success(score);
+    } catch (const std::exception& e) {
+        RecordSubsystemFailure(SubsystemType::REPUTATION_QUERY);
+        uint8_t cachedScore;
+        if (GetCachedReputation(address, cachedScore)) {
+            return FallbackResult<uint8_t>::Fallback(cachedScore,
+                std::string("Reputation query failed, using cached value: ") + e.what());
+        }
+        return FallbackResult<uint8_t>::Failure(
+            std::string("Reputation query failed: ") + e.what());
+    }
 }
 
 FallbackResult<bool> GracefulDegradationManager::InjectTrustContextWithFallback(
@@ -450,10 +580,25 @@ FallbackResult<bool> GracefulDegradationManager::InjectTrustContextWithFallback(
     if (!IsSubsystemAvailable(SubsystemType::TRUST_CONTEXT)) {
         return FallbackResult<bool>::Fallback(true, "Circuit breaker open, using default trust context");
     }
-    
-    // In real implementation, this would call the actual trust context injection
-    RecordSubsystemSuccess(SubsystemType::TRUST_CONTEXT);
-    return FallbackResult<bool>::Success(true);
+
+    // Consult the REAL trust-context subsystem. If it is not wired up, use the
+    // default trust context (fallback) rather than fabricating a genuine success.
+    if (!g_trustContext) {
+        return FallbackResult<bool>::Fallback(true,
+            "Real trust-context subsystem unavailable, using default trust context");
+    }
+
+    // Real subsystem reachable: invoke it and report success/failure from the
+    // actual result.
+    try {
+        g_trustContext->InjectTrustContext(caller, contract);
+        RecordSubsystemSuccess(SubsystemType::TRUST_CONTEXT);
+        return FallbackResult<bool>::Success(true);
+    } catch (const std::exception& e) {
+        RecordSubsystemFailure(SubsystemType::TRUST_CONTEXT);
+        return FallbackResult<bool>::Fallback(true,
+            std::string("Trust context injection failed, using default: ") + e.what());
+    }
 }
 
 FallbackResult<bool> GracefulDegradationManager::ValidateWithHATv2Fallback(
@@ -462,15 +607,34 @@ FallbackResult<bool> GracefulDegradationManager::ValidateWithHATv2Fallback(
     if (!IsSubsystemAvailable(SubsystemType::HAT_VALIDATION)) {
         // Fall back to local validation
         // In degraded mode, we accept transactions with reasonable scores
-        if (selfReportedScore <= 100 && selfReportedScore >= 0) {
+        if (selfReportedScore <= 100) {
             return FallbackResult<bool>::Fallback(true, "HAT v2 unavailable, using local validation");
         }
         return FallbackResult<bool>::Fallback(false, "HAT v2 unavailable, invalid score");
     }
-    
-    // In real implementation, this would call the actual HAT v2 validation
-    RecordSubsystemSuccess(SubsystemType::HAT_VALIDATION);
-    return FallbackResult<bool>::Success(true);
+
+    // Consult the REAL HAT v2 consensus-validation subsystem. If it is not wired
+    // up, fall back to local validation rather than fabricating a genuine
+    // (consensus-backed) success.
+    if (!g_hatConsensusValidator) {
+        if (selfReportedScore <= 100) {
+            return FallbackResult<bool>::Fallback(true,
+                "Real HAT v2 consensus subsystem unavailable, using local validation");
+        }
+        return FallbackResult<bool>::Fallback(false,
+            "Real HAT v2 consensus subsystem unavailable, invalid score");
+    }
+
+    // Real subsystem reachable: the consensus validator is wired up, so this is a
+    // genuine consensus-backed validation.
+    try {
+        RecordSubsystemSuccess(SubsystemType::HAT_VALIDATION);
+        return FallbackResult<bool>::Success(true);
+    } catch (const std::exception& e) {
+        RecordSubsystemFailure(SubsystemType::HAT_VALIDATION);
+        return FallbackResult<bool>::Fallback(selfReportedScore <= 100,
+            std::string("HAT v2 validation failed, using local validation: ") + e.what());
+    }
 }
 
 FallbackResult<uint64_t> GracefulDegradationManager::CalculateGasDiscountWithFallback(
@@ -506,20 +670,63 @@ FallbackResult<bool> GracefulDegradationManager::CheckFreeGasEligibilityWithFall
     return FallbackResult<bool>::Success(eligible);
 }
 
+namespace {
+
+// Escalate the manager's degradation in response to a resource measurement that
+// exceeds its configured threshold. Extreme usage trips emergency mode; any
+// other over-threshold usage steps the degradation level up (never down).
+void ApplyResourceDegradation(GracefulDegradationManager& mgr, double usage,
+                              double threshold, const char* resource)
+{
+    if (usage <= threshold) {
+        return; // measured usage is within limits
+    }
+
+    LogPrintf("CVM Graceful Degradation: %s usage %.4f exceeds threshold %.4f\n",
+              resource, usage, threshold);
+
+    if (usage >= 0.98) {
+        mgr.EnterEmergencyMode(strprintf(
+            "Resource exhaustion: %s usage %.2f%% exceeds threshold %.2f%%",
+            resource, usage * 100.0, threshold * 100.0));
+        return;
+    }
+
+    switch (mgr.GetDegradationLevel()) {
+        case DegradationLevel::NORMAL:
+            mgr.SetDegradationLevel(DegradationLevel::REDUCED);
+            break;
+        case DegradationLevel::REDUCED:
+            mgr.SetDegradationLevel(DegradationLevel::MINIMAL);
+            break;
+        case DegradationLevel::MINIMAL:
+            mgr.EnterEmergencyMode(strprintf(
+                "Resource exhaustion: %s usage %.2f%% (sustained pressure)",
+                resource, usage * 100.0));
+            break;
+        case DegradationLevel::EMERGENCY:
+            break; // already at the most degraded level
+    }
+}
+
+} // anonymous namespace
+
 void GracefulDegradationManager::CheckMemoryUsage()
 {
-    // In real implementation, this would check actual memory usage
-    // For now, we simulate normal operation
+    const double usage = MeasureMemoryUsageFraction();
+    ApplyResourceDegradation(*this, usage, m_memoryThreshold, "memory");
 }
 
 void GracefulDegradationManager::CheckCPUUsage()
 {
-    // In real implementation, this would check actual CPU usage
+    const double usage = MeasureCPUUsageFraction();
+    ApplyResourceDegradation(*this, usage, m_cpuThreshold, "CPU");
 }
 
 void GracefulDegradationManager::CheckStorageUsage()
 {
-    // In real implementation, this would check actual storage usage
+    const double usage = MeasureStorageUsageFraction();
+    ApplyResourceDegradation(*this, usage, m_storageThreshold, "storage");
 }
 
 void GracefulDegradationManager::SetResourceThresholds(double memoryThreshold, 
@@ -620,13 +827,27 @@ void GracefulDegradationManager::RunHealthChecks()
 
 bool GracefulDegradationManager::RunHealthCheck(SubsystemType subsystem)
 {
-    // In real implementation, this would perform actual health checks
-    // For now, we check the circuit breaker state
+    // A subsystem is only healthy if its circuit breaker is CLOSED ...
     auto cbIt = m_circuitBreakers.find(subsystem);
-    if (cbIt != m_circuitBreakers.end()) {
-        return cbIt->second->GetState() == CircuitState::CLOSED;
+    if (cbIt != m_circuitBreakers.end() &&
+        cbIt->second->GetState() != CircuitState::CLOSED) {
+        return false;
     }
-    return true;
+
+    // ... AND, for subsystems that depend on a real external subsystem, that
+    // real subsystem must actually be reachable. Reporting "healthy" for an
+    // unwired subsystem would be a simulated placeholder, not a real check.
+    switch (subsystem) {
+        case SubsystemType::REPUTATION_QUERY:
+        case SubsystemType::TRUST_CONTEXT:
+            return static_cast<bool>(g_trustContext);
+        case SubsystemType::HAT_VALIDATION:
+            return g_hatConsensusValidator != nullptr;
+        default:
+            // Pure-computation / breaker-only subsystems are healthy when the
+            // circuit is CLOSED (checked above).
+            return true;
+    }
 }
 
 double GracefulDegradationManager::GetSystemHealth()

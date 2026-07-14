@@ -25,6 +25,40 @@
 
 namespace CVM {
 
+// Extract the value carried by a CVM transaction that is made available to the
+// executing contract as CALLVALUE (bugfix 2.60), on the ACTIVE block-validation
+// path. This is kept in sync with blockprocessor.cpp's ExtractTransactionValue
+// so the two block-processing paths agree (reconciliation 3.12).
+//
+// The wallet conveys contract value by BURNING it to a provably-unspendable
+// OP_RETURN output that encodes the contract address (see
+// CWallet::CreateContractCallTransaction: `OP_RETURN << contractAddress`), NOT
+// by a spendable output. A transaction's spendable CHANGE output therefore is
+// NOT value sent to the contract and must be excluded. We sum only the value of
+// unspendable (OP_RETURN) outputs other than the CVM marker output.
+//
+// Consequences:
+//  - A contract DEPLOY (deploycontract carries no value; the tx has only the
+//    CVM marker OP_RETURN plus spendable change) yields CALLVALUE == 0
+//    (preservation 3.22).
+//  - A zero-value CALL likewise yields CALLVALUE == 0 (preservation 3.22).
+//  - A value-bearing CALL yields the burned value as CALLVALUE (2.60).
+static uint64_t ExtractTransactionValue(const CTransaction& tx, int cvmOutputIndex)
+{
+    CAmount total = 0;
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (static_cast<int>(i) == cvmOutputIndex) {
+            continue;
+        }
+        // Only value burned to an unspendable (OP_RETURN) output counts as
+        // contract value; spendable change is excluded.
+        if (tx.vout[i].nValue > 0 && tx.vout[i].scriptPubKey.IsUnspendable()) {
+            total += tx.vout[i].nValue;
+        }
+    }
+    return static_cast<uint64_t>(total);
+}
+
 // Helper: Update behavior + temporal metrics for an address after CVM activity
 static void UpdateActivityMetrics(CVMDatabase& db, const uint160& actor, const uint256& txid, const uint160& partner) {
     try {
@@ -161,6 +195,12 @@ BlockValidationResult BlockValidator::ValidateBlock(
     LogPrint(BCLog::CVM, "BlockValidator: Validating block %s at height %d\n",
              block.GetHash().ToString(), pindex->nHeight);
     
+    // The real block hash is threaded into contract execution so the Enhanced
+    // VM sees the correct BLOCKHASH/block context during block processing on the
+    // ACTIVE validation path (bugfix 2.60), instead of an empty uint256(). This
+    // reconciles this path with blockprocessor.cpp (3.12).
+    const uint256 blockHash = block.GetHash();
+    
     uint64_t blockGasUsed = 0;
     
     // Process each transaction
@@ -226,7 +266,7 @@ BlockValidationResult BlockValidator::ValidateBlock(
         // Execute transaction
         uint64_t gasUsed = 0;
         std::string error;
-        if (!ExecuteTransaction(tx, i, pindex->nHeight, view, gasUsed, error)) {
+        if (!ExecuteTransaction(tx, i, pindex->nHeight, blockHash, view, gasUsed, error)) {
             m_lastResult.success = false;
             m_lastResult.error = strprintf("Transaction execution failed: %s", error);
             LogPrint(BCLog::CVM, "BlockValidator: %s\n", m_lastResult.error);
@@ -302,6 +342,7 @@ bool BlockValidator::ExecuteTransaction(
     const CTransaction& tx,
     unsigned int txIndex,
     int blockHeight,
+    const uint256& blockHash,
     CCoinsViewCache& view,
     uint64_t& gasUsed,
     std::string& error)
@@ -325,10 +366,10 @@ bool BlockValidator::ExecuteTransaction(
     if (opType == CVMOpType::CONTRACT_DEPLOY || opType == CVMOpType::EVM_DEPLOY) {
         uint160 contractAddr;
         m_lastResult.contractsDeployed++;
-        return DeployContract(tx, blockHeight, view, gasUsed, contractAddr, error);
+        return DeployContract(tx, blockHeight, blockHash, view, gasUsed, contractAddr, error);
     } else if (opType == CVMOpType::CONTRACT_CALL || opType == CVMOpType::EVM_CALL) {
         m_lastResult.contractsExecuted++;
-        return ExecuteContractCall(tx, blockHeight, view, gasUsed, error);
+        return ExecuteContractCall(tx, blockHeight, blockHash, view, gasUsed, error);
     }
     
     // Not a contract transaction
@@ -453,6 +494,7 @@ bool BlockValidator::VerifyReputationGasCosts(
 bool BlockValidator::DeployContract(
     const CTransaction& tx,
     int blockHeight,
+    const uint256& blockHash,
     CCoinsViewCache& view,
     uint64_t& gasUsed,
     uint160& contractAddr,
@@ -559,16 +601,25 @@ bool BlockValidator::DeployContract(
     // internally, and calling it twice would cause a nonce mismatch where
     // BlockValidator logs one address but EnhancedVM writes to a different one.
 
-    // Execute contract deployment using EnhancedVM
+    // Pass the ACTUAL transaction value and the REAL block hash to the Enhanced
+    // VM so CALLVALUE and BLOCKHASH/block context are correct during block
+    // processing on the active validation path (bugfix 2.60), instead of a
+    // hardcoded 0 / uint256(). A zero-value deploy still surfaces CALLVALUE == 0
+    // (preservation 3.22).
+    uint64_t deployValue = ExtractTransactionValue(tx, opReturnIndex);
+
+    // Execute contract deployment using EnhancedVM. The Enhanced VM flushes
+    // pending contract-state writes durably via CommitExecutionState (bugfix
+    // 2.61) on success, so any SSTORE performed by the constructor is persisted.
     try {
         EnhancedExecutionResult result = m_vm->DeployContract(
             deployData.bytecode,
             deployData.constructorData,
             deployData.gasLimit,
             deployer,
-            0, // deploy_value (from transaction value)
+            deployValue, // deploy_value (actual transaction value)
             blockHeight,
-            uint256(), // block hash
+            blockHash, // real block hash
             0  // timestamp
         );
         
@@ -627,6 +678,7 @@ bool BlockValidator::DeployContract(
 bool BlockValidator::ExecuteContractCall(
     const CTransaction& tx,
     int blockHeight,
+    const uint256& blockHash,
     CCoinsViewCache& view,
     uint64_t& gasUsed,
     std::string& error)
@@ -676,16 +728,25 @@ bool BlockValidator::ExecuteContractCall(
         return false;
     }
     
-    // Execute contract call using EnhancedVM
+    // Pass the ACTUAL transaction value and the REAL block hash to the Enhanced
+    // VM so CALLVALUE and BLOCKHASH/block context are correct during block
+    // processing on the active validation path (bugfix 2.60), instead of a
+    // hardcoded 0 / uint256(). A zero-value call still surfaces CALLVALUE == 0
+    // (preservation 3.22).
+    uint64_t callValue = ExtractTransactionValue(tx, opReturnIndex);
+
+    // Execute contract call using EnhancedVM. The Enhanced VM flushes pending
+    // contract-state writes durably via CommitExecutionState (bugfix 2.61) on
+    // success.
     try {
         EnhancedExecutionResult result = m_vm->CallContract(
             callData.contractAddress,
             callData.callData,
             callData.gasLimit,
             caller,
-            0, // call_value (from transaction value)
+            callValue, // call_value (actual transaction value)
             blockHeight,
-            uint256(), // block hash
+            blockHash, // real block hash
             0  // timestamp
         );
         

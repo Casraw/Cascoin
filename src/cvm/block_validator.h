@@ -116,6 +116,9 @@ public:
      * @param txIndex Transaction index in block
      * @param blockHeight Block height
      * @param view Coins view
+     * @param blockHash Hash of the block being connected. Threaded down to the
+     *                  Enhanced VM so contract execution sees the real
+     *                  BLOCKHASH/block context (bugfix 2.60).
      * @param gasUsed Output: gas used by transaction
      * @param error Output: error message if execution fails
      * @return true if execution succeeded
@@ -124,6 +127,7 @@ public:
         const CTransaction& tx,
         unsigned int txIndex,
         int blockHeight,
+        const uint256& blockHash,
         CCoinsViewCache& view,
         uint64_t& gasUsed,
         std::string& error
@@ -177,6 +181,8 @@ public:
      * 
      * @param tx Transaction containing deployment
      * @param blockHeight Block height
+     * @param blockHash Hash of the block being connected (threaded to the
+     *                  Enhanced VM for BLOCKHASH/block context, bugfix 2.60)
      * @param view Coins view
      * @param gasUsed Output: gas used
      * @param contractAddr Output: deployed contract address
@@ -186,6 +192,7 @@ public:
     bool DeployContract(
         const CTransaction& tx,
         int blockHeight,
+        const uint256& blockHash,
         CCoinsViewCache& view,
         uint64_t& gasUsed,
         uint160& contractAddr,
@@ -199,6 +206,8 @@ public:
      * 
      * @param tx Transaction containing call
      * @param blockHeight Block height
+     * @param blockHash Hash of the block being connected (threaded to the
+     *                  Enhanced VM for BLOCKHASH/block context, bugfix 2.60)
      * @param view Coins view
      * @param gasUsed Output: gas used
      * @param error Output: error message if call fails
@@ -207,6 +216,7 @@ public:
     bool ExecuteContractCall(
         const CTransaction& tx,
         int blockHeight,
+        const uint256& blockHash,
         CCoinsViewCache& view,
         uint64_t& gasUsed,
         std::string& error

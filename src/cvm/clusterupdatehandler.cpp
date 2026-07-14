@@ -92,17 +92,16 @@ uint32_t ClusterUpdateHandler::ProcessBlock(int blockHeight, const std::vector<C
     }
     
     // Step 3: Detect and process cluster merges
-    std::vector<std::pair<uint160, uint160>> merges = DetectClusterMerges(transactions);
+    std::vector<ClusterMergeCandidate> merges = DetectClusterMerges(transactions);
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected %zu cluster merges\n",
              merges.size());
     
-    for (const auto& mergePair : merges) {
-        // For merges, we need to find the linking address
-        // Use the first cluster's canonical address as the linking address for now
-        uint160 linkingAddress = mergePair.first;
-        
-        if (ProcessClusterMerge(mergePair.first, mergePair.second, linkingAddress, 
+    for (const auto& merge : merges) {
+        // Use the ACTUAL linking address that connects the merged clusters
+        // (a real input address of the linking transaction), not the first
+        // cluster's canonical id placeholder (bugfix 2.58).
+        if (ProcessClusterMerge(merge.cluster1, merge.cluster2, merge.linkingAddress,
                                blockHeight, timestamp)) {
             updateCount++;
         }
@@ -327,14 +326,14 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectNewMembers(
     return newMembers;
 }
 
-std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectClusterMerges(
+std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
     const std::vector<CTransaction>& transactions)
 {
     // Detect cluster merges from transaction inputs
     // When a transaction has inputs from addresses in different clusters,
     // those clusters should be merged
     
-    std::vector<std::pair<uint160, uint160>> merges;
+    std::vector<ClusterMergeCandidate> merges;
     std::set<std::pair<uint160, uint160>> processedMerges;  // Avoid duplicate merge pairs
     
     for (const CTransaction& tx : transactions) {
@@ -349,6 +348,8 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectClusterMerg
         // Get clusters for all input addresses
         std::set<uint160> involvedClusters;
         std::map<uint160, uint160> addressToCluster;
+        // Reverse map: for each cluster, a real input address that belongs to it.
+        std::map<uint160, uint160> clusterToAddress;
         
         for (const uint160& address : inputAddresses) {
             uint160 clusterId = clusterer.GetClusterForAddress(address);
@@ -356,6 +357,8 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectClusterMerg
             if (!clusterId.IsNull()) {
                 involvedClusters.insert(clusterId);
                 addressToCluster[address] = clusterId;
+                // Keep the first real address seen for each cluster.
+                clusterToAddress.emplace(clusterId, address);
             }
         }
         
@@ -378,10 +381,25 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectClusterMerg
                     
                     if (processedMerges.count(mergePair) == 0) {
                         processedMerges.insert(mergePair);
-                        merges.push_back(mergePair);
+
+                        // The actual linking address is a real input address of
+                        // this transaction that belongs to one of the merged
+                        // clusters (it is what physically connects them).
+                        ClusterMergeCandidate candidate;
+                        candidate.cluster1 = cluster1;
+                        candidate.cluster2 = cluster2;
+                        auto addrIt = clusterToAddress.find(cluster1);
+                        if (addrIt == clusterToAddress.end()) {
+                            addrIt = clusterToAddress.find(cluster2);
+                        }
+                        if (addrIt != clusterToAddress.end()) {
+                            candidate.linkingAddress = addrIt->second;
+                        }
+                        merges.push_back(candidate);
                         
-                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected cluster merge: %s + %s\n",
-                                 cluster1.ToString(), cluster2.ToString());
+                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected cluster merge: %s + %s (linking: %s)\n",
+                                 cluster1.ToString(), cluster2.ToString(),
+                                 candidate.linkingAddress.ToString());
                     }
                 }
             }

@@ -20,8 +20,62 @@
 #include <utilmoneystr.h>
 #include <hash.h>
 #include <timedata.h>
+#include <validation.h>
+#include <coins.h>
+#include <script/standard.h>
+#include <pubkey.h>
 
 namespace CVM {
+
+namespace {
+// Resolve the REAL sender/deployer/caller address of a CVM transaction by
+// looking up its inputs in the UTXO set and extracting the destination from
+// the referenced scriptPubKey. Returns false when the address cannot be
+// resolved (e.g. UTXO set unavailable or non-standard output). We must not
+// synthesize a pseudo-address from the prevout hash (bugfix 2.56).
+bool ResolveInputSenderAddress(const CTransaction& tx, uint160& out)
+{
+    if (tx.vin.empty()) {
+        return false;
+    }
+
+    LOCK(cs_main);
+    if (!pcoinsTip) {
+        return false;
+    }
+
+    for (const CTxIn& txin : tx.vin) {
+        if (txin.prevout.IsNull()) {
+            continue;
+        }
+
+        Coin coin;
+        if (!pcoinsTip->GetCoin(txin.prevout, coin) || coin.IsSpent()) {
+            continue;
+        }
+
+        CTxDestination dest;
+        if (!ExtractDestination(coin.out.scriptPubKey, dest)) {
+            continue;
+        }
+
+        if (const CKeyID* keyID = boost::get<CKeyID>(&dest)) {
+            out = uint160(*keyID);
+            return true;
+        }
+        if (const CScriptID* scriptID = boost::get<CScriptID>(&dest)) {
+            out = uint160(*scriptID);
+            return true;
+        }
+        if (const WitnessV0KeyHash* witnessKeyHash = boost::get<WitnessV0KeyHash>(&dest)) {
+            memcpy(out.begin(), witnessKeyHash->begin(), 20);
+            return true;
+        }
+    }
+
+    return false;
+}
+} // anonymous namespace
 
 // Global gas allowance tracker
 static GasAllowanceTracker g_gasAllowanceTracker;
@@ -73,11 +127,18 @@ void CVMBlockProcessor::ProcessBlock(
 }
 
 // Extract the value carried by a CVM transaction that is made available to the
-// executing contract as CALLVALUE (bugfix 2.60). This is the total spendable
-// value locked in the transaction's outputs other than the CVM OP_RETURN marker
-// output (which carries no spendable value). A zero-value transaction (e.g. a
-// pure OP_RETURN deploy) therefore yields CALLVALUE == 0, unchanged
-// (preservation 3.22).
+// executing contract as CALLVALUE (bugfix 2.60). Kept in sync with
+// block_validator.cpp's ExtractTransactionValue so both block-processing paths
+// agree (reconciliation 3.12).
+//
+// The wallet conveys contract value by BURNING it to a provably-unspendable
+// OP_RETURN output that encodes the contract address (see
+// CWallet::CreateContractCallTransaction: `OP_RETURN << contractAddress`), NOT
+// by a spendable output. A transaction's spendable CHANGE output therefore is
+// NOT value sent to the contract and must be excluded. We sum only the value of
+// unspendable (OP_RETURN) outputs other than the CVM marker output. A zero-value
+// transaction (e.g. a pure OP_RETURN deploy, which also carries no value output)
+// therefore yields CALLVALUE == 0 (preservation 3.22).
 static uint64_t ExtractTransactionValue(const CTransaction& tx, int cvmOutputIndex)
 {
     CAmount total = 0;
@@ -85,7 +146,9 @@ static uint64_t ExtractTransactionValue(const CTransaction& tx, int cvmOutputInd
         if (static_cast<int>(i) == cvmOutputIndex) {
             continue;
         }
-        if (tx.vout[i].nValue > 0) {
+        // Only value burned to an unspendable (OP_RETURN) output counts as
+        // contract value; spendable change is excluded.
+        if (tx.vout[i].nValue > 0 && tx.vout[i].scriptPubKey.IsUnspendable()) {
             total += tx.vout[i].nValue;
         }
     }
@@ -237,15 +300,11 @@ void CVMBlockProcessor::ProcessDeploy(
     LogPrint(BCLog::CVM, "CVM: Processing contract deployment: hash=%s\n", 
              deployData.codeHash.ToString());
     
-    // Extract deployer address from transaction inputs
+    // Extract the real deployer address from the transaction inputs via the
+    // UTXO set (bugfix 2.56). If it cannot be resolved the deployer stays null
+    // rather than being derived from a prevout-hash pseudo-address.
     uint160 deployer;
-    if (!tx.vin.empty()) {
-        // Get deployer from first input (simplified - would need proper address extraction)
-        CHashWriter hw(SER_GETHASH, 0);
-        hw << tx.vin[0].prevout;
-        uint256 hash = hw.GetHash();
-        memcpy(deployer.begin(), hash.begin(), 20);
-    }
+    ResolveInputSenderAddress(tx, deployer);
     
     // Get bytecode from deployData (now included in OP_RETURN serialization).
     // Fallback: check witness data for legacy transactions.
@@ -395,15 +454,11 @@ void CVMBlockProcessor::ProcessCall(
         return;
     }
     
-    // Extract caller address from transaction inputs
+    // Extract the real caller address from the transaction inputs via the UTXO
+    // set (bugfix 2.56). If it cannot be resolved the caller stays null rather
+    // than being derived from a prevout-hash pseudo-address.
     uint160 caller;
-    if (!tx.vin.empty()) {
-        // Get caller from first input (simplified - would need proper address extraction)
-        CHashWriter hw(SER_GETHASH, 0);
-        hw << tx.vin[0].prevout;
-        uint256 hash = hw.GetHash();
-        memcpy(caller.begin(), hash.begin(), 20);
-    }
+    ResolveInputSenderAddress(tx, caller);
     
     try {
         // Initialize trust context

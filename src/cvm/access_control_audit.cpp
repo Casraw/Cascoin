@@ -691,10 +691,55 @@ void AccessControlAuditor::CleanupExpiredBlacklistEntries() {
 
 void AccessControlAuditor::LoadBlacklist() {
     // AssertLockHeld(m_cs);
-    
-    // Load blacklist entries from database
-    // Note: This is a simplified implementation - in production, you'd iterate over DB keys
-    LogPrint(BCLog::CVM, "Access: Blacklist loaded\n");
+
+    // Restore persisted blacklist entries by iterating the database keys under
+    // the blacklist prefix. Each entry is stored as key 'K' + address.GetHex()
+    // with value = serialized (reason, expiry). Previously this was a no-op, so
+    // entries persisted by a prior auditor were never restored on reload.
+    const std::string prefix = std::string(1, DB_BLACKLIST);
+    std::vector<std::string> keys = m_db.ListKeysWithPrefix(prefix);
+
+    int64_t now = GetCurrentTimestamp();
+    size_t restored = 0;
+
+    for (const std::string& key : keys) {
+        // Key layout: 'K' + 40-char hex address.
+        if (key.size() != prefix.size() + 40) {
+            continue;
+        }
+        std::string hexAddr = key.substr(prefix.size());
+
+        uint160 address;
+        address.SetHex(hexAddr);
+        if (address.IsNull()) {
+            continue;
+        }
+
+        std::vector<uint8_t> valueData;
+        if (!m_db.ReadGeneric(key, valueData)) {
+            continue;
+        }
+
+        try {
+            CDataStream ssValue(valueData, SER_DISK, CLIENT_VERSION);
+            std::string reason;
+            int64_t expiry = -1;
+            ssValue >> reason >> expiry;
+
+            // Skip entries that have already expired.
+            if (expiry > 0 && now > expiry) {
+                m_db.EraseGeneric(key);
+                continue;
+            }
+
+            m_blacklist[address] = std::make_pair(reason, expiry);
+            ++restored;
+        } catch (const std::exception& e) {
+            LogPrintf("Access: Failed to deserialize blacklist entry: %s\n", e.what());
+        }
+    }
+
+    LogPrint(BCLog::CVM, "Access: Blacklist loaded (%d entries restored)\n", restored);
 }
 
 // ========== Global Functions ==========
