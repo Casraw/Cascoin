@@ -5,6 +5,7 @@
 TESTS += test/test_cascoin
 bin_PROGRAMS += test/test_cascoin
 noinst_PROGRAMS += test/test_cascoin_fuzzy
+noinst_PROGRAMS += test/test_cascoin_cvm_fuzzy
 TEST_SRCDIR = test
 TEST_BINARY=test/test_cascoin$(EXEEXT)
 
@@ -51,6 +52,7 @@ BITCOIN_TESTS =\
   test/cvm_sustainable_gas_tests.cpp \
   test/cvm_trust_context_tests.cpp \
   test/cvm_dashboard_contracts_tests.cpp \
+  test/cvm_fuzz_property_tests.cpp \
   test/arith_uint256_tests.cpp \
   test/scriptnum10.h \
   test/addrman_tests.cpp \
@@ -197,6 +199,99 @@ test_test_cascoin_fuzzy_LDADD = \
   $(LIBSECP256K1)
 
 test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS)
+#
+
+# test_cvm_fuzzy binary (CVM-specific fuzz harness) #
+test_test_cascoin_cvm_fuzzy_SOURCES = test/test_cvm_fuzzy.cpp
+test_test_cascoin_cvm_fuzzy_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
+test_test_cascoin_cvm_fuzzy_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+# -static tells libtool to resolve against the static archives as a set (the
+# same flag the main test_cascoin binary uses); this is what allows the
+# circular libbitcoin_server <-> libbitcoin_wallet references pulled in via
+# cvm/evm_rpc.cpp and cvm/txbuilder.cpp to be satisfied.
+test_test_cascoin_cvm_fuzzy_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
+
+# NOTE on library order: the CVM harness pulls in CVMDatabase (LevelDB) plus
+# RPC/serialization code from libbitcoin_{server,common,util}. Because
+# cvm/evm_rpc.cpp, cvm/txbuilder.cpp and rpc/l2_burn.cpp live in
+# libbitcoin_server but call into CWallet, libbitcoin_server and
+# libbitcoin_wallet are mutually dependent: the server archive references
+# wallet symbols and the wallet archive references server/common/util symbols.
+# With static archives a single left-to-right pass cannot resolve such a cycle
+# (whichever archive is scanned last leaves the other's newly pulled objects
+# unresolved). The robust, order-independent fix is to wrap the mutually
+# dependent archives in a GNU ld linker group (--start-group/--end-group), which
+# rescans the enclosed archives until no new symbols are resolved. This is the
+# only reliable way to close the multi-level cycle here: the harness pulls
+# libbitcoin_server (CVM / init / RPC objects); init.o and rpc/cvm.o reference
+# the RPC command table which drags in evm_rpc.o / txbuilder.o / l2_burn.o; and
+# those reference CWallet transaction-building methods, whose defining wallet
+# objects in turn reference further server/common/util symbols. Alternating the
+# archives a fixed number of times does not converge (the RPC subgraph is pulled
+# in whichever server pass ends up last, with no wallet pass after it).
+#
+# Automake rejects a literal '-Wl,--start-group' token inside an _LDADD and also
+# expands plain make variables during its scan, so the group markers are wrapped
+# in a $(shell ...) call: automake treats the function call as opaque (it does
+# not run the shell at Makefile.in generation time), while make expands it to the
+# real linker flag on the link line, where libtool passes it through verbatim
+# and preserves its position around the archives.
+CVM_FUZZY_GROUP_START = $(shell printf '%s' '-Wl,--start-group')
+CVM_FUZZY_GROUP_END = $(shell printf '%s' '-Wl,--end-group')
+test_test_cascoin_cvm_fuzzy_LDADD = \
+  $(CVM_FUZZY_GROUP_START) \
+  $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_COMMON) \
+  $(LIBBITCOIN_UTIL) \
+  $(LIBBITCOIN_CONSENSUS) \
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM)
+if ENABLE_WALLET
+test_test_cascoin_cvm_fuzzy_LDADD += $(LIBBITCOIN_WALLET)
+endif
+if ENABLE_ZMQ
+# init.o (pulled into the harness) references CZMQNotificationInterface, which
+# lives in the internal libbitcoin_zmq archive; keep it inside the linker group.
+test_test_cascoin_cvm_fuzzy_LDADD += $(LIBBITCOIN_ZMQ)
+endif
+test_test_cascoin_cvm_fuzzy_LDADD += \
+  $(LIBUNIVALUE) \
+  $(LIBLEVELDB) \
+  $(LIBLEVELDB_SSE42) \
+  $(LIBMEMENV) \
+  $(LIBSECP256K1) \
+  $(CVM_FUZZY_GROUP_END)
+
+test_test_cascoin_cvm_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS) \
+  $(BDB_LIBS) $(SSL_LIBS) $(MINIUPNPC_LIBS) $(SQLITE3_LIBS) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
+
+if ENABLE_ZMQ
+test_test_cascoin_cvm_fuzzy_LDADD += $(ZMQ_LIBS)
+endif
+
+# Because the linker-group markers are injected via $(shell ...) (see above),
+# automake cannot classify them and would otherwise list them as build
+# prerequisites of the binary, so make would try to "build" '-Wl,--start-group'
+# as a file. Define the link dependencies explicitly (the real internal
+# archives only) so the group-marker tokens are never treated as targets.
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES = \
+  $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_COMMON) \
+  $(LIBBITCOIN_UTIL) \
+  $(LIBBITCOIN_CONSENSUS) \
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
+  $(LIBUNIVALUE) \
+  $(LIBLEVELDB) \
+  $(LIBLEVELDB_SSE42) \
+  $(LIBMEMENV) \
+  $(LIBSECP256K1)
+if ENABLE_WALLET
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES += $(LIBBITCOIN_WALLET)
+endif
+if ENABLE_ZMQ
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES += $(LIBBITCOIN_ZMQ)
+endif
 #
 
 nodist_test_test_cascoin_SOURCES = $(GENERATED_TEST_FILES)
