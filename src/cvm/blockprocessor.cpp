@@ -557,8 +557,13 @@ bool CVMBlockProcessor::ProcessTrustEdge(
     int height,
     CVMDatabase& db
 ) {
+    // Use the canonical wide TrustNodeId identifiers so quantum/P2WSH edges are
+    // stored losslessly. CVMTrustEdgeData::Deserialize always populates `from`/
+    // `to`: for legacy v1 payloads they are migrated to P2PKH nodes (identical
+    // to the previous uint160 behavior), and for v2 payloads they carry the full
+    // 32-byte identifier.
     LogPrintf("CVM: Processing trust edge: %s → %s, weight=%d\n", 
-             HexStr(trustData.fromAddress), HexStr(trustData.toAddress), 
+             trustData.from.ToKeyString(), trustData.to.ToKeyString(), 
              trustData.weight);
     
     // Validate bond output
@@ -571,10 +576,13 @@ bool CVMBlockProcessor::ProcessTrustEdge(
     // Create trust edge
     TrustGraph trustGraph(db);
     
-    // Store trust edge using the TrustGraph interface
+    // Store trust edge using the TrustGraph interface. Pass the wide
+    // TrustNodeId `from`/`to` so P2WSH/quantum identifiers are keyed and stored
+    // without truncation to uint160 (the block processor no longer collapses
+    // 32-byte identifiers to 20 bytes).
     bool success = trustGraph.AddTrustEdge(
-        trustData.fromAddress,
-        trustData.toAddress,
+        trustData.from,
+        trustData.to,
         trustData.weight,
         trustData.bondAmount,
         tx.GetHash(),
@@ -583,7 +591,7 @@ bool CVMBlockProcessor::ProcessTrustEdge(
     
     if (success) {
         LogPrintf("CVM: Trust edge stored - From: %s, To: %s, Weight: %d, Bond: %s\n",
-                  HexStr(trustData.fromAddress), HexStr(trustData.toAddress),
+                  trustData.from.ToKeyString(), trustData.to.ToKeyString(),
                   trustData.weight, FormatMoney(trustData.bondAmount));
     } else {
         LogPrintf("CVM: Warning: Failed to store trust edge for tx %s\n",

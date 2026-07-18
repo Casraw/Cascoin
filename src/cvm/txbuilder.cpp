@@ -490,10 +490,15 @@ CMutableTransaction CVMTransactionBuilder::BuildTrustTransaction(
     CAmount bondAmount,
     const std::string& reason,
     CAmount& fee,
-    std::string& error
+    std::string& error,
+    uint160& outFromAddress
 ) {
     CMutableTransaction tx;
-    
+
+    // Reset the resolved from-identity; only populated once the signer key is
+    // successfully derived below.
+    outFromAddress.SetNull();
+
     if (!wallet) {
         error = "Wallet not available";
         return tx;
@@ -519,7 +524,13 @@ CMutableTransaction CVMTransactionBuilder::BuildTrustTransaction(
         return tx;
     }
     uint160 userAddress = userKey.GetID();
-    
+
+    // Expose the resolved signer/from identity to the caller. This is the exact
+    // key embedded into the on-chain CVMTrustEdgeData.fromAddress below, so the
+    // RPC can key its off-chain propagation on the same identity as the
+    // block-processed canonical edge (bugfix 2.4).
+    outFromAddress = userAddress;
+
     // 2. Build CVM trust edge data
     CVMTrustEdgeData trustData;
     trustData.fromAddress = userAddress;

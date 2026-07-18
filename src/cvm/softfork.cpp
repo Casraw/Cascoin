@@ -318,53 +318,153 @@ bool ValidateCVMSoftFork(const CTransaction& tx, int height,
 
 // Web-of-Trust Serialize/Deserialize implementations
 
-std::vector<uint8_t> CVMTrustEdgeData::Serialize() const {
-    std::vector<uint8_t> result;
-    
-    // Serialize fromAddress (20 bytes)
-    result.insert(result.end(), fromAddress.begin(), fromAddress.end());
-    
-    // Serialize toAddress (20 bytes)
-    result.insert(result.end(), toAddress.begin(), toAddress.end());
-    
-    // Serialize weight (2 bytes, little-endian)
-    result.push_back(weight & 0xFF);
-    result.push_back((weight >> 8) & 0xFF);
-    
-    // Serialize bondAmount (8 bytes, little-endian)
-    int64_t bondValue = bondAmount;
+namespace {
+
+// Little-endian appenders shared by the trust-edge (weight/bond/ts) fields.
+// These match the exact byte layout used by the legacy v1 payload so that
+// pure-uint160 edges remain byte-for-byte identical.
+void AppendLE16(std::vector<uint8_t>& out, int16_t v) {
+    out.push_back(v & 0xFF);
+    out.push_back((v >> 8) & 0xFF);
+}
+
+void AppendLE64(std::vector<uint8_t>& out, int64_t v) {
     for (int i = 0; i < 8; i++) {
-        result.push_back((bondValue >> (i * 8)) & 0xFF);
+        out.push_back((v >> (i * 8)) & 0xFF);
     }
-    
-    // Serialize timestamp (4 bytes, little-endian)
+}
+
+void AppendLE32(std::vector<uint8_t>& out, uint32_t v) {
     for (int i = 0; i < 4; i++) {
-        result.push_back((timestamp >> (i * 8)) & 0xFF);
+        out.push_back((v >> (i * 8)) & 0xFF);
     }
-    
+}
+
+// Serialize a TrustNodeId as type(1) + data(32) into the v2 payload.
+void AppendTrustNode(std::vector<uint8_t>& out, const TrustNodeId& n) {
+    out.push_back(n.type);
+    out.insert(out.end(), n.data.begin(), n.data.end()); // uint256 == 32 bytes
+}
+
+// Fixed sizes for the two payload layouts.
+static const size_t TRUST_EDGE_V1_SIZE = 20 + 20 + 2 + 8 + 4;              // 54
+static const size_t TRUST_EDGE_V2_SIZE = 1 + (1 + 32) + (1 + 32) + 2 + 8 + 4; // 81
+
+// True when a node cannot be represented losslessly by a 20-byte uint160 and
+// therefore forces v2 emission (P2WSH / quantum).
+bool IsWideNode(const TrustNodeId& n) {
+    return n.type == static_cast<uint8_t>(TrustNodeType::P2WSH) ||
+           n.type == static_cast<uint8_t>(TrustNodeType::QUANTUM);
+}
+
+} // anonymous namespace
+
+// Out-of-line definition for the odr-used static const member. The value is
+// initialized in the class declaration; this definition provides the storage
+// required when the member is odr-used (e.g. passed by reference to
+// std::vector::push_back below).
+const uint8_t CVMTrustEdgeData::VERSION_V2;
+
+std::vector<uint8_t> CVMTrustEdgeData::Serialize() const {
+    // Resolve the effective wide identifiers. When the caller populated the
+    // wide `from`/`to` explicitly (type != 0) use them; otherwise derive a
+    // P2PKH node from the legacy uint160 fields.
+    TrustNodeId effFrom = (from.type != 0)
+                              ? from
+                              : TrustNodeId::FromLegacyUint160(fromAddress);
+    TrustNodeId effTo = (to.type != 0)
+                            ? to
+                            : TrustNodeId::FromLegacyUint160(toAddress);
+
+    std::vector<uint8_t> result;
+
+    // Emit v2 ONLY when a P2WSH/quantum node is involved; otherwise emit the
+    // legacy v1 layout so pure-uint160 edges are byte-for-byte unchanged.
+    if (IsWideNode(effFrom) || IsWideNode(effTo)) {
+        // v2 layout: ver(1) fromTNI(33) toTNI(33) weight(2) bond(8) ts(4)
+        result.push_back(VERSION_V2);
+        AppendTrustNode(result, effFrom);
+        AppendTrustNode(result, effTo);
+        AppendLE16(result, weight);
+        AppendLE64(result, bondAmount);
+        AppendLE32(result, timestamp);
+        return result;
+    }
+
+    // v1 layout: from(20) to(20) weight(2) bond(8) ts(4) — emit the low-20-byte
+    // uint160 of each node (identical to historical payloads).
+    uint160 f = effFrom.ToUint160();
+    uint160 t = effTo.ToUint160();
+    result.insert(result.end(), f.begin(), f.end());
+    result.insert(result.end(), t.begin(), t.end());
+    AppendLE16(result, weight);
+    AppendLE64(result, bondAmount);
+    AppendLE32(result, timestamp);
     return result;
 }
 
 bool CVMTrustEdgeData::Deserialize(const std::vector<uint8_t>& data) {
     try {
-        if (data.size() < 54) { // 20+20+2+8+4
+        // v2 detection: an exact v2-length payload whose leading version byte is
+        // >= VERSION_V2. Historical v1 payloads are always fixed 54-byte blobs
+        // with no version byte, so they can never match this branch.
+        if (data.size() == TRUST_EDGE_V2_SIZE && data[0] >= VERSION_V2) {
+            size_t offset = 1; // skip version byte
+
+            // from: TrustNodeId (type + 32-byte data)
+            from.type = data[offset];
+            offset += 1;
+            std::copy(data.begin() + offset, data.begin() + offset + 32, from.data.begin());
+            offset += 32;
+
+            // to: TrustNodeId (type + 32-byte data)
+            to.type = data[offset];
+            offset += 1;
+            std::copy(data.begin() + offset, data.begin() + offset + 32, to.data.begin());
+            offset += 32;
+
+            // weight (2 bytes, little-endian)
+            weight = data[offset] | (data[offset+1] << 8);
+            offset += 2;
+
+            // bondAmount (8 bytes, little-endian)
+            int64_t bondValue = 0;
+            for (int i = 0; i < 8; i++) {
+                bondValue |= (int64_t(data[offset+i]) << (i * 8));
+            }
+            bondAmount = bondValue;
+            offset += 8;
+
+            // timestamp (4 bytes, little-endian)
+            timestamp = data[offset] | (data[offset+1] << 8) |
+                       (data[offset+2] << 16) | (data[offset+3] << 24);
+
+            // Populate the legacy uint160 view for uint160-only consumers.
+            fromAddress = from.ToUint160();
+            toAddress = to.ToUint160();
+            return true;
+        }
+
+        // v1 legacy layout: fixed 54-byte blob, no version byte. Parsed exactly
+        // as before to guarantee historical OP_RETURNs decode identically.
+        if (data.size() < TRUST_EDGE_V1_SIZE) { // 20+20+2+8+4
             return false;
         }
-        
+
         size_t offset = 0;
-        
+
         // Deserialize fromAddress (20 bytes)
         std::copy(data.begin() + offset, data.begin() + offset + 20, fromAddress.begin());
         offset += 20;
-        
+
         // Deserialize toAddress (20 bytes)
         std::copy(data.begin() + offset, data.begin() + offset + 20, toAddress.begin());
         offset += 20;
-        
+
         // Deserialize weight (2 bytes, little-endian)
         weight = data[offset] | (data[offset+1] << 8);
         offset += 2;
-        
+
         // Deserialize bondAmount (8 bytes, little-endian)
         int64_t bondValue = 0;
         for (int i = 0; i < 8; i++) {
@@ -372,11 +472,16 @@ bool CVMTrustEdgeData::Deserialize(const std::vector<uint8_t>& data) {
         }
         bondAmount = bondValue;
         offset += 8;
-        
+
         // Deserialize timestamp (4 bytes, little-endian)
-        timestamp = data[offset] | (data[offset+1] << 8) | 
+        timestamp = data[offset] | (data[offset+1] << 8) |
                    (data[offset+2] << 16) | (data[offset+3] << 24);
-        
+
+        // Migrate the legacy uint160 identifiers to the wide representation as
+        // P2PKH nodes so downstream v2 consumers see a consistent identifier.
+        from = TrustNodeId::FromLegacyUint160(fromAddress);
+        to = TrustNodeId::FromLegacyUint160(toAddress);
+
         return true;
     } catch (const std::exception& e) {
         LogPrintf("CVM: Failed to deserialize CVMTrustEdgeData: %s\n", e.what());

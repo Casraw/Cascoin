@@ -241,8 +241,8 @@ BOOST_AUTO_TEST_CASE(p15_1_39_apply_delta_without_validator)
     std::vector<CVM::TrustEdge> delta;
     for (int i = 0; i < 4; ++i) {
         CVM::TrustEdge e;
-        e.fromAddress = RandAddress();
-        e.toAddress = RandAddress();
+        e.fromAddress = CVM::TrustNodeId::FromLegacyUint160(RandAddress());
+        e.toAddress = CVM::TrustNodeId::FromLegacyUint160(RandAddress());
         e.trustWeight = 60;
         e.bondAmount = COIN * 100;
         e.slashed = false;

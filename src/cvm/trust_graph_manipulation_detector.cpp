@@ -86,12 +86,17 @@ TrustManipulationResult TrustGraphManipulationDetector::AnalyzeAddress(const uin
 TrustManipulationResult TrustGraphManipulationDetector::AnalyzeTrustEdge(const TrustEdge& edge) {
     TrustManipulationResult result;
     
+    // This detector operates purely in legacy uint160 space; extract the
+    // low-20-byte identifier from the wide TrustNodeId fields.
+    const uint160 edgeFrom = edge.fromAddress.ToUint160();
+    const uint160 edgeTo = edge.toAddress.ToUint160();
+
     // Check if either address is already flagged
-    if (IsAddressFlagged(edge.fromAddress) || IsAddressFlagged(edge.toAddress)) {
+    if (IsAddressFlagged(edgeFrom) || IsAddressFlagged(edgeTo)) {
         result.type = TrustManipulationResult::SYBIL_TRUST_NETWORK;
         result.confidence = 0.80;
-        result.involvedAddresses.push_back(edge.fromAddress);
-        result.involvedAddresses.push_back(edge.toAddress);
+        result.involvedAddresses.push_back(edgeFrom);
+        result.involvedAddresses.push_back(edgeTo);
         result.suspiciousEdges.push_back(edge);
         result.description = "Trust edge involves flagged address";
         result.escalateToDAO = true;
@@ -99,11 +104,11 @@ TrustManipulationResult TrustGraphManipulationDetector::AnalyzeTrustEdge(const T
     }
     
     // Check if addresses are in same wallet cluster
-    if (AreInSameCluster(edge.fromAddress, edge.toAddress)) {
+    if (AreInSameCluster(edgeFrom, edgeTo)) {
         result.type = TrustManipulationResult::SYBIL_TRUST_NETWORK;
         result.confidence = 0.95;
-        result.involvedAddresses.push_back(edge.fromAddress);
-        result.involvedAddresses.push_back(edge.toAddress);
+        result.involvedAddresses.push_back(edgeFrom);
+        result.involvedAddresses.push_back(edgeTo);
         result.suspiciousEdges.push_back(edge);
         result.description = "Trust edge between addresses in same wallet cluster";
         result.escalateToDAO = true;
@@ -120,8 +125,8 @@ TrustManipulationResult TrustGraphManipulationDetector::AnalyzeTrustEdge(const T
         if (weightDiff <= 5 && timeDiff <= 3600) {  // Similar weights, within 1 hour
             result.type = TrustManipulationResult::RECIPROCAL_TRUST_ABUSE;
             result.confidence = 0.75;
-            result.involvedAddresses.push_back(edge.fromAddress);
-            result.involvedAddresses.push_back(edge.toAddress);
+            result.involvedAddresses.push_back(edgeFrom);
+            result.involvedAddresses.push_back(edgeTo);
             result.suspiciousEdges.push_back(edge);
             result.suspiciousEdges.push_back(reverseEdge);
             result.description = "Suspicious reciprocal trust with similar weights and timing";
@@ -154,9 +159,9 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectArtificialPathCrea
     std::vector<uint160> suspiciousSources;
     
     for (const auto& edge : incomingEdges) {
-        if (!HasGenuineTransactionHistory(edge.fromAddress)) {
+        if (!HasGenuineTransactionHistory(edge.fromAddress.ToUint160())) {
             suspiciousSourceCount++;
-            suspiciousSources.push_back(edge.fromAddress);
+            suspiciousSources.push_back(edge.fromAddress.ToUint160());
         }
     }
     
@@ -175,7 +180,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectArtificialPathCrea
         
         for (const auto& edge : incomingEdges) {
             for (const auto& suspicious : suspiciousSources) {
-                if (edge.fromAddress == suspicious) {
+                if (edge.fromAddress.ToUint160() == suspicious) {
                     result.suspiciousEdges.push_back(edge);
                     break;
                 }
@@ -281,7 +286,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectRapidTrustAccumula
         result.involvedAddresses.push_back(address);
         
         for (const auto& edge : recentEdges) {
-            result.involvedAddresses.push_back(edge.fromAddress);
+            result.involvedAddresses.push_back(edge.fromAddress.ToUint160());
             result.suspiciousEdges.push_back(edge);
         }
         
@@ -324,8 +329,8 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectCoordinatedTrustBo
             size_t clusterMatches = 0;
             for (size_t i = 0; i < group.second.size(); i++) {
                 for (size_t j = i + 1; j < group.second.size(); j++) {
-                    if (AreInSameCluster(group.second[i].fromAddress, 
-                                        group.second[j].fromAddress)) {
+                    if (AreInSameCluster(group.second[i].fromAddress.ToUint160(), 
+                                        group.second[j].fromAddress.ToUint160())) {
                         clusterMatches++;
                     }
                 }
@@ -337,7 +342,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectCoordinatedTrustBo
             if (clusterRatio >= 0.30 || group.second.size() >= 5) {
                 for (const auto& edge : group.second) {
                     suspiciousEdges.push_back(edge);
-                    suspiciousAddresses.insert(edge.fromAddress);
+                    suspiciousAddresses.insert(edge.fromAddress.ToUint160());
                 }
             }
         }
@@ -432,7 +437,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectTrustWashing(
     std::set<uint160> intermediaries;
     
     for (const auto& edge : incomingEdges) {
-        uint160 source = edge.fromAddress;
+        uint160 source = edge.fromAddress.ToUint160();
         
         // Check if source was recently created
         uint64_t sourceCreationTime = GetAddressCreationTime(source);
@@ -484,7 +489,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectReciprocalTrustAbu
     
     for (const auto& outEdge : outgoingEdges) {
         TrustEdge inEdge;
-        if (m_trustGraph.GetTrustEdge(outEdge.toAddress, address, inEdge)) {
+        if (m_trustGraph.GetTrustEdge(outEdge.toAddress.ToUint160(), address, inEdge)) {
             // Found reciprocal trust
             // Check if it's suspicious
             int16_t weightDiff = std::abs(outEdge.trustWeight - inEdge.trustWeight);
@@ -496,7 +501,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectReciprocalTrustAbu
             // 3. Both addresses have limited other activity
             bool weightSuspicious = weightDiff <= 10;
             bool timeSuspicious = timeDiff <= 3600;
-            bool activitySuspicious = GetAddressActivityCount(outEdge.toAddress) < 10;
+            bool activitySuspicious = GetAddressActivityCount(outEdge.toAddress.ToUint160()) < 10;
             
             if (weightSuspicious && timeSuspicious && activitySuspicious) {
                 reciprocalPairs.push_back({outEdge, inEdge});
@@ -513,7 +518,7 @@ TrustManipulationResult TrustGraphManipulationDetector::DetectReciprocalTrustAbu
             result.involvedAddresses.push_back(address);
             
             for (const auto& pair : reciprocalPairs) {
-                result.involvedAddresses.push_back(pair.first.toAddress);
+                result.involvedAddresses.push_back(pair.first.toAddress.ToUint160());
                 result.suspiciousEdges.push_back(pair.first);
                 result.suspiciousEdges.push_back(pair.second);
             }
@@ -694,22 +699,23 @@ bool TrustGraphManipulationDetector::FindCircularPath(
     std::vector<TrustEdge> outgoing = m_trustGraph.GetOutgoingTrust(current);
     
     for (const auto& edge : outgoing) {
+        const uint160 edgeTo = edge.toAddress.ToUint160();
         // Check if we've found a cycle back to start
-        if (edge.toAddress == start && path.size() >= 3) {
+        if (edgeTo == start && path.size() >= 3) {
             return true;  // Found circular path
         }
         
         // Continue searching if not visited
-        if (visited.find(edge.toAddress) == visited.end()) {
-            visited.insert(edge.toAddress);
-            path.push_back(edge.toAddress);
+        if (visited.find(edgeTo) == visited.end()) {
+            visited.insert(edgeTo);
+            path.push_back(edgeTo);
             
-            if (FindCircularPath(start, edge.toAddress, path, visited, maxDepth)) {
+            if (FindCircularPath(start, edgeTo, path, visited, maxDepth)) {
                 return true;
             }
             
             path.pop_back();
-            visited.erase(edge.toAddress);
+            visited.erase(edgeTo);
         }
     }
     
@@ -856,10 +862,10 @@ bool TrustGraphManipulationDetector::HasGenuineTransactionHistory(const uint160&
     
     std::set<uint160> uniqueInteractions;
     for (const auto& edge : outgoing) {
-        uniqueInteractions.insert(edge.toAddress);
+        uniqueInteractions.insert(edge.toAddress.ToUint160());
     }
     for (const auto& edge : incoming) {
-        uniqueInteractions.insert(edge.fromAddress);
+        uniqueInteractions.insert(edge.fromAddress.ToUint160());
     }
     
     return uniqueInteractions.size() >= 3;

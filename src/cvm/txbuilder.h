@@ -119,6 +119,10 @@ public:
      * @param reason Human-readable reason
      * @param fee Returns calculated fee
      * @param error Returns error message if fails
+     * @param outFromAddress Returns the resolved signer/from identity (the
+     *        GetKeyFromPool key) that is embedded into the on-chain
+     *        CVMTrustEdgeData.fromAddress, so callers can key RPC-side
+     *        propagation on the exact same identity as the on-chain edge.
      * @return Transaction (empty if failed)
      */
     static CMutableTransaction BuildTrustTransaction(
@@ -128,7 +132,8 @@ public:
         CAmount bondAmount,
         const std::string& reason,
         CAmount& fee,
-        std::string& error
+        std::string& error,
+        uint160& outFromAddress
     );
     
     /**

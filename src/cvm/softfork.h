@@ -9,6 +9,7 @@
 #include <script/script.h>
 #include <uint256.h>
 #include <cvm/bytecode_detector.h>
+#include <cvm/trustnodeid.h>
 #include <vector>
 
 namespace CVM {
@@ -128,17 +129,47 @@ struct CVMReputationData {
 
 /**
  * Web-of-Trust: Trust Edge data in OP_RETURN
- * 
- * Represents "fromAddress trusts toAddress with weight X"
+ *
+ * Represents "from trusts to with weight X"
  * Must be accompanied by bond output in same transaction
+ *
+ * Versioned, backward-compatible payload:
+ *   - v1 (legacy): a fixed 54-byte layout with NO version byte,
+ *     `from(20) to(20) weight(2) bond(8) ts(4)`, where from/to are bare
+ *     uint160 P2PKH identifiers. Historical OP_RETURNs use this layout and
+ *     MUST keep decoding identically.
+ *   - v2: a version byte (>= VERSION_V2) followed by `from`/`to` encoded as a
+ *     wide, lossless TrustNodeId (type + 32-byte value), able to carry
+ *     P2WSH / quantum (WitnessV2Quantum) identifiers that do not fit in
+ *     uint160.
+ *
+ * v2 is emitted ONLY when a P2WSH or quantum node is involved; pure-uint160
+ * edges continue to be emitted as v1 so existing behavior/bytes are unchanged.
  */
 struct CVMTrustEdgeData {
-    uint160 fromAddress;           // Who establishes trust
-    uint160 toAddress;             // Who is trusted
+    // Legacy uint160 identifiers. Retained for backward compatibility with the
+    // v1 path and with callers/consumers that operate purely in uint160 space.
+    // When the wide `from`/`to` are not explicitly set (type == 0) these drive
+    // v1 emission; on read they are always populated (from the wide identifier
+    // for v2, directly for v1) so uint160-only consumers keep working.
+    uint160 fromAddress;           // Who establishes trust (legacy uint160 view)
+    uint160 toAddress;             // Who is trusted (legacy uint160 view)
+
+    // Canonical wide identifiers (v2). When either identifier is a P2WSH or
+    // quantum node the payload is emitted as v2 so the full 32-byte identifier
+    // is preserved on-chain. A default-constructed value (type == 0) means
+    // "unset": the legacy uint160 fields are used to derive a P2PKH node.
+    TrustNodeId from;
+    TrustNodeId to;
+
     int16_t weight;                // Trust weight (-100 to +100)
     CAmount bondAmount;            // CAS bonded (locked in output)
     uint32_t timestamp;            // When established
-    
+
+    // On-chain payload version byte for the v2 (wide) layout. v1 has no
+    // version byte and is a fixed 54-byte layout.
+    static const uint8_t VERSION_V2 = 2;
+
     std::vector<uint8_t> Serialize() const;
     bool Deserialize(const std::vector<uint8_t>& data);
 };

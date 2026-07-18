@@ -501,8 +501,8 @@ static std::vector<uint160> GenerateRandomCluster(size_t minSize, size_t maxSize
  */
 static CVM::TrustEdge GenerateRandomTrustEdge(const uint160& target) {
     CVM::TrustEdge edge;
-    edge.fromAddress = GenerateRandomAddress();
-    edge.toAddress = target;
+    edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress());
+    edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     edge.trustWeight = GenerateRandomTrustWeight();
     edge.timestamp = GenerateRandomTimestamp();
     edge.bondAmount = GenerateRandomBondAmount();
@@ -604,7 +604,7 @@ BOOST_AUTO_TEST_CASE(property_trust_propagation_completeness)
         // PROPERTY CHECK 3: Each cluster member has a propagated edge
         // Verify that for each member address, there exists a propagated edge
         for (const auto& member : cluster) {
-            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToString() + "_" + member.ToString();
+            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -626,7 +626,7 @@ BOOST_AUTO_TEST_CASE(property_trust_propagation_completeness)
                     << member.ToString().substr(0, 16));
                 
                 // Verify the propagated edge has correct from address
-                BOOST_CHECK_MESSAGE(propEdge.fromAddress == trustEdge.fromAddress,
+                BOOST_CHECK_MESSAGE(propEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
                     "Iteration " << i << ": Propagated edge fromAddress mismatch");
                 
                 // Verify the propagated edge has correct to address (the cluster member)
@@ -634,7 +634,7 @@ BOOST_AUTO_TEST_CASE(property_trust_propagation_completeness)
                     "Iteration " << i << ": Propagated edge toAddress mismatch");
                 
                 // Verify the propagated edge has correct original target
-                BOOST_CHECK_MESSAGE(propEdge.originalTarget == trustEdge.toAddress,
+                BOOST_CHECK_MESSAGE(propEdge.originalTarget == trustEdge.toAddress.ToUint160(),
                     "Iteration " << i << ": Propagated edge originalTarget mismatch");
                 
                 // Verify trust weight is preserved
@@ -715,7 +715,7 @@ BOOST_AUTO_TEST_CASE(property_single_address_cluster_propagation)
             << "but created " << propagatedCount);
         
         // Verify the propagated edge exists for the target address
-        std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToString() + "_" + targetAddress.ToString();
+        std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + targetAddress.ToString();
         std::vector<uint8_t> data;
         bool found = db.ReadGeneric(expectedKey, data);
         
@@ -937,11 +937,11 @@ BOOST_AUTO_TEST_CASE(property_query_completeness)
                             << ", Got: " << edge.bondAmount);
                         
                         // Verify from address matches original
-                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
+                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
                             "Iteration " << i << ": Propagated edge fromAddress mismatch");
                         
                         // Verify original target is set correctly
-                        BOOST_CHECK_MESSAGE(edge.originalTarget == origEdge.toAddress,
+                        BOOST_CHECK_MESSAGE(edge.originalTarget == origEdge.toAddress.ToUint160(),
                             "Iteration " << i << ": Propagated edge originalTarget mismatch");
                         
                         break;
@@ -1069,8 +1069,8 @@ BOOST_AUTO_TEST_CASE(property_query_completeness_multiple_trusters)
             
             // Create trust edge
             CVM::TrustEdge edge;
-            edge.fromAddress = truster;
-            edge.toAddress = target;
+            edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(truster);
+            edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(target);
             edge.trustWeight = GenerateRandomTrustWeight();
             edge.timestamp = GenerateRandomTimestamp();
             edge.bondAmount = GenerateRandomBondAmount();
@@ -1348,9 +1348,9 @@ BOOST_AUTO_TEST_CASE(property_cascade_update_propagation_weight_update)
                         << ", got " << edge.trustWeight);
                     
                     // Verify other fields are preserved
-                    BOOST_CHECK_MESSAGE(edge.fromAddress == trustEdge.fromAddress,
+                    BOOST_CHECK_MESSAGE(edge.fromAddress == trustEdge.fromAddress.ToUint160(),
                         "Iteration " << i << ": fromAddress changed after update");
-                    BOOST_CHECK_MESSAGE(edge.originalTarget == trustEdge.toAddress,
+                    BOOST_CHECK_MESSAGE(edge.originalTarget == trustEdge.toAddress.ToUint160(),
                         "Iteration " << i << ": originalTarget changed after update");
                     BOOST_CHECK_MESSAGE(edge.bondAmount == trustEdge.bondAmount,
                         "Iteration " << i << ": bondAmount changed after update");
@@ -1800,11 +1800,11 @@ BOOST_AUTO_TEST_CASE(property_new_member_trust_inheritance)
                         << ", Got: " << inheritedEdge.bondAmount);
                     
                     // Verify from address matches original
-                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress.ToUint160(),
                         "Iteration " << i << ": Inherited edge fromAddress mismatch");
                     
                     // Verify original target is set correctly
-                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress.ToUint160(),
                         "Iteration " << i << ": Inherited edge originalTarget mismatch");
                     
                     break;
@@ -1972,8 +1972,8 @@ BOOST_AUTO_TEST_CASE(property_new_member_inherits_from_multiple_trusters)
             
             // Create trust edge
             CVM::TrustEdge edge;
-            edge.fromAddress = truster;
-            edge.toAddress = target;
+            edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(truster);
+            edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(target);
             edge.trustWeight = GenerateRandomTrustWeight();
             edge.timestamp = GenerateRandomTimestamp();
             edge.bondAmount = GenerateRandomBondAmount();
@@ -2206,8 +2206,8 @@ BOOST_AUTO_TEST_CASE(property_propagated_edge_data_integrity)
         int16_t originalTrustWeight = originalEdge.trustWeight;
         CAmount originalBondAmount = originalEdge.bondAmount;
         uint256 originalSourceTx = originalEdge.bondTxHash;
-        uint160 originalFromAddress = originalEdge.fromAddress;
-        uint160 originalToAddress = originalEdge.toAddress;
+        uint160 originalFromAddress = originalEdge.fromAddress.ToUint160();
+        uint160 originalToAddress = originalEdge.toAddress.ToUint160();
         
         // Propagate the trust edge
         uint32_t propagatedCount = propagator.PropagateTrustEdge(originalEdge);
@@ -2354,8 +2354,8 @@ BOOST_AUTO_TEST_CASE(property_propagated_edge_data_integrity_boundary_values)
         
         // Create trust edge with boundary values
         CVM::TrustEdge originalEdge;
-        originalEdge.fromAddress = GenerateRandomAddress();
-        originalEdge.toAddress = targetMember;
+        originalEdge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress());
+        originalEdge.toAddress = CVM::TrustNodeId::FromLegacyUint160(targetMember);
         originalEdge.trustWeight = testCase.trustWeight;
         originalEdge.timestamp = GenerateRandomTimestamp();
         originalEdge.bondAmount = testCase.bondAmount;
@@ -2523,11 +2523,11 @@ BOOST_AUTO_TEST_CASE(property_inherited_edge_data_integrity)
                         << ", Inherited: " << inheritedEdge.bondAmount);
                     
                     // PROPERTY CHECK 3: From address must be identical
-                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress.ToUint160(),
                         "Iteration " << i << ": Inherited edge from address mismatch");
                     
                     // PROPERTY CHECK 4: Original target must be preserved
-                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress.ToUint160(),
                         "Iteration " << i << ": Inherited edge original target mismatch");
                     
                     // PROPERTY CHECK 5: To address should be the new member
@@ -2642,7 +2642,7 @@ BOOST_AUTO_TEST_CASE(property_multiple_propagations_data_integrity)
                             << ", Got: " << propEdge.bondAmount);
                         
                         // Verify from address is preserved
-                        BOOST_CHECK_MESSAGE(propEdge.fromAddress == origEdge.fromAddress,
+                        BOOST_CHECK_MESSAGE(propEdge.fromAddress == origEdge.fromAddress.ToUint160(),
                             "Iteration " << i << ", Member " << member.ToString().substr(0, 16)
                             << ": From address mismatch for source "
                             << origEdge.bondTxHash.ToString().substr(0, 16));
@@ -3930,7 +3930,7 @@ BOOST_AUTO_TEST_CASE(property_trust_relation_listing_completeness)
         // Count unique (from, to) pairs in returned edges
         std::set<std::string> returnedFromToPairs;
         for (const auto& edge : returnedEdges) {
-            std::string key = edge.fromAddress.ToString() + "_" + edge.toAddress.ToString();
+            std::string key = edge.fromAddress.ToUint160().ToString() + "_" + edge.toAddress.ToUint160().ToString();
             returnedFromToPairs.insert(key);
         }
         
@@ -3940,7 +3940,7 @@ BOOST_AUTO_TEST_CASE(property_trust_relation_listing_completeness)
         std::set<std::string> expectedFromToPairs;
         for (const auto& origEdge : createdEdges) {
             for (const auto& member : cluster) {
-                std::string key = origEdge.fromAddress.ToString() + "_" + member.ToString();
+                std::string key = origEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
                 expectedFromToPairs.insert(key);
             }
         }
@@ -3963,7 +3963,7 @@ BOOST_AUTO_TEST_CASE(property_trust_relation_listing_completeness)
         // This is implicitly checked by using a set, but let's verify explicitly
         std::map<std::string, int> pairCounts;
         for (const auto& edge : returnedEdges) {
-            std::string key = edge.fromAddress.ToString() + "_" + edge.toAddress.ToString();
+            std::string key = edge.fromAddress.ToUint160().ToString() + "_" + edge.toAddress.ToUint160().ToString();
             pairCounts[key]++;
         }
         
@@ -3977,7 +3977,7 @@ BOOST_AUTO_TEST_CASE(property_trust_relation_listing_completeness)
         // Each cluster member should appear as toAddress in at least one returned edge
         std::set<uint160> coveredMembers;
         for (const auto& edge : returnedEdges) {
-            coveredMembers.insert(edge.toAddress);
+            coveredMembers.insert(edge.toAddress.ToUint160());
         }
         
         for (const auto& member : cluster) {
@@ -3990,12 +3990,12 @@ BOOST_AUTO_TEST_CASE(property_trust_relation_listing_completeness)
         // Each original truster should appear as fromAddress in returned edges
         std::set<uint160> returnedTrusters;
         for (const auto& edge : returnedEdges) {
-            returnedTrusters.insert(edge.fromAddress);
+            returnedTrusters.insert(edge.fromAddress.ToUint160());
         }
         
         for (const auto& origEdge : createdEdges) {
-            BOOST_CHECK_MESSAGE(returnedTrusters.count(origEdge.fromAddress) > 0,
-                "Iteration " << i << ": Original truster " << origEdge.fromAddress.ToString().substr(0, 16)
+            BOOST_CHECK_MESSAGE(returnedTrusters.count(origEdge.fromAddress.ToUint160()) > 0,
+                "Iteration " << i << ": Original truster " << origEdge.fromAddress.ToUint160().ToString().substr(0, 16)
                 << " not found in returned edges.");
         }
         
@@ -4070,7 +4070,7 @@ BOOST_AUTO_TEST_CASE(property_trust_listing_consistency_across_members)
         // Build set of (from, to) pairs from baseline for comparison
         std::set<std::string> baselinePairs;
         for (const auto& edge : baselineEdges) {
-            std::string key = edge.fromAddress.ToString() + "_" + edge.toAddress.ToString();
+            std::string key = edge.fromAddress.ToUint160().ToString() + "_" + edge.toAddress.ToUint160().ToString();
             baselinePairs.insert(key);
         }
         
@@ -4081,7 +4081,7 @@ BOOST_AUTO_TEST_CASE(property_trust_listing_consistency_across_members)
             // Build set of (from, to) pairs from this member's query
             std::set<std::string> memberPairs;
             for (const auto& edge : memberEdges) {
-                std::string key = edge.fromAddress.ToString() + "_" + edge.toAddress.ToString();
+                std::string key = edge.fromAddress.ToUint160().ToString() + "_" + edge.toAddress.ToUint160().ToString();
                 memberPairs.insert(key);
             }
             
@@ -4217,8 +4217,8 @@ BOOST_AUTO_TEST_CASE(property_trust_listing_multiple_trusters)
             
             // Create trust edge
             CVM::TrustEdge edge;
-            edge.fromAddress = truster;
-            edge.toAddress = target;
+            edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(truster);
+            edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(target);
             edge.trustWeight = GenerateRandomTrustWeight();
             edge.timestamp = GenerateRandomTimestamp();
             edge.bondAmount = GenerateRandomBondAmount();
@@ -4236,7 +4236,7 @@ BOOST_AUTO_TEST_CASE(property_trust_listing_multiple_trusters)
         // PROPERTY CHECK 1: All trusters should be represented
         std::set<uint160> returnedTrusters;
         for (const auto& edge : returnedEdges) {
-            returnedTrusters.insert(edge.fromAddress);
+            returnedTrusters.insert(edge.fromAddress.ToUint160());
         }
         
         BOOST_CHECK_MESSAGE(returnedTrusters == uniqueTrusters,
@@ -4249,8 +4249,8 @@ BOOST_AUTO_TEST_CASE(property_trust_listing_multiple_trusters)
         for (const auto& truster : uniqueTrusters) {
             std::set<uint160> targetsForTruster;
             for (const auto& edge : returnedEdges) {
-                if (edge.fromAddress == truster) {
-                    targetsForTruster.insert(edge.toAddress);
+                if (edge.fromAddress.ToUint160() == truster) {
+                    targetsForTruster.insert(edge.toAddress.ToUint160());
                 }
             }
             
@@ -4456,8 +4456,8 @@ BOOST_AUTO_TEST_CASE(property_cluster_minimum_scoring_negative_trust)
         
         // Create negative trust edge to bad member
         CVM::TrustEdge negativeEdge;
-        negativeEdge.fromAddress = GenerateRandomAddress();
-        negativeEdge.toAddress = badMember;
+        negativeEdge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress());
+        negativeEdge.toAddress = CVM::TrustNodeId::FromLegacyUint160(badMember);
         negativeEdge.trustWeight = -50 - static_cast<int16_t>(InsecureRandRange(51));  // -50 to -100
         negativeEdge.timestamp = GenerateRandomTimestamp();
         negativeEdge.bondAmount = GenerateRandomBondAmount();
@@ -4467,8 +4467,8 @@ BOOST_AUTO_TEST_CASE(property_cluster_minimum_scoring_negative_trust)
         
         // Create positive trust edge to good member
         CVM::TrustEdge positiveEdge;
-        positiveEdge.fromAddress = GenerateRandomAddress();
-        positiveEdge.toAddress = goodMember;
+        positiveEdge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress());
+        positiveEdge.toAddress = CVM::TrustNodeId::FromLegacyUint160(goodMember);
         positiveEdge.trustWeight = 50 + static_cast<int16_t>(InsecureRandRange(51));  // +50 to +100
         positiveEdge.timestamp = GenerateRandomTimestamp();
         positiveEdge.bondAmount = GenerateRandomBondAmount();
@@ -4888,7 +4888,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_merge_trust_combination)
                             << ", Got: " << edge.bondAmount);
                         
                         // Verify from address is preserved
-                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
+                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
                             "Iteration " << i << ": Propagated edge fromAddress mismatch");
                         
                         break;
@@ -4914,7 +4914,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_merge_trust_combination)
                                 << ", Got: " << edge.bondAmount);
                             
                             // Verify from address is preserved
-                            BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
+                            BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
                                 "Iteration " << i << ": Propagated edge fromAddress mismatch");
                             
                             break;
@@ -5136,8 +5136,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_by_timestamp)
         // Create trust edge for cluster1 from the common truster
         uint160 target1 = PickRandomMember(cluster1);
         CVM::TrustEdge edge1;
-        edge1.fromAddress = commonTruster;
-        edge1.toAddress = target1;
+        edge1.fromAddress = CVM::TrustNodeId::FromLegacyUint160(commonTruster);
+        edge1.toAddress = CVM::TrustNodeId::FromLegacyUint160(target1);
         edge1.trustWeight = weight1;
         edge1.timestamp = timestamp1;
         edge1.bondAmount = GenerateRandomBondAmount();
@@ -5148,8 +5148,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_by_timestamp)
         // Create trust edge for cluster2 from the SAME common truster
         uint160 target2 = PickRandomMember(cluster2);
         CVM::TrustEdge edge2;
-        edge2.fromAddress = commonTruster;  // Same truster!
-        edge2.toAddress = target2;
+        edge2.fromAddress = CVM::TrustNodeId::FromLegacyUint160(commonTruster);  // Same truster!
+        edge2.toAddress = CVM::TrustNodeId::FromLegacyUint160(target2);
         edge2.trustWeight = weight2;
         edge2.timestamp = timestamp2;
         edge2.bondAmount = GenerateRandomBondAmount();
@@ -5337,8 +5337,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_equal_timestamps)
         // Create trust edge for cluster1
         uint160 target1 = PickRandomMember(cluster1);
         CVM::TrustEdge edge1;
-        edge1.fromAddress = commonTruster;
-        edge1.toAddress = target1;
+        edge1.fromAddress = CVM::TrustNodeId::FromLegacyUint160(commonTruster);
+        edge1.toAddress = CVM::TrustNodeId::FromLegacyUint160(target1);
         edge1.trustWeight = weight1;
         edge1.timestamp = sameTimestamp;
         edge1.bondAmount = GenerateRandomBondAmount();
@@ -5349,8 +5349,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_equal_timestamps)
         // Create trust edge for cluster2 with SAME timestamp
         uint160 target2 = PickRandomMember(cluster2);
         CVM::TrustEdge edge2;
-        edge2.fromAddress = commonTruster;
-        edge2.toAddress = target2;
+        edge2.fromAddress = CVM::TrustNodeId::FromLegacyUint160(commonTruster);
+        edge2.toAddress = CVM::TrustNodeId::FromLegacyUint160(target2);
         edge2.trustWeight = weight2;
         edge2.timestamp = sameTimestamp;  // Same timestamp!
         edge2.bondAmount = GenerateRandomBondAmount();
@@ -5522,8 +5522,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_multiple_trusters)
             // Create and propagate edge for cluster1
             uint160 target1 = PickRandomMember(cluster1);
             CVM::TrustEdge edge1;
-            edge1.fromAddress = conflict.trusterAddress;
-            edge1.toAddress = target1;
+            edge1.fromAddress = CVM::TrustNodeId::FromLegacyUint160(conflict.trusterAddress);
+            edge1.toAddress = CVM::TrustNodeId::FromLegacyUint160(target1);
             edge1.trustWeight = conflict.weight1;
             edge1.timestamp = conflict.timestamp1;
             edge1.bondAmount = GenerateRandomBondAmount();
@@ -5535,8 +5535,8 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_multiple_trusters)
             // Create and propagate edge for cluster2
             uint160 target2 = PickRandomMember(cluster2);
             CVM::TrustEdge edge2;
-            edge2.fromAddress = conflict.trusterAddress;
-            edge2.toAddress = target2;
+            edge2.fromAddress = CVM::TrustNodeId::FromLegacyUint160(conflict.trusterAddress);
+            edge2.toAddress = CVM::TrustNodeId::FromLegacyUint160(target2);
             edge2.trustWeight = conflict.weight2;
             edge2.timestamp = conflict.timestamp2;
             edge2.bondAmount = GenerateRandomBondAmount();
@@ -5907,8 +5907,8 @@ BOOST_AUTO_TEST_CASE(property_rpc_response_format_consistency)
                 std::vector<CVM::TrustEdge> directEdges = trustGraph.GetIncomingTrust(member);
                 for (const auto& edge : directEdges) {
                     std::map<std::string, std::string> edgeMap;
-                    edgeMap["from"] = edge.fromAddress.ToString();
-                    edgeMap["to"] = edge.toAddress.ToString();
+                    edgeMap["from"] = edge.fromAddress.ToUint160().ToString();
+                    edgeMap["to"] = edge.toAddress.ToUint160().ToString();
                     edgeMap["weight"] = std::to_string(edge.trustWeight);
                     response.direct_edges.push_back(edgeMap);
                 }
@@ -6456,7 +6456,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
         // PROPERTY CHECK 4: Each indexed address has a corresponding propagated edge in storage
         for (const auto& indexedAddr : indexedAddresses) {
             // Verify the propagated edge exists in storage
-            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToString() + "_" + indexedAddr.ToString();
+            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + indexedAddr.ToString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -6481,7 +6481,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
                     "Iteration " << i << ": Stored edge toAddress mismatch");
                 
                 // Verify the stored edge has correct fromAddress
-                BOOST_CHECK_MESSAGE(storedEdge.fromAddress == trustEdge.fromAddress,
+                BOOST_CHECK_MESSAGE(storedEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
                     "Iteration " << i << ": Stored edge fromAddress mismatch");
             }
         }
@@ -6612,7 +6612,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_multiple_sources)
                     << ", Got: " << edge.sourceEdgeTx.ToString().substr(0, 16));
                 
                 // Verify fromAddress matches original edge
-                BOOST_CHECK_MESSAGE(edge.fromAddress == originalEdge.fromAddress,
+                BOOST_CHECK_MESSAGE(edge.fromAddress == originalEdge.fromAddress.ToUint160(),
                     "Iteration " << i << ", Source " << j << ": Edge has wrong fromAddress");
                 
                 // Verify trustWeight matches original edge
@@ -6728,7 +6728,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_after_deletion)
         
         // PROPERTY CHECK 3: Propagated edges are removed from storage
         for (const auto& member : cluster) {
-            std::string edgeKey = "trust_prop_" + trustEdge.fromAddress.ToString() + "_" + member.ToString();
+            std::string edgeKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(edgeKey, data);
             
@@ -6849,9 +6849,9 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 std::string toPart = addressPart.substr(underscorePos + 1);
                 
                 // Verify from address matches the trust edge's from address
-                BOOST_CHECK_MESSAGE(fromPart == trustEdge.fromAddress.ToString(),
+                BOOST_CHECK_MESSAGE(fromPart == trustEdge.fromAddress.ToUint160().ToString(),
                     "Iteration " << i << ": Key from-address '" << fromPart 
-                    << "' does not match expected '" << trustEdge.fromAddress.ToString() << "'");
+                    << "' does not match expected '" << trustEdge.fromAddress.ToUint160().ToString() << "'");
                 
                 // Verify to address is one of the cluster members
                 bool foundMember = false;
@@ -6871,9 +6871,9 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
         // PROPERTY CHECK 3: Verify GetStorageKey() method produces correct format
         for (const auto& member : cluster) {
             CVM::PropagatedTrustEdge propEdge(
-                trustEdge.fromAddress,
+                trustEdge.fromAddress.ToUint160(),
                 member,
-                trustEdge.toAddress,
+                trustEdge.toAddress.ToUint160(),
                 trustEdge.bondTxHash,
                 trustEdge.trustWeight,
                 static_cast<uint32_t>(GetTime()),
@@ -6888,7 +6888,7 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 << "' which does not start with expected prefix '" << EXPECTED_PREFIX << "'");
             
             // Verify the key format is "trust_prop_{from}_{to}"
-            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToString() + "_" + member.ToString();
+            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
             BOOST_CHECK_MESSAGE(storageKey == expectedKey,
                 "Iteration " << i << ": GetStorageKey() returned '" << storageKey 
                 << "' but expected '" << expectedKey << "'");
@@ -6896,7 +6896,7 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
         
         // PROPERTY CHECK 4: Verify stored data can be retrieved using the key format
         for (const auto& member : cluster) {
-            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToString() + "_" + member.ToString();
+            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -6911,7 +6911,7 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 ss >> retrievedEdge;
                 
                 // Verify the retrieved edge has correct addresses
-                BOOST_CHECK_MESSAGE(retrievedEdge.fromAddress == trustEdge.fromAddress,
+                BOOST_CHECK_MESSAGE(retrievedEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
                     "Iteration " << i << ": Retrieved edge fromAddress mismatch");
                 BOOST_CHECK_MESSAGE(retrievedEdge.toAddress == member,
                     "Iteration " << i << ": Retrieved edge toAddress mismatch");
@@ -7037,9 +7037,9 @@ BOOST_AUTO_TEST_CASE(property_index_key_prefix_convention)
         // PROPERTY CHECK 3: Verify GetIndexKey() method produces correct format
         for (const auto& member : cluster) {
             CVM::PropagatedTrustEdge propEdge(
-                trustEdge.fromAddress,
+                trustEdge.fromAddress.ToUint160(),
                 member,
-                trustEdge.toAddress,
+                trustEdge.toAddress.ToUint160(),
                 trustEdge.bondTxHash,
                 trustEdge.trustWeight,
                 static_cast<uint32_t>(GetTime()),

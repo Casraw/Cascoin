@@ -12,6 +12,7 @@
 #include <cvm/txbuilder.h>
 #include <cvm/blockprocessor.h>
 #include <cvm/trustgraph.h>
+#include <cvm/trustnodeid.h>
 #include <cvm/reward_types.h>
 #include <cvm/reward_distributor.h>
 #include <cvm/commit_reveal.h>
@@ -399,6 +400,113 @@ UniValue getcontractinfo(const JSONRPCRequest& request)
     return result;
 }
 
+//
+// Web-of-Trust RPC helpers
+//
+
+/**
+ * Decode a user-supplied address string into a canonical CVM::TrustNodeId.
+ *
+ * This is the single, unified address-decoding path shared by every WoT RPC
+ * (Change B2). It relies on the existing, unchanged DecodeDestination /
+ * IsQuantumAddress / EncodeDestination machinery and maps every standard
+ * Cascoin destination to a lossless TrustNodeId, including bech32 P2WSH and
+ * quantum/Falcon (WitnessV2Quantum) addresses that the previous per-RPC
+ * boost::get<CKeyID>/... branches rejected.
+ *
+ * Supported destination types: CKeyID (P2PKH), CScriptID (P2SH),
+ * WitnessV0KeyHash (P2WPKH), WitnessV0ScriptHash (P2WSH) and
+ * WitnessV2Quantum (quantum). WitnessUnknown and CNoDestination are rejected.
+ *
+ * @param addr The address string as provided by the RPC caller.
+ * @param out  Populated with the canonical node id on success.
+ * @param err  Populated with a precise, human-readable message on failure.
+ * @return true on success; false otherwise. Callers throw
+ *         RPC_INVALID_ADDRESS_OR_KEY with `err` when this returns false.
+ */
+bool DecodeTrustNode(const std::string& addr, CVM::TrustNodeId& out, std::string& err)
+{
+    if (addr.empty()) {
+        err = "Address is empty";
+        return false;
+    }
+
+    // Use the existing decoder unchanged. DecodeDestination already yields a
+    // WitnessV2Quantum for quantum addresses, so no special-casing is needed
+    // here; IsQuantumAddress remains available for callers that need it.
+    CTxDestination dest = DecodeDestination(addr);
+    if (!IsValidDestination(dest)) {
+        err = strprintf("Invalid address: %s", addr);
+        return false;
+    }
+
+    // Map the decoded destination to a canonical, lossless TrustNodeId.
+    if (!CVM::TrustNodeId::FromDestination(dest, out)) {
+        // Reachable for WitnessUnknown and any future/non-standard destination
+        // types that are valid but not representable as a trust node.
+        err = strprintf("Address type not supported for Web-of-Trust: %s", addr);
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * Decode + validate a WoT address in a single call, throwing
+ * RPC_INVALID_ADDRESS_OR_KEY with the precise message on failure.
+ *
+ * This is the throwing convenience wrapper around DecodeTrustNode (Change B2)
+ * used by every WoT RPC so that all five standard destination types
+ * (P2PKH/P2SH/P2WPKH/P2WSH/quantum) are accepted uniformly. It removes the
+ * previous per-RPC "Address type not supported" hard rejection.
+ */
+CVM::TrustNodeId DecodeTrustNodeOrThrow(const std::string& addr)
+{
+    CVM::TrustNodeId node;
+    std::string err;
+    if (!DecodeTrustNode(addr, node, err)) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, err);
+    }
+    return node;
+}
+
+/**
+ * Bridge a resolved TrustNodeId to the legacy uint160 identifier still used by
+ * the TrustGraph storage layer and the on-chain CVMTrustEdgeData / transaction
+ * builder.
+ *
+ * INTERMEDIATE-STATE NOTE (task 7.2): the storage and transaction APIs still
+ * key trust edges by uint160; the migration to a native TrustNodeId key/field
+ * lands later (tasks 8.x/9.x). Until then this derives the uint160 for the
+ * three uint160-representable destination types (P2PKH/P2SH/P2WPKH), reusing
+ * the exact same conversions the original per-RPC branches used.
+ *
+ * P2WSH and quantum destinations carry a full 32-byte identifier that cannot
+ * be represented as uint160 without truncation. Rather than silently truncate
+ * (which would corrupt the identifier and violate 2.12/3.10) or reintroduce a
+ * blanket rejection of every non-legacy type, this reports a precise
+ * width-specific error for that one downstream path only. The decode boundary
+ * (DecodeTrustNode) still accepts these addresses; full storage support
+ * arrives with the TrustNodeId migration.
+ */
+uint160 TrustNodeToLegacyUint160(const CVM::TrustNodeId& node, const std::string& addr)
+{
+    CTxDestination dest = node.ToDestination();
+    if (const CKeyID* id = boost::get<CKeyID>(&dest)) {
+        return uint160(*id);
+    }
+    if (const CScriptID* id = boost::get<CScriptID>(&dest)) {
+        return uint160(*id);
+    }
+    if (const WitnessV0KeyHash* id = boost::get<WitnessV0KeyHash>(&dest)) {
+        return uint160(*id);
+    }
+    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+        strprintf("Address '%s' uses a 32-byte identifier (P2WSH/quantum) that this "
+                  "operation cannot store yet; wide-identifier support lands with the "
+                  "TrustNodeId storage migration", addr));
+}
+
 UniValue getreputation(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
@@ -431,21 +539,11 @@ UniValue getreputation(const JSONRPCRequest& request)
 
     std::string addressStr = request.params[0].get_str();
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(addressStr);
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    // Get address hash - handle both P2PKH and P2SH
-    uint160 address;
-    if (boost::get<CKeyID>(&dest)) {
-        address = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        address = uint160(boost::get<CScriptID>(dest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported for reputation");
-    }
+    // Decode the address via the unified WoT decode path (Change B2). This
+    // accepts every standard destination type; the reputation store below is
+    // still keyed by uint160, so bridge through TrustNodeToLegacyUint160.
+    CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addressStr);
+    uint160 address = TrustNodeToLegacyUint160(node, addressStr);
     
     // Get reputation score
     CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
@@ -504,21 +602,11 @@ UniValue votereputation(const JSONRPCRequest& request)
     }
     std::string reason = request.params[2].get_str();
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(addressStr);
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    // Get address hash - handle both P2PKH and P2SH
-    uint160 targetAddress;
-    if (boost::get<CKeyID>(&dest)) {
-        targetAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        targetAddress = uint160(boost::get<CScriptID>(dest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported for reputation");
-    }
+    // Decode the address via the unified WoT decode path (Change B2). The
+    // reputation store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addressStr);
+    uint160 targetAddress = TrustNodeToLegacyUint160(node, addressStr);
     
     // Create reputation vote data (Soft Fork compatible with OP_RETURN)
     CVM::CVMReputationData repData;
@@ -1139,25 +1227,11 @@ UniValue sendcvmvote(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Vote value must be between -100 and +100");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(addressStr);
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    // Get address hash
-    uint160 targetAddress;
-    if (boost::get<CKeyID>(&dest)) {
-        targetAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        targetAddress = uint160(boost::get<CScriptID>(dest));
-    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
-        // Support bech32 addresses (tcas1q... / cas1q...)
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        targetAddress = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the target address via the unified WoT decode path (Change B2).
+    // The reputation vote store below is still keyed by uint160, so bridge
+    // through TrustNodeToLegacyUint160.
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, addressStr);
     
     // Build transaction
     CAmount fee;
@@ -1331,9 +1405,9 @@ UniValue sendcvmcontract(const JSONRPCRequest& request)
  */
 UniValue addtrust(const JSONRPCRequest& request)
 {
-    if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
+    if (request.fHelp || request.params.size() < 2 || request.params.size() > 5)
         throw std::runtime_error(
-            "addtrust \"address\" weight ( bond \"reason\" )\n"
+            "addtrust \"address\" weight ( bond \"reason\" \"from\" )\n"
             "\nAdd trust relationship in Web-of-Trust graph.\n"
             "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
             "\nArguments:\n"
@@ -1341,6 +1415,9 @@ UniValue addtrust(const JSONRPCRequest& request)
             "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
             "3. bond          (numeric, optional) Amount to bond (default: calculated)\n"
             "4. \"reason\"      (string, optional) Reason for trust\n"
+            "5. \"from\"        (string, optional) Address that creates the trust edge.\n"
+            "                 If omitted, a new address is derived from the loaded wallet.\n"
+            "                 The trust edge is rejected if the from identity cannot be resolved.\n"
             "\nResult:\n"
             "{\n"
             "  \"from\": \"xxx\",           (string) Your address\n"
@@ -1375,28 +1452,51 @@ UniValue addtrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(addressStr);
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
+    // Decode the recipient (to) address via the unified WoT decode path
+    // (Change B2). The TrustGraph store now keys edges by the wide TrustNodeId,
+    // so the resolved node is passed directly into AddTrustEdge (this is what
+    // enables P2WSH/quantum storage end-to-end). The uint160 form is only used
+    // for the still-legacy cluster/propagation calls below.
+    CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 toAddress = toNode.ToUint160();
     
-    uint160 toAddress;
-    if (boost::get<CKeyID>(&dest)) {
-        toAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        toAddress = uint160(boost::get<CScriptID>(dest));
-    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
-        // Support bech32 addresses (tcas1q... / cas1q...)
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        toAddress = uint160(wkh);
+    // Resolve the creating (from) identity. NEVER store an all-zeros placeholder:
+    // either an explicit "from" address is supplied, or a fresh address is derived
+    // from the loaded wallet. If neither is available, reject the request.
+    // The explicit "from" address is decoded via the unified DecodeTrustNode
+    // path (Change B2); the resolved node is stored directly.
+    CVM::TrustNodeId fromNode;
+    uint160 fromAddress;
+    std::string fromStr;
+    if (request.params.size() > 4 && !request.params[4].isNull() &&
+        !request.params[4].get_str().empty()) {
+        // Explicit from address provided by the caller.
+        fromStr = request.params[4].get_str();
+        fromNode = DecodeTrustNodeOrThrow(fromStr);
+        fromAddress = fromNode.ToUint160();
     } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
+        // No explicit from address: derive one from the loaded wallet.
+        CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+        if (!pwallet) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                "Cannot resolve 'from' identity: no wallet loaded. Provide a 'from' address.");
+        }
+        LOCK2(cs_main, pwallet->cs_wallet);
+        CPubKey fresh;
+        if (!pwallet->GetKeyFromPool(fresh)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "Cannot resolve 'from' identity: failed to get an address from the wallet.");
+        }
+        fromAddress = fresh.GetID();
+        fromNode = CVM::TrustNodeId::FromLegacyUint160(fromAddress);
+        fromStr = EncodeDestination(CKeyID(fromAddress));
     }
-    
-    // Get caller's address (would need wallet integration)
-    uint160 fromAddress; // Placeholder
-    
+
+    // Defensive guard: never store an all-zeros from identity.
+    if (fromAddress.IsNull()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Could not resolve a valid 'from' identity");
+    }
+
     // Create trust graph, clusterer, and propagator
     CVM::TrustGraph trustGraph(*CVM::g_cvmdb);
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
@@ -1440,15 +1540,17 @@ UniValue addtrust(const JSONRPCRequest& request)
     uint256 bondTx;
     GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
     
-    // Add trust edge to canonical cluster address (the original target)
-    if (!trustGraph.AddTrustEdge(fromAddress, toAddress, weight, bondAmount, bondTx, reason)) {
+    // Add trust edge to canonical cluster address (the original target). Pass
+    // the wide TrustNodeId identifiers directly so P2WSH/quantum edges are
+    // stored losslessly.
+    if (!trustGraph.AddTrustEdge(fromNode, toNode, weight, bondAmount, bondTx, reason)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
     }
     
     // Create TrustEdge for propagation to all cluster members
     CVM::TrustEdge edge;
-    edge.fromAddress = fromAddress;
-    edge.toAddress = toAddress;
+    edge.fromAddress = fromNode;
+    edge.toAddress = toNode;
     edge.trustWeight = static_cast<int16_t>(weight);
     edge.timestamp = static_cast<uint32_t>(GetTime());
     edge.bondAmount = bondAmount;
@@ -1464,7 +1566,7 @@ UniValue addtrust(const JSONRPCRequest& request)
               edgesPropagated, clusterId.ToString());
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("from", fromAddress.ToString());
+    result.pushKV("from", fromStr);
     result.pushKV("to", addressStr);
     result.pushKV("weight", weight);
     result.pushKV("bond", ValueFromAmount(bondAmount));
@@ -1525,42 +1627,23 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     
     // Parse target address
     std::string targetStr = request.params[0].get_str();
-    CTxDestination targetDest = DecodeDestination(targetStr);
-    if (!IsValidDestination(targetDest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
-    }
-    
-    uint160 targetAddress;
-    if (boost::get<CKeyID>(&targetDest)) {
-        targetAddress = uint160(boost::get<CKeyID>(targetDest));
-    } else if (boost::get<CScriptID>(&targetDest)) {
-        targetAddress = uint160(boost::get<CScriptID>(targetDest));
-    } else if (boost::get<WitnessV0KeyHash>(&targetDest)) {
-        // Support bech32 addresses (tcas1q... / cas1q...)
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(targetDest);
-        targetAddress = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the target via the unified WoT decode path (Change B2). The
+    // TrustGraph traversal is now keyed by the wide TrustNodeId, so the
+    // resolved node is passed directly into GetWeightedReputation/FindTrustPaths
+    // (enabling P2WSH/quantum end-to-end). The uint160 form is used only for the
+    // still-legacy cluster calls below.
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
+    uint160 targetAddress = targetNode.ToUint160();
     
     // Parse viewer address
-    uint160 viewerAddress = targetAddress; // Default: self-view
+    CVM::TrustNodeId viewerNode = targetNode; // Default: self-view
+    uint160 viewerAddress = targetAddress;
+    // Echo the supplied viewer as base58; default to the target (self-view).
+    std::string viewerStr = targetStr;
     if (request.params.size() > 1) {
-        std::string viewerStr = request.params[1].get_str();
-        CTxDestination viewerDest = DecodeDestination(viewerStr);
-        if (!IsValidDestination(viewerDest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
-        }
-        
-        if (boost::get<CKeyID>(&viewerDest)) {
-            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
-        } else if (boost::get<CScriptID>(&viewerDest)) {
-            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
-        } else if (boost::get<WitnessV0KeyHash>(&viewerDest)) {
-            // Support bech32 addresses (tcas1q... / cas1q...)
-            const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(viewerDest);
-            viewerAddress = uint160(wkh);
-        }
+        viewerStr = request.params[1].get_str();
+        viewerNode = DecodeTrustNodeOrThrow(viewerStr);
+        viewerAddress = viewerNode.ToUint160();
     }
     
     // Get max depth
@@ -1588,8 +1671,9 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         clusterId = targetAddress;
     }
     
-    // Calculate individual weighted reputation for the target address
-    double individualReputation = trustGraph.GetWeightedReputation(viewerAddress, targetAddress, maxDepth);
+    // Calculate individual weighted reputation for the target address (keyed by
+    // the wide TrustNodeId so quantum/P2WSH targets traverse correctly).
+    double individualReputation = trustGraph.GetWeightedReputation(viewerNode, targetNode, maxDepth);
     
     // Use ClusterTrustQuery for cluster-aware reputation (Requirement 4.4)
     // This aggregates reputation across the entire wallet cluster
@@ -1611,12 +1695,14 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     // Check for negative trust in cluster
     bool hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetAddress);
     
-    // Find trust paths (for the target address specifically)
-    std::vector<CVM::TrustPath> paths = trustGraph.FindTrustPaths(viewerAddress, targetAddress, maxDepth);
+    // Find trust paths (for the target address specifically), keyed by the wide
+    // TrustNodeId.
+    std::vector<CVM::TrustPath> paths = trustGraph.FindTrustPaths(viewerNode, targetNode, maxDepth);
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("target", targetStr);
-    result.pushKV("viewer", viewerAddress.ToString());
+    // Echo viewer as a base58 address, not uint160 hex (Property 2, Requirement 2.8).
+    result.pushKV("viewer", viewerStr);
     // Use cluster-aggregated reputation as the main score (Requirement 4.4)
     result.pushKV("reputation", std::min(clusterReputation, worstReputation));
     result.pushKV("individual_reputation", individualReputation);
@@ -1646,7 +1732,9 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         UniValue hopsArray(UniValue::VARR);
         for (size_t i = 0; i < path.addresses.size(); i++) {
             UniValue hop(UniValue::VOBJ);
-            hop.pushKV("address", path.addresses[i].ToString());
+            // Display hop as a base58 address, not uint160 hex (Requirement 2.8).
+            // Use the wide TrustNodeId's destination so all address types render.
+            hop.pushKV("address", EncodeDestination(path.addresses[i].ToDestination()));
             hop.pushKV("trust_weight", path.weights[i]);
             hopsArray.push_back(hop);
         }
@@ -1710,8 +1798,11 @@ UniValue listtrustrelations(const JSONRPCRequest& request)
     int count = 0;
     
     for (const auto& key : keys) {
-        // Skip reverse index keys
-        if (key.find("trust_in_") != std::string::npos) continue;
+        // Only enumerate canonical forward trust edge keys (trust_<from>_<to>).
+        // This skips reverse-index keys (trust_in_*) and foreign records written by
+        // the TrustPropagator (trust_prop_* / trust_prop_idx_*), which have a different
+        // layout and would otherwise be misdeserialized as a TrustEdge.
+        if (!CVM::IsCanonicalForwardEdgeKey(key)) continue;
         
         // Read edge
         std::vector<uint8_t> data;
@@ -1721,9 +1812,19 @@ UniValue listtrustrelations(const JSONRPCRequest& request)
                 CDataStream ss(data, SER_DISK, CLIENT_VERSION);
                 ss >> edge;
                 
-                // Convert uint160 to readable Cascoin addresses
-                std::string fromAddr = EncodeDestination(CKeyID(edge.fromAddress));
-                std::string toAddr = EncodeDestination(CKeyID(edge.toAddress));
+                // Defensive: require the stream to be fully consumed. If any trailing
+                // bytes remain, the record is not a plain canonical TrustEdge (e.g. a
+                // future/foreign record type); skip it rather than silently misreading it.
+                if (!ss.empty()) {
+                    LogPrintf("listtrustrelations: Skipping key %s with %u trailing byte(s) after edge\n",
+                             key, (unsigned)ss.size());
+                    continue;
+                }
+                
+                // Convert the wide TrustNodeId identifiers to readable Cascoin
+                // addresses (renders every supported address type, incl. P2WSH/quantum).
+                std::string fromAddr = EncodeDestination(edge.fromAddress.ToDestination());
+                std::string toAddr = EncodeDestination(edge.toAddress.ToDestination());
                 
                 UniValue edgeObj(UniValue::VOBJ);
                 edgeObj.pushKV("from", fromAddr);
@@ -1869,24 +1970,12 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
-    }
-    
-    uint160 toAddress;
-    if (dest.type() == typeid(CKeyID)) {
-        toAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (dest.type() == typeid(CScriptID)) {
-        toAddress = uint160(boost::get<CScriptID>(dest));
-    } else if (dest.type() == typeid(WitnessV0KeyHash)) {
-        // Support bech32 addresses (tcas1q... / cas1q...)
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        toAddress = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the recipient address via the unified WoT decode path (Change B2).
+    // The transaction builder and propagation store below are still keyed by
+    // uint160, so bridge through TrustNodeToLegacyUint160.
+    const std::string toAddrStr = request.params[0].get_str();
+    CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(toAddrStr);
+    uint160 toAddress = TrustNodeToLegacyUint160(toNode, toAddrStr);
     
     // Parse weight
     int64_t weightInt = 0;
@@ -1920,8 +2009,11 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     // Build transaction
     std::string error;
     CAmount fee;
+    // Receives the resolved signer/from identity embedded on-chain; consumed by
+    // the off-chain propagation below (see task 3.2).
+    uint160 resolvedFromAddress;
     CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildTrustTransaction(
-        pwallet, toAddress, weight, bondAmount, reason, fee, error
+        pwallet, toAddress, weight, bondAmount, reason, fee, error, resolvedFromAddress
     );
     
     if (mtx.vin.empty()) {
@@ -1955,17 +2047,15 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
         clusterId = toAddress;
     }
     
-    // Get sender address from wallet (first key)
-    uint160 fromAddress;
-    const std::map<CKeyID, int64_t>& reserveKeys = pwallet->GetAllReserveKeys();
-    if (!reserveKeys.empty()) {
-        fromAddress = uint160(reserveKeys.begin()->first);
-    }
-    
-    // Create TrustEdge for propagation
+    // Create TrustEdge for propagation. The from-identity MUST be the on-chain
+    // signer key embedded in the OP_RETURN by BuildTrustTransaction (returned via
+    // resolvedFromAddress), so the off-chain propagated edge and the block-processed
+    // canonical edge agree on the same `from` address (task 3.2).
     CVM::TrustEdge edge;
-    edge.fromAddress = fromAddress;
-    edge.toAddress = toAddress;
+    // On-chain edges are currently uint160 (P2PKH-shaped) until the versioned
+    // on-chain payload lands (task 9.x); wrap into the wide TrustNodeId fields.
+    edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(resolvedFromAddress);
+    edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(toAddress);
     edge.trustWeight = weight;
     edge.timestamp = static_cast<uint32_t>(GetTime());
     edge.bondAmount = bondAmount;
@@ -2030,24 +2120,12 @@ UniValue sendbondedvote(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
-    }
-    
-    uint160 targetAddress;
-    if (dest.type() == typeid(CKeyID)) {
-        targetAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (dest.type() == typeid(CScriptID)) {
-        targetAddress = uint160(boost::get<CScriptID>(dest));
-    } else if (dest.type() == typeid(WitnessV0KeyHash)) {
-        // Support bech32 addresses (tcas1q... / cas1q...)
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        targetAddress = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the target address via the unified WoT decode path (Change B2).
+    // The vote store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string targetAddrStr = request.params[0].get_str();
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetAddrStr);
+    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetAddrStr);
     
     // Parse vote value
     int64_t voteInt = 0;
@@ -2147,20 +2225,12 @@ UniValue getbehaviormetrics(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
-    }
-    
-    uint160 address;
-    if (dest.type() == typeid(CKeyID)) {
-        address = uint160(boost::get<CKeyID>(dest));
-    } else if (dest.type() == typeid(CScriptID)) {
-        address = uint160(boost::get<CScriptID>(dest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the address via the unified WoT decode path (Change B2). The HAT
+    // behavior store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string addrStr = request.params[0].get_str();
+    CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addrStr);
+    uint160 address = TrustNodeToLegacyUint160(node, addrStr);
     
     // Get metrics
     CVM::SecureHAT hat(*CVM::g_cvmdb);
@@ -2209,20 +2279,12 @@ UniValue getgraphmetrics(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid Cascoin address");
-    }
-    
-    uint160 address;
-    if (dest.type() == typeid(CKeyID)) {
-        address = uint160(boost::get<CKeyID>(dest));
-    } else if (dest.type() == typeid(CScriptID)) {
-        address = uint160(boost::get<CScriptID>(dest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the address via the unified WoT decode path (Change B2). The HAT
+    // graph store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string addrStr = request.params[0].get_str();
+    CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addrStr);
+    uint160 address = TrustNodeToLegacyUint160(node, addrStr);
     
     // Get metrics
     CVM::SecureHAT hat(*CVM::g_cvmdb);
@@ -2265,40 +2327,21 @@ UniValue getsecuretrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse target address
-    CTxDestination targetDest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(targetDest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
-    }
-    
-    uint160 targetAddress;
-    if (targetDest.type() == typeid(CKeyID)) {
-        targetAddress = uint160(boost::get<CKeyID>(targetDest));
-    } else if (targetDest.type() == typeid(CScriptID)) {
-        targetAddress = uint160(boost::get<CScriptID>(targetDest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target address type not supported");
-    }
+    // Decode target/viewer via the unified WoT decode path (Change B2). The HAT
+    // store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string targetStr = request.params[0].get_str();
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
+    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetStr);
     
     // Parse viewer address (optional)
     uint160 viewerAddress = targetAddress; // Default to self
-    std::string viewerStr = request.params[0].get_str();
+    std::string viewerStr = targetStr;
     
     if (request.params.size() > 1) {
-        CTxDestination viewerDest = DecodeDestination(request.params[1].get_str());
-        if (!IsValidDestination(viewerDest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
-        }
-        
-        if (viewerDest.type() == typeid(CKeyID)) {
-            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
-        } else if (viewerDest.type() == typeid(CScriptID)) {
-            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
-        } else {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer address type not supported");
-        }
-        
         viewerStr = request.params[1].get_str();
+        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
+        viewerAddress = TrustNodeToLegacyUint160(viewerNode, viewerStr);
     }
     
     // Calculate trust
@@ -2362,40 +2405,21 @@ UniValue gettrustbreakdown(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse target address
-    CTxDestination targetDest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(targetDest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
-    }
-    
-    uint160 targetAddress;
-    if (targetDest.type() == typeid(CKeyID)) {
-        targetAddress = uint160(boost::get<CKeyID>(targetDest));
-    } else if (targetDest.type() == typeid(CScriptID)) {
-        targetAddress = uint160(boost::get<CScriptID>(targetDest));
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target address type not supported");
-    }
+    // Decode target/viewer via the unified WoT decode path (Change B2). The HAT
+    // store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string targetStr = request.params[0].get_str();
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
+    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetStr);
     
     // Parse viewer address (optional)
     uint160 viewerAddress = targetAddress; // Default to self
-    std::string viewerStr = request.params[0].get_str();
+    std::string viewerStr = targetStr;
     
     if (request.params.size() > 1) {
-        CTxDestination viewerDest = DecodeDestination(request.params[1].get_str());
-        if (!IsValidDestination(viewerDest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
-        }
-        
-        if (viewerDest.type() == typeid(CKeyID)) {
-            viewerAddress = uint160(boost::get<CKeyID>(viewerDest));
-        } else if (viewerDest.type() == typeid(CScriptID)) {
-            viewerAddress = uint160(boost::get<CScriptID>(viewerDest));
-        } else {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer address type not supported");
-        }
-        
         viewerStr = request.params[1].get_str();
+        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
+        viewerAddress = TrustNodeToLegacyUint160(viewerNode, viewerStr);
     }
     
     // Calculate trust with breakdown
@@ -2505,18 +2529,12 @@ UniValue getwalletcluster(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    CKeyID* keyID = boost::get<CKeyID>(&dest);
-    if (!keyID) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address must be a pubkey hash");
-    }
-    
-    uint160 address(*keyID);
+    // Decode the address via the unified WoT decode path (Change B2). This
+    // previously accepted only P2PKH; the clusterer below is still keyed by
+    // uint160, so bridge through TrustNodeToLegacyUint160.
+    const std::string addressStr = request.params[0].get_str();
+    CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
     uint160 cluster_id = clusterer.GetClusterForAddress(address);
@@ -2572,30 +2590,18 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse target
-    CTxDestination target_dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(target_dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid target address");
-    }
-    
-    CKeyID* target_keyID = boost::get<CKeyID>(&target_dest);
-    if (!target_keyID) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Target must be a pubkey hash");
-    }
-    
-    uint160 target(*target_keyID);
+    // Decode target/viewer via the unified WoT decode path (Change B2). This
+    // previously accepted only P2PKH; the cluster trust store below is still
+    // keyed by uint160, so bridge through TrustNodeToLegacyUint160.
+    const std::string targetStr = request.params[0].get_str();
+    CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
+    uint160 target = TrustNodeToLegacyUint160(targetNode, targetStr);
     uint160 viewer;
     
     if (request.params.size() > 1) {
-        CTxDestination viewer_dest = DecodeDestination(request.params[1].get_str());
-        if (!IsValidDestination(viewer_dest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
-        }
-        CKeyID* viewer_keyID = boost::get<CKeyID>(&viewer_dest);
-        if (!viewer_keyID) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Viewer must be a pubkey hash");
-        }
-        viewer = uint160(*viewer_keyID);
+        const std::string viewerStr = request.params[1].get_str();
+        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
+        viewer = TrustNodeToLegacyUint160(viewerNode, viewerStr);
     }
     
     // Create cluster-aware components (Requirement 4.2)
@@ -2711,23 +2717,11 @@ UniValue addclustertrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(addressStr);
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    uint160 toAddress;
-    if (boost::get<CKeyID>(&dest)) {
-        toAddress = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        toAddress = uint160(boost::get<CScriptID>(dest));
-    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        toAddress = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the recipient address via the unified WoT decode path (Change B2).
+    // The cluster trust store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 toAddress = TrustNodeToLegacyUint160(toNode, addressStr);
     
     // Get caller's address (placeholder - would need wallet integration)
     uint160 fromAddress;
@@ -2778,10 +2772,11 @@ UniValue addclustertrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
     }
     
-    // Create TrustEdge for propagation
+    // Create TrustEdge for propagation (legacy uint160 cluster path; wrap into
+    // the wide TrustNodeId fields).
     CVM::TrustEdge edge;
-    edge.fromAddress = fromAddress;
-    edge.toAddress = toAddress;
+    edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(fromAddress);
+    edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(toAddress);
     edge.trustWeight = static_cast<int16_t>(weight);
     edge.timestamp = static_cast<uint32_t>(GetTime());
     edge.bondAmount = bondAmount;
@@ -2842,39 +2837,19 @@ UniValue getclustertrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    uint160 address;
-    if (boost::get<CKeyID>(&dest)) {
-        address = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        address = uint160(boost::get<CScriptID>(dest));
-    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        address = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode address/viewer via the unified WoT decode path (Change B2). The
+    // cluster trust store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string addressStr = request.params[0].get_str();
+    CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     // Parse optional viewer
     uint160 viewer;
     if (request.params.size() > 1) {
-        CTxDestination viewer_dest = DecodeDestination(request.params[1].get_str());
-        if (!IsValidDestination(viewer_dest)) {
-            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid viewer address");
-        }
-        if (boost::get<CKeyID>(&viewer_dest)) {
-            viewer = uint160(boost::get<CKeyID>(viewer_dest));
-        } else if (boost::get<CScriptID>(&viewer_dest)) {
-            viewer = uint160(boost::get<CScriptID>(viewer_dest));
-        } else if (boost::get<WitnessV0KeyHash>(&viewer_dest)) {
-            const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(viewer_dest);
-            viewer = uint160(wkh);
-        }
+        const std::string viewerStr = request.params[1].get_str();
+        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
+        viewer = TrustNodeToLegacyUint160(viewerNode, viewerStr);
     }
     
     // Create components
@@ -2978,23 +2953,12 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Parse address
-    CTxDestination dest = DecodeDestination(request.params[0].get_str());
-    if (!IsValidDestination(dest)) {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid address");
-    }
-    
-    uint160 address;
-    if (boost::get<CKeyID>(&dest)) {
-        address = uint160(boost::get<CKeyID>(dest));
-    } else if (boost::get<CScriptID>(&dest)) {
-        address = uint160(boost::get<CScriptID>(dest));
-    } else if (boost::get<WitnessV0KeyHash>(&dest)) {
-        const WitnessV0KeyHash& wkh = boost::get<WitnessV0KeyHash>(dest);
-        address = uint160(wkh);
-    } else {
-        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Address type not supported");
-    }
+    // Decode the address via the unified WoT decode path (Change B2). The
+    // cluster trust store below is still keyed by uint160, so bridge through
+    // TrustNodeToLegacyUint160.
+    const std::string addressStr = request.params[0].get_str();
+    CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
+    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     // Get max count
     uint32_t maxCount = 100;
@@ -3047,8 +3011,9 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
     UniValue direct_arr(UniValue::VARR);
     for (const auto& edge : directEdges) {
         UniValue edgeObj(UniValue::VOBJ);
-        edgeObj.pushKV("from", EncodeDestination(CKeyID(edge.fromAddress)));
-        edgeObj.pushKV("to", EncodeDestination(CKeyID(edge.toAddress)));
+        // TrustEdge endpoints are wide TrustNodeId identifiers; render via ToDestination.
+        edgeObj.pushKV("from", EncodeDestination(edge.fromAddress.ToDestination()));
+        edgeObj.pushKV("to", EncodeDestination(edge.toAddress.ToDestination()));
         edgeObj.pushKV("weight", (int)edge.trustWeight);
         edgeObj.pushKV("bond", ValueFromAmount(edge.bondAmount));
         edgeObj.pushKV("timestamp", (uint64_t)edge.timestamp);
@@ -6064,7 +6029,7 @@ static const CRPCCommand commands[] =
     { "reputation",         "votereputation",        &votereputation,         {"address","vote","reason","proof"} },
     { "reputation",         "sendcvmvote",           &sendcvmvote,            {"address","vote","reason"} },
     { "reputation",         "listreputations",       &listreputations,        {"threshold","count"} },
-    { "wot",                "addtrust",              &addtrust,               {"address","weight","bond","reason"} },
+    { "wot",                "addtrust",              &addtrust,               {"address","weight","bond","reason","from"} },
     { "wot",                "getweightedreputation", &getweightedreputation,  {"target","viewer","maxdepth"} },
     { "wot",                "gettrustgraphstats",    &gettrustgraphstats,     {} },
     { "wot",                "listtrustrelations",    &listtrustrelations,     {"max_count"} },

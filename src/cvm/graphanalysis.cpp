@@ -27,8 +27,8 @@ std::vector<uint160> GraphAnalyzer::GetAllNodes() {
                 CDataStream ss(data, SER_DISK, CLIENT_VERSION);
                 TrustEdge edge;
                 ss >> edge;
-                nodes_set.insert(edge.fromAddress);
-                nodes_set.insert(edge.toAddress);
+                nodes_set.insert(edge.fromAddress.ToUint160());
+                nodes_set.insert(edge.toAddress.ToUint160());
             } catch (...) {
                 continue;
             }
@@ -75,7 +75,7 @@ double GraphAnalyzer::CalculateMutualTrustRatio(const uint160& address) {
     int mutual_count = 0;
     
     for (const auto& edge : outgoing) {
-        if (HasEdge(edge.toAddress, address)) {
+        if (HasEdge(edge.toAddress.ToUint160(), address)) {
             mutual_count++;
         }
     }
@@ -98,12 +98,13 @@ std::set<uint160> GraphAnalyzer::FindClusterMembers(const uint160& address) {
         std::vector<TrustEdge> outgoing = trust_graph.GetOutgoingTrust(current);
         
         for (const auto& edge : outgoing) {
-            if (cluster.count(edge.toAddress)) continue;
+            const uint160 edgeTo = edge.toAddress.ToUint160();
+            if (cluster.count(edgeTo)) continue;
             
             // Check if this node also trusts back (mutual)
-            if (HasEdge(edge.toAddress, current)) {
-                cluster.insert(edge.toAddress);
-                to_check.push(edge.toAddress);
+            if (HasEdge(edgeTo, current)) {
+                cluster.insert(edgeTo);
+                to_check.push(edgeTo);
             }
         }
     }
@@ -142,7 +143,7 @@ double GraphAnalyzer::CalculateBetweennessCentrality(const uint160& address) {
             for (const auto& path : paths) {
                 bool found = false;
                 for (const auto& addr : path.addresses) {
-                    if (addr == address) {
+                    if (addr.ToUint160() == address) {
                         paths_through++;
                         found = true;
                         break;
@@ -250,7 +251,7 @@ uint160 GraphAnalyzer::FindMainEntryPoint(const uint160& address) {
         for (const auto& path : paths) {
             if (path.addresses.size() > 1) {
                 // First hop is entry point
-                uint160 entry = path.addresses[1];
+                uint160 entry = path.addresses[1].ToUint160();
                 entry_count[entry]++;
             }
         }

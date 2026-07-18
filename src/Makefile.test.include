@@ -32,6 +32,9 @@ BITCOIN_TESTS =\
   test/cvm_enhanced_storage_tests.cpp \
   test/cvm_functional_fix_explore_tests.cpp \
   test/cvm_functional_fix_preserve_tests.cpp \
+  test/cvm_wot_fix_explore_tests.cpp \
+  test/cvm_wot_fix_property_tests.cpp \
+  test/cvm_wot_preserve_tests.cpp \
   test/cvm_workstream1_fix_property_tests.cpp \
   test/cvm_workstream1_preserve_tests.cpp \
   test/cvm_workstream2_fix_property_tests.cpp \
@@ -144,6 +147,7 @@ BITCOIN_TESTS =\
   test/timedata_tests.cpp \
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
+  test/trustnodeid_tests.cpp \
   test/trustpropagator_tests.cpp \
   test/txvalidation_tests.cpp \
   test/txvalidationcache_tests.cpp \

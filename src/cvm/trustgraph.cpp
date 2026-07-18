@@ -13,6 +13,7 @@
 #include <amount.h>
 #include <chain.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 
 extern CChain chainActive;
@@ -21,6 +22,147 @@ namespace CVM {
 
 // Global configuration
 WoTConfig g_wotConfig;
+
+namespace {
+
+//
+// Trust-edge DB key helpers (task 8.2)
+// ------------------------------------
+// Keys embed one node identifier per segment. Two shapes coexist for backward
+// compatibility (see IsLegacyKeySegment in the header):
+//   - Current v2 (tagged):  "trust_<from.ToKeyString()>_<to.ToKeyString()>"
+//                           "trust_in_<to.ToKeyString()>_<from.ToKeyString()>"
+//   - Legacy v1 (40-hex):   "trust_<from.hex40>_<to.hex40>"
+//                           "trust_in_<to.hex40>_<from.hex40>"
+// New writes always use the tagged v2 shape; reads accept BOTH so legacy
+// records written before this change still resolve (Property 6).
+//
+
+//! Canonical v2 forward-edge key: "trust_<from>_<to>".
+std::string ForwardEdgeKey(const TrustNodeId& from, const TrustNodeId& to)
+{
+    return "trust_" + from.ToKeyString() + "_" + to.ToKeyString();
+}
+
+//! Canonical v2 reverse-index key: "trust_in_<to>_<from>".
+std::string ReverseEdgeKey(const TrustNodeId& from, const TrustNodeId& to)
+{
+    return "trust_in_" + to.ToKeyString() + "_" + from.ToKeyString();
+}
+
+//! Canonical v2 outgoing-edge enumeration prefix: "trust_<from>_".
+std::string OutgoingPrefix(const TrustNodeId& from)
+{
+    return "trust_" + from.ToKeyString() + "_";
+}
+
+//! Canonical v2 incoming-edge enumeration prefix: "trust_in_<to>_".
+std::string IncomingPrefix(const TrustNodeId& to)
+{
+    return "trust_in_" + to.ToKeyString() + "_";
+}
+
+//! Legacy v1 forward-edge key (40-hex segments), for back-compat reads.
+std::string LegacyForwardEdgeKey(const uint160& from, const uint160& to)
+{
+    return "trust_" + from.ToString() + "_" + to.ToString();
+}
+
+//! Legacy v1 outgoing-edge enumeration prefix (40-hex), for back-compat reads.
+std::string LegacyOutgoingPrefix(const uint160& from)
+{
+    return "trust_" + from.ToString() + "_";
+}
+
+//! Legacy v1 incoming-edge enumeration prefix (40-hex), for back-compat reads.
+std::string LegacyIncomingPrefix(const uint160& to)
+{
+    return "trust_in_" + to.ToString() + "_";
+}
+
+//! Extract the first node key segment from a trust key.
+//! Handles both forward keys ("trust_<a>_<b>") and reverse-index keys
+//! ("trust_in_<a>_<b>"). Node segments never contain '_' (legacy segments are
+//! hex; tagged segments use '-'), so splitting on '_' is unambiguous.
+//! Returns an empty string if the key does not have a recognised trust prefix.
+std::string FirstNodeSegment(const std::string& key)
+{
+    size_t start;
+    if (key.rfind("trust_in_", 0) == 0) {
+        start = 9; // strlen("trust_in_")
+    } else if (key.rfind("trust_", 0) == 0) {
+        start = 6; // strlen("trust_")
+    } else {
+        return std::string();
+    }
+    const size_t end = key.find('_', start);
+    if (end == std::string::npos) {
+        return key.substr(start);
+    }
+    return key.substr(start, end - start);
+}
+
+//! Deserialize a TrustEdge record, selecting the legacy v1 or the canonical v2
+//! path from the shape of the DB key (see IsLegacyKeySegment). A legacy key uses
+//! 40-hex uint160 segments and is read via UnserializeLegacyV1 (which migrates
+//! from/to to TrustNodeId{P2PKH, zero-extended}); a tagged key is read via the
+//! canonical v2 operator (ss >> edge).
+bool DeserializeTrustEdgeForKey(const std::string& key,
+                                const std::vector<uint8_t>& data,
+                                TrustEdge& edge)
+{
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        if (IsLegacyKeySegment(FirstNodeSegment(key))) {
+            edge.UnserializeLegacyV1(ss);
+        } else {
+            ss >> edge;
+        }
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("TrustGraph: Failed to deserialize trust edge for key %s: %s\n",
+                  key, e.what());
+        return false;
+    }
+}
+
+} // anonymous namespace
+
+bool IsLegacyKeySegment(const std::string& segment)
+{
+    // A legacy uint160 segment is exactly 40 hexadecimal characters and has no
+    // separator. A tagged TrustNodeId segment is "<type:02x>-<64hex>" (67 chars
+    // containing a '-'), so the length check alone already discriminates the
+    // two, and the hex check rejects any other 40-char shape defensively.
+    if (segment.size() != 40) {
+        return false;
+    }
+    for (const char c : segment) {
+        if (!std::isxdigit(static_cast<unsigned char>(c))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsCanonicalForwardEdgeKey(const std::string& key)
+{
+    // Must be a "trust_" key. Prefer prefix checks (rfind(prefix, 0) == 0)
+    // over find(...) != npos to avoid substring false positives.
+    if (key.rfind("trust_", 0) != 0) {
+        return false;
+    }
+    // Exclude the reverse index keys ("trust_in_...").
+    if (key.find("trust_in_") != std::string::npos) {
+        return false;
+    }
+    // Exclude foreign propagator records ("trust_prop_..." and
+    // "trust_prop_idx_..."), which share the "trust_" prefix.
+    if (key.rfind("trust_prop_", 0) == 0) {
+        return false;
+    }
+    return true;
+}
 
 TrustGraph::TrustGraph(CVMDatabase& db) 
     : database(db)
@@ -32,8 +174,8 @@ TrustGraph::TrustGraph(CVMDatabase& db)
 TrustGraph::~TrustGraph() = default;
 
 bool TrustGraph::AddTrustEdge(
-    const uint160& from,
-    const uint160& to,
+    const TrustNodeId& from,
+    const TrustNodeId& to,
     int16_t weight,
     CAmount bondAmount,
     const uint256& bondTx,
@@ -52,8 +194,9 @@ bool TrustGraph::AddTrustEdge(
                   bondAmount, requiredBond);
         return false;
     }
-    
-    // Create trust edge
+
+    // Create trust edge keyed by the wide TrustNodeId identifiers directly, so
+    // P2WSH / quantum destinations are stored losslessly.
     TrustEdge edge;
     edge.fromAddress = from;
     edge.toAddress = to;
@@ -64,11 +207,11 @@ bool TrustGraph::AddTrustEdge(
     edge.slashed = false;
     edge.reason = reason;
     
-    // Store in database
-    // Key: "trust_" + from + "_" + to
-    std::string key = "trust_" + from.ToString() + "_" + to.ToString();
+    // Store in database under the canonical v2 (tagged) key:
+    //   "trust_" + from.ToKeyString() + "_" + to.ToKeyString()
+    std::string key = ForwardEdgeKey(from, to);
     
-    // Serialize edge
+    // Serialize edge (canonical v2 layout via ADD_SERIALIZE_METHODS)
     CDataStream ss(SER_DISK, CLIENT_VERSION);
     ss << edge;
     std::vector<uint8_t> data(ss.begin(), ss.end());
@@ -79,95 +222,125 @@ bool TrustGraph::AddTrustEdge(
     }
     
     // Also store in reverse index for incoming trust queries
-    std::string reverseKey = "trust_in_" + to.ToString() + "_" + from.ToString();
+    std::string reverseKey = ReverseEdgeKey(from, to);
     if (!database.WriteGeneric(reverseKey, data)) {
         LogPrintf("TrustGraph: Failed to write reverse trust edge to database\n");
         return false;
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: Added edge %s -> %s: %d (bond: %d)\n",
-             from.ToString(), to.ToString(), weight, bondAmount);
+             from.ToKeyString(), to.ToKeyString(), weight, bondAmount);
     
     return true;
+}
+
+bool TrustGraph::AddTrustEdge(
+    const uint160& from,
+    const uint160& to,
+    int16_t weight,
+    CAmount bondAmount,
+    const uint256& bondTx,
+    const std::string& reason
+) {
+    // Legacy P2PKH wrapper: a bare uint160 is always a legacy P2PKH-shaped
+    // identifier, so forward to the TrustNodeId overload with zero-extended ids.
+    return AddTrustEdge(TrustNodeId::FromLegacyUint160(from),
+                        TrustNodeId::FromLegacyUint160(to),
+                        weight, bondAmount, bondTx, reason);
+}
+
+bool TrustGraph::GetTrustEdge(const TrustNodeId& from, const TrustNodeId& to, TrustEdge& edge) const {
+    // Prefer the canonical v2 (tagged) key. Fall back to the legacy v1 (40-hex)
+    // key so edges written before this change still resolve (Property 6). The
+    // legacy fallback is only meaningful for uint160-shaped (P2PKH) nodes.
+    std::string key = ForwardEdgeKey(from, to);
+    std::vector<uint8_t> data;
+    if (!database.ReadGeneric(key, data)) {
+        if (from.type == static_cast<uint8_t>(TrustNodeType::P2PKH) &&
+            to.type == static_cast<uint8_t>(TrustNodeType::P2PKH)) {
+            key = LegacyForwardEdgeKey(from.ToUint160(), to.ToUint160());
+            if (!database.ReadGeneric(key, data)) {
+                return false; // Not found under either shape
+            }
+        } else {
+            return false; // Not found (no legacy shape for wide identifiers)
+        }
+    }
+
+    return DeserializeTrustEdgeForKey(key, data, edge);
 }
 
 bool TrustGraph::GetTrustEdge(const uint160& from, const uint160& to, TrustEdge& edge) const {
-    std::string key = "trust_" + from.ToString() + "_" + to.ToString();
-    std::vector<uint8_t> data;
-    
-    if (!database.ReadGeneric(key, data)) {
-        return false; // Not found
-    }
-    
-    // Deserialize edge
-    try {
-        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-        ss >> edge;
-    } catch (const std::exception& e) {
-        LogPrintf("TrustGraph: Failed to deserialize trust edge: %s\n", e.what());
-        return false;
-    }
-    
-    return true;
+    return GetTrustEdge(TrustNodeId::FromLegacyUint160(from),
+                        TrustNodeId::FromLegacyUint160(to), edge);
 }
 
-std::vector<TrustEdge> TrustGraph::GetOutgoingTrust(const uint160& from) const {
+std::vector<TrustEdge> TrustGraph::GetOutgoingTrust(const TrustNodeId& from) const {
     std::vector<TrustEdge> edges;
-    
-    // Search for all keys with prefix "trust_{from}_"
-    std::string prefix = "trust_" + from.ToString() + "_";
-    std::vector<std::string> keys = database.ListKeysWithPrefix(prefix);
-    
+
+    // Enumerate the canonical v2 (tagged) prefix. For legacy P2PKH nodes also
+    // enumerate the legacy v1 (40-hex) prefix so edges written before this
+    // change still resolve (Property 6). Each record is deserialized via the
+    // key-shape-aware path.
+    std::vector<std::string> keys = database.ListKeysWithPrefix(OutgoingPrefix(from));
+    if (from.type == static_cast<uint8_t>(TrustNodeType::P2PKH)) {
+        std::vector<std::string> legacyKeys = database.ListKeysWithPrefix(LegacyOutgoingPrefix(from.ToUint160()));
+        keys.insert(keys.end(), legacyKeys.begin(), legacyKeys.end());
+    }
+
     for (const std::string& key : keys) {
         std::vector<uint8_t> data;
         if (database.ReadGeneric(key, data)) {
-            try {
-                TrustEdge edge;
-                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-                ss >> edge;
+            TrustEdge edge;
+            if (DeserializeTrustEdgeForKey(key, data, edge)) {
                 edges.push_back(edge);
-            } catch (const std::exception& e) {
-                LogPrintf("TrustGraph: Failed to deserialize edge for key %s: %s\n", 
-                         key, e.what());
             }
         }
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: Found %d outgoing trust edges from %s\n", 
-             edges.size(), from.ToString());
+             edges.size(), from.ToKeyString());
     return edges;
 }
 
-std::vector<TrustEdge> TrustGraph::GetIncomingTrust(const uint160& to) const {
+std::vector<TrustEdge> TrustGraph::GetOutgoingTrust(const uint160& from) const {
+    return GetOutgoingTrust(TrustNodeId::FromLegacyUint160(from));
+}
+
+std::vector<TrustEdge> TrustGraph::GetIncomingTrust(const TrustNodeId& to) const {
     std::vector<TrustEdge> edges;
-    
-    // Search for all keys with prefix "trust_in_{to}_"
-    std::string prefix = "trust_in_" + to.ToString() + "_";
-    std::vector<std::string> keys = database.ListKeysWithPrefix(prefix);
-    
+
+    // Enumerate the canonical v2 (tagged) reverse prefix. For legacy P2PKH nodes
+    // also enumerate the legacy v1 (40-hex) reverse prefix so pre-existing edges
+    // still resolve (Property 6).
+    std::vector<std::string> keys = database.ListKeysWithPrefix(IncomingPrefix(to));
+    if (to.type == static_cast<uint8_t>(TrustNodeType::P2PKH)) {
+        std::vector<std::string> legacyKeys = database.ListKeysWithPrefix(LegacyIncomingPrefix(to.ToUint160()));
+        keys.insert(keys.end(), legacyKeys.begin(), legacyKeys.end());
+    }
+
     for (const std::string& key : keys) {
         std::vector<uint8_t> data;
         if (database.ReadGeneric(key, data)) {
-            try {
-                TrustEdge edge;
-                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-                ss >> edge;
+            TrustEdge edge;
+            if (DeserializeTrustEdgeForKey(key, data, edge)) {
                 edges.push_back(edge);
-            } catch (const std::exception& e) {
-                LogPrintf("TrustGraph: Failed to deserialize edge for key %s: %s\n",
-                         key, e.what());
             }
         }
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: Found %d incoming trust edges to %s\n",
-             edges.size(), to.ToString());
+             edges.size(), to.ToKeyString());
     return edges;
 }
 
+std::vector<TrustEdge> TrustGraph::GetIncomingTrust(const uint160& to) const {
+    return GetIncomingTrust(TrustNodeId::FromLegacyUint160(to));
+}
+
 double TrustGraph::GetWeightedReputation(
-    const uint160& viewer,
-    const uint160& target,
+    const TrustNodeId& viewer,
+    const TrustNodeId& target,
     int maxDepth
 ) const {
     // If viewer is viewing themselves, return direct reputation
@@ -212,36 +385,71 @@ double TrustGraph::GetWeightedReputation(
         return count > 0 ? (sum / count) : 0.0;
     }
     
-    // Calculate weighted reputation based on trust paths
+    // Calculate weighted reputation derived from the trust-path weights.
+    //
+    // Each discovered path contributes its final-hop trust weight (the trust
+    // the last intermediary places directly in the target), scaled by the path
+    // strength (path.totalWeight, the product of the normalized hop weights in
+    // [0, 1]). This yields a non-zero score whenever a qualifying path exists,
+    // even in the absence of any BondedVote records at the target.
+    //
+    // The final-hop weight is on the same -100..100 scale as the self-view
+    // average returned by the viewer == target branch above, so the aggregate
+    // is normalized to that same scale.
+    //
+    // BondedVote records at the target are still incorporated when present:
+    // each non-slashed vote is added as an additional path-strength-weighted
+    // sample, but they are not required to produce a non-zero result.
     double weightedSum = 0.0;
     double totalWeight = 0.0;
-    
+
+    // Fetch the target's bonded votes once (may be empty). BondedVote records
+    // are keyed by legacy uint160; use the low-20-byte value of the target.
+    std::vector<BondedVote> votes = GetVotesForAddress(target.ToUint160());
+
     for (const auto& path : paths) {
-        // Get reputation votes at target
-        std::vector<BondedVote> votes = GetVotesForAddress(target);
-        
+        // Path strength in [0, 1]; skip degenerate/empty paths.
+        double pathWeight = path.totalWeight;
+        if (pathWeight <= 0.0 || path.weights.empty()) {
+            continue;
+        }
+
+        // Base contribution: the target's trust as seen through this path,
+        // taken from the final hop's trust weight (-100..100 scale).
+        double finalHopWeight = static_cast<double>(path.weights.back());
+        weightedSum += finalHopWeight * pathWeight;
+        totalWeight += pathWeight;
+
+        // Additional contributions from bonded votes at the target, when present.
         for (const auto& vote : votes) {
             if (!vote.slashed) {
-                // Weight this vote by the trust path strength
-                double pathWeight = path.totalWeight;
                 weightedSum += vote.voteValue * pathWeight;
                 totalWeight += pathWeight;
             }
         }
     }
-    
-    // Return weighted average
+
+    // Return the path-strength-weighted average on the -100..100 scale.
     return totalWeight > 0.0 ? (weightedSum / totalWeight) : 0.0;
 }
 
+double TrustGraph::GetWeightedReputation(
+    const uint160& viewer,
+    const uint160& target,
+    int maxDepth
+) const {
+    return GetWeightedReputation(TrustNodeId::FromLegacyUint160(viewer),
+                                 TrustNodeId::FromLegacyUint160(target), maxDepth);
+}
+
 std::vector<TrustPath> TrustGraph::FindTrustPaths(
-    const uint160& from,
-    const uint160& to,
+    const TrustNodeId& from,
+    const TrustNodeId& to,
     int maxDepth
 ) const {
     std::vector<TrustPath> results;
     TrustPath currentPath;
-    std::set<uint160> visited;
+    std::set<TrustNodeId> visited;
     
     // Start recursive search
     FindPathsRecursive(from, to, maxDepth, currentPath, visited, results);
@@ -253,17 +461,26 @@ std::vector<TrustPath> TrustGraph::FindTrustPaths(
         });
     
     LogPrint(BCLog::ALL, "TrustGraph: Found %d paths from %s to %s (max depth %d)\n",
-             results.size(), from.ToString(), to.ToString(), maxDepth);
+             results.size(), from.ToKeyString(), to.ToKeyString(), maxDepth);
     
     return results;
 }
 
+std::vector<TrustPath> TrustGraph::FindTrustPaths(
+    const uint160& from,
+    const uint160& to,
+    int maxDepth
+) const {
+    return FindTrustPaths(TrustNodeId::FromLegacyUint160(from),
+                          TrustNodeId::FromLegacyUint160(to), maxDepth);
+}
+
 void TrustGraph::FindPathsRecursive(
-    const uint160& current,
-    const uint160& target,
+    const TrustNodeId& current,
+    const TrustNodeId& target,
     int remainingDepth,
     TrustPath& currentPath,
-    std::set<uint160>& visited,
+    std::set<TrustNodeId>& visited,
     std::vector<TrustPath>& results
 ) const {
     // Base case: reached target
@@ -703,10 +920,11 @@ std::map<std::string, uint64_t> TrustGraph::GetGraphStats() const {
     uint64_t activeDisputeCount = 0;
     uint64_t slashedVoteCount = 0;
     
-    // Count trust edges (keys starting with "trust_" but not "trust_in_")
+    // Count only canonical forward trust edges (trust_<from>_<to>), excluding
+    // reverse-index keys and foreign propagator records (trust_prop_* / trust_prop_idx_*).
     std::vector<std::string> trustKeys = database.ListKeysWithPrefix("trust_");
     for (const auto& key : trustKeys) {
-        if (key.find("trust_in_") == std::string::npos) {
+        if (IsCanonicalForwardEdgeKey(key)) {
             trustEdgeCount++;
         }
     }

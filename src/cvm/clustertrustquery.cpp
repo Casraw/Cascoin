@@ -130,7 +130,7 @@ double ClusterTrustQuery::GetAddressTrustScore(const uint160& target, const uint
         totalBondWeight += bondWeight;
         
         LogPrint(BCLog::CVM, "ClusterTrustQuery: Direct edge from %s: weight=%d, bond=%.2f\n",
-                 edge.fromAddress.ToString(), edge.trustWeight, bondWeight);
+                 edge.fromAddress.ToKeyString(), edge.trustWeight, bondWeight);
     }
     
     // Process propagated edges
@@ -301,8 +301,8 @@ TrustEdge ClusterTrustQuery::PropagatedToTrustEdge(const PropagatedTrustEdge& pr
     // Convert a PropagatedTrustEdge to a TrustEdge for unified handling
     
     TrustEdge edge;
-    edge.fromAddress = propEdge.fromAddress;
-    edge.toAddress = propEdge.toAddress;
+    edge.fromAddress = TrustNodeId::FromLegacyUint160(propEdge.fromAddress);
+    edge.toAddress = TrustNodeId::FromLegacyUint160(propEdge.toAddress);
     edge.trustWeight = propEdge.trustWeight;
     edge.timestamp = propEdge.propagatedAt;
     edge.bondAmount = propEdge.bondAmount;
@@ -331,7 +331,7 @@ void ClusterTrustQuery::DeduplicateEdges(std::vector<TrustEdge>& edges) const
     
     for (size_t i = 0; i < edges.size(); ++i) {
         const TrustEdge& edge = edges[i];
-        std::string key = edge.fromAddress.ToString() + "_" + edge.toAddress.ToString();
+        std::string key = edge.fromAddress.ToKeyString() + "_" + edge.toAddress.ToKeyString();
         
         auto it = uniqueEdges.find(key);
         if (it == uniqueEdges.end()) {
