@@ -258,11 +258,24 @@ class WoTFixesTest(BitcoinTestFramework):
             assert -100 <= edge["weight"] <= 100, "weight out of range: %s" % edge["weight"]
             assert_equal(edge["slashed"], False)
 
-        # The canonical count is unchanged by the propagation records and stays
-        # consistent with gettrustgraphstats. (2.7)
+        # The on-chain sendtrustrelation is now persisted as a canonical edge on
+        # block connect (trust-system-activation fix, requirements 2.1/2.2), so
+        # the canonical count grows by exactly one canonical record. The foreign
+        # propagation records (trust_prop_* / trust_prop_idx_*) MUST still be
+        # excluded from canonical enumeration: if they were misread, the count
+        # would grow by more than one. Assert exactly +1 and that the single new
+        # edge is the expected canonical target/weight (not offset garbage). (2.7)
         self.assert_count_consistent()
-        assert_equal(after["count"], before["count"])
-        self.log.info("  foreign propagation records excluded; count stable at %d and consistent"
+        assert_equal(after["count"], before["count"] + 1)
+        new_edges = [e for e in after["edges"] if e["to"] == target]
+        assert_equal(len(new_edges), 1)
+        assert_equal(new_edges[0]["weight"], 80)
+        # The on-chain TRUST_EDGE payload persists weight/bond/bond-tx/timestamp
+        # (requirement 2.1); the reason is not part of the canonical on-chain
+        # record, so only assert it is a well-formed string (no offset garbage).
+        assert isinstance(new_edges[0]["reason"], str)
+        self.log.info("  on-chain edge persisted canonically; foreign propagation "
+                      "records excluded; count grew by exactly 1 to %d and consistent"
                       % after["count"])
 
 

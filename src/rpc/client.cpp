@@ -178,6 +178,24 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "l2_sendtransaction", 5, "chainid" },
     { "l2_getregisteredchains", 0, "activeonly" },
     { "l2_updatechainstatus", 0, "chainid" },
+    // Cascoin: Web-of-Trust / reputation numeric parameters.
+    // Without these, cascoin-cli passes numeric args as JSON strings, which
+    // breaks handlers that read them via get_int()/get_int64() (e.g. the
+    // getweightedreputation "maxdepth" argument reported "JSON value is not an
+    // integer as expected"). The weight/bond/vote handlers already tolerate a
+    // string, but converting here also enables named-argument invocation.
+    { "getweightedreputation", 2, "maxdepth" },
+    { "listtrustrelations", 0, "max_count" },
+    { "listreputations", 0, "threshold" },
+    { "listreputations", 1, "count" },
+    { "addtrust", 1, "weight" },
+    { "addtrust", 2, "bond" },
+    { "sendtrustrelation", 1, "weight" },
+    { "sendtrustrelation", 2, "bond" },
+    { "sendbondedvote", 1, "vote" },
+    { "sendbondedvote", 2, "bond" },
+    { "votereputation", 1, "vote" },
+    { "sendcvmvote", 1, "vote" },
 };
 
 class CRPCConvertTable

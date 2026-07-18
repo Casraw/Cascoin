@@ -49,6 +49,30 @@ public:
         int height,
         CVMDatabase& db
     );
+
+    /**
+     * Persist ONLY non-contract CVM records found in the block.
+     *
+     * Iterates the block's transactions and dispatches exclusively the five
+     * non-contract op types (TRUST_EDGE, BONDED_VOTE, DAO_DISPUTE, DAO_VOTE,
+     * REPUTATION_VOTE) to their persistence handlers. Contract deploy/call
+     * work (CONTRACT_DEPLOY, CONTRACT_CALL, EVM_DEPLOY, EVM_CALL) is handled by
+     * BlockValidator::ValidateBlock() and is explicitly NOT re-executed here,
+     * so the expensive TrustContext/SecureHAT/Enhanced-VM work that caused the
+     * original ProcessBlock() hang is never reached.
+     *
+     * This is called from ConnectBlock() in the durable-write phase (after the
+     * fJustCheck return), so no durable state is written during validation-only.
+     *
+     * @param block Block to process
+     * @param height Block height
+     * @param db CVM database to update
+     */
+    static void ProcessNonContractBlock(
+        const CBlock& block,
+        int height,
+        CVMDatabase& db
+    );
     
     /**
      * Process single transaction for CVM operations
@@ -86,6 +110,25 @@ public:
     );
 
 private:
+    /**
+     * Process single transaction for non-contract CVM operations only.
+     *
+     * Parses the CVM OP_RETURN and dispatches ONLY the five non-contract op
+     * types (TRUST_EDGE, BONDED_VOTE, DAO_DISPUTE, DAO_VOTE, REPUTATION_VOTE)
+     * to their persistence handlers. Contract types (CONTRACT_DEPLOY,
+     * CONTRACT_CALL, EVM_DEPLOY, EVM_CALL) and unknown types are intentionally
+     * skipped — they are BlockValidator::ValidateBlock()'s responsibility.
+     *
+     * @param tx Transaction to process
+     * @param height Block height
+     * @param db CVM database to update
+     */
+    static void ProcessNonContractTransaction(
+        const CTransaction& tx,
+        int height,
+        CVMDatabase& db
+    );
+
     /**
      * Process reputation vote transaction
      * 

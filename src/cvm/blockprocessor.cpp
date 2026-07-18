@@ -263,6 +263,162 @@ void CVMBlockProcessor::ProcessTransaction(
     }
 }
 
+void CVMBlockProcessor::ProcessNonContractBlock(
+    const CBlock& block,
+    int height,
+    CVMDatabase& db
+) {
+    int nonContractTxCount = 0;
+
+    // Persist ONLY non-contract CVM records. Contract deploy/call transactions
+    // are executed exactly once by BlockValidator::ValidateBlock() during the
+    // validation phase and MUST NOT be re-executed here — re-executing them was
+    // the source of the expensive TrustContext/SecureHAT/Enhanced-VM work that
+    // caused the original ProcessBlock() hang.
+    //
+    // Reconciliation invariant with off-chain propagation (no double-count):
+    // For a TRUST_EDGE tx, this connect-time path writes the CANONICAL edge via
+    // ProcessTrustEdge -> TrustGraph::AddTrustEdge, keyed trust_<from>_<to>
+    // (plus the reverse index trust_in_<to>_<from>). The broadcasting RPC
+    // (sendtrustrelation, src/rpc/cvm.cpp) separately calls
+    // TrustPropagator::PropagateTrustEdge at broadcast time, which writes ONLY
+    // the DISJOINT off-chain namespace trust_prop_* / trust_prop_idx_* and never
+    // calls AddTrustEdge. The canonical enumerators used by listtrustrelations
+    // and TrustGraph::GetGraphStats filter with IsCanonicalForwardEdgeKey
+    // (see src/cvm/trustgraph.cpp), which rejects both trust_in_ and trust_prop_
+    // (and trust_prop_idx_) keys, so the propagated records are never counted or
+    // traversed as canonical edges. The RPC also derives its propagated `from`
+    // from resolvedFromAddress returned by BuildTrustTransaction — the same
+    // signer identity embedded in the on-chain OP_RETURN — so the canonical
+    // edge and the off-chain side effect AGREE on `from` rather than producing
+    // two conflicting/duplicated relationships. Net: the two record sets coexist
+    // in separate namespaces and canonical enumeration counts are unaffected by
+    // the propagated records (Property 3 / Property 5; reqs 2.8, 3.9).
+    for (const auto& tx : block.vtx) {
+        // Skip coinbase.
+        if (tx->IsCoinBase()) {
+            continue;
+        }
+
+        // Only transactions carrying a CVM OP_RETURN are of interest.
+        int cvmOutputIndex = FindCVMOpReturn(*tx);
+        if (cvmOutputIndex < 0) {
+            continue;
+        }
+
+        // Defensive isolation: a handler that rejects an invalid record (bad
+        // weight/bond/payload) logs and returns without persisting; even in the
+        // unexpected event of an exception, it MUST NOT escape ConnectBlock or
+        // abort processing of the rest of the block.
+        try {
+            ProcessNonContractTransaction(*tx, height, db);
+        } catch (const std::exception& e) {
+            LogPrintf("CVM Error: Exception while processing non-contract CVM tx %s: %s\n",
+                      tx->GetHash().ToString(), e.what());
+        } catch (...) {
+            LogPrintf("CVM Error: Unknown exception while processing non-contract CVM tx %s\n",
+                      tx->GetHash().ToString());
+        }
+        nonContractTxCount++;
+    }
+
+    if (nonContractTxCount > 0) {
+        LogPrintf("CVM: Processed %d non-contract CVM transactions in block %d\n",
+                  nonContractTxCount, height);
+    }
+}
+
+void CVMBlockProcessor::ProcessNonContractTransaction(
+    const CTransaction& tx,
+    int height,
+    CVMDatabase& db
+) {
+    // Find CVM OP_RETURN output.
+    int cvmOutputIndex = FindCVMOpReturn(tx);
+    if (cvmOutputIndex < 0) {
+        return; // Not a CVM transaction.
+    }
+
+    // Parse CVM data.
+    CVMOpType opType;
+    std::vector<uint8_t> data;
+
+    if (!ParseCVMOpReturn(tx.vout[cvmOutputIndex], opType, data)) {
+        LogPrintf("CVM Warning: Failed to parse CVM OP_RETURN in tx %s\n",
+                  tx.GetHash().ToString());
+        return;
+    }
+
+    // Dispatch ONLY the five non-contract op types to their persistence
+    // handlers. Contract types are handled by BlockValidator::ValidateBlock()
+    // and are intentionally skipped here (no re-execution).
+    switch (opType) {
+        case CVMOpType::REPUTATION_VOTE: {
+            CVMReputationData voteData;
+            if (voteData.Deserialize(data)) {
+                ProcessVote(voteData, tx, height, db);
+            } else {
+                LogPrintf("CVM Warning: Invalid vote data in tx %s\n",
+                          tx.GetHash().ToString());
+            }
+            break;
+        }
+
+        case CVMOpType::TRUST_EDGE: {
+            CVMTrustEdgeData trustData;
+            if (trustData.Deserialize(data)) {
+                ProcessTrustEdge(trustData, tx, height, db);
+            } else {
+                LogPrintf("CVM Warning: Invalid trust edge data in tx %s\n",
+                          tx.GetHash().ToString());
+            }
+            break;
+        }
+
+        case CVMOpType::BONDED_VOTE: {
+            CVMBondedVoteData voteData;
+            if (voteData.Deserialize(data)) {
+                ProcessBondedVote(voteData, tx, height, db);
+            } else {
+                LogPrintf("CVM Warning: Invalid bonded vote data in tx %s\n",
+                          tx.GetHash().ToString());
+            }
+            break;
+        }
+
+        case CVMOpType::DAO_DISPUTE: {
+            CVMDAODisputeData disputeData;
+            if (disputeData.Deserialize(data)) {
+                ProcessDAODispute(disputeData, tx, height, db);
+            } else {
+                LogPrintf("CVM Warning: Invalid DAO dispute data in tx %s\n",
+                          tx.GetHash().ToString());
+            }
+            break;
+        }
+
+        case CVMOpType::DAO_VOTE: {
+            CVMDAOVoteData voteData;
+            if (voteData.Deserialize(data)) {
+                ProcessDAOVote(voteData, tx, height, db);
+            } else {
+                LogPrintf("CVM Warning: Invalid DAO vote data in tx %s\n",
+                          tx.GetHash().ToString());
+            }
+            break;
+        }
+
+        // Contract types are BlockValidator's responsibility and MUST NOT be
+        // re-executed here. Unknown types are ignored.
+        case CVMOpType::CONTRACT_DEPLOY:
+        case CVMOpType::CONTRACT_CALL:
+        case CVMOpType::EVM_DEPLOY:
+        case CVMOpType::EVM_CALL:
+        default:
+            break;
+    }
+}
+
 void CVMBlockProcessor::ProcessVote(
     const CVMReputationData& voteData,
     const CTransaction& tx,
@@ -271,6 +427,28 @@ void CVMBlockProcessor::ProcessVote(
 ) {
     LogPrint(BCLog::ALL, "CVM: Processing vote for %s: %+d\n", 
              voteData.targetAddress.ToString(), voteData.voteValue);
+    
+    // Idempotency guard (reorg/reconnect safe): unlike the other non-contract
+    // handlers, applying a reputation vote is a non-idempotent increment
+    // (score += voteValue; voteCount++). If the same block is disconnected and
+    // reconnected during a reorg, the vote would be applied twice and the
+    // reputation double-counted. Mark each REPUTATION_VOTE tx as applied, keyed
+    // by its transaction hash, and skip it if it has already been applied so a
+    // given vote is counted at most once.
+    //
+    // NOTE: The other four non-contract handlers are already idempotent upserts
+    // keyed by a unique identifier and need no marker:
+    //   - AddTrustEdge   -> trust_<from>_<to>   (overwrite)
+    //   - RecordBondedVote -> vote_<bondTxHash> (overwrite)
+    //   - CreateDispute  -> dispute_<txid>      (overwrite)
+    //   - VoteOnDispute  -> member-keyed dispute.daoVotes[member] (with a
+    //                       resolved guard on ResolveDispute)
+    const std::string appliedKey = "repvote_applied_" + tx.GetHash().ToString();
+    if (db.ExistsGeneric(appliedKey)) {
+        LogPrint(BCLog::ALL, "CVM: Reputation vote tx %s already applied, skipping (idempotent)\n",
+                 tx.GetHash().ToString());
+        return;
+    }
     
     // Get current reputation
     ReputationSystem repSystem(db);
@@ -284,6 +462,10 @@ void CVMBlockProcessor::ProcessVote(
     
     // Store updated reputation
     repSystem.UpdateReputation(voteData.targetAddress, score);
+    
+    // Record that this vote tx has been applied so a reorg/reconnection of the
+    // same block does not double-count the reputation delta.
+    db.WriteGeneric(appliedKey, {1});
     
     LogPrintf("CVM: Vote processed - Address: %s, Vote: %+d, New Score: %d, VoteCount: %d\n",
               voteData.targetAddress.ToString(), voteData.voteValue, 
@@ -580,6 +762,14 @@ bool CVMBlockProcessor::ProcessTrustEdge(
     // TrustNodeId `from`/`to` so P2WSH/quantum identifiers are keyed and stored
     // without truncation to uint160 (the block processor no longer collapses
     // 32-byte identifiers to 20 bytes).
+    //
+    // Canonical write vs. off-chain propagation: this writes the canonical
+    // trust_<from>_<to> record — the ONLY namespace the WoT read APIs enumerate.
+    // It is disjoint from the trust_prop_* / trust_prop_idx_* records written by
+    // TrustPropagator::PropagateTrustEdge at RPC broadcast time (which never
+    // calls AddTrustEdge). IsCanonicalForwardEdgeKey excludes the propagated
+    // keys from enumeration, so there is no double-count between the on-chain
+    // canonical edge and the off-chain propagation side effect (reqs 2.8, 3.9).
     bool success = trustGraph.AddTrustEdge(
         trustData.from,
         trustData.to,

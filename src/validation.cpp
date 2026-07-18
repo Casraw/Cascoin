@@ -2212,9 +2212,18 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // NOTE: Contract deployment and execution is already handled by BlockValidator::ValidateBlock()
     // above. CVMBlockProcessor::ProcessBlock() was duplicating this work and creating expensive
     // TrustContext+SecureHAT calculations that caused the node to hang.
-    // We only run ProcessClusterUpdates() here for wallet trust propagation.
+    // Here we persist only the non-contract CVM records (trust edges, bonded votes, DAO
+    // disputes/votes, reputation votes) and run ProcessClusterUpdates() for wallet trust
+    // propagation. This section is reached only when fJustCheck == false (the fJustCheck
+    // return precedes it), so no durable WoT/reputation write occurs during validation-only.
     if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
         if (CVM::g_cvmdb) {
+            // Persist on-chain non-contract CVM records (trust edges, bonded votes, DAO
+            // disputes/votes, reputation votes). Contract deploy/call work is already done by
+            // BlockValidator::ValidateBlock() above and is NOT re-executed here. Run before
+            // ProcessClusterUpdates() so records exist before cluster propagation runs.
+            // (Requirements: 2.1, 2.9, 3.1, 3.6, 3.7)
+            CVM::CVMBlockProcessor::ProcessNonContractBlock(block, pindex->nHeight, *CVM::g_cvmdb);
             // Process cluster updates for wallet trust propagation (Requirements: 2.4, 16.1)
             CVM::CVMBlockProcessor::ProcessClusterUpdates(block, pindex->nHeight, *CVM::g_cvmdb);
         } else {

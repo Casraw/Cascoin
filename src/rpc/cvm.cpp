@@ -1672,19 +1672,30 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     }
     
     // Calculate individual weighted reputation for the target address (keyed by
-    // the wide TrustNodeId so quantum/P2WSH targets traverse correctly).
+    // the wide TrustNodeId so quantum/P2WSH/P2SH targets traverse correctly).
     double individualReputation = trustGraph.GetWeightedReputation(viewerNode, targetNode, maxDepth);
     
-    // Use ClusterTrustQuery for cluster-aware reputation (Requirement 4.4)
-    // This aggregates reputation across the entire wallet cluster
-    // New addresses in wallet are automatically included
-    double clusterReputation = clusterQuery.GetEffectiveTrust(targetAddress, viewerAddress);
-    
-    // Find worst member in cluster
+    // Cluster-aware reputation (Requirement 4.4): the effective score is the
+    // minimum across the target's wallet cluster, so a scammer cannot escape a
+    // low score by moving to another address in the same wallet.
+    //
+    // TYPE CORRECTNESS: the wallet-clustering / ClusterTrustQuery subsystem is
+    // keyed by legacy uint160 (effectively P2PKH). Scoring the *target itself*
+    // through that legacy path collapses its TrustNodeId to a P2PKH key, which
+    // does not match edges stored for non-P2PKH destinations (P2SH, P2WPKH,
+    // P2WSH, quantum) and spuriously returns 0 — masking a valid transitive
+    // trust result. We therefore take the target's own contribution from the
+    // type-preserving individualReputation above, and only fold in *other*
+    // cluster members via the legacy path (those are genuinely distinct
+    // addresses surfaced by on-chain clustering, which is itself uint160-based).
     double worstReputation = individualReputation;
     uint160 worstMember = targetAddress;
     
     for (const uint160& member : clusterMembers) {
+        if (member == targetAddress) {
+            // The target is already scored type-correctly via individualReputation.
+            continue;
+        }
         double memberRep = trustGraph.GetWeightedReputation(viewerAddress, member, maxDepth);
         if (memberRep < worstReputation) {
             worstReputation = memberRep;
@@ -1692,8 +1703,24 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         }
     }
     
-    // Check for negative trust in cluster
-    bool hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetAddress);
+    // Effective (headline) reputation: the cluster minimum, seeded from the
+    // type-correct individual reputation of the target.
+    double effectiveReputation = worstReputation;
+    
+    // Check for negative trust in cluster. Evaluate the target itself through
+    // the type-preserving incoming edges (so non-P2PKH targets are handled
+    // correctly), then fall back to the cluster-wide (legacy) check for the
+    // remaining members.
+    bool hasNegativeTrust = false;
+    for (const auto& edge : trustGraph.GetIncomingTrust(targetNode)) {
+        if (!edge.slashed && edge.trustWeight < 0) {
+            hasNegativeTrust = true;
+            break;
+        }
+    }
+    if (!hasNegativeTrust) {
+        hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetAddress);
+    }
     
     // Find trust paths (for the target address specifically), keyed by the wide
     // TrustNodeId.
@@ -1703,8 +1730,10 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     result.pushKV("target", targetStr);
     // Echo viewer as a base58 address, not uint160 hex (Property 2, Requirement 2.8).
     result.pushKV("viewer", viewerStr);
-    // Use cluster-aggregated reputation as the main score (Requirement 4.4)
-    result.pushKV("reputation", std::min(clusterReputation, worstReputation));
+    // Use cluster-aggregated reputation as the main score (Requirement 4.4).
+    // effectiveReputation is the cluster minimum seeded from the type-correct
+    // individual reputation (see the computation above).
+    result.pushKV("reputation", effectiveReputation);
     result.pushKV("individual_reputation", individualReputation);
     result.pushKV("paths_found", (int64_t)paths.size());
     result.pushKV("max_depth", maxDepth);
