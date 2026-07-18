@@ -363,17 +363,90 @@ double TrustGraph::GetWeightedReputation(
         return count > 0 ? (sum / count) : 0.0;
     }
     
-    // Find all trust paths from viewer to target
-    std::vector<TrustPath> paths = FindTrustPaths(viewer, target, maxDepth);
-    
-    if (paths.empty()) {
-        // No trust path found - use unweighted global reputation
-        // (similar to current system)
-        std::vector<TrustEdge> incoming = GetIncomingTrust(target);
-        if (incoming.empty()) {
-            return 0.0;
+    // viewer != target: personalized, transitive reputation.
+    //
+    // Model: the viewer's trust of the target is the trust the viewer places in
+    // each *intermediary* that has a direct opinion (trust edge) about the
+    // target, multiplied by that intermediary's signed opinion of the target,
+    // aggregated over every intermediary the viewer can reach through a POSITIVE
+    // trust path:
+    //
+    //   score(viewer -> target)
+    //       = sum_X [ opinion(X -> target) * confidence(viewer -> X) ]
+    //         / sum_X [ confidence(viewer -> X) ]
+    //
+    // where confidence(viewer -> X) in (0, 1] is the strength of the strongest
+    // positive trust path from the viewer to X (the product of the normalized
+    // hop weights), and opinion(X -> target) is the signed weight (-100..100) of
+    // X's direct trust edge to the target.
+    //
+    // Web-of-Trust consequences:
+    //   * A trusted intermediary's NEGATIVE opinion lowers the viewer's trust of
+    //     the target: if A trusts B and B has a bad opinion of C (B -> C < 0),
+    //     then A's trust of C is worse.
+    //   * Trust is never routed *through* a distrusted node: the viewer -> X
+    //     sub-paths traverse positive edges only (FindTrustPaths drops edges with
+    //     weight < 10), so an intermediary the viewer does not trust contributes
+    //     nothing.
+    //   * A direct edge from the viewer to the target counts at full confidence.
+    //
+    // This is deliberately confined to the reputation *score*. The path-finding
+    // primitive (FindTrustPaths) keeps its positive-only semantics, so consumers
+    // that rely on trust-path existence (e.g. HAT WoT-connection detection) are
+    // unaffected.
+    std::vector<TrustEdge> incoming = GetIncomingTrust(target);
+    if (incoming.empty()) {
+        return 0.0; // Nobody has expressed an opinion about the target yet.
+    }
+
+    // Fetch the target's bonded votes once (may be empty). BondedVote records
+    // are keyed by legacy uint160; use the low-20-byte value of the target.
+    std::vector<BondedVote> votes = GetVotesForAddress(target.ToUint160());
+
+    double weightedSum = 0.0;
+    double totalConfidence = 0.0;
+
+    for (const auto& edge : incoming) {
+        if (edge.slashed) {
+            continue;
         }
-        
+
+        // How strongly does the viewer trust this intermediary (edge.fromAddress)?
+        double confidence = 0.0;
+        if (edge.fromAddress == viewer) {
+            // Direct opinion expressed by the viewer about the target.
+            confidence = 1.0;
+        } else if (maxDepth > 1) {
+            // Indirect: strongest positive trust path viewer -> intermediary.
+            // Bound the sub-path length so the full viewer -> X -> target chain
+            // stays within maxDepth.
+            std::vector<TrustPath> subPaths =
+                FindTrustPaths(viewer, edge.fromAddress, maxDepth - 1);
+            for (const auto& sp : subPaths) {
+                if (sp.totalWeight > confidence) {
+                    confidence = sp.totalWeight; // strongest confidence in (0, 1]
+                }
+            }
+        }
+
+        // The viewer cannot reach this intermediary through positive trust, so
+        // it contributes nothing (you do not inherit opinions you cannot vouch
+        // for).
+        if (confidence <= 0.0) {
+            continue;
+        }
+
+        // Signed opinion of the intermediary about the target (-100..100).
+        double opinion = static_cast<double>(edge.trustWeight);
+        weightedSum += opinion * confidence;
+        totalConfidence += confidence;
+    }
+
+    if (totalConfidence <= 0.0) {
+        // No intermediary reachable through positive trust has an opinion about
+        // the target. Fall back to the unweighted global reputation so the score
+        // still reflects the crowd's view (matching the previous behaviour when
+        // no trust path existed).
         double sum = 0.0;
         int count = 0;
         for (const auto& edge : incoming) {
@@ -384,53 +457,19 @@ double TrustGraph::GetWeightedReputation(
         }
         return count > 0 ? (sum / count) : 0.0;
     }
-    
-    // Calculate weighted reputation derived from the trust-path weights.
-    //
-    // Each discovered path contributes its final-hop trust weight (the trust
-    // the last intermediary places directly in the target), scaled by the path
-    // strength (path.totalWeight, the product of the normalized hop weights in
-    // [0, 1]). This yields a non-zero score whenever a qualifying path exists,
-    // even in the absence of any BondedVote records at the target.
-    //
-    // The final-hop weight is on the same -100..100 scale as the self-view
-    // average returned by the viewer == target branch above, so the aggregate
-    // is normalized to that same scale.
-    //
-    // BondedVote records at the target are still incorporated when present:
-    // each non-slashed vote is added as an additional path-strength-weighted
-    // sample, but they are not required to produce a non-zero result.
-    double weightedSum = 0.0;
-    double totalWeight = 0.0;
 
-    // Fetch the target's bonded votes once (may be empty). BondedVote records
-    // are keyed by legacy uint160; use the low-20-byte value of the target.
-    std::vector<BondedVote> votes = GetVotesForAddress(target.ToUint160());
-
-    for (const auto& path : paths) {
-        // Path strength in [0, 1]; skip degenerate/empty paths.
-        double pathWeight = path.totalWeight;
-        if (pathWeight <= 0.0 || path.weights.empty()) {
-            continue;
-        }
-
-        // Base contribution: the target's trust as seen through this path,
-        // taken from the final hop's trust weight (-100..100 scale).
-        double finalHopWeight = static_cast<double>(path.weights.back());
-        weightedSum += finalHopWeight * pathWeight;
-        totalWeight += pathWeight;
-
-        // Additional contributions from bonded votes at the target, when present.
-        for (const auto& vote : votes) {
-            if (!vote.slashed) {
-                weightedSum += vote.voteValue * pathWeight;
-                totalWeight += pathWeight;
-            }
+    // Incorporate bonded votes at the target, when present. Each non-slashed
+    // vote is a staked opinion about the target; add it as one further sample at
+    // full weight so it is comparable to a single trusted opinion.
+    for (const auto& vote : votes) {
+        if (!vote.slashed) {
+            weightedSum += static_cast<double>(vote.voteValue);
+            totalConfidence += 1.0;
         }
     }
 
-    // Return the path-strength-weighted average on the -100..100 scale.
-    return totalWeight > 0.0 ? (weightedSum / totalWeight) : 0.0;
+    // Confidence-weighted average on the -100..100 scale.
+    return totalConfidence > 0.0 ? (weightedSum / totalConfidence) : 0.0;
 }
 
 double TrustGraph::GetWeightedReputation(

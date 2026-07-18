@@ -44,6 +44,14 @@ Implementation notes
   trust off-chain to the target's wallet cluster. It is exercised here to prove
   those propagation records do not corrupt the canonical enumeration/counting.
 
+Negative / distrust propagation
+-------------------------------
+The final phase verifies transitive *distrust*: a trusted intermediary's
+negative opinion of a target lowers the viewer's trust of that target (if A
+trusts B and B distrusts C, then A distrusts C), positive and negative opinions
+from several equally trusted intermediaries aggregate to a confidence-weighted
+average, and trust is never routed *through* a distrusted intermediary.
+
 _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12_
 """
 
@@ -91,7 +99,20 @@ class WoTFixesTest(BitcoinTestFramework):
         # not corrupt the canonical listing/counting.
         self.check_onchain_propagation_does_not_corrupt()
 
+        # Verify negative / distrust propagation semantics: a trusted
+        # intermediary's bad opinion of a target lowers the viewer's trust of
+        # that target, and trust is never routed through a distrusted node.
+        self.check_negative_trust_propagation()
+
         self.log.info("All Web-of-Trust single-wallet end-to-end flows passed")
+
+    def assert_close(self, actual, expected, tol=0.5):
+        """Assert a floating-point reputation score is within ``tol`` of the
+        expected value (path strengths are products of normalized weights, so
+        exact float equality is not reliable)."""
+        actual = float(actual)
+        assert_greater_than(expected + tol, actual)
+        assert_greater_than(actual, expected - tol)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -277,6 +298,88 @@ class WoTFixesTest(BitcoinTestFramework):
         self.log.info("  on-chain edge persisted canonically; foreign propagation "
                       "records excluded; count grew by exactly 1 to %d and consistent"
                       % after["count"])
+
+    # ------------------------------------------------------------------
+    # Negative / distrust propagation
+    # ------------------------------------------------------------------
+    def check_negative_trust_propagation(self):
+        """Transitive distrust through the Web-of-Trust.
+
+        A trusted intermediary's *negative* opinion of a target lowers the
+        viewer's trust of that target, mirroring the positive case: if A trusts
+        B and B has a bad opinion of C (B -> C < 0), then A's trust of C is
+        worse. Trust is never routed *through* a distrusted intermediary.
+
+            A -> B (+80)   A trusts B
+            B -> C (-80)   B distrusts C
+            B -> D (+80)   B trusts D
+
+        From A's perspective C is seen as negative (A adopts B's distrust) and D
+        as positive (A adopts B's trust). Adding a second, equally trusted
+        intermediary E with the opposite opinion of C balances A's view back
+        toward neutral. Finally, a distrusted intermediary's opinion is not
+        inherited at all.
+        """
+        node = self.nodes[0]
+        self.log.info("=== Web-of-Trust negative / distrust propagation ===")
+
+        A = self.make_address("legacy")
+        B = self.make_address("legacy")
+        C = self.make_address("legacy")
+        D = self.make_address("legacy")
+
+        # A trusts B; B distrusts C; B trusts D. addtrust writes the edge
+        # directly (no on-chain funding required for the canonical graph).
+        node.addtrust(B, 80, 2, "A trusts B (neg-test)", A)
+        node.addtrust(C, -80, 2, "B distrusts C (neg-test)", B)
+        node.addtrust(D, 80, 2, "B trusts D (neg-test)", B)
+
+        # A's view of C: distrust propagates through the trusted intermediary B.
+        # A single intermediary contributes its signed opinion (-80) directly.
+        rep_c = node.getweightedreputation(C, A, 3)
+        assert_greater_than(0.0, float(rep_c["individual_reputation"]))   # strictly negative
+        self.assert_close(rep_c["individual_reputation"], -80.0)
+        assert_equal(rep_c["has_negative_trust"], True)
+        self.log.info("  A's view of C (B distrusts C): individual_reputation=%s, has_negative_trust=%s"
+                      % (rep_c["individual_reputation"], rep_c["has_negative_trust"]))
+
+        # A's view of D: the positive opinion propagates the same way.
+        rep_d = node.getweightedreputation(D, A, 3)
+        assert_greater_than(float(rep_d["individual_reputation"]), 0.0)   # strictly positive
+        self.assert_close(rep_d["individual_reputation"], 80.0)
+        assert_equal(rep_d["has_negative_trust"], False)
+        self.log.info("  A's view of D (B trusts D): individual_reputation=%s"
+                      % rep_d["individual_reputation"])
+
+        # Conflicting opinions from two equally trusted intermediaries average
+        # out: B (-80) and E (+80), both reachable at equal confidence -> ~0.
+        E = self.make_address("legacy")
+        node.addtrust(E, 80, 2, "A trusts E (neg-test)", A)
+        node.addtrust(C, 80, 2, "E trusts C (neg-test)", E)
+        rep_c2 = node.getweightedreputation(C, A, 3)
+        self.assert_close(rep_c2["individual_reputation"], 0.0)
+        # A negative edge still points into C, so the warning flag stays set.
+        assert_equal(rep_c2["has_negative_trust"], True)
+        self.log.info("  A's view of C after E also opines (+80): individual_reputation=%s (balanced)"
+                      % rep_c2["individual_reputation"])
+
+        # Trust is never routed THROUGH a distrusted intermediary. F1 distrusts
+        # F2, so F2's positive opinion of F3 is not inherited by F1; F3's only
+        # trust comes from F2, so F1 falls back to F3's (positive) global
+        # reputation. The distrust of F2 does not taint F3.
+        F1 = self.make_address("legacy")
+        F2 = self.make_address("legacy")
+        F3 = self.make_address("legacy")
+        node.addtrust(F2, -80, 2, "F1 distrusts F2 (neg-test)", F1)
+        node.addtrust(F3, 80, 2, "F2 trusts F3 (neg-test)", F2)
+        rep_f3 = node.getweightedreputation(F3, F1, 3)
+        # No positive path F1 -> F2 exists, so F2's opinion is not routed and the
+        # score is the global fallback (positive), never a propagated negative.
+        assert_greater_than_or_equal(float(rep_f3["individual_reputation"]), 0.0)
+        self.log.info("  F1 (distrusts F2) view of F3: individual_reputation=%s (distrust not routed through F2)"
+                      % rep_f3["individual_reputation"])
+
+        self.log.info("  negative / distrust propagation behaves correctly")
 
 
 if __name__ == '__main__':
