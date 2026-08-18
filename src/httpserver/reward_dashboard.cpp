@@ -291,7 +291,7 @@ std::string GetRewardDistributionJSON(const std::string& disputeIdStr) {
                     size_t voterIdx = 0;
                     for (const auto& [voter, amount] : dist.voterRewards) {
                         json << "    {\n";
-                        json << "      \"address\": \"" << EncodeDestination(CKeyID(voter)) << "\",\n";
+                        json << "      \"address\": \"" << EncodeDestination(voter.ToDestination()) << "\",\n";
                         json << "      \"amount\": " << amount << ",\n";
                         json << "      \"amount_formatted\": \"" << FormatCAS(amount) << "\"\n";
                         json << "    }";
@@ -357,7 +357,7 @@ std::string GetDisputesJSON(const std::string& status, size_t limit) {
                 const auto& dispute = filtered[i];
                 json << "    {\n";
                 json << "      \"dispute_id\": \"" << dispute.disputeId.GetHex() << "\",\n";
-                json << "      \"challenger\": \"" << EncodeDestination(CKeyID(dispute.challenger)) << "\",\n";
+                json << "      \"challenger\": \"" << EncodeDestination(dispute.challenger.ToDestination()) << "\",\n";
                 json << "      \"target_vote\": \"" << dispute.originalVoteTx.GetHex() << "\",\n";
                 json << "      \"challenge_bond\": " << dispute.challengeBond << ",\n";
                 json << "      \"challenge_bond_formatted\": \"" << FormatCAS(dispute.challengeBond) << "\",\n";
@@ -417,7 +417,7 @@ std::string GetDisputeDetailJSON(const std::string& disputeIdStr) {
                 ss >> dispute;
                 
                 json << "  \"dispute_id\": \"" << dispute.disputeId.GetHex() << "\",\n";
-                json << "  \"challenger\": \"" << EncodeDestination(CKeyID(dispute.challenger)) << "\",\n";
+                json << "  \"challenger\": \"" << EncodeDestination(dispute.challenger.ToDestination()) << "\",\n";
                 json << "  \"target_vote\": \"" << dispute.originalVoteTx.GetHex() << "\",\n";
                 json << "  \"challenge_bond\": " << dispute.challengeBond << ",\n";
                 json << "  \"challenge_bond_formatted\": \"" << FormatCAS(dispute.challengeBond) << "\",\n";

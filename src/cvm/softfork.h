@@ -117,9 +117,15 @@ struct CVMCallData {
 
 /**
  * Reputation vote data in OP_RETURN (Simple, no bond)
+ *
+ * Canonical one-layout body (no version byte):
+ *   target:TNI33, vote:int16, timestamp:uint32  => exactly 39 bytes
+ * where TNI33 is the 33-byte canonical TrustNodeId (1 type byte + 32 data
+ * bytes). The identity is a wide, lossless user identity able to carry every
+ * supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/quantum).
  */
 struct CVMReputationData {
-    uint160 targetAddress;         // Address being voted on
+    TrustNodeId targetAddress;     // Address being voted on (wide user identity)
     int16_t voteValue;             // Vote value (-100 to +100)
     uint32_t timestamp;            // Vote timestamp
     
@@ -181,8 +187,12 @@ struct CVMTrustEdgeData {
  * Bond locked in separate output, can be slashed by DAO
  */
 struct CVMBondedVoteData {
-    uint160 voter;                 // Who is voting
-    uint160 target;                // Who is being voted on
+    // Canonical one-layout body (no version byte):
+    //   voter:TNI33, target:TNI33, vote:int16, bond:int64, timestamp:uint32
+    //   => exactly 80 bytes. Both identities are wide, lossless user
+    //   identities carrying every supported destination type.
+    TrustNodeId voter;             // Who is voting (wide user identity)
+    TrustNodeId target;            // Who is being voted on (wide user identity)
     int16_t voteValue;             // Vote value (-100 to +100)
     CAmount bondAmount;            // CAS bonded (locked in output)
     uint32_t timestamp;            // When vote was cast
@@ -198,10 +208,15 @@ struct CVMBondedVoteData {
  * DAO members will vote to slash or keep the bond
  */
 struct CVMDAODisputeData {
-    uint256 originalVoteTxHash;    // Vote being disputed
-    uint160 challenger;            // Who challenges
+    // Canonical one-layout body (no version byte):
+    //   originalVoteTx:uint256, challenger:TNI33, bond:int64, timestamp:uint32
+    //   => exactly 77 bytes. The originalVoteTx hash stays uint256; only the
+    //   challenger user identity is a wide, lossless TrustNodeId. The
+    //   human-readable `reason` is NOT serialized into the OP_RETURN body.
+    uint256 originalVoteTxHash;    // Vote being disputed (protocol hash)
+    TrustNodeId challenger;        // Who challenges (wide user identity)
     CAmount challengeBond;         // Challenger's bond
-    std::string reason;            // Challenge reason (max 64 chars)
+    std::string reason;            // Challenge reason (not serialized on-chain)
     uint32_t timestamp;
     
     std::vector<uint8_t> Serialize() const;
@@ -215,8 +230,12 @@ struct CVMDAODisputeData {
  * Stake-weighted voting
  */
 struct CVMDAOVoteData {
-    uint256 disputeId;             // Dispute being voted on
-    uint160 daoMember;             // DAO member voting
+    // Canonical one-layout body (no version byte):
+    //   disputeId:uint256, member:TNI33, support:uint8, stake:int64,
+    //   timestamp:uint32  => exactly 78 bytes. The disputeId stays uint256;
+    //   only the DAO member user identity is a wide, lossless TrustNodeId.
+    uint256 disputeId;             // Dispute being voted on (protocol hash)
+    TrustNodeId daoMember;         // DAO member voting (wide user identity)
     bool supportSlash;             // true = slash, false = keep
     CAmount stake;                 // Amount staked
     uint32_t timestamp;

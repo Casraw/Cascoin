@@ -30,6 +30,11 @@ BehaviorMetrics::BehaviorMetrics()
 }
 
 BehaviorMetrics::BehaviorMetrics(const uint160& addr)
+    : BehaviorMetrics(TrustNodeId::FromLegacyUint160(addr))
+{
+}
+
+BehaviorMetrics::BehaviorMetrics(const TrustNodeId& addr)
     : address(addr),
       total_trades(0),
       successful_trades(0),
@@ -67,7 +72,7 @@ void BehaviorMetrics::AddTrade(const TradeRecord& trade) {
     activity_timestamps.push_back(trade.timestamp);
     
     LogPrint(BCLog::ALL, "BehaviorMetrics: Added trade for %s (total: %d, partners: %d)\n",
-             address.ToString(), total_trades, unique_partners.size());
+             address.ToKeyString(), total_trades, unique_partners.size());
 }
 
 void BehaviorMetrics::AddActivity(int64_t timestamp) {
@@ -82,7 +87,7 @@ void BehaviorMetrics::UpdateScores() {
     base_reputation = CalculateBaseReputation();
     
     LogPrint(BCLog::ALL, "BehaviorMetrics: Updated scores for %s: diversity=%.2f, volume=%.2f, pattern=%.2f, base=%d\n",
-             address.ToString(), diversity_score, volume_score, pattern_score, base_reputation);
+             address.ToKeyString(), diversity_score, volume_score, pattern_score, base_reputation);
 }
 
 double BehaviorMetrics::CalculateDiversityScore() const {
@@ -98,7 +103,7 @@ double BehaviorMetrics::CalculateDiversityScore() const {
     
     if (score < 0.3) {
         LogPrintf("BehaviorMetrics: LOW DIVERSITY WARNING for %s: %.2f (%d partners, %d trades)\n",
-                 address.ToString(), score, unique_partners.size(), total_trades);
+                 address.ToKeyString(), score, unique_partners.size(), total_trades);
     }
     
     return score;
@@ -151,7 +156,7 @@ double BehaviorMetrics::DetectSuspiciousPattern() const {
     // CV < 0.5 = too regular (suspicious!)
     if (cv < 0.5) {
         LogPrintf("BehaviorMetrics: SUSPICIOUS PATTERN detected for %s: CV=%.2f (mean=%.0fs, stddev=%.0fs)\n",
-                 address.ToString(), cv, mean, std_dev);
+                 address.ToKeyString(), cv, mean, std_dev);
         return 0.5;  // 50% penalty!
     }
     
@@ -222,7 +227,7 @@ void BehaviorMetrics::AddFraudRecord(const uint256& txHash, int16_t penalty, int
     fraud_score = CalculateFraudScore();
     
     LogPrint(BCLog::CVM, "BehaviorMetrics: Added fraud record for %s (count=%d, penalty=%d, score=%.2f)\n",
-             address.ToString(), fraud_count, penalty, fraud_score);
+             address.ToKeyString(), fraud_count, penalty, fraud_score);
 }
 
 bool BehaviorMetrics::HasFraudHistory() const {

@@ -8,6 +8,7 @@
 #include <primitives/transaction.h>
 #include <amount.h>
 #include <uint256.h>
+#include <cvm/trustnodeid.h>
 #include <vector>
 #include <string>
 
@@ -35,7 +36,8 @@ public:
      * - Output 1: Change back to wallet
      * 
      * @param wallet Wallet to fund transaction
-     * @param targetAddress Address being voted on
+     * @param targetNode Wide user identity being voted on (TrustNodeId). Carries
+     *        every supported destination type without truncation.
      * @param voteValue Vote value (-100 to +100)
      * @param reason Human-readable reason
      * @param fee Returns calculated fee
@@ -44,7 +46,7 @@ public:
      */
     static CMutableTransaction BuildVoteTransaction(
         CWallet* wallet,
-        const uint160& targetAddress,
+        const TrustNodeId& targetNode,
         int16_t voteValue,
         const std::string& reason,
         CAmount& fee,
@@ -146,7 +148,8 @@ public:
      * - Output 2: Change back to wallet
      * 
      * @param wallet Wallet to fund transaction
-     * @param targetAddress Address being voted on
+     * @param targetNode Wide user identity being voted on (TrustNodeId). Carries
+     *        every supported destination type without truncation.
      * @param voteValue Vote value (-100 to +100)
      * @param bondAmount CAS to lock as bond
      * @param reason Human-readable reason
@@ -156,7 +159,7 @@ public:
      */
     static CMutableTransaction BuildBondedVoteTransaction(
         CWallet* wallet,
-        const uint160& targetAddress,
+        const TrustNodeId& targetNode,
         int16_t voteValue,
         CAmount bondAmount,
         const std::string& reason,

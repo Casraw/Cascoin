@@ -27,6 +27,24 @@
 
 BOOST_FIXTURE_TEST_SUITE(challenger_reward_tests, BasicTestingSetup)
 
+// Reward-system user identities are now wide TrustNodeId (trustnodeid full
+// migration, Wave 6). These helpers build canonical P2PKH-shaped identities from
+// the fixed/ random uint160 values the reward tests previously used, keeping the
+// existing round-trip / conservation / idempotence properties intact.
+static CVM::TrustNodeId TniFromHex(const char* hex)
+{
+    uint160 u;
+    u.SetHex(hex);
+    return CVM::TrustNodeId::FromLegacyUint160(u);
+}
+
+static CVM::TrustNodeId TniRand20()
+{
+    uint160 u;
+    GetRandBytes(u.begin(), 20);
+    return CVM::TrustNodeId::FromLegacyUint160(u);
+}
+
 // ============================================================================
 // Task 1.2: Property Test for Percentage Validation
 // Property 4: Reward Percentage Validation
@@ -212,8 +230,7 @@ BOOST_AUTO_TEST_CASE(pending_reward_serialization)
     uint256 disputeId;
     disputeId.SetHex("0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
     
-    uint160 recipient;
-    recipient.SetHex("0x1234567890abcdef1234567890abcdef12345678");
+    CVM::TrustNodeId recipient = TniFromHex("0x1234567890abcdef1234567890abcdef12345678");
     
     uint256 rewardId = CVM::PendingReward::GenerateRewardId(
         disputeId, recipient, CVM::RewardType::CHALLENGER_BOUNTY);
@@ -256,8 +273,7 @@ BOOST_AUTO_TEST_CASE(pending_reward_claimed_serialization)
     uint256 disputeId;
     disputeId.SetHex("0x1111111111111111111111111111111111111111111111111111111111111111");
     
-    uint160 recipient;
-    recipient.SetHex("0x2222222222222222222222222222222222222222");
+    CVM::TrustNodeId recipient = TniFromHex("0x2222222222222222222222222222222222222222");
     
     uint256 rewardId = CVM::PendingReward::GenerateRewardId(
         disputeId, recipient, CVM::RewardType::DAO_VOTER_REWARD);
@@ -306,8 +322,7 @@ BOOST_AUTO_TEST_CASE(reward_type_enum_serialization)
     uint256 disputeId;
     disputeId.SetHex("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     
-    uint160 recipient;
-    recipient.SetHex("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    CVM::TrustNodeId recipient = TniFromHex("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     
     for (const auto& type : types) {
         uint256 rewardId = CVM::PendingReward::GenerateRewardId(disputeId, recipient, type);
@@ -345,11 +360,10 @@ BOOST_AUTO_TEST_CASE(reward_distribution_serialization)
     original.burnedAmount = 200 * COIN;
     original.distributedTime = 1234567890;
     
-    // Add some voter rewards
-    uint160 voter1, voter2, voter3;
-    voter1.SetHex("0x1111111111111111111111111111111111111111");
-    voter2.SetHex("0x2222222222222222222222222222222222222222");
-    voter3.SetHex("0x3333333333333333333333333333333333333333");
+    // Add some voter rewards (wide TrustNodeId keys)
+    CVM::TrustNodeId voter1 = TniFromHex("0x1111111111111111111111111111111111111111");
+    CVM::TrustNodeId voter2 = TniFromHex("0x2222222222222222222222222222222222222222");
+    CVM::TrustNodeId voter3 = TniFromHex("0x3333333333333333333333333333333333333333");
     
     original.voterRewards[voter1] = 100 * COIN;
     original.voterRewards[voter2] = 150 * COIN;
@@ -397,8 +411,7 @@ BOOST_AUTO_TEST_CASE(reward_distribution_failed_challenge_serialization)
     original.distributedTime = 1234567890;
     
     // Wrongly accused gets compensation (stored as voter reward)
-    uint160 wronglyAccused;
-    wronglyAccused.SetHex("0x4444444444444444444444444444444444444444");
+    CVM::TrustNodeId wronglyAccused = TniFromHex("0x4444444444444444444444444444444444444444");
     original.voterRewards[wronglyAccused] = 70 * COIN;  // 70% compensation
     
     // Serialize
@@ -455,9 +468,8 @@ BOOST_AUTO_TEST_CASE(reward_id_uniqueness)
     disputeId1.SetHex("0x1111111111111111111111111111111111111111111111111111111111111111");
     disputeId2.SetHex("0x2222222222222222222222222222222222222222222222222222222222222222");
     
-    uint160 recipient1, recipient2;
-    recipient1.SetHex("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
-    recipient2.SetHex("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+    CVM::TrustNodeId recipient1 = TniFromHex("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    CVM::TrustNodeId recipient2 = TniFromHex("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
     
     // Same dispute, same recipient, different types should produce different IDs
     uint256 id1 = CVM::PendingReward::GenerateRewardId(
@@ -495,8 +507,7 @@ BOOST_AUTO_TEST_CASE(pending_reward_is_valid)
     uint256 disputeId;
     disputeId.SetHex("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
     
-    uint160 recipient;
-    recipient.SetHex("0x1234567890abcdef1234567890abcdef12345678");
+    CVM::TrustNodeId recipient = TniFromHex("0x1234567890abcdef1234567890abcdef12345678");
     
     uint256 rewardId = CVM::PendingReward::GenerateRewardId(
         disputeId, recipient, CVM::RewardType::CHALLENGER_BOUNTY);
@@ -513,8 +524,8 @@ BOOST_AUTO_TEST_CASE(pending_reward_is_valid)
         CVM::RewardType::CHALLENGER_BOUNTY, 1234567890);
     BOOST_CHECK(!zeroAmount.IsValid());
     
-    // Invalid: null recipient
-    uint160 nullRecipient;  // Default constructed is null
+    // Invalid: null recipient (default-constructed TrustNodeId has type tag 0)
+    CVM::TrustNodeId nullRecipient;
     CVM::PendingReward nullRecipientReward(
         rewardId, disputeId, nullRecipient, 100 * COIN,
         CVM::RewardType::CHALLENGER_BOUNTY, 1234567890);
@@ -1205,8 +1216,8 @@ CVM::DAODispute CreateTestDispute(bool slashDecision, CAmount challengeBond,
     // Generate random dispute ID
     GetRandBytes(dispute.disputeId.begin(), 32);
     
-    // Generate random challenger
-    GetRandBytes(dispute.challenger.begin(), 20);
+    // Generate random challenger (wide TrustNodeId identity)
+    dispute.challenger = TniRand20();
     
     dispute.challengeBond = challengeBond;
     dispute.resolved = true;
@@ -1216,8 +1227,7 @@ CVM::DAODispute CreateTestDispute(bool slashDecision, CAmount challengeBond,
     
     // Add voters on slash side (vote = true)
     for (int i = 0; i < numSlashVoters; i++) {
-        uint160 voter;
-        GetRandBytes(voter.begin(), 20);
+        CVM::TrustNodeId voter = TniRand20();
         
         CAmount stake = COIN + GetRandInt(100) * COIN;  // 1-100 CAS
         
@@ -1227,8 +1237,7 @@ CVM::DAODispute CreateTestDispute(bool slashDecision, CAmount challengeBond,
     
     // Add voters on keep side (vote = false)
     for (int i = 0; i < numKeepVoters; i++) {
-        uint160 voter;
-        GetRandBytes(voter.begin(), 20);
+        CVM::TrustNodeId voter = TniRand20();
         
         CAmount stake = COIN + GetRandInt(100) * COIN;  // 1-100 CAS
         
@@ -1336,9 +1345,8 @@ BOOST_AUTO_TEST_CASE(property_conservation_of_funds_failed_challenge)
         CVM::DAODispute dispute = CreateTestDispute(false, challengerBond, 
                                                      GetRandInt(5), GetRandInt(5));
         
-        // Generate random original voter address
-        uint160 originalVoter;
-        GetRandBytes(originalVoter.begin(), 20);
+        // Generate random original voter address (wide TrustNodeId identity)
+        CVM::TrustNodeId originalVoter = TniRand20();
         
         // Distribute rewards
         bool success = distributor.DistributeFailedChallengeRewards(dispute, originalVoter);
@@ -1552,8 +1560,7 @@ BOOST_AUTO_TEST_CASE(property_pending_rewards_completeness)
     // Run 100+ iterations
     for (int i = 0; i < 150; i++) {
         // Create multiple disputes for the same challenger
-        uint160 challenger;
-        GetRandBytes(challenger.begin(), 20);
+        CVM::TrustNodeId challenger = TniRand20();
         
         int numDisputes = 1 + GetRandInt(5);  // 1-5 disputes
         std::set<uint256> expectedRewardIds;
@@ -1574,8 +1581,7 @@ BOOST_AUTO_TEST_CASE(property_pending_rewards_completeness)
             
             // Add some voters
             for (int v = 0; v < 3; v++) {
-                uint160 voter;
-                GetRandBytes(voter.begin(), 20);
+                CVM::TrustNodeId voter = TniRand20();
                 dispute.daoVotes[voter] = true;
                 dispute.daoStakes[voter] = 10 * COIN;
             }
@@ -2240,8 +2246,7 @@ BOOST_AUTO_TEST_CASE(rpc_getpendingrewards_data)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2251,8 +2256,7 @@ BOOST_AUTO_TEST_CASE(rpc_getpendingrewards_data)
     dispute.slashDecision = true;
     
     // Add a winning voter
-    uint160 voter;
-    GetRandBytes(voter.begin(), 20);
+    CVM::TrustNodeId voter = TniRand20();
     dispute.daoVotes[voter] = true;  // Voted for slash
     dispute.daoStakes[voter] = 50 * COIN;
     
@@ -2311,11 +2315,9 @@ BOOST_AUTO_TEST_CASE(rpc_claimreward_cases)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
-    uint160 wrongAddress;
-    GetRandBytes(wrongAddress.begin(), 20);
+    CVM::TrustNodeId wrongAddress = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2372,8 +2374,7 @@ BOOST_AUTO_TEST_CASE(rpc_claimallrewards_batch)
     CVM::RewardDistributor distributor(db, config);
     
     // Create multiple disputes with rewards for the same challenger
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CAmount totalExpected = 0;
     int numDisputes = 3;
@@ -2445,8 +2446,7 @@ BOOST_AUTO_TEST_CASE(rpc_getrewarddistribution_breakdown)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2455,11 +2455,10 @@ BOOST_AUTO_TEST_CASE(rpc_getrewarddistribution_breakdown)
     dispute.resolved = true;
     dispute.slashDecision = true;
     
-    // Add multiple winning voters with different stakes
-    uint160 voter1, voter2, voter3;
-    GetRandBytes(voter1.begin(), 20);
-    GetRandBytes(voter2.begin(), 20);
-    GetRandBytes(voter3.begin(), 20);
+    // Add multiple winning voters with different stakes (wide TrustNodeId keys)
+    CVM::TrustNodeId voter1 = TniRand20();
+    CVM::TrustNodeId voter2 = TniRand20();
+    CVM::TrustNodeId voter3 = TniRand20();
     
     dispute.daoVotes[voter1] = true;
     dispute.daoVotes[voter2] = true;
@@ -2686,8 +2685,7 @@ BOOST_AUTO_TEST_CASE(rpc_getdispute_with_rewards)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2795,8 +2793,7 @@ BOOST_AUTO_TEST_CASE(edge_case_no_voters_on_winning_side)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2808,9 +2805,8 @@ BOOST_AUTO_TEST_CASE(edge_case_no_voters_on_winning_side)
     dispute.resolvedTime = 1234567890;
     
     // Add voters only on the losing side (keep side)
-    uint160 voter1, voter2;
-    GetRandBytes(voter1.begin(), 20);
-    GetRandBytes(voter2.begin(), 20);
+    CVM::TrustNodeId voter1 = TniRand20();
+    CVM::TrustNodeId voter2 = TniRand20();
     
     dispute.daoVotes[voter1] = false;  // Vote to keep (losing side)
     dispute.daoVotes[voter2] = false;  // Vote to keep (losing side)
@@ -2872,8 +2868,7 @@ BOOST_AUTO_TEST_CASE(edge_case_all_voters_on_losing_side)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2886,8 +2881,7 @@ BOOST_AUTO_TEST_CASE(edge_case_all_voters_on_losing_side)
     
     // Add voters only on the losing side (keep side)
     for (int i = 0; i < 5; i++) {
-        uint160 voter;
-        GetRandBytes(voter.begin(), 20);
+        CVM::TrustNodeId voter = TniRand20();
         dispute.daoVotes[voter] = false;  // Vote to keep (losing side)
         dispute.daoStakes[voter] = (i + 1) * 20 * COIN;
     }
@@ -2937,8 +2931,7 @@ BOOST_AUTO_TEST_CASE(edge_case_zero_slashed_bond)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -2950,8 +2943,7 @@ BOOST_AUTO_TEST_CASE(edge_case_zero_slashed_bond)
     dispute.resolvedTime = 1234567890;
     
     // Add a winning voter
-    uint160 voter;
-    GetRandBytes(voter.begin(), 20);
+    CVM::TrustNodeId voter = TniRand20();
     dispute.daoVotes[voter] = true;  // Vote to slash (winning side)
     dispute.daoStakes[voter] = 50 * COIN;
     
@@ -3003,8 +2995,7 @@ BOOST_AUTO_TEST_CASE(edge_case_invalid_voter_address)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3015,8 +3006,8 @@ BOOST_AUTO_TEST_CASE(edge_case_invalid_voter_address)
     dispute.createdTime = 1234567800;
     dispute.resolvedTime = 1234567890;
     
-    // Use null/invalid voter address
-    uint160 invalidVoter;  // Default constructed is null
+    // Use null/invalid voter address (default-constructed TrustNodeId, type tag 0)
+    CVM::TrustNodeId invalidVoter;
     
     // Distribute rewards with invalid voter
     bool success = distributor.DistributeFailedChallengeRewards(dispute, invalidVoter);
@@ -3061,8 +3052,7 @@ BOOST_AUTO_TEST_CASE(edge_case_legacy_dispute_backward_compatibility)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3080,9 +3070,8 @@ BOOST_AUTO_TEST_CASE(edge_case_legacy_dispute_backward_compatibility)
     dispute.rewardsDistributed = false;
     
     // Add voters using legacy direct voting (not commit-reveal)
-    uint160 voter1, voter2;
-    GetRandBytes(voter1.begin(), 20);
-    GetRandBytes(voter2.begin(), 20);
+    CVM::TrustNodeId voter1 = TniRand20();
+    CVM::TrustNodeId voter2 = TniRand20();
     
     dispute.daoVotes[voter1] = true;   // Vote to slash (winning)
     dispute.daoVotes[voter2] = false;  // Vote to keep (losing)
@@ -3182,8 +3171,7 @@ BOOST_AUTO_TEST_CASE(edge_case_very_small_slashed_bond)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3195,8 +3183,7 @@ BOOST_AUTO_TEST_CASE(edge_case_very_small_slashed_bond)
     dispute.resolvedTime = 1234567890;
     
     // Add a winning voter
-    uint160 voter;
-    GetRandBytes(voter.begin(), 20);
+    CVM::TrustNodeId voter = TniRand20();
     dispute.daoVotes[voter] = true;
     dispute.daoStakes[voter] = 1;  // 1 satoshi stake
     
@@ -3250,8 +3237,7 @@ BOOST_AUTO_TEST_CASE(edge_case_large_amounts)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3264,8 +3250,7 @@ BOOST_AUTO_TEST_CASE(edge_case_large_amounts)
     
     // Add multiple winning voters with large stakes
     for (int i = 0; i < 10; i++) {
-        uint160 voter;
-        GetRandBytes(voter.begin(), 20);
+        CVM::TrustNodeId voter = TniRand20();
         dispute.daoVotes[voter] = true;
         dispute.daoStakes[voter] = 100000 * COIN;  // 100k CAS each
     }
@@ -3315,11 +3300,9 @@ BOOST_AUTO_TEST_CASE(edge_case_failed_challenge_valid_voter)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
-    uint160 originalVoter;
-    GetRandBytes(originalVoter.begin(), 20);
+    CVM::TrustNodeId originalVoter = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3384,8 +3367,7 @@ BOOST_AUTO_TEST_CASE(edge_case_single_voter_winning_side)
     uint256 disputeId;
     GetRandBytes(disputeId.begin(), 32);
     
-    uint160 challenger;
-    GetRandBytes(challenger.begin(), 20);
+    CVM::TrustNodeId challenger = TniRand20();
     
     CVM::DAODispute dispute;
     dispute.disputeId = disputeId;
@@ -3397,8 +3379,7 @@ BOOST_AUTO_TEST_CASE(edge_case_single_voter_winning_side)
     dispute.resolvedTime = 1234567890;
     
     // Add single winning voter
-    uint160 singleVoter;
-    GetRandBytes(singleVoter.begin(), 20);
+    CVM::TrustNodeId singleVoter = TniRand20();
     dispute.daoVotes[singleVoter] = true;  // Vote to slash (winning)
     dispute.daoStakes[singleVoter] = 50 * COIN;
     

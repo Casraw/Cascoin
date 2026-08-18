@@ -63,16 +63,25 @@ SecureHAT::SecureHAT(CVMDatabase& db)
 }
 
 int16_t SecureHAT::CalculateFinalTrust(
-    const uint160& target,
-    const uint160& viewer
+    const TrustNodeId& target,
+    const TrustNodeId& viewer
 ) {
     TrustBreakdown breakdown = CalculateWithBreakdown(target, viewer);
     return breakdown.final_score;
 }
 
-TrustBreakdown SecureHAT::CalculateWithBreakdown(
+int16_t SecureHAT::CalculateFinalTrust(
     const uint160& target,
     const uint160& viewer
+) {
+    // Legacy P2PKH wrapper: a bare uint160 is a legacy P2PKH-shaped identity.
+    return CalculateFinalTrust(TrustNodeId::FromLegacyUint160(target),
+                               TrustNodeId::FromLegacyUint160(viewer));
+}
+
+TrustBreakdown SecureHAT::CalculateWithBreakdown(
+    const TrustNodeId& target,
+    const TrustNodeId& viewer
 ) {
     TrustBreakdown breakdown;
     
@@ -181,19 +190,29 @@ TrustBreakdown SecureHAT::CalculateWithBreakdown(
     breakdown.final_score = std::max(int16_t(0), std::min(int16_t(100), breakdown.final_score));
     
     LogPrintf("SecureHAT: %s -> %d (B:%.2f W:%.2f E:%.2f T:%.2f)\n",
-              target.ToString(), breakdown.final_score,
+              target.ToKeyString(), breakdown.final_score,
               breakdown.secure_behavior, breakdown.secure_wot,
               breakdown.secure_economic, breakdown.secure_temporal);
     
     return breakdown;
 }
 
+TrustBreakdown SecureHAT::CalculateWithBreakdown(
+    const uint160& target,
+    const uint160& viewer
+) {
+    // Legacy P2PKH wrapper.
+    return CalculateWithBreakdown(TrustNodeId::FromLegacyUint160(target),
+                                  TrustNodeId::FromLegacyUint160(viewer));
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Component Getters
 // ═══════════════════════════════════════════════════════════════
 
-BehaviorMetrics SecureHAT::GetBehaviorMetrics(const uint160& address) {
-    std::string key = "behavior_" + address.ToString();
+BehaviorMetrics SecureHAT::GetBehaviorMetrics(const TrustNodeId& address) {
+    // One current typed layout keyed by the canonical ToKeyString() segment.
+    std::string key = "behavior_" + address.ToKeyString();
     std::vector<uint8_t> data;
     
     if (database.ReadGeneric(key, data)) {
@@ -201,7 +220,13 @@ BehaviorMetrics SecureHAT::GetBehaviorMetrics(const uint160& address) {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
             BehaviorMetrics metrics;
             ss >> metrics;
-            return metrics;
+            // Require complete stream consumption: reject trailing bytes.
+            if (!ss.empty()) {
+                LogPrintf("ERROR: Trailing bytes in BehaviorMetrics record for %s\n",
+                          address.ToKeyString());
+            } else {
+                return metrics;
+            }
         } catch (const std::exception& e) {
             LogPrintf("ERROR: Failed to deserialize BehaviorMetrics: %s\n", e.what());
         }
@@ -213,13 +238,13 @@ BehaviorMetrics SecureHAT::GetBehaviorMetrics(const uint160& address) {
     return metrics;
 }
 
-GraphMetrics SecureHAT::GetGraphMetrics(const uint160& address) {
+GraphMetrics SecureHAT::GetGraphMetrics(const TrustNodeId& address) {
     // Calculate on-demand (could be cached later)
     GraphMetrics metrics;
     metrics.address = address;
     
     // Cluster detection
-    std::set<uint160> suspicious = analyzer.DetectSuspiciousClusters();
+    std::set<TrustNodeId> suspicious = analyzer.DetectSuspiciousClusters();
     metrics.in_suspicious_cluster = suspicious.count(address) > 0;
     metrics.mutual_trust_ratio = analyzer.CalculateMutualTrustRatio(address);
     
@@ -231,8 +256,8 @@ GraphMetrics SecureHAT::GetGraphMetrics(const uint160& address) {
     return metrics;
 }
 
-StakeInfo SecureHAT::GetStakeInfo(const uint160& address) {
-    std::string key = "stake_" + address.ToString();
+StakeInfo SecureHAT::GetStakeInfo(const TrustNodeId& address) {
+    std::string key = "stake_" + address.ToKeyString();
     std::vector<uint8_t> data;
     
     if (database.ReadGeneric(key, data)) {
@@ -240,7 +265,12 @@ StakeInfo SecureHAT::GetStakeInfo(const uint160& address) {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
             StakeInfo info;
             ss >> info;
-            return info;
+            if (!ss.empty()) {
+                LogPrintf("ERROR: Trailing bytes in StakeInfo record for %s\n",
+                          address.ToKeyString());
+            } else {
+                return info;
+            }
         } catch (const std::exception& e) {
             LogPrintf("ERROR: Failed to deserialize StakeInfo: %s\n", e.what());
         }
@@ -250,8 +280,8 @@ StakeInfo SecureHAT::GetStakeInfo(const uint160& address) {
     return StakeInfo();
 }
 
-TemporalMetrics SecureHAT::GetTemporalMetrics(const uint160& address) {
-    std::string key = "temporal_" + address.ToString();
+TemporalMetrics SecureHAT::GetTemporalMetrics(const TrustNodeId& address) {
+    std::string key = "temporal_" + address.ToKeyString();
     std::vector<uint8_t> data;
     
     if (database.ReadGeneric(key, data)) {
@@ -259,7 +289,12 @@ TemporalMetrics SecureHAT::GetTemporalMetrics(const uint160& address) {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
             TemporalMetrics metrics;
             ss >> metrics;
-            return metrics;
+            if (!ss.empty()) {
+                LogPrintf("ERROR: Trailing bytes in TemporalMetrics record for %s\n",
+                          address.ToKeyString());
+            } else {
+                return metrics;
+            }
         } catch (const std::exception& e) {
             LogPrintf("ERROR: Failed to deserialize TemporalMetrics: %s\n", e.what());
         }
@@ -272,12 +307,33 @@ TemporalMetrics SecureHAT::GetTemporalMetrics(const uint160& address) {
     return metrics;
 }
 
+// ───────────────────────────────────────────────────────────────
+// Legacy uint160 wrappers (P2PKH callers). Wave 8 removes the remaining
+// uint160 bridging at RPC sites.
+// ───────────────────────────────────────────────────────────────
+
+BehaviorMetrics SecureHAT::GetBehaviorMetrics(const uint160& address) {
+    return GetBehaviorMetrics(TrustNodeId::FromLegacyUint160(address));
+}
+
+GraphMetrics SecureHAT::GetGraphMetrics(const uint160& address) {
+    return GetGraphMetrics(TrustNodeId::FromLegacyUint160(address));
+}
+
+StakeInfo SecureHAT::GetStakeInfo(const uint160& address) {
+    return GetStakeInfo(TrustNodeId::FromLegacyUint160(address));
+}
+
+TemporalMetrics SecureHAT::GetTemporalMetrics(const uint160& address) {
+    return GetTemporalMetrics(TrustNodeId::FromLegacyUint160(address));
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Storage Methods
 // ═══════════════════════════════════════════════════════════════
 
 bool SecureHAT::StoreBehaviorMetrics(const BehaviorMetrics& metrics) {
-    std::string key = "behavior_" + metrics.address.ToString();
+    std::string key = "behavior_" + metrics.address.ToKeyString();
     
     try {
         CDataStream ss(SER_DISK, CLIENT_VERSION);
@@ -290,8 +346,8 @@ bool SecureHAT::StoreBehaviorMetrics(const BehaviorMetrics& metrics) {
     }
 }
 
-bool SecureHAT::StoreStakeInfo(const uint160& address, const StakeInfo& info) {
-    std::string key = "stake_" + address.ToString();
+bool SecureHAT::StoreStakeInfo(const TrustNodeId& address, const StakeInfo& info) {
+    std::string key = "stake_" + address.ToKeyString();
     
     try {
         CDataStream ss(SER_DISK, CLIENT_VERSION);
@@ -304,8 +360,8 @@ bool SecureHAT::StoreStakeInfo(const uint160& address, const StakeInfo& info) {
     }
 }
 
-bool SecureHAT::StoreTemporalMetrics(const uint160& address, const TemporalMetrics& metrics) {
-    std::string key = "temporal_" + address.ToString();
+bool SecureHAT::StoreTemporalMetrics(const TrustNodeId& address, const TemporalMetrics& metrics) {
+    std::string key = "temporal_" + address.ToKeyString();
     
     try {
         CDataStream ss(SER_DISK, CLIENT_VERSION);
@@ -316,6 +372,15 @@ bool SecureHAT::StoreTemporalMetrics(const uint160& address, const TemporalMetri
         LogPrintf("ERROR: Failed to serialize TemporalMetrics: %s\n", e.what());
         return false;
     }
+}
+
+// Legacy uint160 wrappers (P2PKH callers).
+bool SecureHAT::StoreStakeInfo(const uint160& address, const StakeInfo& info) {
+    return StoreStakeInfo(TrustNodeId::FromLegacyUint160(address), info);
+}
+
+bool SecureHAT::StoreTemporalMetrics(const uint160& address, const TemporalMetrics& metrics) {
+    return StoreTemporalMetrics(TrustNodeId::FromLegacyUint160(address), metrics);
 }
 
 } // namespace CVM

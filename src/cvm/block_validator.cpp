@@ -66,13 +66,16 @@ static void UpdateActivityMetrics(CVMDatabase& db, const uint160& actor, const u
         
         // Behavior metrics
         BehaviorMetrics metrics = hat.GetBehaviorMetrics(actor);
-        if (metrics.address.IsNull()) {
-            metrics.address = actor;
+        // A default-constructed TrustNodeId (type 0) means "no stored identity".
+        // `actor`/`partner` are legacy P2PKH-shaped uint160 identities here, so
+        // wrap them into TrustNodeId without narrowing.
+        if (metrics.address.type == 0) {
+            metrics.address = TrustNodeId::FromLegacyUint160(actor);
             metrics.account_creation = GetTime();
         }
         TradeRecord trade;
         trade.txid = txid;
-        trade.partner = partner;
+        trade.partner = TrustNodeId::FromLegacyUint160(partner);
         trade.volume = 0;
         trade.timestamp = GetTime();
         trade.success = true;

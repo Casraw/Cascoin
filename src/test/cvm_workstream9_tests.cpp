@@ -158,7 +158,7 @@ BOOST_AUTO_TEST_CASE(p16_1_49_reputation_index_nonempty)
         seeded.insert(addr);
 
         CVM::ReputationScore score;
-        score.address = addr;
+        score.address = CVM::TrustNodeId::FromLegacyUint160(addr);
         score.score = -8000;             // well below the -5000 threshold
         score.voteCount = 3;
         score.lastUpdated = GetTime();
@@ -177,7 +177,7 @@ BOOST_AUTO_TEST_CASE(p16_1_49_reputation_index_nonempty)
             "P16 (1.49): precondition — a written reputation record should be readable.");
     }
 
-    std::vector<uint160> withRep = rep.GetLowReputationAddresses();
+    std::vector<CVM::TrustNodeId> withRep = rep.GetLowReputationAddresses();
 
     BOOST_CHECK_MESSAGE(!withRep.empty(),
         "P16 (1.49): GetLowReputationAddresses returned an EMPTY list after real "
@@ -325,7 +325,7 @@ BOOST_AUTO_TEST_CASE(p16_1_48_exchange_pattern_detected)
     // exchange pattern. This is the committed data source the fix makes
     // DetectExchangePattern consult.
     CVM::ReputationScore score;
-    score.address = exchangeAddr;
+    score.address = CVM::TrustNodeId::FromLegacyUint160(exchangeAddr);
     score.score = 0;
     score.voteCount = 0;
     score.lastUpdated = GetTime();
@@ -362,14 +362,14 @@ BOOST_AUTO_TEST_CASE(preserve_3_20_behavior_metric_scoring)
     {
         CVM::BehaviorMetrics m(RandAddress());
         m.total_trades = 100;
-        for (int i = 0; i < 2; ++i) m.unique_partners.insert(RandAddress());
+        for (int i = 0; i < 2; ++i) m.unique_partners.insert(CVM::TrustNodeId::FromLegacyUint160(RandAddress()));
         // 2 / sqrt(100) = 2 / 10 = 0.2 (a low-diversity / Sybil-like signal).
         BOOST_CHECK_CLOSE(m.CalculateDiversityScore(), 0.2, 1e-6);
     }
     {
         CVM::BehaviorMetrics m(RandAddress());
         m.total_trades = 100;
-        for (int i = 0; i < 50; ++i) m.unique_partners.insert(RandAddress());
+        for (int i = 0; i < 50; ++i) m.unique_partners.insert(CVM::TrustNodeId::FromLegacyUint160(RandAddress()));
         // 50 / sqrt(100) = 5.0 -> capped at 1.0.
         BOOST_CHECK_CLOSE(m.CalculateDiversityScore(), 1.0, 1e-6);
     }

@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <amount.h>
 #include <serialize.h>
+#include <cvm/trustnodeid.h>
 #include <map>
 #include <set>
 #include <vector>
@@ -32,14 +33,21 @@ struct TrustEdge;
  * addresses in the same wallet cluster. This prevents reputation gaming
  * where malicious actors create new addresses to escape negative trust.
  * 
- * Storage key format: "trust_prop_{from}_{to}"
- * 
- * Requirements: 5.1, 5.5
+ * Storage key format: "trust_prop_<fromTNI>_<toTNI>"
+ *
+ * Identity representation
+ * -----------------------
+ * fromAddress/toAddress/originalTarget are wide TrustNodeId values: they carry
+ * every supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/quantum) without
+ * truncation and never collide when they differ by type. The source-edge
+ * reference (sourceEdgeTx) remains a uint256 transaction hash.
+ *
+ * Requirements: 2.7, 5.1, 5.5
  */
 struct PropagatedTrustEdge {
-    uint160 fromAddress;          // Original truster (who established trust)
-    uint160 toAddress;            // Propagated target (cluster member receiving propagated trust)
-    uint160 originalTarget;       // Original target address (the address trust was originally given to)
+    TrustNodeId fromAddress;      // Original truster (who established trust)
+    TrustNodeId toAddress;        // Propagated target (cluster member receiving propagated trust)
+    TrustNodeId originalTarget;   // Original target identity (the identity trust was originally given to)
     uint256 sourceEdgeTx;         // Reference to original trust edge transaction hash
     int16_t trustWeight;          // Inherited trust weight (-100 to +100)
     uint32_t propagatedAt;        // Timestamp when propagation occurred
@@ -57,7 +65,8 @@ struct PropagatedTrustEdge {
         , bondAmount(0) 
     {}
     
-    PropagatedTrustEdge(const uint160& from, const uint160& to, const uint160& origTarget,
+    // Primary typed constructor (carries wide identities end to end).
+    PropagatedTrustEdge(const TrustNodeId& from, const TrustNodeId& to, const TrustNodeId& origTarget,
                         const uint256& sourceTx, int16_t weight, uint32_t propTimestamp, 
                         uint32_t origTimestamp, CAmount bond)
         : fromAddress(from)
@@ -70,8 +79,8 @@ struct PropagatedTrustEdge {
         , bondAmount(bond)
     {}
     
-    // Legacy constructor for backward compatibility (uses propagatedAt as originalTimestamp)
-    PropagatedTrustEdge(const uint160& from, const uint160& to, const uint160& origTarget,
+    // Typed legacy-arity constructor (uses propagatedAt as originalTimestamp).
+    PropagatedTrustEdge(const TrustNodeId& from, const TrustNodeId& to, const TrustNodeId& origTarget,
                         const uint256& sourceTx, int16_t weight, uint32_t timestamp, CAmount bond)
         : fromAddress(from)
         , toAddress(to)
@@ -82,16 +91,37 @@ struct PropagatedTrustEdge {
         , originalTimestamp(timestamp)  // Default to propagatedAt for legacy compatibility
         , bondAmount(bond)
     {}
+
+    // --- Thin uint160 wrapper constructors (legacy P2PKH callers) ----------
+    // Each zero-extends the bare uint160 into a TrustNodeId{P2PKH} via
+    // FromLegacyUint160 and forwards to the typed constructor above. Wave 8
+    // removes the remaining uint160 bridging at the RPC/block-processing sites.
+    PropagatedTrustEdge(const uint160& from, const uint160& to, const uint160& origTarget,
+                        const uint256& sourceTx, int16_t weight, uint32_t propTimestamp, 
+                        uint32_t origTimestamp, CAmount bond)
+        : PropagatedTrustEdge(TrustNodeId::FromLegacyUint160(from),
+                              TrustNodeId::FromLegacyUint160(to),
+                              TrustNodeId::FromLegacyUint160(origTarget),
+                              sourceTx, weight, propTimestamp, origTimestamp, bond)
+    {}
+    
+    PropagatedTrustEdge(const uint160& from, const uint160& to, const uint160& origTarget,
+                        const uint256& sourceTx, int16_t weight, uint32_t timestamp, CAmount bond)
+        : PropagatedTrustEdge(TrustNodeId::FromLegacyUint160(from),
+                              TrustNodeId::FromLegacyUint160(to),
+                              TrustNodeId::FromLegacyUint160(origTarget),
+                              sourceTx, weight, timestamp, bond)
+    {}
     
     /**
      * Generate the database storage key for this propagated edge
-     * Format: "trust_prop_{from}_{to}"
+     * Format: "trust_prop_<fromTNI>_<toTNI>" (TNI = TrustNodeId::ToKeyString())
      */
     std::string GetStorageKey() const;
     
     /**
      * Generate the index key for source edge lookup
-     * Format: "trust_prop_idx_{sourceEdgeTx}_{to}"
+     * Format: "trust_prop_idx_<sourceEdgeTx:64hex>_<toTNI>"
      */
     std::string GetIndexKey() const;
     
@@ -130,18 +160,21 @@ struct PropagatedTrustEdge {
  * Provides a summary view of all trust relations affecting a wallet cluster,
  * including both direct and propagated trust edges.
  * 
- * Storage key format: "cluster_trust_{clusterId}"
- * 
- * Requirements: 3.2, 3.4
+ * Storage key format: "cluster_trust_<clusterTNI>"
+ *
+ * clusterId and memberAddresses are wide TrustNodeId values (no truncation, no
+ * cross-type collision).
+ *
+ * Requirements: 2.7, 3.2, 3.4
  */
 struct ClusterTrustSummary {
-    uint160 clusterId;                    // Canonical cluster address (primary identifier)
-    std::set<uint160> memberAddresses;    // All addresses in the cluster
-    int64_t totalIncomingTrust;           // Sum of positive incoming trust weights
-    int64_t totalNegativeTrust;           // Sum of negative incoming trust weights
-    double effectiveScore;                // Minimum trust score across all cluster members
-    uint32_t edgeCount;                   // Total trust edges (direct + propagated)
-    uint32_t lastUpdated;                 // Timestamp of last modification
+    TrustNodeId clusterId;                    // Cluster identity (primary identifier)
+    std::set<TrustNodeId> memberAddresses;    // All identities in the cluster
+    int64_t totalIncomingTrust;               // Sum of positive incoming trust weights
+    int64_t totalNegativeTrust;               // Sum of negative incoming trust weights
+    double effectiveScore;                    // Minimum trust score across all cluster members
+    uint32_t edgeCount;                       // Total trust edges (direct + propagated)
+    uint32_t lastUpdated;                     // Timestamp of last modification
     
     ClusterTrustSummary()
         : clusterId()
@@ -153,7 +186,8 @@ struct ClusterTrustSummary {
         , lastUpdated(0)
     {}
     
-    ClusterTrustSummary(const uint160& id)
+    // Primary typed constructor.
+    explicit ClusterTrustSummary(const TrustNodeId& id)
         : clusterId(id)
         , memberAddresses()
         , totalIncomingTrust(0)
@@ -162,10 +196,15 @@ struct ClusterTrustSummary {
         , edgeCount(0)
         , lastUpdated(0)
     {}
+
+    // Thin uint160 wrapper constructor (legacy P2PKH callers).
+    explicit ClusterTrustSummary(const uint160& id)
+        : ClusterTrustSummary(TrustNodeId::FromLegacyUint160(id))
+    {}
     
     /**
      * Generate the database storage key for this cluster summary
-     * Format: "cluster_trust_{clusterId}"
+     * Format: "cluster_trust_<clusterTNI>" (TNI = TrustNodeId::ToKeyString())
      */
     std::string GetStorageKey() const;
     
@@ -175,16 +214,16 @@ struct ClusterTrustSummary {
     size_t GetMemberCount() const { return memberAddresses.size(); }
     
     /**
-     * Check if an address is a member of this cluster
+     * Check if an identity is a member of this cluster
      */
-    bool HasMember(const uint160& address) const {
+    bool HasMember(const TrustNodeId& address) const {
         return memberAddresses.find(address) != memberAddresses.end();
     }
     
     /**
-     * Add a member address to the cluster
+     * Add a member identity to the cluster
      */
-    void AddMember(const uint160& address) {
+    void AddMember(const TrustNodeId& address) {
         memberAddresses.insert(address);
     }
     
@@ -469,7 +508,7 @@ public:
      * 
      * Requirements: 2.1, 2.2
      */
-    uint32_t InheritTrustForNewMember(const uint160& newAddress, const uint160& clusterId);
+    uint32_t InheritTrustForNewMember(const TrustNodeId& newAddress, const TrustNodeId& clusterId);
     
     /**
      * Handle cluster merge - combine trust relations
@@ -481,8 +520,8 @@ public:
      * 
      * Requirements: 6.1, 6.2, 6.4
      */
-    bool HandleClusterMerge(const uint160& cluster1, const uint160& cluster2, 
-                           const uint160& mergedClusterId);
+    bool HandleClusterMerge(const TrustNodeId& cluster1, const TrustNodeId& cluster2, 
+                           const TrustNodeId& mergedClusterId);
     
     /**
      * Delete propagated edges when original edge is removed
@@ -513,7 +552,7 @@ public:
      * 
      * Requirement: 1.4
      */
-    std::vector<PropagatedTrustEdge> GetPropagatedEdgesForAddress(const uint160& target) const;
+    std::vector<PropagatedTrustEdge> GetPropagatedEdgesForAddress(const TrustNodeId& target) const;
     
     /**
      * Get cluster trust summary
@@ -523,6 +562,19 @@ public:
      * 
      * Requirements: 3.2, 3.4
      */
+    ClusterTrustSummary GetClusterTrustSummary(const TrustNodeId& address) const;
+
+    // --- Thin uint160 wrappers (legacy P2PKH callers) ---------------------
+    //
+    // Each wraps the bare uint160 as TrustNodeId{P2PKH, zero-extended} via
+    // FromLegacyUint160 and forwards to the typed overload above. They are kept
+    // so the RPC/block-processing bridging (which still passes uint160) keeps
+    // working until Wave 8 removes it.
+
+    uint32_t InheritTrustForNewMember(const uint160& newAddress, const uint160& clusterId);
+    bool HandleClusterMerge(const uint160& cluster1, const uint160& cluster2,
+                            const uint160& mergedClusterId);
+    std::vector<PropagatedTrustEdge> GetPropagatedEdgesForAddress(const uint160& target) const;
     ClusterTrustSummary GetClusterTrustSummary(const uint160& address) const;
     
     /**
@@ -571,8 +623,9 @@ private:
     TrustGraph& trustGraph;
     
     // LRU Cache for cluster trust summaries (Requirements 7.4, 7.5)
-    // Uses LRU eviction when cache exceeds 100MB limit
-    mutable LRUCache<uint160, ClusterTrustSummary> summaryCache;
+    // Uses LRU eviction when cache exceeds 100MB limit. Keyed by the wide
+    // TrustNodeId cluster identity (TrustNodeId provides operator< for map use).
+    mutable LRUCache<TrustNodeId, ClusterTrustSummary> summaryCache;
     
     /**
      * Store a propagated edge in database
@@ -588,37 +641,37 @@ private:
      * Build index entry for source edge -> propagated edges
      * 
      * @param sourceEdgeTx Transaction hash of source edge
-     * @param propagatedTo Address that received propagated edge
+     * @param propagatedTo Identity that received propagated edge
      * @return true if successful
      * 
      * Requirement: 5.2
      */
-    bool IndexPropagatedEdge(const uint256& sourceEdgeTx, const uint160& propagatedTo);
+    bool IndexPropagatedEdge(const uint256& sourceEdgeTx, const TrustNodeId& propagatedTo);
     
     /**
      * Remove index entry for source edge -> propagated edge
      * 
      * @param sourceEdgeTx Transaction hash of source edge
-     * @param propagatedTo Address that had propagated edge
+     * @param propagatedTo Identity that had propagated edge
      * @return true if successful
      */
-    bool RemoveIndexEntry(const uint256& sourceEdgeTx, const uint160& propagatedTo);
+    bool RemoveIndexEntry(const uint256& sourceEdgeTx, const TrustNodeId& propagatedTo);
     
     /**
      * Delete a single propagated edge from database
      * 
-     * @param fromAddress Source address of edge
-     * @param toAddress Target address of edge
+     * @param fromAddress Source identity of edge
+     * @param toAddress Target identity of edge
      * @return true if successful
      */
-    bool DeletePropagatedEdge(const uint160& fromAddress, const uint160& toAddress);
+    bool DeletePropagatedEdge(const TrustNodeId& fromAddress, const TrustNodeId& toAddress);
     
     /**
      * Invalidate cache for a cluster
      * 
      * @param clusterId Cluster to invalidate
      */
-    void InvalidateClusterCache(const uint160& clusterId);
+    void InvalidateClusterCache(const TrustNodeId& clusterId);
     
     /**
      * Build cluster trust summary from database
@@ -626,15 +679,15 @@ private:
      * @param clusterId Cluster to summarize
      * @return Computed trust summary
      */
-    ClusterTrustSummary BuildClusterTrustSummary(const uint160& clusterId) const;
+    ClusterTrustSummary BuildClusterTrustSummary(const TrustNodeId& clusterId) const;
     
     /**
-     * Calculate trust score for a single address
+     * Calculate trust score for a single identity
      * 
-     * @param memberAddress Address to calculate score for
+     * @param memberAddress Identity to calculate score for
      * @return Weighted average trust score
      */
-    double CalculateMemberScore(const uint160& memberAddress) const;
+    double CalculateMemberScore(const TrustNodeId& memberAddress) const;
 };
 
 } // namespace CVM

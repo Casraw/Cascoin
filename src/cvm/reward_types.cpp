@@ -9,7 +9,7 @@
 namespace CVM {
 
 uint256 PendingReward::GenerateRewardId(const uint256& disputeId, 
-                                        const uint160& recipient, 
+                                        const TrustNodeId& recipient, 
                                         RewardType type) {
     CHashWriter ss(SER_GETHASH, PROTOCOL_VERSION);
     ss << disputeId;

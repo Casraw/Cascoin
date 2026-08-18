@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <amount.h>
 #include <serialize.h>
+#include <cvm/trustnodeid.h>
 #include <set>
 #include <vector>
 
@@ -15,10 +16,14 @@ namespace CVM {
 
 /**
  * TradeRecord - Records a single trade for behavior analysis
+ *
+ * `partner` is a user identity and therefore a wide TrustNodeId: it must be
+ * able to represent every supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/
+ * quantum) without truncation. `txid` remains a uint256 transaction hash.
  */
 struct TradeRecord {
     uint256 txid;
-    uint160 partner;
+    TrustNodeId partner;
     CAmount volume;
     int64_t timestamp;
     bool success;
@@ -48,7 +53,7 @@ struct TradeRecord {
  */
 class BehaviorMetrics {
 public:
-    uint160 address;
+    TrustNodeId address;
     
     // Trade Metrics
     std::vector<TradeRecord> trade_history;
@@ -58,7 +63,7 @@ public:
     CAmount total_volume;
     
     // Diversity Metrics
-    std::set<uint160> unique_partners;
+    std::set<TrustNodeId> unique_partners;
     
     // Temporal Metrics
     int64_t account_creation;
@@ -79,6 +84,11 @@ public:
     double fraud_score;                // 0.0-1.0 (lower = more fraudulent)
     
     BehaviorMetrics();
+    explicit BehaviorMetrics(const TrustNodeId& addr);
+
+    //! Legacy P2PKH convenience constructor. Wraps a bare uint160 as
+    //! TrustNodeId{P2PKH, zero-extended}; mirrors TrustNodeId::FromLegacyUint160
+    //! and keeps existing uint160 P2PKH callers compiling without narrowing.
     explicit BehaviorMetrics(const uint160& addr);
     
     // Trade Management
@@ -203,14 +213,15 @@ public:
         READWRITE(account_creation);
         READWRITE(last_activity);
         READWRITE(activity_timestamps);
-        // Serialize unique_partners as a vector (std::set not directly serializable)
+        // Serialize unique_partners as a vector (std::set not directly
+        // serializable). Partners are wide TrustNodeId user identities.
         if (ser_action.ForRead()) {
-            std::vector<uint160> partners_vec;
+            std::vector<TrustNodeId> partners_vec;
             READWRITE(partners_vec);
             unique_partners.clear();
             for (const auto& p : partners_vec) unique_partners.insert(p);
         } else {
-            std::vector<uint160> partners_vec(unique_partners.begin(), unique_partners.end());
+            std::vector<TrustNodeId> partners_vec(unique_partners.begin(), unique_partners.end());
             READWRITE(partners_vec);
         }
         READWRITE(diversity_score);

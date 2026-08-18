@@ -459,7 +459,7 @@ BOOST_AUTO_TEST_CASE(p5_vote_attributed_to_real_voter_property)
         int64_t voteValue = static_cast<int64_t>(InsecureRandRange(201)) - 100; // [-100,100]
 
         CVM::ReputationVoteTx vote;
-        vote.targetAddress = target;
+        vote.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
         vote.voteValue = voteValue;
         vote.reason = "p5-" + std::to_string(i);
 

@@ -471,25 +471,19 @@ CVM::TrustNodeId DecodeTrustNodeOrThrow(const std::string& addr)
 }
 
 /**
- * Bridge a resolved TrustNodeId to the legacy uint160 identifier still used by
- * the TrustGraph storage layer and the on-chain CVMTrustEdgeData / transaction
- * builder.
+ * Narrow a resolved user identity to the 20-byte form required ONLY by the
+ * excluded on-chain CVMTrustEdgeData v1 builder (BuildTrustTransaction).
  *
- * INTERMEDIATE-STATE NOTE (task 7.2): the storage and transaction APIs still
- * key trust edges by uint160; the migration to a native TrustNodeId key/field
- * lands later (tasks 8.x/9.x). Until then this derives the uint160 for the
- * three uint160-representable destination types (P2PKH/P2SH/P2WPKH), reusing
- * the exact same conversions the original per-RPC branches used.
- *
- * P2WSH and quantum destinations carry a full 32-byte identifier that cannot
- * be represented as uint160 without truncation. Rather than silently truncate
- * (which would corrupt the identifier and violate 2.12/3.10) or reintroduce a
- * blanket rejection of every non-legacy type, this reports a precise
- * width-specific error for that one downstream path only. The decode boundary
- * (DecodeTrustNode) still accepts these addresses; full storage support
- * arrives with the TrustNodeId migration.
+ * Every migrated downstream subsystem (reputation, HAT, wallet-cluster /
+ * cluster-trust, bonded-vote, DAO, and propagation) now carries TrustNodeId
+ * end to end and MUST NOT use this helper. It exists solely because the
+ * completed WoT-core on-chain trust-edge format is P2PKH-shaped and is kept
+ * byte-for-byte unchanged by this migration; that format cannot represent the
+ * 32-byte P2WSH/quantum identities, so those are rejected here rather than
+ * truncated. The decode boundary (DecodeTrustNode) still accepts every
+ * supported address type.
  */
-uint160 TrustNodeToLegacyUint160(const CVM::TrustNodeId& node, const std::string& addr)
+static uint160 OnChainTrustEdgeUint160(const CVM::TrustNodeId& node, const std::string& addr)
 {
     CTxDestination dest = node.ToDestination();
     if (const CKeyID* id = boost::get<CKeyID>(&dest)) {
@@ -502,9 +496,8 @@ uint160 TrustNodeToLegacyUint160(const CVM::TrustNodeId& node, const std::string
         return uint160(*id);
     }
     throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
-        strprintf("Address '%s' uses a 32-byte identifier (P2WSH/quantum) that this "
-                  "operation cannot store yet; wide-identifier support lands with the "
-                  "TrustNodeId storage migration", addr));
+        strprintf("Address '%s' uses a 32-byte identifier (P2WSH/quantum) that the "
+                  "on-chain trust-edge format cannot represent", addr));
 }
 
 UniValue getreputation(const JSONRPCRequest& request)
@@ -539,16 +532,15 @@ UniValue getreputation(const JSONRPCRequest& request)
 
     std::string addressStr = request.params[0].get_str();
     
-    // Decode the address via the unified WoT decode path (Change B2). This
-    // accepts every standard destination type; the reputation store below is
-    // still keyed by uint160, so bridge through TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed reputation store so every
+    // supported destination type is scored without truncation.
     CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addressStr);
-    uint160 address = TrustNodeToLegacyUint160(node, addressStr);
     
     // Get reputation score
     CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
     CVM::ReputationScore score;
-    repSystem.GetReputation(address, score);
+    repSystem.GetReputation(node, score);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -602,15 +594,14 @@ UniValue votereputation(const JSONRPCRequest& request)
     }
     std::string reason = request.params[2].get_str();
     
-    // Decode the address via the unified WoT decode path (Change B2). The
-    // reputation store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed reputation store.
     CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addressStr);
-    uint160 targetAddress = TrustNodeToLegacyUint160(node, addressStr);
     
-    // Create reputation vote data (Soft Fork compatible with OP_RETURN)
+    // Create reputation vote data (Soft Fork compatible with OP_RETURN). The
+    // OP_RETURN body now carries the wide, lossless TrustNodeId identity.
     CVM::CVMReputationData repData;
-    repData.targetAddress = targetAddress;
+    repData.targetAddress = node;
     repData.voteValue = static_cast<int16_t>(voteValue);
     repData.timestamp = static_cast<uint32_t>(GetTime());
     
@@ -623,7 +614,7 @@ UniValue votereputation(const JSONRPCRequest& request)
     if (CVM::g_cvmdb) {
         CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
         CVM::ReputationScore score;
-        repSystem.GetReputation(targetAddress, score);
+        repSystem.GetReputation(node, score);
         
         // Update score
         score.score += voteValue;
@@ -631,7 +622,7 @@ UniValue votereputation(const JSONRPCRequest& request)
         score.lastUpdated = repData.timestamp;
         
         // Store updated score
-        repSystem.UpdateReputation(targetAddress, score);
+        repSystem.UpdateReputation(node, score);
         
         LogPrintf("CVM: Reputation vote recorded for %s: %+d (new score: %d)\n",
                   addressStr, voteValue, score.score);
@@ -1227,17 +1218,16 @@ UniValue sendcvmvote(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Vote value must be between -100 and +100");
     }
     
-    // Decode the target address via the unified WoT decode path (Change B2).
-    // The reputation vote store below is still keyed by uint160, so bridge
-    // through TrustNodeToLegacyUint160.
+    // Decode the target address via the unified WoT decode path (Change B2) and
+    // pass the wide TrustNodeId straight into the builder so every supported
+    // destination type is carried without truncation.
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, addressStr);
     
     // Build transaction
     CAmount fee;
     std::string error;
     CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildVoteTransaction(
-        pwallet, targetAddress, static_cast<int16_t>(voteValue), reason, fee, error
+        pwallet, targetNode, static_cast<int16_t>(voteValue), reason, fee, error
     );
     
     if (mtx.vin.empty()) {
@@ -1453,12 +1443,11 @@ UniValue addtrust(const JSONRPCRequest& request)
     }
     
     // Decode the recipient (to) address via the unified WoT decode path
-    // (Change B2). The TrustGraph store now keys edges by the wide TrustNodeId,
-    // so the resolved node is passed directly into AddTrustEdge (this is what
-    // enables P2WSH/quantum storage end-to-end). The uint160 form is only used
-    // for the still-legacy cluster/propagation calls below.
+    // (Change B2). The TrustGraph store and the wallet-clustering subsystem both
+    // key by the wide TrustNodeId, so the resolved node is passed directly into
+    // AddTrustEdge and every cluster/propagation call below. This carries
+    // P2WSH/quantum identities end-to-end with no width narrowing.
     CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 toAddress = toNode.ToUint160();
     
     // Resolve the creating (from) identity. NEVER store an all-zeros placeholder:
     // either an explicit "from" address is supplied, or a fresh address is derived
@@ -1466,14 +1455,12 @@ UniValue addtrust(const JSONRPCRequest& request)
     // The explicit "from" address is decoded via the unified DecodeTrustNode
     // path (Change B2); the resolved node is stored directly.
     CVM::TrustNodeId fromNode;
-    uint160 fromAddress;
     std::string fromStr;
     if (request.params.size() > 4 && !request.params[4].isNull() &&
         !request.params[4].get_str().empty()) {
         // Explicit from address provided by the caller.
         fromStr = request.params[4].get_str();
         fromNode = DecodeTrustNodeOrThrow(fromStr);
-        fromAddress = fromNode.ToUint160();
     } else {
         // No explicit from address: derive one from the loaded wallet.
         CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
@@ -1487,13 +1474,13 @@ UniValue addtrust(const JSONRPCRequest& request)
             throw JSONRPCError(RPC_WALLET_ERROR,
                 "Cannot resolve 'from' identity: failed to get an address from the wallet.");
         }
-        fromAddress = fresh.GetID();
-        fromNode = CVM::TrustNodeId::FromLegacyUint160(fromAddress);
-        fromStr = EncodeDestination(CKeyID(fromAddress));
+        const uint160 freshId = fresh.GetID();
+        fromNode = CVM::TrustNodeId::FromLegacyUint160(freshId);
+        fromStr = EncodeDestination(CKeyID(freshId));
     }
 
     // Defensive guard: never store an all-zeros from identity.
-    if (fromAddress.IsNull()) {
+    if (fromNode.data.IsNull()) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Could not resolve a valid 'from' identity");
     }
 
@@ -1524,14 +1511,15 @@ UniValue addtrust(const JSONRPCRequest& request)
         reason = request.params[3].get_str();
     }
     
-    // Get wallet cluster for target address (Requirement 4.1)
-    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(toAddress);
+    // Get wallet cluster for target identity (Requirement 4.1). Typed
+    // cluster query: P2WSH/quantum targets keep their exact type and width.
+    CVM::TrustNodeId clusterId = clusterer.GetClusterForAddress(toNode);
+    std::set<CVM::TrustNodeId> clusterMembers = clusterer.GetClusterMembers(toNode);
     
     // If no cluster found, treat as single-address cluster
     if (clusterMembers.empty()) {
-        clusterMembers.insert(toAddress);
-        clusterId = toAddress;
+        clusterMembers.insert(toNode);
+        clusterId = toNode;
         LogPrintf("CVM: addtrust - No cluster found for %s, treating as single-address cluster\n", 
                   addressStr);
     }
@@ -1563,7 +1551,7 @@ UniValue addtrust(const JSONRPCRequest& request)
     uint32_t edgesPropagated = propagator.PropagateTrustEdge(edge);
     
     LogPrintf("CVM: addtrust - Trust propagated to %u addresses in cluster %s\n",
-              edgesPropagated, clusterId.ToString());
+              edgesPropagated, clusterId.ToKeyString());
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("from", fromStr);
@@ -1572,8 +1560,10 @@ UniValue addtrust(const JSONRPCRequest& request)
     result.pushKV("bond", ValueFromAmount(bondAmount));
     result.pushKV("required_bond", ValueFromAmount(requiredBond));
     result.pushKV("reason", reason);
-    // Cluster-aware fields (Requirement 4.1)
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    // Cluster-aware fields (Requirement 4.1). Render the cluster ID through its
+    // stored typed destination so non-P2PKH cluster IDs are not fabricated as
+    // P2PKH.
+    result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
     result.pushKV("edges_propagated", (uint64_t)edgesPropagated);
     
@@ -1628,22 +1618,19 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     // Parse target address
     std::string targetStr = request.params[0].get_str();
     // Decode the target via the unified WoT decode path (Change B2). The
-    // TrustGraph traversal is now keyed by the wide TrustNodeId, so the
-    // resolved node is passed directly into GetWeightedReputation/FindTrustPaths
-    // (enabling P2WSH/quantum end-to-end). The uint160 form is used only for the
-    // still-legacy cluster calls below.
+    // TrustGraph traversal and the wallet-clustering subsystem are both keyed by
+    // the wide TrustNodeId, so the resolved node is passed directly into
+    // GetWeightedReputation/FindTrustPaths and every cluster query below. This
+    // carries P2WSH/quantum identities end-to-end with no width narrowing.
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
-    uint160 targetAddress = targetNode.ToUint160();
     
     // Parse viewer address
     CVM::TrustNodeId viewerNode = targetNode; // Default: self-view
-    uint160 viewerAddress = targetAddress;
     // Echo the supplied viewer as base58; default to the target (self-view).
     std::string viewerStr = targetStr;
     if (request.params.size() > 1) {
         viewerStr = request.params[1].get_str();
         viewerNode = DecodeTrustNodeOrThrow(viewerStr);
-        viewerAddress = viewerNode.ToUint160();
     }
     
     // Get max depth
@@ -1661,14 +1648,14 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
     CVM::ClusterTrustQuery clusterQuery(*CVM::g_cvmdb, clusterer, trustGraph, propagator);
     
-    // Get cluster info
-    uint160 clusterId = clusterer.GetClusterForAddress(targetAddress);
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(targetAddress);
+    // Get cluster info (typed query: P2WSH/quantum targets keep exact type/width).
+    CVM::TrustNodeId clusterId = clusterer.GetClusterForAddress(targetNode);
+    std::set<CVM::TrustNodeId> clusterMembers = clusterer.GetClusterMembers(targetNode);
     
     // If no cluster found, treat as single-address cluster
     if (clusterMembers.empty()) {
-        clusterMembers.insert(targetAddress);
-        clusterId = targetAddress;
+        clusterMembers.insert(targetNode);
+        clusterId = targetNode;
     }
     
     // Calculate individual weighted reputation for the target address (keyed by
@@ -1677,26 +1664,20 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     
     // Cluster-aware reputation (Requirement 4.4): the effective score is the
     // minimum across the target's wallet cluster, so a scammer cannot escape a
-    // low score by moving to another address in the same wallet.
-    //
-    // TYPE CORRECTNESS: the wallet-clustering / ClusterTrustQuery subsystem is
-    // keyed by legacy uint160 (effectively P2PKH). Scoring the *target itself*
-    // through that legacy path collapses its TrustNodeId to a P2PKH key, which
-    // does not match edges stored for non-P2PKH destinations (P2SH, P2WPKH,
-    // P2WSH, quantum) and spuriously returns 0 — masking a valid transitive
-    // trust result. We therefore take the target's own contribution from the
-    // type-preserving individualReputation above, and only fold in *other*
-    // cluster members via the legacy path (those are genuinely distinct
-    // addresses surfaced by on-chain clustering, which is itself uint160-based).
+    // low score by moving to another address in the same wallet. Every member
+    // is a wide TrustNodeId, so each is scored through the type-preserving
+    // traversal — P2SH/P2WPKH/P2WSH/quantum members are handled correctly and no
+    // identity is collapsed to a P2PKH key. The target's own contribution comes
+    // from the type-correct individualReputation seeded above.
     double worstReputation = individualReputation;
-    uint160 worstMember = targetAddress;
+    CVM::TrustNodeId worstMember = targetNode;
     
-    for (const uint160& member : clusterMembers) {
-        if (member == targetAddress) {
+    for (const CVM::TrustNodeId& member : clusterMembers) {
+        if (member == targetNode) {
             // The target is already scored type-correctly via individualReputation.
             continue;
         }
-        double memberRep = trustGraph.GetWeightedReputation(viewerAddress, member, maxDepth);
+        double memberRep = trustGraph.GetWeightedReputation(viewerNode, member, maxDepth);
         if (memberRep < worstReputation) {
             worstReputation = memberRep;
             worstMember = member;
@@ -1719,7 +1700,7 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
         }
     }
     if (!hasNegativeTrust) {
-        hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetAddress);
+        hasNegativeTrust = clusterQuery.HasNegativeClusterTrust(targetNode);
     }
     
     // Find trust paths (for the target address specifically), keyed by the wide
@@ -1738,12 +1719,14 @@ UniValue getweightedreputation(const JSONRPCRequest& request)
     result.pushKV("paths_found", (int64_t)paths.size());
     result.pushKV("max_depth", maxDepth);
     
-    // Cluster-aware fields (Requirement 4.4)
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    // Cluster-aware fields (Requirement 4.4). Render identities through their
+    // stored typed destination so non-P2PKH cluster IDs/members are not
+    // fabricated as P2PKH.
+    result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
     
     if (clusterMembers.size() > 1 || worstReputation < individualReputation) {
-        result.pushKV("worst_member", EncodeDestination(CKeyID(worstMember)));
+        result.pushKV("worst_member", EncodeDestination(worstMember.ToDestination()));
         result.pushKV("worst_reputation", worstReputation);
     }
     
@@ -2000,11 +1983,13 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     }
     
     // Decode the recipient address via the unified WoT decode path (Change B2).
-    // The transaction builder and propagation store below are still keyed by
-    // uint160, so bridge through TrustNodeToLegacyUint160.
+    // The cluster/propagation stores below carry the wide TrustNodeId directly.
+    // The on-chain trust-edge builder (CVMTrustEdgeData v1, excluded from this
+    // migration) is P2PKH-shaped, so narrow only that one value via
+    // OnChainTrustEdgeUint160.
     const std::string toAddrStr = request.params[0].get_str();
     CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(toAddrStr);
-    uint160 toAddress = TrustNodeToLegacyUint160(toNode, toAddrStr);
+    uint160 toAddress = OnChainTrustEdgeUint160(toNode, toAddrStr);
     
     // Parse weight
     int64_t weightInt = 0;
@@ -2066,14 +2051,14 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
     CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
     
-    // Get cluster info
-    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(toAddress);
+    // Get cluster info (typed identities carried end to end).
+    CVM::TrustNodeId clusterId = clusterer.GetClusterForAddress(toNode);
+    std::set<CVM::TrustNodeId> clusterMembers = clusterer.GetClusterMembers(toNode);
     
     // If no cluster found, treat as single-address cluster
     if (clusterMembers.empty()) {
-        clusterMembers.insert(toAddress);
-        clusterId = toAddress;
+        clusterMembers.insert(toNode);
+        clusterId = toNode;
     }
     
     // Create TrustEdge for propagation. The from-identity MUST be the on-chain
@@ -2084,7 +2069,7 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     // On-chain edges are currently uint160 (P2PKH-shaped) until the versioned
     // on-chain payload lands (task 9.x); wrap into the wide TrustNodeId fields.
     edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(resolvedFromAddress);
-    edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(toAddress);
+    edge.toAddress = toNode;
     edge.trustWeight = weight;
     edge.timestamp = static_cast<uint32_t>(GetTime());
     edge.bondAmount = bondAmount;
@@ -2096,7 +2081,7 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     uint32_t edgesPropagated = propagator.PropagateTrustEdge(edge);
     
     LogPrintf("CVM: sendtrustrelation - Trust propagated to %u addresses in cluster %s (txid: %s)\n",
-              edgesPropagated, clusterId.ToString(), txid.ToString());
+              edgesPropagated, clusterId.ToKeyString(), txid.ToString());
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -2105,8 +2090,9 @@ UniValue sendtrustrelation(const JSONRPCRequest& request)
     result.pushKV("bond", ValueFromAmount(bondAmount));
     result.pushKV("weight", weight);
     result.pushKV("to_address", request.params[0].get_str());
-    // Cluster-aware fields (Requirement 4.3)
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    // Cluster-aware fields (Requirement 4.3). Cluster ID is a wide TrustNodeId;
+    // render via its typed destination.
+    result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     result.pushKV("cluster_size", (uint64_t)clusterMembers.size());
     result.pushKV("edges_propagated", (uint64_t)edgesPropagated);
     
@@ -2149,12 +2135,11 @@ UniValue sendbondedvote(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode the target address via the unified WoT decode path (Change B2).
-    // The vote store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the target address via the unified WoT decode path (Change B2) and
+    // pass the wide TrustNodeId straight into the builder so every supported
+    // destination type is carried without truncation.
     const std::string targetAddrStr = request.params[0].get_str();
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetAddrStr);
-    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetAddrStr);
     
     // Parse vote value
     int64_t voteInt = 0;
@@ -2189,7 +2174,7 @@ UniValue sendbondedvote(const JSONRPCRequest& request)
     std::string error;
     CAmount fee;
     CMutableTransaction mtx = CVM::CVMTransactionBuilder::BuildBondedVoteTransaction(
-        pwallet, targetAddress, voteValue, bondAmount, reason, fee, error
+        pwallet, targetNode, voteValue, bondAmount, reason, fee, error
     );
     
     if (mtx.vin.empty()) {
@@ -2254,16 +2239,14 @@ UniValue getbehaviormetrics(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode the address via the unified WoT decode path (Change B2). The HAT
-    // behavior store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed HAT behavior store.
     const std::string addrStr = request.params[0].get_str();
     CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addrStr);
-    uint160 address = TrustNodeToLegacyUint160(node, addrStr);
     
     // Get metrics
     CVM::SecureHAT hat(*CVM::g_cvmdb);
-    CVM::BehaviorMetrics metrics = hat.GetBehaviorMetrics(address);
+    CVM::BehaviorMetrics metrics = hat.GetBehaviorMetrics(node);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -2308,16 +2291,14 @@ UniValue getgraphmetrics(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode the address via the unified WoT decode path (Change B2). The HAT
-    // graph store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed HAT graph store.
     const std::string addrStr = request.params[0].get_str();
     CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addrStr);
-    uint160 address = TrustNodeToLegacyUint160(node, addrStr);
     
     // Get metrics
     CVM::SecureHAT hat(*CVM::g_cvmdb);
-    CVM::GraphMetrics metrics = hat.GetGraphMetrics(address);
+    CVM::GraphMetrics metrics = hat.GetGraphMetrics(node);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -2356,26 +2337,23 @@ UniValue getsecuretrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode target/viewer via the unified WoT decode path (Change B2). The HAT
-    // store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode target/viewer via the unified WoT decode path (Change B2) and
+    // carry the wide TrustNodeId values straight into the typed HAT store.
     const std::string targetStr = request.params[0].get_str();
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
-    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetStr);
     
     // Parse viewer address (optional)
-    uint160 viewerAddress = targetAddress; // Default to self
+    CVM::TrustNodeId viewerNode = targetNode; // Default to self
     std::string viewerStr = targetStr;
     
     if (request.params.size() > 1) {
         viewerStr = request.params[1].get_str();
-        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
-        viewerAddress = TrustNodeToLegacyUint160(viewerNode, viewerStr);
+        viewerNode = DecodeTrustNodeOrThrow(viewerStr);
     }
     
     // Calculate trust
     CVM::SecureHAT hat(*CVM::g_cvmdb);
-    int16_t trustScore = hat.CalculateFinalTrust(targetAddress, viewerAddress);
+    int16_t trustScore = hat.CalculateFinalTrust(targetNode, viewerNode);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -2434,26 +2412,23 @@ UniValue gettrustbreakdown(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode target/viewer via the unified WoT decode path (Change B2). The HAT
-    // store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode target/viewer via the unified WoT decode path (Change B2) and
+    // carry the wide TrustNodeId values straight into the typed HAT store.
     const std::string targetStr = request.params[0].get_str();
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
-    uint160 targetAddress = TrustNodeToLegacyUint160(targetNode, targetStr);
     
     // Parse viewer address (optional)
-    uint160 viewerAddress = targetAddress; // Default to self
+    CVM::TrustNodeId viewerNode = targetNode; // Default to self
     std::string viewerStr = targetStr;
     
     if (request.params.size() > 1) {
         viewerStr = request.params[1].get_str();
-        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
-        viewerAddress = TrustNodeToLegacyUint160(viewerNode, viewerStr);
+        viewerNode = DecodeTrustNodeOrThrow(viewerStr);
     }
     
     // Calculate trust with breakdown
     CVM::SecureHAT hat(*CVM::g_cvmdb);
-    CVM::TrustBreakdown breakdown = hat.CalculateWithBreakdown(targetAddress, viewerAddress);
+    CVM::TrustBreakdown breakdown = hat.CalculateWithBreakdown(targetNode, viewerNode);
     
     // Build result
     UniValue result(UniValue::VOBJ);
@@ -2558,29 +2533,28 @@ UniValue getwalletcluster(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode the address via the unified WoT decode path (Change B2). This
-    // previously accepted only P2PKH; the clusterer below is still keyed by
-    // uint160, so bridge through TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed clusterer. Members are
+    // rendered through their stored typed destination.
     const std::string addressStr = request.params[0].get_str();
     CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
-    uint160 cluster_id = clusterer.GetClusterForAddress(address);
-    std::set<uint160> members = clusterer.GetClusterMembers(address);
+    CVM::TrustNodeId cluster_id = clusterer.GetClusterForAddress(addressNode);
+    std::set<CVM::TrustNodeId> members = clusterer.GetClusterMembers(addressNode);
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(cluster_id)));
+    result.pushKV("cluster_id", EncodeDestination(cluster_id.ToDestination()));
     result.pushKV("member_count", (uint64_t)members.size());
     
     UniValue members_arr(UniValue::VARR);
-    for (const uint160& member : members) {
-        members_arr.push_back(EncodeDestination(CKeyID(member)));
+    for (const CVM::TrustNodeId& member : members) {
+        members_arr.push_back(EncodeDestination(member.ToDestination()));
     }
     result.pushKV("members", members_arr);
     
-    result.pushKV("shared_reputation", clusterer.GetEffectiveReputation(address));
-    result.pushKV("shared_hat_score", clusterer.GetEffectiveHATScore(address));
+    result.pushKV("shared_reputation", clusterer.GetEffectiveReputation(addressNode));
+    result.pushKV("shared_hat_score", clusterer.GetEffectiveHATScore(addressNode));
     
     return result;
 }
@@ -2619,18 +2593,16 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode target/viewer via the unified WoT decode path (Change B2). This
-    // previously accepted only P2PKH; the cluster trust store below is still
-    // keyed by uint160, so bridge through TrustNodeToLegacyUint160.
+    // Decode target/viewer via the unified WoT decode path (Change B2) and
+    // carry the wide TrustNodeId values straight into the typed cluster-trust
+    // query surface.
     const std::string targetStr = request.params[0].get_str();
     CVM::TrustNodeId targetNode = DecodeTrustNodeOrThrow(targetStr);
-    uint160 target = TrustNodeToLegacyUint160(targetNode, targetStr);
-    uint160 viewer;
+    CVM::TrustNodeId viewerNode;
     
     if (request.params.size() > 1) {
         const std::string viewerStr = request.params[1].get_str();
-        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
-        viewer = TrustNodeToLegacyUint160(viewerNode, viewerStr);
+        viewerNode = DecodeTrustNodeOrThrow(viewerStr);
     }
     
     // Create cluster-aware components (Requirement 4.2)
@@ -2641,26 +2613,26 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
     CVM::SecureHAT hat(*CVM::g_cvmdb);
     
     // Get cluster info
-    uint160 cluster_id = clusterer.GetClusterForAddress(target);
-    std::set<uint160> members = clusterer.GetClusterMembers(target);
+    CVM::TrustNodeId cluster_id = clusterer.GetClusterForAddress(targetNode);
+    std::set<CVM::TrustNodeId> members = clusterer.GetClusterMembers(targetNode);
     
     // Calculate individual score for this specific address
-    double individual_score = clusterQuery.GetAddressTrustScore(target, viewer);
+    double individual_score = clusterQuery.GetAddressTrustScore(targetNode, viewerNode);
     
     // Use ClusterTrustQuery.GetEffectiveTrust() for cluster-aware minimum scoring (Requirement 4.2)
     // This returns the minimum score across ALL addresses in the wallet cluster
-    double effective_score = clusterQuery.GetEffectiveTrust(target, viewer);
+    double effective_score = clusterQuery.GetEffectiveTrust(targetNode, viewerNode);
     
     // Get worst member info
     double worst_score;
-    uint160 worst_address = clusterQuery.GetWorstClusterMember(target, worst_score);
+    CVM::TrustNodeId worst_address = clusterQuery.GetWorstClusterMember(targetNode, worst_score);
     
     // Check for negative trust in cluster
-    bool has_negative_trust = clusterQuery.HasNegativeClusterTrust(target);
+    bool has_negative_trust = clusterQuery.HasNegativeClusterTrust(targetNode);
     
     // Get all cluster trust edges for edge counts
-    std::vector<CVM::TrustEdge> allEdges = clusterQuery.GetAllClusterTrustEdges(target);
-    std::vector<CVM::PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(target);
+    std::vector<CVM::TrustEdge> allEdges = clusterQuery.GetAllClusterTrustEdges(targetNode);
+    std::vector<CVM::PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(targetNode);
     
     // Count direct vs propagated edges
     uint32_t directEdgeCount = 0;
@@ -2673,8 +2645,8 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
     }
     
     UniValue result(UniValue::VOBJ);
-    result.pushKV("target", EncodeDestination(CKeyID(target)));
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(cluster_id)));
+    result.pushKV("target", EncodeDestination(targetNode.ToDestination()));
+    result.pushKV("cluster_id", EncodeDestination(cluster_id.ToDestination()));
     result.pushKV("cluster_size", (uint64_t)members.size());
     result.pushKV("individual_score", individual_score);
     result.pushKV("effective_score", effective_score);
@@ -2682,7 +2654,7 @@ UniValue geteffectivetrust(const JSONRPCRequest& request)
     
     // Add cluster information (Requirement 4.2)
     if (members.size() > 1 || worst_score < individual_score) {
-        result.pushKV("worst_address_in_cluster", EncodeDestination(CKeyID(worst_address)));
+        result.pushKV("worst_address_in_cluster", EncodeDestination(worst_address.ToDestination()));
         result.pushKV("worst_score", worst_score);
     }
     
@@ -2746,14 +2718,14 @@ UniValue addclustertrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Weight must be between -100 and +100");
     }
     
-    // Decode the recipient address via the unified WoT decode path (Change B2).
-    // The cluster trust store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the recipient address via the unified WoT decode path (Change B2)
+    // and carry the wide TrustNodeId straight into the typed trust graph,
+    // clusterer, and propagator.
     CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 toAddress = TrustNodeToLegacyUint160(toNode, addressStr);
     
-    // Get caller's address (placeholder - would need wallet integration)
-    uint160 fromAddress;
+    // Get caller's address (placeholder - would need wallet integration).
+    // Preserve prior behavior: an all-zero P2PKH-shaped identity.
+    CVM::TrustNodeId fromNode = CVM::TrustNodeId::FromLegacyUint160(uint160());
     
     // Calculate required bond
     CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
@@ -2782,14 +2754,14 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
     CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
     
-    // Get cluster info
-    uint160 clusterId = clusterer.GetClusterForAddress(toAddress);
-    std::set<uint160> members = clusterer.GetClusterMembers(toAddress);
+    // Get cluster info (typed identities)
+    CVM::TrustNodeId clusterId = clusterer.GetClusterForAddress(toNode);
+    std::set<CVM::TrustNodeId> members = clusterer.GetClusterMembers(toNode);
     
     // If no cluster found, treat as single-address cluster
     if (members.empty()) {
-        members.insert(toAddress);
-        clusterId = toAddress;
+        members.insert(toNode);
+        clusterId = toNode;
     }
     
     // Placeholder bond transaction (in production, would create real TX)
@@ -2797,15 +2769,14 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
     
     // Add trust edge to original target
-    if (!trustGraph.AddTrustEdge(fromAddress, toAddress, weight, bondAmount, bondTx, reason)) {
+    if (!trustGraph.AddTrustEdge(fromNode, toNode, weight, bondAmount, bondTx, reason)) {
         throw JSONRPCError(RPC_INTERNAL_ERROR, "Failed to add trust edge");
     }
     
-    // Create TrustEdge for propagation (legacy uint160 cluster path; wrap into
-    // the wide TrustNodeId fields).
+    // Create TrustEdge for propagation (typed endpoints carried directly).
     CVM::TrustEdge edge;
-    edge.fromAddress = CVM::TrustNodeId::FromLegacyUint160(fromAddress);
-    edge.toAddress = CVM::TrustNodeId::FromLegacyUint160(toAddress);
+    edge.fromAddress = fromNode;
+    edge.toAddress = toNode;
     edge.trustWeight = static_cast<int16_t>(weight);
     edge.timestamp = static_cast<uint32_t>(GetTime());
     edge.bondAmount = bondAmount;
@@ -2818,7 +2789,7 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     
     // Build result
     UniValue result(UniValue::VOBJ);
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     result.pushKV("members_affected", (uint64_t)members.size());
     result.pushKV("edges_created", (uint64_t)edgesCreated);
     result.pushKV("source_txid", bondTx.GetHex());
@@ -2866,19 +2837,17 @@ UniValue getclustertrust(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode address/viewer via the unified WoT decode path (Change B2). The
-    // cluster trust store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode address/viewer via the unified WoT decode path (Change B2) and
+    // carry the wide TrustNodeId values straight into the typed cluster-trust
+    // query surface.
     const std::string addressStr = request.params[0].get_str();
     CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     // Parse optional viewer
-    uint160 viewer;
+    CVM::TrustNodeId viewerNode;
     if (request.params.size() > 1) {
         const std::string viewerStr = request.params[1].get_str();
-        CVM::TrustNodeId viewerNode = DecodeTrustNodeOrThrow(viewerStr);
-        viewer = TrustNodeToLegacyUint160(viewerNode, viewerStr);
+        viewerNode = DecodeTrustNodeOrThrow(viewerStr);
     }
     
     // Create components
@@ -2888,14 +2857,14 @@ UniValue getclustertrust(const JSONRPCRequest& request)
     CVM::ClusterTrustQuery query(*CVM::g_cvmdb, clusterer, trustGraph, propagator);
     
     // Get cluster summary
-    CVM::ClusterTrustSummary summary = propagator.GetClusterTrustSummary(address);
+    CVM::ClusterTrustSummary summary = propagator.GetClusterTrustSummary(addressNode);
     
     // Get effective trust score
-    double effectiveScore = query.GetEffectiveTrust(address, viewer);
+    double effectiveScore = query.GetEffectiveTrust(addressNode, viewerNode);
     
     // Get worst member
     double worstScore;
-    uint160 worstMember = query.GetWorstClusterMember(address, worstScore);
+    CVM::TrustNodeId worstMember = query.GetWorstClusterMember(addressNode, worstScore);
     
     // Count edges
     uint32_t directEdges = 0;
@@ -2909,19 +2878,20 @@ UniValue getclustertrust(const JSONRPCRequest& request)
         propagatedEdges += propagated.size();
     }
     
-    // Build result
+    // Build result. Cluster ID and members are wide TrustNodeId identities;
+    // render via ToDestination so every supported address type is shown.
     UniValue result(UniValue::VOBJ);
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(summary.clusterId)));
+    result.pushKV("cluster_id", EncodeDestination(summary.clusterId.ToDestination()));
     result.pushKV("member_count", (uint64_t)summary.memberAddresses.size());
     
     UniValue members_arr(UniValue::VARR);
     for (const auto& member : summary.memberAddresses) {
-        members_arr.push_back(EncodeDestination(CKeyID(member)));
+        members_arr.push_back(EncodeDestination(member.ToDestination()));
     }
     result.pushKV("members", members_arr);
     
     result.pushKV("effective_score", effectiveScore);
-    result.pushKV("worst_member", EncodeDestination(CKeyID(worstMember)));
+    result.pushKV("worst_member", EncodeDestination(worstMember.ToDestination()));
     result.pushKV("worst_score", worstScore);
     result.pushKV("total_incoming_edges", (uint64_t)directEdges);
     result.pushKV("total_propagated_edges", (uint64_t)propagatedEdges);
@@ -2982,12 +2952,10 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
         throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
     }
     
-    // Decode the address via the unified WoT decode path (Change B2). The
-    // cluster trust store below is still keyed by uint160, so bridge through
-    // TrustNodeToLegacyUint160.
+    // Decode the address via the unified WoT decode path (Change B2) and carry
+    // the wide TrustNodeId straight into the typed clusterer.
     const std::string addressStr = request.params[0].get_str();
     CVM::TrustNodeId addressNode = DecodeTrustNodeOrThrow(addressStr);
-    uint160 address = TrustNodeToLegacyUint160(addressNode, addressStr);
     
     // Get max count
     uint32_t maxCount = 100;
@@ -3000,14 +2968,14 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
     CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
     
-    // Get cluster info
-    uint160 clusterId = clusterer.GetClusterForAddress(address);
-    std::set<uint160> members = clusterer.GetClusterMembers(address);
+    // Get cluster info (typed identities)
+    CVM::TrustNodeId clusterId = clusterer.GetClusterForAddress(addressNode);
+    std::set<CVM::TrustNodeId> members = clusterer.GetClusterMembers(addressNode);
     
     // If no cluster found, treat as single-address cluster
     if (members.empty()) {
-        members.insert(address);
-        clusterId = address;
+        members.insert(addressNode);
+        clusterId = addressNode;
     }
     
     // Collect direct edges
@@ -3034,7 +3002,7 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
     
     // Build result
     UniValue result(UniValue::VOBJ);
-    result.pushKV("cluster_id", EncodeDestination(CKeyID(clusterId)));
+    result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     
     // Direct edges array
     UniValue direct_arr(UniValue::VARR);
@@ -3055,9 +3023,11 @@ UniValue listclustertrustrelations(const JSONRPCRequest& request)
     UniValue propagated_arr(UniValue::VARR);
     for (const auto& edge : propagatedEdges) {
         UniValue edgeObj(UniValue::VOBJ);
-        edgeObj.pushKV("from", EncodeDestination(CKeyID(edge.fromAddress)));
-        edgeObj.pushKV("to", EncodeDestination(CKeyID(edge.toAddress)));
-        edgeObj.pushKV("original_target", EncodeDestination(CKeyID(edge.originalTarget)));
+        // Propagated edge endpoints are wide TrustNodeId identities; render via
+        // ToDestination so every supported address type is shown.
+        edgeObj.pushKV("from", EncodeDestination(edge.fromAddress.ToDestination()));
+        edgeObj.pushKV("to", EncodeDestination(edge.toAddress.ToDestination()));
+        edgeObj.pushKV("original_target", EncodeDestination(edge.originalTarget.ToDestination()));
         edgeObj.pushKV("weight", (int)edge.trustWeight);
         edgeObj.pushKV("bond", ValueFromAmount(edge.bondAmount));
         edgeObj.pushKV("propagated_at", (uint64_t)edge.propagatedAt);
@@ -3096,15 +3066,16 @@ UniValue detectclusters(const JSONRPCRequest& request)
     
     // Detect clusters
     CVM::GraphAnalyzer analyzer(*CVM::g_cvmdb);
-    std::set<uint160> suspicious = analyzer.DetectSuspiciousClusters();
+    std::set<CVM::TrustNodeId> suspicious = analyzer.DetectSuspiciousClusters();
     
     // Build result
     UniValue result(UniValue::VOBJ);
     UniValue addresses(UniValue::VARR);
     
-    for (const auto& addr : suspicious) {
-        CKeyID keyID(addr);
-        addresses.push_back(EncodeDestination(keyID));
+    for (const auto& node : suspicious) {
+        // Render each stored identity through its typed destination so
+        // non-P2PKH members are reported with the correct address type.
+        addresses.push_back(EncodeDestination(node.ToDestination()));
     }
     
     result.pushKV("suspicious_addresses", addresses);
@@ -3182,7 +3153,7 @@ UniValue listdisputes(const JSONRPCRequest& request)
                 UniValue disputeObj(UniValue::VOBJ);
                 disputeObj.pushKV("dispute_id", dispute.disputeId.ToString());
                 disputeObj.pushKV("original_vote_tx", dispute.originalVoteTx.ToString());
-                disputeObj.pushKV("challenger", EncodeDestination(CKeyID(dispute.challenger)));
+                disputeObj.pushKV("challenger", EncodeDestination(dispute.challenger.ToDestination()));
                 disputeObj.pushKV("challenge_bond", ValueFromAmount(dispute.challengeBond));
                 disputeObj.pushKV("challenge_reason", dispute.challengeReason);
                 disputeObj.pushKV("created_time", (int64_t)dispute.createdTime);
@@ -3269,7 +3240,7 @@ UniValue getdispute(const JSONRPCRequest& request)
     UniValue result(UniValue::VOBJ);
     result.pushKV("dispute_id", dispute.disputeId.ToString());
     result.pushKV("original_vote_tx", dispute.originalVoteTx.ToString());
-    result.pushKV("challenger", EncodeDestination(CKeyID(dispute.challenger)));
+    result.pushKV("challenger", EncodeDestination(dispute.challenger.ToDestination()));
     result.pushKV("challenge_bond", ValueFromAmount(dispute.challengeBond));
     result.pushKV("challenge_reason", dispute.challengeReason);
     result.pushKV("created_time", (int64_t)dispute.createdTime);
@@ -3287,7 +3258,7 @@ UniValue getdispute(const JSONRPCRequest& request)
     
     for (const auto& vote : dispute.daoVotes) {
         UniValue voteObj(UniValue::VOBJ);
-        voteObj.pushKV("dao_member", EncodeDestination(CKeyID(vote.first)));
+        voteObj.pushKV("dao_member", EncodeDestination(vote.first.ToDestination()));
         voteObj.pushKV("support_slash", vote.second);
         
         CAmount stake = dispute.daoStakes.at(vote.first);
@@ -3325,7 +3296,7 @@ UniValue getdispute(const JSONRPCRequest& request)
                 // Add voter rewards breakdown
                 UniValue voterRewardsObj(UniValue::VOBJ);
                 for (const auto& [voter, amount] : dist.voterRewards) {
-                    voterRewardsObj.pushKV(EncodeDestination(CKeyID(voter)), ValueFromAmount(amount));
+                    voterRewardsObj.pushKV(EncodeDestination(voter.ToDestination()), ValueFromAmount(amount));
                 }
                 rewardObj.pushKV("voter_rewards", voterRewardsObj);
                 
@@ -3656,7 +3627,7 @@ UniValue getrewarddistribution(const JSONRPCRequest& request)
     // Add voter rewards breakdown
     UniValue voterRewardsObj(UniValue::VOBJ);
     for (const auto& [voter, amount] : dist.voterRewards) {
-        voterRewardsObj.pushKV(EncodeDestination(CKeyID(voter)), ValueFromAmount(amount));
+        voterRewardsObj.pushKV(EncodeDestination(voter.ToDestination()), ValueFromAmount(amount));
     }
     result.pushKV("voter_rewards", voterRewardsObj);
     
@@ -3943,7 +3914,7 @@ UniValue createdispute(const JSONRPCRequest& request)
             rec.disputeId = disputeId;
             rec.originalVoteTx = voteTxId;
             // Best effort: we don't resolve challenger here; the block processor will fill authoritative values
-            rec.challenger = uint160();
+            rec.challenger = CVM::TrustNodeId();
             rec.challengeBond = challengeBond;
             rec.challengeReason = reason;
             rec.createdTime = GetTime();

@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <serialize.h>
 #include <primitives/transaction.h>
+#include <cvm/trustnodeid.h>
 #include <vector>
 #include <string>
 
@@ -22,6 +23,12 @@ namespace CVM {
  * - On-chain behavior patterns
  * 
  * Never blocks transactions, only provides scoring and warnings.
+ *
+ * User identities (the scored address and the vote target) are wide
+ * TrustNodeId values: they represent every supported destination type
+ * (P2PKH/P2SH/P2WPKH/P2WSH/quantum) without truncation and never collide when
+ * they differ by type. Transaction-pattern data remains keyed by uint256
+ * transaction hashes.
  */
 
 /**
@@ -29,7 +36,7 @@ namespace CVM {
  */
 class ReputationScore {
 public:
-    uint160 address;           // Address being scored
+    TrustNodeId address;       // Address being scored (wide user identity)
     int64_t score;             // Reputation score (-10000 to +10000)
     uint64_t voteCount;        // Number of votes received
     int64_t lastUpdated;       // Timestamp of last update
@@ -72,7 +79,7 @@ public:
  */
 class ReputationVoteTx {
 public:
-    uint160 targetAddress;     // Address being voted on
+    TrustNodeId targetAddress; // Address being voted on (wide user identity)
     int64_t voteValue;         // Vote value (-100 to +100)
     std::string reason;        // Reason for vote
     std::vector<uint8_t> proof; // Optional proof/evidence
@@ -125,35 +132,49 @@ public:
     ReputationSystem(CVMDatabase& db);
     
     /**
-     * Get reputation score for address
+     * Get reputation score for a wide user identity.
      */
-    bool GetReputation(const uint160& address, ReputationScore& score);
+    bool GetReputation(const TrustNodeId& address, ReputationScore& score);
     
     /**
-     * Update reputation score for address
+     * Update reputation score for a wide user identity.
      */
-    bool UpdateReputation(const uint160& address, const ReputationScore& score);
+    bool UpdateReputation(const TrustNodeId& address, const ReputationScore& score);
     
     /**
-     * Apply a reputation vote
+     * Apply a reputation vote from a resolved voter identity.
      */
-    bool ApplyVote(const uint160& voterAddress, const ReputationVoteTx& vote, int64_t timestamp);
+    bool ApplyVote(const TrustNodeId& voterAddress, const ReputationVoteTx& vote, int64_t timestamp);
     
     /**
-     * Update reputation based on transaction behavior
+     * Update reputation based on transaction behavior.
      */
-    void UpdateBehaviorScore(const uint160& address, const CTransaction& tx, int blockHeight);
+    void UpdateBehaviorScore(const TrustNodeId& address, const CTransaction& tx, int blockHeight);
     
     /**
-     * Calculate voting power for an address
+     * Calculate voting power for an identity.
      * Based on: coin age, stake, own reputation
      */
+    int64_t GetVotingPower(const TrustNodeId& address);
+
+    //! Thin uint160 wrappers (legacy P2PKH callers). Each wraps the bare
+    //! uint160 as TrustNodeId{P2PKH, zero-extended} and forwards to the
+    //! TrustNodeId overload above. Wave 8 removes the remaining uint160
+    //! bridging at the RPC/block-processing sites.
+    bool GetReputation(const uint160& address, ReputationScore& score);
+    bool UpdateReputation(const uint160& address, const ReputationScore& score);
+    bool ApplyVote(const uint160& voterAddress, const ReputationVoteTx& vote, int64_t timestamp);
+    void UpdateBehaviorScore(const uint160& address, const CTransaction& tx, int blockHeight);
     int64_t GetVotingPower(const uint160& address);
     
     /**
-     * Get list of addresses with poor reputation
+     * Get list of identities with poor reputation.
+     *
+     * Enumerates the maintained reputation index (clause 2.49) and returns the
+     * wide identities at or below the threshold. Malformed/noncanonical index
+     * key segments are skipped, not reinterpreted.
      */
-    std::vector<uint160> GetLowReputationAddresses(int64_t threshold = -5000);
+    std::vector<TrustNodeId> GetLowReputationAddresses(int64_t threshold = -5000);
     
     /**
      * Analyze transaction for suspicious patterns
@@ -182,12 +203,12 @@ public:
     /**
      * Detect rapid-fire transactions (possible spam).
      *
-     * Consults the per-address transaction-history index maintained via
-     * RecordAddressActivity() and returns true when the address's activity
+     * Consults the per-identity transaction-history index maintained via
+     * RecordAddressActivity() and returns true when the identity's activity
      * matches the rapid-fire pattern (many transactions within a small block
      * window) at or before the supplied block height. (Bugfix 2.14)
      */
-    static bool DetectRapidFire(const uint160& address, int blockHeight, CVMDatabase& db);
+    static bool DetectRapidFire(const TrustNodeId& address, int blockHeight, CVMDatabase& db);
     
     /**
      * Detect mixer-like behavior
@@ -202,15 +223,21 @@ public:
     /**
      * Detect address reuse patterns that indicate exchange.
      *
-     * Consults the address's committed reputation record and returns true when
+     * Consults the identity's committed reputation record and returns true when
      * its transaction volume / count matches the exchange pattern. (Bugfix 2.48)
      */
-    static bool DetectExchangePattern(const uint160& address, CVMDatabase& db);
+    static bool DetectExchangePattern(const TrustNodeId& address, CVMDatabase& db);
 
     /**
-     * Record an address's on-chain activity (block height) into the
+     * Record an identity's on-chain activity (block height) into the
      * transaction-history index consulted by DetectRapidFire().
      */
+    static void RecordAddressActivity(const TrustNodeId& address, int blockHeight, CVMDatabase& db);
+
+    //! Thin uint160 wrappers (legacy P2PKH callers); Wave 8 removes the
+    //! remaining uint160 bridging at the call sites.
+    static bool DetectRapidFire(const uint160& address, int blockHeight, CVMDatabase& db);
+    static bool DetectExchangePattern(const uint160& address, CVMDatabase& db);
     static void RecordAddressActivity(const uint160& address, int blockHeight, CVMDatabase& db);
 };
 

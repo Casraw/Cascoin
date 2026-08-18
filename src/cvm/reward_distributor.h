@@ -79,34 +79,43 @@ public:
      * Requirements: 2.1, 2.2, 2.3, 2.4, 6.1, 6.2
      */
     bool DistributeFailedChallengeRewards(const DAODispute& dispute, 
-                                          const uint160& originalVoter);
+                                          const TrustNodeId& originalVoter);
     
     /**
      * Get all pending rewards for an address
      * 
-     * @param recipient Address to query
+     * @param recipient Address to query (wide, lossless identity)
      * @return Vector of pending (unclaimed) rewards
      * 
      * Requirements: 3.5
      */
+    std::vector<PendingReward> GetPendingRewards(const TrustNodeId& recipient) const;
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     std::vector<PendingReward> GetPendingRewards(const uint160& recipient) const;
     
     /**
      * Get all claimed rewards for an address (claim history)
      * 
-     * @param recipient Address to query
+     * @param recipient Address to query (wide, lossless identity)
      * @return Vector of claimed rewards
      * 
      * Requirements: 7.1, 7.2 (Dashboard claim history)
      */
+    std::vector<PendingReward> GetClaimedRewards(const TrustNodeId& recipient) const;
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     std::vector<PendingReward> GetClaimedRewards(const uint160& recipient) const;
     
     /**
      * Get all rewards (both pending and claimed) for an address
      * 
-     * @param recipient Address to query
+     * @param recipient Address to query (wide, lossless identity)
      * @return Vector of all rewards
      */
+    std::vector<PendingReward> GetAllRewards(const TrustNodeId& recipient) const;
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     std::vector<PendingReward> GetAllRewards(const uint160& recipient) const;
     
     /**
@@ -123,6 +132,9 @@ public:
      * 
      * Requirements: 3.3, 3.4, 6.3
      */
+    CAmount ClaimReward(const uint256& rewardId, const TrustNodeId& recipient);
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     CAmount ClaimReward(const uint256& rewardId, const uint160& recipient);
     
     /**
@@ -171,7 +183,7 @@ private:
      * Uses integer arithmetic to avoid rounding errors.
      * Any remainder from rounding is returned separately.
      */
-    std::pair<std::map<uint160, CAmount>, CAmount> CalculateVoterRewards(
+    std::pair<std::map<TrustNodeId, CAmount>, CAmount> CalculateVoterRewards(
         const DAODispute& dispute,
         CAmount totalVoterPool,
         bool winningSide
@@ -211,7 +223,7 @@ private:
      */
     void EmitRewardEvent(const std::string& eventType,
                          const uint256& disputeId,
-                         const uint160& recipient,
+                         const TrustNodeId& recipient,
                          CAmount amount);
     
     /**
@@ -221,7 +233,7 @@ private:
      * @param rewardId Reward ID to add
      * @return true if successful
      */
-    bool AddToRecipientIndex(const uint160& recipient, const uint256& rewardId);
+    bool AddToRecipientIndex(const TrustNodeId& recipient, const uint256& rewardId);
     
     /**
      * Get total stake on a specific side of the dispute

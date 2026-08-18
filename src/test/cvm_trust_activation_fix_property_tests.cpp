@@ -134,7 +134,7 @@ CTransactionRef MakeTrustEdgeTx(const uint160& from, const uint160& to,
 CTransactionRef MakeReputationVoteTx(const uint160& target, int16_t voteValue)
 {
     CVM::CVMReputationData voteData;
-    voteData.targetAddress = target;
+    voteData.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     voteData.voteValue = voteValue;
     voteData.timestamp = kTimestamp;
 
@@ -154,8 +154,8 @@ CTransactionRef MakeBondedVoteTx(const uint160& voter, const uint160& target,
                                  int16_t voteValue, CAmount bond = kBond)
 {
     CVM::CVMBondedVoteData voteData;
-    voteData.voter = voter;
-    voteData.target = target;
+    voteData.voter = CVM::TrustNodeId::FromLegacyUint160(voter);
+    voteData.target = CVM::TrustNodeId::FromLegacyUint160(target);
     voteData.voteValue = voteValue;
     voteData.bondAmount = bond;
     voteData.timestamp = kTimestamp;
@@ -178,7 +178,7 @@ CTransactionRef MakeDAODisputeTx(const uint256& originalVoteTx,
 {
     CVM::CVMDAODisputeData disputeData;
     disputeData.originalVoteTxHash = originalVoteTx;
-    disputeData.challenger = challenger;
+    disputeData.challenger = CVM::TrustNodeId::FromLegacyUint160(challenger);
     disputeData.challengeBond = bond;
     disputeData.reason = "challenge";
     disputeData.timestamp = kTimestamp;
@@ -201,7 +201,7 @@ CTransactionRef MakeDAOVoteTx(const uint256& disputeId, const uint160& daoMember
 {
     CVM::CVMDAOVoteData voteData;
     voteData.disputeId = disputeId;
-    voteData.daoMember = daoMember;
+    voteData.daoMember = CVM::TrustNodeId::FromLegacyUint160(daoMember);
     voteData.supportSlash = supportSlash;
     voteData.stake = stake;
     voteData.timestamp = kTimestamp;

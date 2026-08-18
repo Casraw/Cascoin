@@ -151,6 +151,10 @@ BITCOIN_TESTS =\
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
   test/trustnodeid_tests.cpp \
+  test/trustnodeid_validation_tests.cpp \
+  test/trustnodeid_full_migration_explore_tests.cpp \
+  test/trustnodeid_full_migration_preserve_tests.cpp \
+  test/trustnodeid_full_migration_fix_property_tests.cpp \
   test/trustpropagator_tests.cpp \
   test/txvalidation_tests.cpp \
   test/txvalidationcache_tests.cpp \

@@ -7,8 +7,10 @@
 
 #include <uint256.h>
 #include <serialize.h>
+#include <cvm/trustnodeid.h>
 #include <primitives/transaction.h>
 #include <map>
+#include <set>
 #include <vector>
 #include <deque>
 #include <mutex>
@@ -30,9 +32,9 @@ class TrustPropagator;
  * address that connects them — rather than a cluster canonical id placeholder.
  */
 struct ClusterMergeCandidate {
-    uint160 cluster1;        // First cluster (absorbing cluster)
-    uint160 cluster2;        // Second cluster (merged into cluster1)
-    uint160 linkingAddress;  // Real address connecting the two clusters
+    TrustNodeId cluster1;        // First cluster (absorbing cluster)
+    TrustNodeId cluster2;        // Second cluster (merged into cluster1)
+    TrustNodeId linkingAddress;  // Real identity connecting the two clusters
 };
 
 /**
@@ -61,9 +63,9 @@ struct ClusterUpdateEvent {
     };
     
     Type eventType;              // Type of cluster update event
-    uint160 clusterId;           // The cluster that was affected
-    uint160 affectedAddress;     // The address that triggered or was affected by the event
-    uint160 mergedFromCluster;   // For CLUSTER_MERGE: the cluster that was merged into clusterId
+    TrustNodeId clusterId;       // The cluster that was affected
+    TrustNodeId affectedAddress; // The identity that triggered or was affected by the event
+    TrustNodeId mergedFromCluster; // For CLUSTER_MERGE: the cluster that was merged into clusterId
     uint32_t blockHeight;        // Block height when the event occurred
     uint32_t timestamp;          // Unix timestamp when the event was processed
     uint32_t inheritedEdgeCount; // For TRUST_INHERITED: number of edges inherited
@@ -75,7 +77,8 @@ struct ClusterUpdateEvent {
         , inheritedEdgeCount(0)
     {}
     
-    ClusterUpdateEvent(Type type, const uint160& cluster, const uint160& affected,
+    // Primary typed constructor.
+    ClusterUpdateEvent(Type type, const TrustNodeId& cluster, const TrustNodeId& affected,
                        uint32_t height, uint32_t ts)
         : eventType(type)
         , clusterId(cluster)
@@ -84,54 +87,59 @@ struct ClusterUpdateEvent {
         , timestamp(ts)
         , inheritedEdgeCount(0)
     {}
+
+    // Thin uint160 wrapper constructor (legacy P2PKH callers).
+    ClusterUpdateEvent(Type type, const uint160& cluster, const uint160& affected,
+                       uint32_t height, uint32_t ts)
+        : ClusterUpdateEvent(type, TrustNodeId::FromLegacyUint160(cluster),
+                             TrustNodeId::FromLegacyUint160(affected), height, ts)
+    {}
     
     /**
-     * Create a NEW_MEMBER event
-     * 
-     * @param cluster The cluster the address joined
-     * @param newMember The new member address
-     * @param height Block height
-     * @param ts Timestamp
-     * @return Configured ClusterUpdateEvent
+     * Create a NEW_MEMBER event (typed identities).
      */
-    static ClusterUpdateEvent NewMember(const uint160& cluster, const uint160& newMember,
+    static ClusterUpdateEvent NewMember(const TrustNodeId& cluster, const TrustNodeId& newMember,
                                         uint32_t height, uint32_t ts) {
         ClusterUpdateEvent event(Type::NEW_MEMBER, cluster, newMember, height, ts);
         return event;
     }
     
     /**
-     * Create a CLUSTER_MERGE event
-     * 
-     * @param targetCluster The cluster that absorbed the other
-     * @param sourceCluster The cluster that was merged
-     * @param linkingAddress The address that caused the merge
-     * @param height Block height
-     * @param ts Timestamp
-     * @return Configured ClusterUpdateEvent
+     * Create a CLUSTER_MERGE event (typed identities).
      */
-    static ClusterUpdateEvent ClusterMerge(const uint160& targetCluster, const uint160& sourceCluster,
-                                           const uint160& linkingAddress, uint32_t height, uint32_t ts) {
+    static ClusterUpdateEvent ClusterMerge(const TrustNodeId& targetCluster, const TrustNodeId& sourceCluster,
+                                           const TrustNodeId& linkingAddress, uint32_t height, uint32_t ts) {
         ClusterUpdateEvent event(Type::CLUSTER_MERGE, targetCluster, linkingAddress, height, ts);
         event.mergedFromCluster = sourceCluster;
         return event;
     }
     
     /**
-     * Create a TRUST_INHERITED event
-     * 
-     * @param cluster The cluster where trust was inherited
-     * @param newMember The address that inherited trust
-     * @param edgeCount Number of trust edges inherited
-     * @param height Block height
-     * @param ts Timestamp
-     * @return Configured ClusterUpdateEvent
+     * Create a TRUST_INHERITED event (typed identities).
      */
-    static ClusterUpdateEvent TrustInherited(const uint160& cluster, const uint160& newMember,
+    static ClusterUpdateEvent TrustInherited(const TrustNodeId& cluster, const TrustNodeId& newMember,
                                              uint32_t edgeCount, uint32_t height, uint32_t ts) {
         ClusterUpdateEvent event(Type::TRUST_INHERITED, cluster, newMember, height, ts);
         event.inheritedEdgeCount = edgeCount;
         return event;
+    }
+
+    // --- Thin uint160 wrapper factory methods (legacy P2PKH callers) ------
+    static ClusterUpdateEvent NewMember(const uint160& cluster, const uint160& newMember,
+                                        uint32_t height, uint32_t ts) {
+        return NewMember(TrustNodeId::FromLegacyUint160(cluster),
+                         TrustNodeId::FromLegacyUint160(newMember), height, ts);
+    }
+    static ClusterUpdateEvent ClusterMerge(const uint160& targetCluster, const uint160& sourceCluster,
+                                           const uint160& linkingAddress, uint32_t height, uint32_t ts) {
+        return ClusterMerge(TrustNodeId::FromLegacyUint160(targetCluster),
+                            TrustNodeId::FromLegacyUint160(sourceCluster),
+                            TrustNodeId::FromLegacyUint160(linkingAddress), height, ts);
+    }
+    static ClusterUpdateEvent TrustInherited(const uint160& cluster, const uint160& newMember,
+                                             uint32_t edgeCount, uint32_t height, uint32_t ts) {
+        return TrustInherited(TrustNodeId::FromLegacyUint160(cluster),
+                              TrustNodeId::FromLegacyUint160(newMember), edgeCount, height, ts);
     }
     
     /**
@@ -244,9 +252,9 @@ public:
      * 
      * @param address Address to check
      * @param clusterId Cluster it belongs to
-     * @return true if address is newly detected in cluster
+     * @return true if identity is newly detected in cluster
      */
-    bool IsNewClusterMember(const uint160& address, const uint160& clusterId) const;
+    bool IsNewClusterMember(const TrustNodeId& address, const TrustNodeId& clusterId) const;
     
     /**
      * Get recent cluster update events
@@ -268,16 +276,23 @@ public:
      * @param maxCount Maximum events to return
      * @return Vector of events affecting the cluster
      */
-    std::vector<ClusterUpdateEvent> GetEventsForCluster(const uint160& clusterId, 
+    std::vector<ClusterUpdateEvent> GetEventsForCluster(const TrustNodeId& clusterId, 
                                                         uint32_t maxCount = 100) const;
     
     /**
-     * Get events for a specific address
+     * Get events for a specific identity
      * 
-     * @param address Address to query
+     * @param address Identity to query
      * @param maxCount Maximum events to return
-     * @return Vector of events affecting the address
+     * @return Vector of events affecting the identity
      */
+    std::vector<ClusterUpdateEvent> GetEventsForAddress(const TrustNodeId& address,
+                                                        uint32_t maxCount = 100) const;
+
+    // --- Thin uint160 wrappers (legacy P2PKH callers) ---------------------
+    bool IsNewClusterMember(const uint160& address, const uint160& clusterId) const;
+    std::vector<ClusterUpdateEvent> GetEventsForCluster(const uint160& clusterId,
+                                                        uint32_t maxCount = 100) const;
     std::vector<ClusterUpdateEvent> GetEventsForAddress(const uint160& address,
                                                         uint32_t maxCount = 100) const;
     
@@ -326,9 +341,9 @@ private:
     WalletClusterer& clusterer;
     TrustPropagator& propagator;
     
-    // Track known cluster memberships: address -> clusterId
-    // Used to detect when an address joins a new cluster
-    std::map<uint160, uint160> knownMemberships;
+    // Track known cluster memberships: identity -> clusterId
+    // Used to detect when an identity joins a new cluster
+    std::map<TrustNodeId, TrustNodeId> knownMemberships;
     
     // Recent events for quick access (bounded by MAX_RECENT_EVENTS)
     mutable std::deque<ClusterUpdateEvent> recentEvents;
@@ -345,9 +360,9 @@ private:
      * 2. Not previously known to be in that cluster
      * 
      * @param transactions Transactions to analyze
-     * @return Vector of (address, clusterId) pairs for new members
+     * @return Vector of (identity, clusterId) pairs for new members
      */
-    std::vector<std::pair<uint160, uint160>> DetectNewMembers(
+    std::vector<std::pair<TrustNodeId, TrustNodeId>> DetectNewMembers(
         const std::vector<CTransaction>& transactions);
     
     /**
@@ -374,7 +389,7 @@ private:
      * @param timestamp Current timestamp
      * @return true if processed successfully
      */
-    bool ProcessNewMember(const uint160& newMember, const uint160& clusterId,
+    bool ProcessNewMember(const TrustNodeId& newMember, const TrustNodeId& clusterId,
                          uint32_t blockHeight, uint32_t timestamp);
     
     /**
@@ -389,8 +404,8 @@ private:
      * @param timestamp Current timestamp
      * @return true if processed successfully
      */
-    bool ProcessClusterMerge(const uint160& cluster1, const uint160& cluster2,
-                            const uint160& linkingAddress,
+    bool ProcessClusterMerge(const TrustNodeId& cluster1, const TrustNodeId& cluster2,
+                            const TrustNodeId& linkingAddress,
                             uint32_t blockHeight, uint32_t timestamp);
     
     /**
@@ -415,18 +430,22 @@ private:
     /**
      * Update known membership for an address
      * 
-     * @param address Address to update
+     * @param address Identity to update
      * @param clusterId New cluster ID
      */
-    void UpdateKnownMembership(const uint160& address, const uint160& clusterId);
+    void UpdateKnownMembership(const TrustNodeId& address, const TrustNodeId& clusterId);
     
     /**
-     * Extract addresses from transaction inputs
+     * Extract identities from transaction inputs.
+     *
+     * Every supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/quantum) is
+     * resolved via TrustNodeId::FromDestination; unresolved prevouts, invalid
+     * indexes, CNoDestination and WitnessUnknown are ignored.
      * 
      * @param tx Transaction to analyze
-     * @return Set of addresses used as inputs
+     * @return Set of identities used as inputs
      */
-    std::set<uint160> ExtractInputAddresses(const CTransaction& tx) const;
+    std::set<TrustNodeId> ExtractInputAddresses(const CTransaction& tx) const;
 };
 
 } // namespace CVM

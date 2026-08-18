@@ -21,7 +21,7 @@ namespace CVM {
 static const std::string CLUSTER_EVENT_PREFIX = "cluster_event_";
 
 // Storage key prefix for known cluster memberships
-// Format: "cluster_member_{address}"
+// Format: "cluster_member_<TNI>" (TNI = TrustNodeId::ToKeyString())
 static const std::string CLUSTER_MEMBER_PREFIX = "cluster_member_";
 
 //
@@ -75,16 +75,16 @@ uint32_t ClusterUpdateHandler::ProcessBlock(int blockHeight, const std::vector<C
     uint32_t updateCount = 0;
     
     // Step 1: Detect new cluster members from transaction inputs
-    // Requirement 2.4: Check for new addresses joining existing clusters
-    std::vector<std::pair<uint160, uint160>> newMembers = DetectNewMembers(transactions);
+    // Requirement 2.4: Check for new identities joining existing clusters
+    std::vector<std::pair<TrustNodeId, TrustNodeId>> newMembers = DetectNewMembers(transactions);
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected %zu new cluster members\n",
              newMembers.size());
     
     // Step 2: Process each new member - inherit trust and emit events
     for (const auto& memberPair : newMembers) {
-        const uint160& newAddress = memberPair.first;
-        const uint160& clusterId = memberPair.second;
+        const TrustNodeId& newAddress = memberPair.first;
+        const TrustNodeId& clusterId = memberPair.second;
         
         if (ProcessNewMember(newAddress, clusterId, blockHeight, timestamp)) {
             updateCount++;
@@ -118,17 +118,17 @@ uint32_t ClusterUpdateHandler::ProcessBlock(int blockHeight, const std::vector<C
     return updateCount;
 }
 
-bool ClusterUpdateHandler::IsNewClusterMember(const uint160& address, const uint160& clusterId) const
+bool ClusterUpdateHandler::IsNewClusterMember(const TrustNodeId& address, const TrustNodeId& clusterId) const
 {
-    // Check if we've seen this address in this cluster before
+    // Check if we've seen this identity in this cluster before
     auto it = knownMemberships.find(address);
     
     if (it == knownMemberships.end()) {
-        // Address not in any known cluster - it's new
+        // Identity not in any known cluster - it's new
         return true;
     }
     
-    // Address is known, check if it's in a different cluster
+    // Identity is known, check if it's in a different cluster
     // (which would indicate a cluster merge scenario)
     return it->second != clusterId;
 }
@@ -150,7 +150,7 @@ std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetRecentEvents(uint32_t m
     return result;
 }
 
-std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForCluster(const uint160& clusterId, 
+std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForCluster(const TrustNodeId& clusterId, 
                                                                           uint32_t maxCount) const
 {
     std::lock_guard<std::mutex> lock(eventsMutex);
@@ -168,7 +168,7 @@ std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForCluster(const 
     return result;
 }
 
-std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForAddress(const uint160& address,
+std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForAddress(const TrustNodeId& address,
                                                                           uint32_t maxCount) const
 {
     std::lock_guard<std::mutex> lock(eventsMutex);
@@ -220,7 +220,7 @@ void ClusterUpdateHandler::LoadKnownMemberships()
     knownMemberships.clear();
     
     for (const std::string& key : keys) {
-        // Read the cluster ID for this address
+        // Read the cluster ID for this identity
         std::vector<uint8_t> data;
         if (!database.ReadGeneric(key, data)) {
             continue;
@@ -228,10 +228,15 @@ void ClusterUpdateHandler::LoadKnownMemberships()
         
         try {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-            uint160 address;
-            uint160 clusterId;
+            TrustNodeId address;
+            TrustNodeId clusterId;
             ss >> address;
             ss >> clusterId;
+            if (!ss.empty()) {
+                LogPrintf("ClusterUpdateHandler: trailing bytes in membership record \"%s\"; skipping\n",
+                          key);
+                continue;
+            }
             
             knownMemberships[address] = clusterId;
         } catch (const std::exception& e) {
@@ -250,10 +255,11 @@ void ClusterUpdateHandler::SaveKnownMemberships()
              knownMemberships.size());
     
     for (const auto& pair : knownMemberships) {
-        const uint160& address = pair.first;
-        const uint160& clusterId = pair.second;
+        const TrustNodeId& address = pair.first;
+        const TrustNodeId& clusterId = pair.second;
         
-        std::string key = CLUSTER_MEMBER_PREFIX + address.ToString();
+        // Key format: "cluster_member_<TNI>" (TNI = TrustNodeId::ToKeyString())
+        std::string key = CLUSTER_MEMBER_PREFIX + address.ToKeyString();
         
         CDataStream ss(SER_DISK, CLIENT_VERSION);
         ss << address;
@@ -262,21 +268,21 @@ void ClusterUpdateHandler::SaveKnownMemberships()
         std::vector<uint8_t> data(ss.begin(), ss.end());
         
         if (!database.WriteGeneric(key, data)) {
-            LogPrintf("ClusterUpdateHandler: Failed to save membership for address %s\n",
-                      address.ToString());
+            LogPrintf("ClusterUpdateHandler: Failed to save membership for identity %s\n",
+                      address.ToKeyString());
         }
     }
 }
 
-std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectNewMembers(
+std::vector<std::pair<TrustNodeId, TrustNodeId>> ClusterUpdateHandler::DetectNewMembers(
     const std::vector<CTransaction>& transactions)
 {
     // Detect new cluster members from transaction inputs
-    // When multiple addresses are used as inputs in the same transaction,
+    // When multiple identities are used as inputs in the same transaction,
     // they belong to the same wallet cluster
     
-    std::vector<std::pair<uint160, uint160>> newMembers;
-    std::set<uint160> processedAddresses;  // Avoid duplicates within this block
+    std::vector<std::pair<TrustNodeId, TrustNodeId>> newMembers;
+    std::set<TrustNodeId> processedAddresses;  // Avoid duplicates within this block
     
     for (const CTransaction& tx : transactions) {
         // Skip coinbase transactions
@@ -284,32 +290,32 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectNewMembers(
             continue;
         }
         
-        // Extract all input addresses from this transaction
-        std::set<uint160> inputAddresses = ExtractInputAddresses(tx);
+        // Extract all input identities from this transaction
+        std::set<TrustNodeId> inputAddresses = ExtractInputAddresses(tx);
         
-        // For each input address, check if it's new to its cluster
-        for (const uint160& address : inputAddresses) {
-            // Skip if we've already processed this address in this block
+        // For each input identity, check if it's new to its cluster
+        for (const TrustNodeId& address : inputAddresses) {
+            // Skip if we've already processed this identity in this block
             if (processedAddresses.count(address) > 0) {
                 continue;
             }
             processedAddresses.insert(address);
             
-            // Get the cluster for this address from the clusterer
+            // Get the cluster for this identity from the clusterer.
             // The clusterer maintains cluster information based on transaction analysis
-            uint160 clusterId = clusterer.GetClusterForAddress(address);
+            TrustNodeId clusterId = clusterer.GetClusterForAddress(address);
             
-            // If the cluster ID equals the address itself, it might be a single-address cluster
-            // or a new address. Check if it's part of a larger cluster.
-            if (clusterId.IsNull() || clusterId == address) {
-                // Check if this address is part of a multi-input transaction
+            // If the cluster ID equals the identity itself, it might be a single-identity
+            // cluster or a new identity. Check if it's part of a larger cluster.
+            if (clusterId.data.IsNull() || clusterId == address) {
+                // Check if this identity is part of a multi-input transaction
                 // which would indicate it belongs to a cluster
                 if (inputAddresses.size() <= 1) {
-                    // Single input, not part of a multi-address wallet
+                    // Single input, not part of a multi-identity wallet
                     continue;
                 }
                 // Multiple inputs - the clusterer should have linked them
-                // Use the first address as the cluster ID if not set
+                // Use the identity itself as the cluster ID if not set
                 clusterId = address;
             }
             
@@ -318,7 +324,7 @@ std::vector<std::pair<uint160, uint160>> ClusterUpdateHandler::DetectNewMembers(
                 newMembers.push_back(std::make_pair(address, clusterId));
                 
                 LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected new cluster member %s in cluster %s\n",
-                         address.ToString(), clusterId.ToString());
+                         address.ToKeyString(), clusterId.ToKeyString());
             }
         }
     }
@@ -334,30 +340,30 @@ std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
     // those clusters should be merged
     
     std::vector<ClusterMergeCandidate> merges;
-    std::set<std::pair<uint160, uint160>> processedMerges;  // Avoid duplicate merge pairs
+    std::set<std::pair<TrustNodeId, TrustNodeId>> processedMerges;  // Avoid duplicate merge pairs
     
     for (const CTransaction& tx : transactions) {
-        // Extract all input addresses from this transaction
-        std::set<uint160> inputAddresses = ExtractInputAddresses(tx);
+        // Extract all input identities from this transaction
+        std::set<TrustNodeId> inputAddresses = ExtractInputAddresses(tx);
         
         if (inputAddresses.size() < 2) {
-            // Need at least 2 addresses to potentially merge clusters
+            // Need at least 2 identities to potentially merge clusters
             continue;
         }
         
-        // Get clusters for all input addresses
-        std::set<uint160> involvedClusters;
-        std::map<uint160, uint160> addressToCluster;
-        // Reverse map: for each cluster, a real input address that belongs to it.
-        std::map<uint160, uint160> clusterToAddress;
+        // Get clusters for all input identities
+        std::set<TrustNodeId> involvedClusters;
+        std::map<TrustNodeId, TrustNodeId> addressToCluster;
+        // Reverse map: for each cluster, a real input identity that belongs to it.
+        std::map<TrustNodeId, TrustNodeId> clusterToAddress;
         
-        for (const uint160& address : inputAddresses) {
-            uint160 clusterId = clusterer.GetClusterForAddress(address);
+        for (const TrustNodeId& address : inputAddresses) {
+            TrustNodeId clusterId = clusterer.GetClusterForAddress(address);
             
-            if (!clusterId.IsNull()) {
+            if (!clusterId.data.IsNull()) {
                 involvedClusters.insert(clusterId);
                 addressToCluster[address] = clusterId;
-                // Keep the first real address seen for each cluster.
+                // Keep the first real identity seen for each cluster.
                 clusterToAddress.emplace(clusterId, address);
             }
         }
@@ -365,12 +371,12 @@ std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
         // If multiple clusters are involved, they should be merged
         if (involvedClusters.size() > 1) {
             // Create merge pairs for all cluster combinations
-            std::vector<uint160> clusterList(involvedClusters.begin(), involvedClusters.end());
+            std::vector<TrustNodeId> clusterList(involvedClusters.begin(), involvedClusters.end());
             
             for (size_t i = 0; i < clusterList.size(); i++) {
                 for (size_t j = i + 1; j < clusterList.size(); j++) {
-                    uint160 cluster1 = clusterList[i];
-                    uint160 cluster2 = clusterList[j];
+                    TrustNodeId cluster1 = clusterList[i];
+                    TrustNodeId cluster2 = clusterList[j];
                     
                     // Normalize the pair (smaller first) to avoid duplicates
                     if (cluster2 < cluster1) {
@@ -382,7 +388,7 @@ std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
                     if (processedMerges.count(mergePair) == 0) {
                         processedMerges.insert(mergePair);
 
-                        // The actual linking address is a real input address of
+                        // The actual linking identity is a real input identity of
                         // this transaction that belongs to one of the merged
                         // clusters (it is what physically connects them).
                         ClusterMergeCandidate candidate;
@@ -398,8 +404,8 @@ std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
                         merges.push_back(candidate);
                         
                         LogPrint(BCLog::CVM, "ClusterUpdateHandler: Detected cluster merge: %s + %s (linking: %s)\n",
-                                 cluster1.ToString(), cluster2.ToString(),
-                                 candidate.linkingAddress.ToString());
+                                 cluster1.ToKeyString(), cluster2.ToKeyString(),
+                                 candidate.linkingAddress.ToKeyString());
                     }
                 }
             }
@@ -409,7 +415,7 @@ std::vector<ClusterMergeCandidate> ClusterUpdateHandler::DetectClusterMerges(
     return merges;
 }
 
-bool ClusterUpdateHandler::ProcessNewMember(const uint160& newMember, const uint160& clusterId,
+bool ClusterUpdateHandler::ProcessNewMember(const TrustNodeId& newMember, const TrustNodeId& clusterId,
                                            uint32_t blockHeight, uint32_t timestamp)
 {
     // Process a new cluster member:
@@ -419,7 +425,7 @@ bool ClusterUpdateHandler::ProcessNewMember(const uint160& newMember, const uint
     // 4. Update known memberships
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Processing new member %s in cluster %s\n",
-             newMember.ToString(), clusterId.ToString());
+             newMember.ToKeyString(), clusterId.ToKeyString());
     
     // Requirement 6.3: Emit event for monitoring
     ClusterUpdateEvent newMemberEvent = ClusterUpdateEvent::NewMember(
@@ -438,11 +444,11 @@ bool ClusterUpdateHandler::ProcessNewMember(const uint160& newMember, const uint
             break;
         } catch (const std::exception& e) {
             LogPrintf("ClusterUpdateHandler: Trust inheritance attempt %u failed for %s: %s\n",
-                      attempt + 1, newMember.ToString(), e.what());
+                      attempt + 1, newMember.ToKeyString(), e.what());
             
             if (attempt + 1 >= MAX_INHERITANCE_RETRIES) {
                 LogPrintf("ClusterUpdateHandler: ERROR - Trust inheritance failed after %u retries for %s\n",
-                          MAX_INHERITANCE_RETRIES, newMember.ToString());
+                          MAX_INHERITANCE_RETRIES, newMember.ToKeyString());
             }
         }
     }
@@ -454,7 +460,7 @@ bool ClusterUpdateHandler::ProcessNewMember(const uint160& newMember, const uint
         EmitEvent(trustEvent);
         
         LogPrint(BCLog::CVM, "ClusterUpdateHandler: New member %s inherited %u trust edges\n",
-                 newMember.ToString(), inheritedCount);
+                 newMember.ToKeyString(), inheritedCount);
     }
     
     // Update known memberships
@@ -463,17 +469,17 @@ bool ClusterUpdateHandler::ProcessNewMember(const uint160& newMember, const uint
     return true;
 }
 
-bool ClusterUpdateHandler::ProcessClusterMerge(const uint160& cluster1, const uint160& cluster2,
-                                              const uint160& linkingAddress,
+bool ClusterUpdateHandler::ProcessClusterMerge(const TrustNodeId& cluster1, const TrustNodeId& cluster2,
+                                              const TrustNodeId& linkingAddress,
                                               uint32_t blockHeight, uint32_t timestamp)
 {
     // Process a cluster merge:
     // 1. Emit CLUSTER_MERGE event
     // 2. Call TrustPropagator to handle trust combination
-    // 3. Update known memberships for all affected addresses
+    // 3. Update known memberships for all affected identities
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Processing cluster merge: %s + %s (linking: %s)\n",
-             cluster1.ToString(), cluster2.ToString(), linkingAddress.ToString());
+             cluster1.ToKeyString(), cluster2.ToKeyString(), linkingAddress.ToKeyString());
     
     // Requirement 6.3: Emit event for monitoring
     // The first cluster absorbs the second
@@ -483,20 +489,20 @@ bool ClusterUpdateHandler::ProcessClusterMerge(const uint160& cluster1, const ui
     
     // Requirements 6.1, 6.2: Combine trust relations from both clusters
     // The merged cluster ID is typically the first cluster (or the one with more members)
-    uint160 mergedClusterId = cluster1;
+    TrustNodeId mergedClusterId = cluster1;
     
     bool mergeSuccess = propagator.HandleClusterMerge(cluster1, cluster2, mergedClusterId);
     
     if (!mergeSuccess) {
         LogPrintf("ClusterUpdateHandler: Warning - HandleClusterMerge returned false for %s + %s\n",
-                  cluster1.ToString(), cluster2.ToString());
+                  cluster1.ToKeyString(), cluster2.ToKeyString());
         // Continue anyway - the merge event has been recorded
     }
     
-    // Update known memberships for all addresses in the merged cluster
-    std::set<uint160> mergedMembers = clusterer.GetClusterMembers(mergedClusterId);
+    // Update known memberships for all identities in the merged cluster
+    std::set<TrustNodeId> mergedMembers = clusterer.GetClusterMembers(mergedClusterId);
     
-    for (const uint160& member : mergedMembers) {
+    for (const TrustNodeId& member : mergedMembers) {
         UpdateKnownMembership(member, mergedClusterId);
     }
     
@@ -529,7 +535,7 @@ void ClusterUpdateHandler::EmitEvent(const ClusterUpdateEvent& event)
     totalEventCount++;
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Emitted %s event for cluster %s (total: %lu)\n",
-             event.GetEventTypeName(), event.clusterId.ToString(), totalEventCount);
+             event.GetEventTypeName(), event.clusterId.ToKeyString(), totalEventCount);
 }
 
 bool ClusterUpdateHandler::StoreEvent(const ClusterUpdateEvent& event)
@@ -552,17 +558,17 @@ bool ClusterUpdateHandler::StoreEvent(const ClusterUpdateEvent& event)
     return result;
 }
 
-void ClusterUpdateHandler::UpdateKnownMembership(const uint160& address, const uint160& clusterId)
+void ClusterUpdateHandler::UpdateKnownMembership(const TrustNodeId& address, const TrustNodeId& clusterId)
 {
     knownMemberships[address] = clusterId;
     
     LogPrint(BCLog::CVM, "ClusterUpdateHandler: Updated membership for %s -> cluster %s\n",
-             address.ToString(), clusterId.ToString());
+             address.ToKeyString(), clusterId.ToKeyString());
 }
 
-std::set<uint160> ClusterUpdateHandler::ExtractInputAddresses(const CTransaction& tx) const
+std::set<TrustNodeId> ClusterUpdateHandler::ExtractInputAddresses(const CTransaction& tx) const
 {
-    std::set<uint160> addresses;
+    std::set<TrustNodeId> addresses;
     
     // Skip coinbase transactions - they have no real inputs
     if (tx.IsCoinBase()) {
@@ -574,11 +580,14 @@ std::set<uint160> ClusterUpdateHandler::ExtractInputAddresses(const CTransaction
     try {
         consensusParams = &(Params().GetConsensus());
     } catch (...) {
-        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Chain params not initialized, cannot extract addresses\n");
+        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Chain params not initialized, cannot extract identities\n");
         return addresses;
     }
     
-    // For each input, look up the previous transaction's output to get the address
+    // For each input, look up the previous transaction's output to get the identity.
+    // Every supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/quantum) is
+    // resolved via TrustNodeId::FromDestination without truncation; unresolved
+    // prevouts, invalid indexes, CNoDestination and WitnessUnknown are ignored.
     for (const CTxIn& txin : tx.vin) {
         // Skip null prevouts (shouldn't happen for non-coinbase)
         if (txin.prevout.IsNull()) {
@@ -594,30 +603,16 @@ std::set<uint160> ClusterUpdateHandler::ExtractInputAddresses(const CTransaction
             if (txin.prevout.n < prevTx->vout.size()) {
                 const CTxOut& prevOut = prevTx->vout[txin.prevout.n];
                 
-                // Extract the destination address from the scriptPubKey
+                // Extract the destination from the scriptPubKey and convert it to
+                // the wide, lossless TrustNodeId representation.
                 CTxDestination dest;
                 if (ExtractDestination(prevOut.scriptPubKey, dest)) {
-                    // Handle different destination types
-                    if (const CKeyID* keyId = boost::get<CKeyID>(&dest)) {
-                        // P2PKH address
-                        addresses.insert(uint160(*keyId));
-                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Extracted P2PKH address %s from input\n",
-                                 uint160(*keyId).ToString());
-                    } else if (const CScriptID* scriptId = boost::get<CScriptID>(&dest)) {
-                        // P2SH address
-                        addresses.insert(uint160(*scriptId));
-                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Extracted P2SH address %s from input\n",
-                                 uint160(*scriptId).ToString());
-                    } else if (const WitnessV0KeyHash* witnessKeyHash = boost::get<WitnessV0KeyHash>(&dest)) {
-                        // P2WPKH (native SegWit) address
-                        uint160 addr;
-                        memcpy(addr.begin(), witnessKeyHash->begin(), 20);
-                        addresses.insert(addr);
-                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Extracted P2WPKH address %s from input\n",
-                                 addr.ToString());
+                    TrustNodeId id;
+                    if (TrustNodeId::FromDestination(dest, id)) {
+                        addresses.insert(id);
+                        LogPrint(BCLog::CVM, "ClusterUpdateHandler: Extracted identity %s from input\n",
+                                 id.ToKeyString());
                     }
-                    // Note: We skip WitnessV0ScriptHash and WitnessUnknown as they are 32 bytes
-                    // and don't fit in uint160
                 }
             }
         } else {
@@ -627,6 +622,30 @@ std::set<uint160> ClusterUpdateHandler::ExtractInputAddresses(const CTransaction
     }
     
     return addresses;
+}
+
+// ---------------------------------------------------------------------------
+// Thin uint160 wrappers (legacy P2PKH callers). Each zero-extends the bare
+// uint160 into a TrustNodeId{P2PKH} via FromLegacyUint160 and forwards to the
+// wide overload.
+// ---------------------------------------------------------------------------
+
+bool ClusterUpdateHandler::IsNewClusterMember(const uint160& address, const uint160& clusterId) const
+{
+    return IsNewClusterMember(TrustNodeId::FromLegacyUint160(address),
+                              TrustNodeId::FromLegacyUint160(clusterId));
+}
+
+std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForCluster(const uint160& clusterId,
+                                                                          uint32_t maxCount) const
+{
+    return GetEventsForCluster(TrustNodeId::FromLegacyUint160(clusterId), maxCount);
+}
+
+std::vector<ClusterUpdateEvent> ClusterUpdateHandler::GetEventsForAddress(const uint160& address,
+                                                                          uint32_t maxCount) const
+{
+    return GetEventsForAddress(TrustNodeId::FromLegacyUint160(address), maxCount);
 }
 
 } // namespace CVM

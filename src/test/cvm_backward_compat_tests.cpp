@@ -218,7 +218,7 @@ BOOST_AUTO_TEST_CASE(reputation_score_preservation)
 
     CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
     CVM::ReputationScore seeded;
-    seeded.address = address;
+    seeded.address = CVM::TrustNodeId::FromLegacyUint160(address);
     seeded.score = 5000; // -10000..10000 internal scale -> 50 on the 0..100 scale
     seeded.category = "normal";
     BOOST_REQUIRE(repSystem.UpdateReputation(address, seeded));

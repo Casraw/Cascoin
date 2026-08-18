@@ -171,7 +171,7 @@ CTransactionRef MakeTrustEdgeTx(const uint160& from, const uint160& to,
 CTransactionRef MakeReputationVoteTx(const uint160& target, int16_t voteValue = 100)
 {
     CVM::CVMReputationData voteData;
-    voteData.targetAddress = target;
+    voteData.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     voteData.voteValue = voteValue;
     voteData.timestamp = kTimestamp;
 
@@ -707,9 +707,9 @@ BOOST_AUTO_TEST_CASE(preserve_propagation_coexistence_stats_property)
         const int nProp = 1 + static_cast<int>(InsecureRandRange(4));
         for (int k = 0; k < nProp; ++k) {
             CVM::PropagatedTrustEdge pe;
-            pe.fromAddress = from;
-            pe.toAddress = RandU160();
-            pe.originalTarget = to;
+            pe.fromAddress = CVM::TrustNodeId::FromLegacyUint160(from);
+            pe.toAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+            pe.originalTarget = CVM::TrustNodeId::FromLegacyUint160(to);
             pe.sourceEdgeTx = InsecureRand256();
             pe.trustWeight = kWeight;
             pe.propagatedAt = kTimestamp;
@@ -810,9 +810,9 @@ BOOST_AUTO_TEST_CASE(preserve_propagated_edge_roundtrip_property)
 {
     for (int i = 0; i < kSamples; ++i) {
         CVM::PropagatedTrustEdge in;
-        in.fromAddress = RandU160();
-        in.toAddress = RandU160();
-        in.originalTarget = RandU160();
+        in.fromAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        in.toAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        in.originalTarget = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         in.sourceEdgeTx = InsecureRand256();
         in.trustWeight = static_cast<int16_t>(static_cast<int>(InsecureRandRange(201)) - 100);
         in.propagatedAt = static_cast<uint32_t>(InsecureRandRange(0xFFFFFFFFULL));

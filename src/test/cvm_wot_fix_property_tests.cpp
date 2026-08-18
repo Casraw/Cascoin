@@ -719,9 +719,9 @@ BOOST_AUTO_TEST_CASE(p5_preserved_validation_and_filters_property)
     // 3.7 — shared records still round-trip byte-for-byte.
     for (int i = 0; i < kSamples; ++i) {
         CVM::PropagatedTrustEdge pin;
-        pin.fromAddress = RandU160();
-        pin.toAddress = RandU160();
-        pin.originalTarget = RandU160();
+        pin.fromAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        pin.toAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        pin.originalTarget = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         pin.sourceEdgeTx = InsecureRand256();
         pin.trustWeight = static_cast<int16_t>(static_cast<int>(InsecureRandRange(201)) - 100);
         pin.propagatedAt = static_cast<uint32_t>(InsecureRandRange(0xFFFFFFFFULL));
@@ -736,8 +736,10 @@ BOOST_AUTO_TEST_CASE(p5_preserved_validation_and_filters_property)
             "P5 (3.7): PropagatedTrustEdge did not round-trip (#" + std::to_string(i) + ")");
 
         CVM::BondedVote vin;
-        vin.voter = RandU160();
-        vin.target = RandU160();
+        // BondedVote identity fields are now wide TrustNodeId (this migration);
+        // the round-trip property still holds with typed P2PKH-shaped identities.
+        vin.voter = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        vin.target = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         vin.voteValue = static_cast<int16_t>(static_cast<int>(InsecureRandRange(201)) - 100);
         vin.bondAmount = static_cast<CAmount>(InsecureRandRange(0x7FFFFFFFFFFFULL));
         vin.bondTxHash = InsecureRand256();

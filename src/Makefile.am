@@ -211,6 +211,7 @@ BITCOIN_CORE_H = \
   cvm/trustpropagator.h \
   cvm/clusterupdatehandler.h \
   cvm/clustertrustquery.h \
+  cvm/migration_observability.h \
   cvm/cvmtx.h \
   cvm/evmc_host.h \
   cvm/keccak256.h \
@@ -367,6 +368,7 @@ libbitcoin_server_a_SOURCES = \
   cvm/trustpropagator.cpp \
   cvm/clusterupdatehandler.cpp \
   cvm/clustertrustquery.cpp \
+  cvm/migration_observability.cpp \
   cvm/cvmtx.cpp \
   cvm/evmc_host.cpp \
   cvm/keccak256.cpp \

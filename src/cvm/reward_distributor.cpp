@@ -40,13 +40,13 @@ CAmount RewardDistributor::GetTotalStakeOnSide(const DAODispute& dispute, bool s
     return total;
 }
 
-std::pair<std::map<uint160, CAmount>, CAmount> RewardDistributor::CalculateVoterRewards(
+std::pair<std::map<TrustNodeId, CAmount>, CAmount> RewardDistributor::CalculateVoterRewards(
     const DAODispute& dispute,
     CAmount totalVoterPool,
     bool winningSide
 ) const
 {
-    std::map<uint160, CAmount> rewards;
+    std::map<TrustNodeId, CAmount> rewards;
     CAmount remainder = 0;
     
     if (totalVoterPool <= 0) {
@@ -89,8 +89,8 @@ std::pair<std::map<uint160, CAmount>, CAmount> RewardDistributor::CalculateVoter
 
 bool RewardDistributor::DistributeSlashRewards(const DAODispute& dispute, CAmount slashedBond)
 {
-    // Validate inputs
-    if (dispute.disputeId.IsNull() || dispute.challenger.IsNull()) {
+    // Validate inputs (challenger type tag 0 is the null/unset identity)
+    if (dispute.disputeId.IsNull() || dispute.challenger.type == 0) {
         return false;
     }
     
@@ -202,7 +202,7 @@ bool RewardDistributor::DistributeSlashRewards(const DAODispute& dispute, CAmoun
     
     // 4. Emit burn event
     if (burnAmount > 0) {
-        uint160 nullAddr;  // Null address for burn
+        TrustNodeId nullAddr;  // Null identity (type 0) for burn
         EmitRewardEvent("BondBurned", dispute.disputeId, nullAddr, burnAmount);
     }
     
@@ -223,7 +223,7 @@ bool RewardDistributor::DistributeSlashRewards(const DAODispute& dispute, CAmoun
 
 
 bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispute,
-                                                         const uint160& originalVoter)
+                                                         const TrustNodeId& originalVoter)
 {
     // Validate inputs
     if (dispute.disputeId.IsNull()) {
@@ -243,8 +243,8 @@ bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispu
     CAmount wronglyAccusedCompensation = 0;
     CAmount burnAmount = 0;
     
-    // Check if original voter address is valid
-    if (originalVoter.IsNull()) {
+    // Check if original voter address is valid (type tag 0 is null/unset)
+    if (originalVoter.type == 0) {
         // Invalid voter address - burn entire bond
         burnAmount = forfeitedBond;
     } else {
@@ -259,7 +259,7 @@ bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispu
     }
     
     // Create pending reward for wrongly accused voter
-    if (wronglyAccusedCompensation > 0 && !originalVoter.IsNull()) {
+    if (wronglyAccusedCompensation > 0 && originalVoter.type != 0) {
         uint256 compensationId = PendingReward::GenerateRewardId(
             dispute.disputeId, originalVoter, RewardType::WRONGLY_ACCUSED_COMPENSATION);
         
@@ -282,7 +282,7 @@ bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispu
     
     // Emit burn event
     if (burnAmount > 0) {
-        uint160 nullAddr;  // Null address for burn
+        TrustNodeId nullAddr;  // Null identity (type 0) for burn
         EmitRewardEvent("BondBurned", dispute.disputeId, nullAddr, burnAmount);
     }
     
@@ -296,7 +296,7 @@ bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispu
     distribution.totalDaoVoterRewards = wronglyAccusedCompensation;
     distribution.burnedAmount = burnAmount;
     
-    if (!originalVoter.IsNull() && wronglyAccusedCompensation > 0) {
+    if (originalVoter.type != 0 && wronglyAccusedCompensation > 0) {
         distribution.voterRewards[originalVoter] = wronglyAccusedCompensation;
     }
     
@@ -306,16 +306,16 @@ bool RewardDistributor::DistributeFailedChallengeRewards(const DAODispute& dispu
 }
 
 
-std::vector<PendingReward> RewardDistributor::GetPendingRewards(const uint160& recipient) const
+std::vector<PendingReward> RewardDistributor::GetPendingRewards(const TrustNodeId& recipient) const
 {
     std::vector<PendingReward> result;
     
-    if (recipient.IsNull()) {
+    if (recipient.type == 0) {
         return result;
     }
     
-    // Get list of reward IDs for this recipient
-    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.GetHex();
+    // Get list of reward IDs for this recipient (canonical tagged key segment)
+    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.ToKeyString();
     std::vector<uint8_t> indexData;
     
     if (!database.ReadGeneric(indexKey, indexData)) {
@@ -341,16 +341,21 @@ std::vector<PendingReward> RewardDistributor::GetPendingRewards(const uint160& r
     return result;
 }
 
-std::vector<PendingReward> RewardDistributor::GetClaimedRewards(const uint160& recipient) const
+std::vector<PendingReward> RewardDistributor::GetPendingRewards(const uint160& recipient) const
+{
+    return GetPendingRewards(TrustNodeId::FromLegacyUint160(recipient));
+}
+
+std::vector<PendingReward> RewardDistributor::GetClaimedRewards(const TrustNodeId& recipient) const
 {
     std::vector<PendingReward> result;
     
-    if (recipient.IsNull()) {
+    if (recipient.type == 0) {
         return result;
     }
     
-    // Get list of reward IDs for this recipient
-    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.GetHex();
+    // Get list of reward IDs for this recipient (canonical tagged key segment)
+    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.ToKeyString();
     std::vector<uint8_t> indexData;
     
     if (!database.ReadGeneric(indexKey, indexData)) {
@@ -376,16 +381,21 @@ std::vector<PendingReward> RewardDistributor::GetClaimedRewards(const uint160& r
     return result;
 }
 
-std::vector<PendingReward> RewardDistributor::GetAllRewards(const uint160& recipient) const
+std::vector<PendingReward> RewardDistributor::GetClaimedRewards(const uint160& recipient) const
+{
+    return GetClaimedRewards(TrustNodeId::FromLegacyUint160(recipient));
+}
+
+std::vector<PendingReward> RewardDistributor::GetAllRewards(const TrustNodeId& recipient) const
 {
     std::vector<PendingReward> result;
     
-    if (recipient.IsNull()) {
+    if (recipient.type == 0) {
         return result;
     }
     
-    // Get list of reward IDs for this recipient
-    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.GetHex();
+    // Get list of reward IDs for this recipient (canonical tagged key segment)
+    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.ToKeyString();
     std::vector<uint8_t> indexData;
     
     if (!database.ReadGeneric(indexKey, indexData)) {
@@ -408,10 +418,15 @@ std::vector<PendingReward> RewardDistributor::GetAllRewards(const uint160& recip
     return result;
 }
 
-CAmount RewardDistributor::ClaimReward(const uint256& rewardId, const uint160& recipient)
+std::vector<PendingReward> RewardDistributor::GetAllRewards(const uint160& recipient) const
 {
-    // Validate inputs
-    if (rewardId.IsNull() || recipient.IsNull()) {
+    return GetAllRewards(TrustNodeId::FromLegacyUint160(recipient));
+}
+
+CAmount RewardDistributor::ClaimReward(const uint256& rewardId, const TrustNodeId& recipient)
+{
+    // Validate inputs (recipient type tag 0 is the null/unset identity)
+    if (rewardId.IsNull() || recipient.type == 0) {
         return 0;
     }
     
@@ -445,6 +460,11 @@ CAmount RewardDistributor::ClaimReward(const uint256& rewardId, const uint160& r
     EmitRewardEvent("RewardClaimed", reward.disputeId, recipient, reward.amount);
     
     return reward.amount;
+}
+
+CAmount RewardDistributor::ClaimReward(const uint256& rewardId, const uint160& recipient)
+{
+    return ClaimReward(rewardId, TrustNodeId::FromLegacyUint160(recipient));
 }
 
 bool RewardDistributor::RewardExists(const uint256& rewardId) const
@@ -536,9 +556,9 @@ bool RewardDistributor::StoreRewardDistribution(const RewardDistribution& distri
     return database.WriteGeneric(key, data);
 }
 
-bool RewardDistributor::AddToRecipientIndex(const uint160& recipient, const uint256& rewardId)
+bool RewardDistributor::AddToRecipientIndex(const TrustNodeId& recipient, const uint256& rewardId)
 {
-    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.GetHex();
+    std::string indexKey = DB_REWARDS_BY_RECIPIENT_PREFIX + recipient.ToKeyString();
     std::vector<uint8_t> indexData;
     std::vector<uint256> rewardIds;
     
@@ -568,7 +588,7 @@ bool RewardDistributor::AddToRecipientIndex(const uint160& recipient, const uint
 
 void RewardDistributor::EmitRewardEvent(const std::string& eventType,
                                          const uint256& disputeId,
-                                         const uint160& recipient,
+                                         const TrustNodeId& recipient,
                                          CAmount amount)
 {
     // Create event key with timestamp for ordering
@@ -592,7 +612,7 @@ void RewardDistributor::EmitRewardEvent(const std::string& eventType,
     
     // Log the event
     LogPrint(BCLog::CVM, "RewardEvent: type=%s dispute=%s recipient=%s amount=%lld\n",
-             eventType, disputeId.GetHex(), recipient.GetHex(), amount);
+             eventType, disputeId.GetHex(), recipient.ToKeyString(), amount);
 }
 
 } // namespace CVM

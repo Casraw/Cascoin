@@ -214,8 +214,8 @@ struct TrustPath {
  * the bond is slashed.
  */
 struct BondedVote {
-    uint160 voter;               // Who is voting
-    uint160 target;              // Who is being voted on
+    TrustNodeId voter;           // Who is voting (wide, lossless identity)
+    TrustNodeId target;          // Who is being voted on (wide, lossless identity)
     int16_t voteValue;          // Vote value (-100 to +100)
     CAmount bondAmount;         // Amount staked
     uint256 bondTxHash;         // Transaction with bond
@@ -253,14 +253,14 @@ struct BondedVote {
 struct DAODispute {
     uint256 disputeId;           // Unique dispute ID
     uint256 originalVoteTx;      // The vote being disputed
-    uint160 challenger;          // Who challenged the vote
+    TrustNodeId challenger;      // Who challenged the vote (wide, lossless identity)
     CAmount challengeBond;       // Bond staked by challenger
     std::string challengeReason; // Why is it being challenged
     uint32_t createdTime;        // When dispute was created
     
-    // DAO Votes
-    std::map<uint160, bool> daoVotes;  // DAO member -> support (true=slash, false=keep)
-    std::map<uint160, CAmount> daoStakes; // Amount staked by each DAO member
+    // DAO Votes (keyed by wide, lossless DAO-member identity)
+    std::map<TrustNodeId, bool> daoVotes;  // DAO member -> support (true=slash, false=keep)
+    std::map<TrustNodeId, CAmount> daoStakes; // Amount staked by each DAO member
     
     // Resolution
     bool resolved;               // Has dispute been resolved?
@@ -496,9 +496,12 @@ public:
     /**
      * Get all votes for a target address
      * 
-     * @param target Address
+     * @param target Address (wide, lossless identity)
      * @return Vector of bonded votes
      */
+    std::vector<BondedVote> GetVotesForAddress(const TrustNodeId& target) const;
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     std::vector<BondedVote> GetVotesForAddress(const uint160& target) const;
     
     /**
@@ -536,6 +539,14 @@ public:
      * @param stake Amount staked by DAO member
      * @return true if successful
      */
+    bool VoteOnDispute(
+        const uint256& disputeId,
+        const TrustNodeId& daoMember,
+        bool support,
+        CAmount stake
+    );
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     bool VoteOnDispute(
         const uint256& disputeId,
         const uint160& daoMember,
@@ -582,9 +593,12 @@ public:
      * 2. Minimum stake (100 CAS bonded)
      * 3. Active participation (voted in last 10,000 blocks)
      * 
-     * @param address Address to check
+     * @param address Address to check (wide, lossless identity)
      * @return true if address is a DAO member
      */
+    bool IsDAOMember(const TrustNodeId& address) const;
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wave 8 removes bridging.
     bool IsDAOMember(const uint160& address) const;
     
     /**

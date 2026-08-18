@@ -130,6 +130,52 @@ struct TrustNodeId {
     }
 };
 
+/**
+ * Strict canonical-identity validation for a TrustNodeId.
+ *
+ * This is the single acceptance gate reused by every migrated downstream
+ * user-identity call site (HAT, reputation, clustering, bonded-vote/DAO,
+ * propagation, OP_RETURN payloads, and RPC). It does NOT change, reinterpret,
+ * or truncate the identity; it only accepts or rejects it.
+ *
+ * A TrustNodeId is canonical iff ALL of the following hold:
+ *   - `type` is one of the stable tags 1..5 (P2PKH, P2SH, P2WPKH, P2WSH,
+ *     QUANTUM); unknown tags are rejected.
+ *   - For the 20-byte types (P2PKH/P2SH/P2WPKH) the high 12 bytes of `data`
+ *     (internal byte order, indices 20..31) are zero; nonzero high padding is
+ *     rejected.
+ *   - For the 32-byte types (P2WSH/QUANTUM) all 32 bytes are significant and no
+ *     padding constraint applies.
+ *   - `ToDestination()` yields a supported CTxDestination that maps back to the
+ *     exact same identity (no width rejection, no type inference).
+ *
+ * @param node The identity to validate.
+ * @param err  Populated with a human-readable reason on failure; cleared on
+ *             success.
+ * @return true iff `node` is a strictly canonical TrustNodeId.
+ */
+bool ValidateCanonicalTrustNode(const TrustNodeId& node, std::string& err);
+
+/**
+ * Parse a canonical LevelDB key segment into a TrustNodeId.
+ *
+ * The input MUST match the exact lowercase shape produced by
+ * `TrustNodeId::ToKeyString()`: "<type:02x>-<data:64 lowercase hex>" (exactly
+ * 67 characters, a single '-' separator at index 2). This helper rejects
+ * unknown types, uppercase/noncanonical hex, extra separators, trailing
+ * characters, and — via ValidateCanonicalTrustNode — nonzero high padding for
+ * the 20-byte types. It never converts through uint160 or infers a type from a
+ * bare width.
+ *
+ * @param key The textual key segment to parse.
+ * @param out Populated on success with the canonical identity.
+ * @param err Populated with a human-readable reason on failure; cleared on
+ *            success.
+ * @return true iff `key` is exactly the canonical ToKeyString() form of a
+ *         strictly canonical TrustNodeId.
+ */
+bool ParseKeyStringToTrustNode(const std::string& key, TrustNodeId& out, std::string& err);
+
 } // namespace CVM
 
 #endif // CASCOIN_CVM_TRUSTNODEID_H

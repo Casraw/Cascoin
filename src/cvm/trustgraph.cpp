@@ -400,8 +400,8 @@ double TrustGraph::GetWeightedReputation(
     }
 
     // Fetch the target's bonded votes once (may be empty). BondedVote records
-    // are keyed by legacy uint160; use the low-20-byte value of the target.
-    std::vector<BondedVote> votes = GetVotesForAddress(target.ToUint160());
+    // are keyed by the wide TrustNodeId target identity.
+    std::vector<BondedVote> votes = GetVotesForAddress(target);
 
     double weightedSum = 0.0;
     double totalConfidence = 0.0;
@@ -608,25 +608,26 @@ bool TrustGraph::RecordBondedVote(const BondedVote& vote) {
         return false;
     }
     
-    // Store in target's vote list
-    std::string targetKey = "votes_" + vote.target.ToString() + "_" + vote.bondTxHash.ToString();
+    // Store in target's vote list under the canonical tagged key:
+    //   "votes_" + target.ToKeyString() + "_" + bondTxHash
+    std::string targetKey = "votes_" + vote.target.ToKeyString() + "_" + vote.bondTxHash.ToString();
     if (!database.WriteGeneric(targetKey, data)) {
         LogPrintf("TrustGraph: Failed to write vote to target index\n");
         return false;
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: Recorded bonded vote: %s -> %s: %d (bond: %d)\n",
-             vote.voter.ToString(), vote.target.ToString(), 
+             vote.voter.ToKeyString(), vote.target.ToKeyString(), 
              vote.voteValue, vote.bondAmount);
     
     return true;
 }
 
-std::vector<BondedVote> TrustGraph::GetVotesForAddress(const uint160& target) const {
+std::vector<BondedVote> TrustGraph::GetVotesForAddress(const TrustNodeId& target) const {
     std::vector<BondedVote> votes;
     
-    // Search for all keys with prefix "votes_{target}_"
-    std::string prefix = "votes_" + target.ToString() + "_";
+    // Search for all keys with prefix "votes_<target.ToKeyString()>_"
+    std::string prefix = "votes_" + target.ToKeyString() + "_";
     std::vector<std::string> keys = database.ListKeysWithPrefix(prefix);
     
     for (const std::string& key : keys) {
@@ -645,8 +646,12 @@ std::vector<BondedVote> TrustGraph::GetVotesForAddress(const uint160& target) co
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: Found %d votes for %s\n",
-             votes.size(), target.ToString());
+             votes.size(), target.ToKeyString());
     return votes;
+}
+
+std::vector<BondedVote> TrustGraph::GetVotesForAddress(const uint160& target) const {
+    return GetVotesForAddress(TrustNodeId::FromLegacyUint160(target));
 }
 
 bool TrustGraph::SlashVote(const uint256& voteTxHash, const uint256& slashTxHash) {
@@ -683,8 +688,8 @@ bool TrustGraph::SlashVote(const uint256& voteTxHash, const uint256& slashTxHash
         return false;
     }
     
-    // Also update in target's vote list
-    std::string targetKey = "votes_" + vote.target.ToString() + "_" + voteTxHash.ToString();
+    // Also update in target's vote list (canonical tagged key)
+    std::string targetKey = "votes_" + vote.target.ToKeyString() + "_" + voteTxHash.ToString();
     if (!database.WriteGeneric(targetKey, updatedData)) {
         LogPrintf("TrustGraph: Failed to update slashed vote in target index\n");
         return false;
@@ -736,13 +741,13 @@ bool TrustGraph::GetDispute(const uint256& disputeId, DAODispute& dispute) const
 
 bool TrustGraph::VoteOnDispute(
     const uint256& disputeId,
-    const uint160& daoMember,
+    const TrustNodeId& daoMember,
     bool support,
     CAmount stake
 ) {
     // Check if DAO member
     if (!IsDAOMember(daoMember)) {
-        LogPrintf("TrustGraph: %s is not a DAO member\n", daoMember.ToString());
+        LogPrintf("TrustGraph: %s is not a DAO member\n", daoMember.ToKeyString());
         return false;
     }
     
@@ -774,9 +779,18 @@ bool TrustGraph::VoteOnDispute(
     }
     
     LogPrint(BCLog::ALL, "TrustGraph: DAO vote recorded: %s on dispute %s (support: %d, stake: %d)\n",
-             daoMember.ToString(), disputeId.ToString(), support, stake);
+             daoMember.ToKeyString(), disputeId.ToString(), support, stake);
     
     return true;
+}
+
+bool TrustGraph::VoteOnDispute(
+    const uint256& disputeId,
+    const uint160& daoMember,
+    bool support,
+    CAmount stake
+) {
+    return VoteOnDispute(disputeId, TrustNodeId::FromLegacyUint160(daoMember), support, stake);
 }
 
 bool TrustGraph::ResolveDispute(const uint256& disputeId) {
@@ -875,7 +889,7 @@ bool TrustGraph::ResolveDispute(const uint256& disputeId) {
         } else {
             // Get the original voter who was wrongly accused
             BondedVote originalVote;
-            uint160 originalVoter;
+            TrustNodeId originalVoter;
             
             if (GetDisputedVote(disputeId, originalVote)) {
                 originalVoter = originalVote.voter;
@@ -1018,13 +1032,13 @@ CAmount TrustGraph::CalculateRequiredBond(int16_t voteValue) const {
     return base + perPoint;
 }
 
-bool TrustGraph::IsDAOMember(const uint160& address) const {
+bool TrustGraph::IsDAOMember(const TrustNodeId& address) const {
     // DAO membership requirements:
     // 1. Minimum reputation score (70+)
     // 2. Minimum stake (100 CAS bonded)
     // 3. Active participation (voted in last 10,000 blocks)
     
-    // Check reputation
+    // Check reputation (typed end to end)
     ReputationSystem repSystem(const_cast<CVMDatabase&>(database));
     ReputationScore repScore;
     bool hasRep = repSystem.GetReputation(address, repScore);
@@ -1047,9 +1061,14 @@ bool TrustGraph::IsDAOMember(const uint160& address) const {
         return false;
     }
     
-    // Check recent activity (voted in last 10,000 blocks)
-    // Query database for recent votes
-    std::string activityKey = "dao_activity_" + address.ToString();
+    // Check recent activity (voted in last 10,000 blocks).
+    // The "dao_activity_" record is an activation-era, uint160-keyed record that
+    // is OUT OF SCOPE for this wave (it is not one of the converted bonded-vote /
+    // DAO keys and is enumerated as a 40-hex uint160 segment elsewhere, e.g. the
+    // HAT consensus DAO-member list). It is intentionally keyed by the low-20-byte
+    // value so existing readers/writers stay consistent; only P2PKH members have
+    // such records today.
+    std::string activityKey = "dao_activity_" + address.ToUint160().ToString();
     std::vector<uint8_t> activityData;
     if (database.ReadGeneric(activityKey, activityData)) {
         // Deserialize last activity block
@@ -1069,6 +1088,10 @@ bool TrustGraph::IsDAOMember(const uint160& address) const {
     }
     
     return true;
+}
+
+bool TrustGraph::IsDAOMember(const uint160& address) const {
+    return IsDAOMember(TrustNodeId::FromLegacyUint160(address));
 }
 
 } // namespace CVM

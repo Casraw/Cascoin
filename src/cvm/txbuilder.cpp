@@ -28,7 +28,7 @@ static const CAmount DUST_THRESHOLD = 546;
 
 CMutableTransaction CVMTransactionBuilder::BuildVoteTransaction(
     CWallet* wallet,
-    const uint160& targetAddress,
+    const TrustNodeId& targetNode,
     int16_t voteValue,
     const std::string& reason,
     CAmount& fee,
@@ -44,9 +44,10 @@ CMutableTransaction CVMTransactionBuilder::BuildVoteTransaction(
     // Lock wallet for coin selection
     LOCK2(cs_main, wallet->cs_wallet);
     
-    // 1. Build CVM reputation data
+    // 1. Build CVM reputation data. The target is a wide, lossless user
+    // identity (TrustNodeId) carried straight into the canonical OP_RETURN body.
     CVMReputationData repData;
-    repData.targetAddress = targetAddress;
+    repData.targetAddress = targetNode;
     repData.voteValue = voteValue;
     repData.timestamp = static_cast<uint32_t>(GetTime());
     
@@ -606,7 +607,7 @@ CMutableTransaction CVMTransactionBuilder::BuildTrustTransaction(
 
 CMutableTransaction CVMTransactionBuilder::BuildBondedVoteTransaction(
     CWallet* wallet,
-    const uint160& targetAddress,
+    const TrustNodeId& targetNode,
     int16_t voteValue,
     CAmount bondAmount,
     const std::string& reason,
@@ -641,10 +642,12 @@ CMutableTransaction CVMTransactionBuilder::BuildBondedVoteTransaction(
     }
     uint160 voterAddress = userKey.GetID();
     
-    // 2. Build CVM bonded vote data
+    // 2. Build CVM bonded vote data. The signer (voter) is a P2PKH pool key, so
+    // carry it as a canonical P2PKH TrustNodeId; the target is passed through as
+    // the wide user identity provided by the caller. No uint160 truncation.
     CVMBondedVoteData voteData;
-    voteData.voter = voterAddress;
-    voteData.target = targetAddress;
+    voteData.voter = TrustNodeId::FromLegacyUint160(voterAddress);
+    voteData.target = targetNode;
     voteData.voteValue = voteValue;
     voteData.bondAmount = bondAmount;
     voteData.timestamp = static_cast<uint32_t>(GetTime());
@@ -706,7 +709,7 @@ CMutableTransaction CVMTransactionBuilder::BuildBondedVoteTransaction(
     fee = actualFee;
     
     LogPrintf("CVM: Built bonded vote transaction: voter=%s, target=%s, value=%d, bond=%s, fee=%s\n",
-              HexStr(voterAddress), HexStr(targetAddress), voteValue,
+              HexStr(voterAddress), targetNode.ToKeyString(), voteValue,
               FormatMoney(bondAmount), FormatMoney(fee));
     
     return tx;
@@ -743,9 +746,11 @@ CMutableTransaction CVMTransactionBuilder::BuildDisputeTransaction(
     }
     uint160 challengerAddress = challengerKey.GetID();
     
-    // 2. Build CVM dispute data
+    // 2. Build CVM dispute data. The challenger is a P2PKH pool key carried as a
+    // canonical P2PKH TrustNodeId (no uint160 truncation); originalVoteTx is a
+    // protocol hash and stays uint256.
     CVMDAODisputeData disputeData;
-    disputeData.challenger = challengerAddress;
+    disputeData.challenger = TrustNodeId::FromLegacyUint160(challengerAddress);
     disputeData.originalVoteTxHash = originalVoteTx;
     disputeData.challengeBond = challengeBond;
     disputeData.reason = reason.substr(0, 64); // Max 64 chars
@@ -845,9 +850,11 @@ CMutableTransaction CVMTransactionBuilder::BuildDisputeVoteTransaction(
     }
     uint160 voterAddress = voterKey.GetID();
     
-    // 2. Build CVM dispute vote data
+    // 2. Build CVM dispute vote data. The DAO member is a P2PKH pool key carried
+    // as a canonical P2PKH TrustNodeId (no uint160 truncation); disputeId is a
+    // protocol hash and stays uint256.
     CVMDAOVoteData voteData;
-    voteData.daoMember = voterAddress;
+    voteData.daoMember = TrustNodeId::FromLegacyUint160(voterAddress);
     voteData.disputeId = disputeId;
     voteData.supportSlash = supportSlash;
     voteData.stake = stake;

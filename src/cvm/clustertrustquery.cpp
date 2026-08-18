@@ -29,37 +29,35 @@ ClusterTrustQuery::ClusterTrustQuery(CVMDatabase& db, WalletClusterer& clust,
     LogPrint(BCLog::CVM, "ClusterTrustQuery: Initialized\n");
 }
 
-double ClusterTrustQuery::GetEffectiveTrust(const uint160& target, const uint160& viewer) const
+double ClusterTrustQuery::GetEffectiveTrust(const TrustNodeId& target, const TrustNodeId& viewer) const
 {
-    // Requirement 4.2: When `geteffectivetrust` is called, consider both direct and 
-    // propagated trust edges in the calculation
-    // 
+    // Requirement 4.2: consider both direct and propagated trust edges.
+    //
     // Algorithm:
-    // 1. Get all addresses in the target's wallet cluster
+    // 1. Get all identities in the target's wallet cluster
     // 2. Calculate trust score for each cluster member
     // 3. Return the minimum score (most conservative)
     //
-    // This ensures that a scammer cannot escape negative reputation by using a 
-    // different address from the same wallet.
-    
+    // This ensures that a scammer cannot escape negative reputation by using a
+    // different identity from the same wallet.
+
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetEffectiveTrust for target %s (viewer: %s)\n",
-             target.ToString(), viewer.IsNull() ? "global" : viewer.ToString());
+             target.ToKeyString(), viewer.data.IsNull() ? "global" : viewer.ToKeyString());
     
-    // Step 1: Get all addresses in the target's wallet cluster
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(target);
+    // Step 1: Get all identities in the target's wallet cluster
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(target);
     
-    // If no cluster found, treat as single-address cluster
+    // If no cluster found, treat as single-identity cluster
     if (clusterMembers.empty()) {
-        LogPrint(BCLog::CVM, "ClusterTrustQuery: No cluster found for %s, treating as single address\n",
-                 target.ToString());
+        LogPrint(BCLog::CVM, "ClusterTrustQuery: No cluster found for %s, treating as single identity\n",
+                 target.ToKeyString());
         clusterMembers.insert(target);
     }
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: Found %zu cluster members for %s\n",
-             clusterMembers.size(), target.ToString());
+             clusterMembers.size(), target.ToKeyString());
     
-    // Step 2: Calculate trust score for each cluster member
-    // Step 3: Track minimum score across all members
+    // Step 2/3: Track minimum score across all members
     double minScore = std::numeric_limits<double>::max();
     bool foundAnyScore = false;
     
@@ -67,7 +65,7 @@ double ClusterTrustQuery::GetEffectiveTrust(const uint160& target, const uint160
         double memberScore = GetAddressTrustScore(memberAddress, viewer);
         
         LogPrint(BCLog::CVM, "ClusterTrustQuery: Member %s has trust score %.4f\n",
-                 memberAddress.ToString(), memberScore);
+                 memberAddress.ToKeyString(), memberScore);
         
         if (memberScore < minScore) {
             minScore = memberScore;
@@ -82,36 +80,37 @@ double ClusterTrustQuery::GetEffectiveTrust(const uint160& target, const uint160
     }
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetEffectiveTrust returning minimum score %.4f for %s\n",
-             minScore, target.ToString());
+             minScore, target.ToKeyString());
     
     return minScore;
 }
 
-double ClusterTrustQuery::GetAddressTrustScore(const uint160& target, const uint160& viewer) const
+double ClusterTrustQuery::GetAddressTrustScore(const TrustNodeId& target, const TrustNodeId& viewer) const
 {
-    // Calculate trust score for a single address without considering cluster membership
-    // This combines:
+    // Calculate trust score for a single identity without considering cluster
+    // membership. This combines:
     // 1. Direct trust edges from TrustGraph
     // 2. Propagated trust edges from TrustPropagator
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetAddressTrustScore for %s\n",
-             target.ToString());
+             target.ToKeyString());
     
     // Get direct trust edges from TrustGraph
     std::vector<TrustEdge> directEdges = trustGraph.GetIncomingTrust(target);
     
-    // Get propagated trust edges from TrustPropagator
-    std::vector<PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(target);
+    // Get propagated trust edges from TrustPropagator (typed end to end)
+    std::vector<PropagatedTrustEdge> propagatedEdges =
+        propagator.GetPropagatedEdgesForAddress(target);
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: Found %zu direct edges and %zu propagated edges for %s\n",
-             directEdges.size(), propagatedEdges.size(), target.ToString());
+             directEdges.size(), propagatedEdges.size(), target.ToKeyString());
     
     // If viewer is specified, use weighted reputation from TrustGraph
     // This provides personalized trust based on the viewer's trust graph
-    if (!viewer.IsNull()) {
+    if (!viewer.data.IsNull()) {
         double weightedRep = trustGraph.GetWeightedReputation(viewer, target);
         LogPrint(BCLog::CVM, "ClusterTrustQuery: Using weighted reputation %.4f from viewer %s\n",
-                 weightedRep, viewer.ToString());
+                 weightedRep, viewer.ToKeyString());
         return weightedRep;
     }
     
@@ -143,7 +142,7 @@ double ClusterTrustQuery::GetAddressTrustScore(const uint160& target, const uint
         totalBondWeight += bondWeight;
         
         LogPrint(BCLog::CVM, "ClusterTrustQuery: Propagated edge from %s: weight=%d, bond=%.2f\n",
-                 propEdge.fromAddress.ToString(), propEdge.trustWeight, bondWeight);
+                 propEdge.fromAddress.ToKeyString(), propEdge.trustWeight, bondWeight);
     }
     
     // Calculate weighted average score
@@ -153,28 +152,28 @@ double ClusterTrustQuery::GetAddressTrustScore(const uint160& target, const uint
     }
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetAddressTrustScore returning %.4f for %s\n",
-             score, target.ToString());
+             score, target.ToKeyString());
     
     return score;
 }
 
-std::vector<TrustEdge> ClusterTrustQuery::GetAllClusterTrustEdges(const uint160& address) const
+std::vector<TrustEdge> ClusterTrustQuery::GetAllClusterTrustEdges(const TrustNodeId& address) const
 {
     // Requirement 3.3: Return all trust edges where any cluster member is the target
     // This includes both direct trust edges and propagated edges
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetAllClusterTrustEdges for %s\n",
-             address.ToString());
+             address.ToKeyString());
     
     std::vector<TrustEdge> result;
     
     // Get all cluster members
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(address);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(address);
     
-    // If no cluster found, treat as single-address cluster
+    // If no cluster found, treat as single-identity cluster
     if (clusterMembers.empty()) {
-        LogPrint(BCLog::CVM, "ClusterTrustQuery: No cluster found for %s, treating as single address\n",
-                 address.ToString());
+        LogPrint(BCLog::CVM, "ClusterTrustQuery: No cluster found for %s, treating as single identity\n",
+                 address.ToKeyString());
         clusterMembers.insert(address);
     }
     
@@ -187,7 +186,8 @@ std::vector<TrustEdge> ClusterTrustQuery::GetAllClusterTrustEdges(const uint160&
         }
         
         // Get propagated trust edges and convert to TrustEdge
-        std::vector<PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(memberAddress);
+        std::vector<PropagatedTrustEdge> propagatedEdges =
+            propagator.GetPropagatedEdgesForAddress(memberAddress);
         for (const auto& propEdge : propagatedEdges) {
             result.push_back(PropagatedToTrustEdge(propEdge));
         }
@@ -202,28 +202,28 @@ std::vector<TrustEdge> ClusterTrustQuery::GetAllClusterTrustEdges(const uint160&
     return result;
 }
 
-std::vector<TrustEdge> ClusterTrustQuery::GetClusterIncomingTrust(const uint160& address) const
+std::vector<TrustEdge> ClusterTrustQuery::GetClusterIncomingTrust(const TrustNodeId& address) const
 {
     // Requirement 1.4: Return both direct and propagated trust edges targeting any cluster member
     // This is essentially the same as GetAllClusterTrustEdges for incoming trust
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetClusterIncomingTrust for %s\n",
-             address.ToString());
+             address.ToKeyString());
     
     return GetAllClusterTrustEdges(address);
 }
 
-bool ClusterTrustQuery::HasNegativeClusterTrust(const uint160& address) const
+bool ClusterTrustQuery::HasNegativeClusterTrust(const TrustNodeId& address) const
 {
-    // Check if any address in the wallet cluster has received negative trust
+    // Check if any identity in the wallet cluster has received negative trust
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: HasNegativeClusterTrust for %s\n",
-             address.ToString());
+             address.ToKeyString());
     
     // Get all cluster members
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(address);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(address);
     
-    // If no cluster found, treat as single-address cluster
+    // If no cluster found, treat as single-identity cluster
     if (clusterMembers.empty()) {
         clusterMembers.insert(address);
     }
@@ -235,44 +235,46 @@ bool ClusterTrustQuery::HasNegativeClusterTrust(const uint160& address) const
         for (const auto& edge : directEdges) {
             if (edge.trustWeight < 0) {
                 LogPrint(BCLog::CVM, "ClusterTrustQuery: Found negative trust edge to %s (weight: %d)\n",
-                         memberAddress.ToString(), edge.trustWeight);
+                         memberAddress.ToKeyString(), edge.trustWeight);
                 return true;
             }
         }
         
         // Check propagated trust edges
-        std::vector<PropagatedTrustEdge> propagatedEdges = propagator.GetPropagatedEdgesForAddress(memberAddress);
+        std::vector<PropagatedTrustEdge> propagatedEdges =
+            propagator.GetPropagatedEdgesForAddress(memberAddress);
         for (const auto& propEdge : propagatedEdges) {
             if (propEdge.trustWeight < 0) {
                 LogPrint(BCLog::CVM, "ClusterTrustQuery: Found negative propagated trust edge to %s (weight: %d)\n",
-                         memberAddress.ToString(), propEdge.trustWeight);
+                         memberAddress.ToKeyString(), propEdge.trustWeight);
                 return true;
             }
         }
     }
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: No negative trust found for cluster containing %s\n",
-             address.ToString());
+             address.ToKeyString());
     
     return false;
 }
 
-uint160 ClusterTrustQuery::GetWorstClusterMember(const uint160& address, double& worstScore) const
+TrustNodeId ClusterTrustQuery::GetWorstClusterMember(const TrustNodeId& address, double& worstScore) const
 {
     // Find the cluster member with the lowest (worst) trust score
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: GetWorstClusterMember for %s\n",
-             address.ToString());
+             address.ToKeyString());
     
     // Get all cluster members
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(address);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(address);
     
-    // If no cluster found, treat as single-address cluster
+    // If no cluster found, treat as single-identity cluster
     if (clusterMembers.empty()) {
         clusterMembers.insert(address);
     }
     
-    uint160 worstMember;
+    TrustNodeId worstMember;
+    bool haveWorst = false;
     worstScore = std::numeric_limits<double>::max();
     
     for (const auto& memberAddress : clusterMembers) {
@@ -281,17 +283,18 @@ uint160 ClusterTrustQuery::GetWorstClusterMember(const uint160& address, double&
         if (memberScore < worstScore) {
             worstScore = memberScore;
             worstMember = memberAddress;
+            haveWorst = true;
         }
     }
     
-    // If no members found (shouldn't happen), return the input address with score 0
-    if (worstMember.IsNull()) {
+    // If no members found (shouldn't happen), return the input identity with score 0
+    if (!haveWorst) {
         worstMember = address;
         worstScore = 0.0;
     }
     
     LogPrint(BCLog::CVM, "ClusterTrustQuery: Worst cluster member is %s with score %.4f\n",
-             worstMember.ToString(), worstScore);
+             worstMember.ToKeyString(), worstScore);
     
     return worstMember;
 }
@@ -301,14 +304,16 @@ TrustEdge ClusterTrustQuery::PropagatedToTrustEdge(const PropagatedTrustEdge& pr
     // Convert a PropagatedTrustEdge to a TrustEdge for unified handling
     
     TrustEdge edge;
-    edge.fromAddress = TrustNodeId::FromLegacyUint160(propEdge.fromAddress);
-    edge.toAddress = TrustNodeId::FromLegacyUint160(propEdge.toAddress);
+    // Propagated edge endpoints are already wide TrustNodeId values; carry them
+    // through without narrowing.
+    edge.fromAddress = propEdge.fromAddress;
+    edge.toAddress = propEdge.toAddress;
     edge.trustWeight = propEdge.trustWeight;
     edge.timestamp = propEdge.propagatedAt;
     edge.bondAmount = propEdge.bondAmount;
     edge.bondTxHash = propEdge.sourceEdgeTx;
     edge.slashed = false;  // Propagated edges inherit slashed status from original
-    edge.reason = "Propagated from " + propEdge.originalTarget.ToString();
+    edge.reason = "Propagated from " + propEdge.originalTarget.ToKeyString();
     
     return edge;
 }
@@ -324,7 +329,7 @@ void ClusterTrustQuery::DeduplicateEdges(std::vector<TrustEdge>& edges) const
     }
     
     // Use a map to track unique edges by (from, to) pair
-    // Key: from_address + "_" + to_address
+    // Key: from_address + "_" + to_address (canonical typed key segments)
     // Value: index in edges vector
     std::map<std::string, size_t> uniqueEdges;
     std::vector<TrustEdge> deduped;
@@ -351,6 +356,44 @@ void ClusterTrustQuery::DeduplicateEdges(std::vector<TrustEdge>& edges) const
              edges.size(), deduped.size());
     
     edges = std::move(deduped);
+}
+
+// ---------------------------------------------------------------------------
+// Thin uint160 wrappers (legacy P2PKH callers). Each zero-extends the bare
+// uint160 into a TrustNodeId{P2PKH} and forwards to the wide overload. Wave 8
+// removes the remaining uint160 bridging at the RPC sites.
+// ---------------------------------------------------------------------------
+
+double ClusterTrustQuery::GetEffectiveTrust(const uint160& target, const uint160& viewer) const
+{
+    return GetEffectiveTrust(TrustNodeId::FromLegacyUint160(target),
+                             TrustNodeId::FromLegacyUint160(viewer));
+}
+
+std::vector<TrustEdge> ClusterTrustQuery::GetAllClusterTrustEdges(const uint160& address) const
+{
+    return GetAllClusterTrustEdges(TrustNodeId::FromLegacyUint160(address));
+}
+
+std::vector<TrustEdge> ClusterTrustQuery::GetClusterIncomingTrust(const uint160& address) const
+{
+    return GetClusterIncomingTrust(TrustNodeId::FromLegacyUint160(address));
+}
+
+bool ClusterTrustQuery::HasNegativeClusterTrust(const uint160& address) const
+{
+    return HasNegativeClusterTrust(TrustNodeId::FromLegacyUint160(address));
+}
+
+uint160 ClusterTrustQuery::GetWorstClusterMember(const uint160& address, double& worstScore) const
+{
+    return GetWorstClusterMember(TrustNodeId::FromLegacyUint160(address), worstScore).ToUint160();
+}
+
+double ClusterTrustQuery::GetAddressTrustScore(const uint160& target, const uint160& viewer) const
+{
+    return GetAddressTrustScore(TrustNodeId::FromLegacyUint160(target),
+                                TrustNodeId::FromLegacyUint160(viewer));
 }
 
 } // namespace CVM

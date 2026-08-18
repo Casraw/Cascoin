@@ -392,7 +392,7 @@ BOOST_AUTO_TEST_CASE(p17_1_56_sender_not_prevout_pseudo_address)
     // score.score / 100 => priority.reputation, so 9500 => 95 (CRITICAL).
     CVM::ReputationSystem rep(*db);
     CVM::ReputationScore score;
-    score.address = pseudoAddr;
+    score.address = CVM::TrustNodeId::FromLegacyUint160(pseudoAddr);
     score.score = 9500;
     score.voteCount = 5;
     score.lastUpdated = GetTime();
@@ -504,7 +504,7 @@ BOOST_AUTO_TEST_CASE(preserve_3_19_loaded_state_unchanged)
         uint160 addr = RandAddress();
 
         CVM::ReputationScore score;
-        score.address = addr;
+        score.address = CVM::TrustNodeId::FromLegacyUint160(addr);
         score.score = 4200;
         score.voteCount = 7;
         score.lastUpdated = GetTime();

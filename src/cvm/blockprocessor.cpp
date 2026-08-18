@@ -426,7 +426,7 @@ void CVMBlockProcessor::ProcessVote(
     CVMDatabase& db
 ) {
     LogPrint(BCLog::ALL, "CVM: Processing vote for %s: %+d\n", 
-             voteData.targetAddress.ToString(), voteData.voteValue);
+             voteData.targetAddress.ToKeyString(), voteData.voteValue);
     
     // Idempotency guard (reorg/reconnect safe): unlike the other non-contract
     // handlers, applying a reputation vote is a non-idempotent increment
@@ -468,7 +468,7 @@ void CVMBlockProcessor::ProcessVote(
     db.WriteGeneric(appliedKey, {1});
     
     LogPrintf("CVM: Vote processed - Address: %s, Vote: %+d, New Score: %d, VoteCount: %d\n",
-              voteData.targetAddress.ToString(), voteData.voteValue, 
+              voteData.targetAddress.ToKeyString(), voteData.voteValue, 
               score.score, score.voteCount);
 }
 
@@ -798,8 +798,8 @@ bool CVMBlockProcessor::ProcessBondedVote(
     CVMDatabase& db
 ) {
     LogPrintf("CVM: Processing bonded vote: %s votes %+d on %s\n", 
-             HexStr(voteData.voter), voteData.voteValue, 
-             HexStr(voteData.target));
+             voteData.voter.ToKeyString(), voteData.voteValue, 
+             voteData.target.ToKeyString());
     
     // Validate bond output
     if (!ValidateBond(tx, voteData.bondAmount)) {
@@ -808,7 +808,9 @@ bool CVMBlockProcessor::ProcessBondedVote(
         return false;
     }
     
-    // Create bonded vote record
+    // Create bonded vote record. The OP_RETURN payload now carries canonical
+    // wide TrustNodeId identities (Wave 7), so they are stored directly with no
+    // uint160 bridging and no destination-type erasure.
     TrustGraph trustGraph(db);
     BondedVote vote;
     vote.voter = voteData.voter;
@@ -825,7 +827,7 @@ bool CVMBlockProcessor::ProcessBondedVote(
     
     if (success) {
         LogPrintf("CVM: Bonded vote stored - Voter: %s, Target: %s, Value: %+d, Bond: %s\n",
-                  HexStr(voteData.voter), HexStr(voteData.target),
+                  voteData.voter.ToKeyString(), voteData.target.ToKeyString(),
                   voteData.voteValue, FormatMoney(voteData.bondAmount));
     } else {
         LogPrintf("CVM: Warning: Failed to store bonded vote for tx %s\n",
@@ -856,6 +858,8 @@ bool CVMBlockProcessor::ProcessDAODispute(
     DAODispute dispute;
     dispute.disputeId = tx.GetHash();  // Use tx hash as dispute ID
     dispute.originalVoteTx = disputeData.originalVoteTxHash;
+    // OP_RETURN challenger identity is now a canonical wide TrustNodeId
+    // (Wave 7); store it directly with no uint160 bridging.
     dispute.challenger = disputeData.challenger;
     dispute.challengeBond = disputeData.challengeBond;
     dispute.createdTime = disputeData.timestamp;
@@ -870,7 +874,7 @@ bool CVMBlockProcessor::ProcessDAODispute(
     if (success) {
         LogPrintf("CVM: DAO dispute created - ID: %s, Vote: %s, Challenger: %s\n",
                   tx.GetHash().ToString(), disputeData.originalVoteTxHash.ToString(),
-                  disputeData.challenger.ToString());
+                  disputeData.challenger.ToKeyString());
     } else {
         LogPrintf("CVM Warning: Failed to create DAO dispute for tx %s\n",
                   tx.GetHash().ToString());
@@ -899,7 +903,7 @@ bool CVMBlockProcessor::ProcessDAOVote(
     
     if (success) {
         LogPrintf("CVM: DAO vote recorded - Dispute: %s, Member: %s, Slash: %s, Stake: %s\n",
-                  voteData.disputeId.ToString(), voteData.daoMember.ToString(),
+                  voteData.disputeId.ToString(), voteData.daoMember.ToKeyString(),
                   voteData.supportSlash ? "YES" : "NO", FormatMoney(voteData.stake));
         
         // Check if dispute can be resolved

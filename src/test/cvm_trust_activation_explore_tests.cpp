@@ -136,7 +136,7 @@ CTransactionRef MakeTrustEdgeTx(const uint160& from, const uint160& to)
 CTransactionRef MakeReputationVoteTx(const uint160& target)
 {
     CVM::CVMReputationData voteData;
-    voteData.targetAddress = target;
+    voteData.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     voteData.voteValue = kVoteValue;
     voteData.timestamp = kTimestamp;
 

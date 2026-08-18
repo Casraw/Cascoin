@@ -335,9 +335,9 @@ BOOST_AUTO_TEST_CASE(edge_zero_values)
     ss >> deserialized;
     
     BOOST_CHECK(edge == deserialized);
-    BOOST_CHECK(deserialized.fromAddress.IsNull());
-    BOOST_CHECK(deserialized.toAddress.IsNull());
-    BOOST_CHECK(deserialized.originalTarget.IsNull());
+    BOOST_CHECK(deserialized.fromAddress.data.IsNull());
+    BOOST_CHECK(deserialized.toAddress.data.IsNull());
+    BOOST_CHECK(deserialized.originalTarget.data.IsNull());
     BOOST_CHECK(deserialized.sourceEdgeTx.IsNull());
     BOOST_CHECK_EQUAL(deserialized.trustWeight, 0);
     BOOST_CHECK_EQUAL(deserialized.propagatedAt, 0);
@@ -434,6 +434,22 @@ public:
             return membersIt->second;
         }
         return std::set<uint160>();
+    }
+
+    // Typed overrides mirror the uint160 predefined-cluster behavior so the
+    // typed query surface (used by ClusterTrustQuery after the migration) sees
+    // the same predefined clusters. The mock stores clusters as uint160, so the
+    // typed views project through FromLegacyUint160.
+    CVM::TrustNodeId GetClusterForAddress(const CVM::TrustNodeId& address) override {
+        return CVM::TrustNodeId::FromLegacyUint160(GetClusterForAddress(address.ToUint160()));
+    }
+
+    std::set<CVM::TrustNodeId> GetClusterMembers(const CVM::TrustNodeId& address) override {
+        std::set<CVM::TrustNodeId> result;
+        for (const uint160& member : GetClusterMembers(address.ToUint160())) {
+            result.insert(CVM::TrustNodeId::FromLegacyUint160(member));
+        }
+        return result;
     }
     
     /**
@@ -604,7 +620,7 @@ BOOST_AUTO_TEST_CASE(property_trust_propagation_completeness)
         // PROPERTY CHECK 3: Each cluster member has a propagated edge
         // Verify that for each member address, there exists a propagated edge
         for (const auto& member : cluster) {
-            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
+            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -626,15 +642,15 @@ BOOST_AUTO_TEST_CASE(property_trust_propagation_completeness)
                     << member.ToString().substr(0, 16));
                 
                 // Verify the propagated edge has correct from address
-                BOOST_CHECK_MESSAGE(propEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
+                BOOST_CHECK_MESSAGE(propEdge.fromAddress == trustEdge.fromAddress,
                     "Iteration " << i << ": Propagated edge fromAddress mismatch");
                 
                 // Verify the propagated edge has correct to address (the cluster member)
-                BOOST_CHECK_MESSAGE(propEdge.toAddress == member,
+                BOOST_CHECK_MESSAGE(propEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(member),
                     "Iteration " << i << ": Propagated edge toAddress mismatch");
                 
                 // Verify the propagated edge has correct original target
-                BOOST_CHECK_MESSAGE(propEdge.originalTarget == trustEdge.toAddress.ToUint160(),
+                BOOST_CHECK_MESSAGE(propEdge.originalTarget == trustEdge.toAddress,
                     "Iteration " << i << ": Propagated edge originalTarget mismatch");
                 
                 // Verify trust weight is preserved
@@ -715,7 +731,7 @@ BOOST_AUTO_TEST_CASE(property_single_address_cluster_propagation)
             << "but created " << propagatedCount);
         
         // Verify the propagated edge exists for the target address
-        std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + targetAddress.ToString();
+        std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(targetAddress).ToKeyString();
         std::vector<uint8_t> data;
         bool found = db.ReadGeneric(expectedKey, data);
         
@@ -724,7 +740,7 @@ BOOST_AUTO_TEST_CASE(property_single_address_cluster_propagation)
         
         // Clean up for next iteration
         db.EraseGeneric(expectedKey);
-        std::string indexKey = "trust_prop_idx_" + trustEdge.bondTxHash.ToString() + "_" + targetAddress.ToString();
+        std::string indexKey = "trust_prop_idx_" + trustEdge.bondTxHash.ToString() + "_" + CVM::TrustNodeId::FromLegacyUint160(targetAddress).ToKeyString();
         db.EraseGeneric(indexKey);
     }
     
@@ -898,10 +914,10 @@ BOOST_AUTO_TEST_CASE(property_query_completeness)
             
             // PROPERTY CHECK 2: All returned edges have correct toAddress
             for (const auto& edge : queriedEdges) {
-                BOOST_CHECK_MESSAGE(edge.toAddress == memberAddr,
+                BOOST_CHECK_MESSAGE(edge.toAddress == CVM::TrustNodeId::FromLegacyUint160(memberAddr),
                     "Iteration " << i << ": Queried edge has wrong toAddress. "
                     << "Expected: " << memberAddr.ToString().substr(0, 16)
-                    << ", Got: " << edge.toAddress.ToString().substr(0, 16));
+                    << ", Got: " << edge.toAddress.ToKeyString().substr(0, 16));
             }
             
             // PROPERTY CHECK 3: All source edge tx hashes are represented
@@ -937,11 +953,11 @@ BOOST_AUTO_TEST_CASE(property_query_completeness)
                             << ", Got: " << edge.bondAmount);
                         
                         // Verify from address matches original
-                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
+                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
                             "Iteration " << i << ": Propagated edge fromAddress mismatch");
                         
                         // Verify original target is set correctly
-                        BOOST_CHECK_MESSAGE(edge.originalTarget == origEdge.toAddress.ToUint160(),
+                        BOOST_CHECK_MESSAGE(edge.originalTarget == origEdge.toAddress,
                             "Iteration " << i << ": Propagated edge originalTarget mismatch");
                         
                         break;
@@ -1098,7 +1114,7 @@ BOOST_AUTO_TEST_CASE(property_query_completeness_multiple_trusters)
             // Verify all trusters are represented
             std::set<uint160> returnedTrusters;
             for (const auto& edge : queriedEdges) {
-                returnedTrusters.insert(edge.fromAddress);
+                returnedTrusters.insert(edge.fromAddress.ToUint160());
             }
             
             BOOST_CHECK_MESSAGE(returnedTrusters == uniqueTrusters,
@@ -1348,9 +1364,9 @@ BOOST_AUTO_TEST_CASE(property_cascade_update_propagation_weight_update)
                         << ", got " << edge.trustWeight);
                     
                     // Verify other fields are preserved
-                    BOOST_CHECK_MESSAGE(edge.fromAddress == trustEdge.fromAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(edge.fromAddress == trustEdge.fromAddress,
                         "Iteration " << i << ": fromAddress changed after update");
-                    BOOST_CHECK_MESSAGE(edge.originalTarget == trustEdge.toAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(edge.originalTarget == trustEdge.toAddress,
                         "Iteration " << i << ": originalTarget changed after update");
                     BOOST_CHECK_MESSAGE(edge.bondAmount == trustEdge.bondAmount,
                         "Iteration " << i << ": bondAmount changed after update");
@@ -1623,12 +1639,12 @@ BOOST_AUTO_TEST_CASE(cluster_trust_summary_serialization_roundtrip)
     
     for (int i = 0; i < PBT_MIN_ITERATIONS; ++i) {
         CVM::ClusterTrustSummary original;
-        original.clusterId = GenerateRandomAddress();
+        original.clusterId = CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress());
         
         // Add random number of member addresses (1-20)
         size_t memberCount = 1 + InsecureRandRange(20);
         for (size_t j = 0; j < memberCount; ++j) {
-            original.AddMember(GenerateRandomAddress());
+            original.AddMember(CVM::TrustNodeId::FromLegacyUint160(GenerateRandomAddress()));
         }
         
         original.totalIncomingTrust = static_cast<int64_t>(InsecureRandRange(10000));
@@ -1784,7 +1800,7 @@ BOOST_AUTO_TEST_CASE(property_new_member_trust_inheritance)
                     foundOriginal = true;
                     
                     // Verify the inherited edge targets the new address
-                    BOOST_CHECK_MESSAGE(inheritedEdge.toAddress == newAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
                         "Iteration " << i << ": Inherited edge should target new address");
                     
                     // Verify trust weight matches original
@@ -1800,11 +1816,11 @@ BOOST_AUTO_TEST_CASE(property_new_member_trust_inheritance)
                         << ", Got: " << inheritedEdge.bondAmount);
                     
                     // Verify from address matches original
-                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress,
                         "Iteration " << i << ": Inherited edge fromAddress mismatch");
                     
                     // Verify original target is set correctly
-                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress,
                         "Iteration " << i << ": Inherited edge originalTarget mismatch");
                     
                     break;
@@ -2023,7 +2039,7 @@ BOOST_AUTO_TEST_CASE(property_new_member_inherits_from_multiple_trusters)
         // Verify all trusters are represented
         std::set<uint160> inheritedTrusters;
         for (const auto& edge : newMemberEdges) {
-            inheritedTrusters.insert(edge.fromAddress);
+            inheritedTrusters.insert(edge.fromAddress.ToUint160());
         }
         
         BOOST_CHECK_MESSAGE(inheritedTrusters == uniqueTrusters,
@@ -2245,13 +2261,13 @@ BOOST_AUTO_TEST_CASE(property_propagated_edge_data_integrity)
                     
                     // PROPERTY CHECK 3: From address must be identical
                     // The truster (fromAddress) must be preserved
-                    BOOST_CHECK_MESSAGE(propEdge.fromAddress == originalFromAddress,
+                    BOOST_CHECK_MESSAGE(propEdge.fromAddress == CVM::TrustNodeId::FromLegacyUint160(originalFromAddress),
                         "Iteration " << i << ", Member " << member.ToString().substr(0, 16)
                         << ": From address not preserved");
                     
                     // PROPERTY CHECK 4: Original target must be preserved
                     // The originalTarget field should reference the original trust target
-                    BOOST_CHECK_MESSAGE(propEdge.originalTarget == originalToAddress,
+                    BOOST_CHECK_MESSAGE(propEdge.originalTarget == CVM::TrustNodeId::FromLegacyUint160(originalToAddress),
                         "Iteration " << i << ", Member " << member.ToString().substr(0, 16)
                         << ": Original target not preserved");
                     
@@ -2262,7 +2278,7 @@ BOOST_AUTO_TEST_CASE(property_propagated_edge_data_integrity)
                         << ": Source edge tx not preserved");
                     
                     // PROPERTY CHECK 6: To address should be the cluster member
-                    BOOST_CHECK_MESSAGE(propEdge.toAddress == member,
+                    BOOST_CHECK_MESSAGE(propEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(member),
                         "Iteration " << i << ", Member " << member.ToString().substr(0, 16)
                         << ": To address should be the cluster member");
                     
@@ -2523,15 +2539,15 @@ BOOST_AUTO_TEST_CASE(property_inherited_edge_data_integrity)
                         << ", Inherited: " << inheritedEdge.bondAmount);
                     
                     // PROPERTY CHECK 3: From address must be identical
-                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(inheritedEdge.fromAddress == origEdge.fromAddress,
                         "Iteration " << i << ": Inherited edge from address mismatch");
                     
                     // PROPERTY CHECK 4: Original target must be preserved
-                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress.ToUint160(),
+                    BOOST_CHECK_MESSAGE(inheritedEdge.originalTarget == origEdge.toAddress,
                         "Iteration " << i << ": Inherited edge original target mismatch");
                     
                     // PROPERTY CHECK 5: To address should be the new member
-                    BOOST_CHECK_MESSAGE(inheritedEdge.toAddress == newAddress,
+                    BOOST_CHECK_MESSAGE(inheritedEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
                         "Iteration " << i << ": Inherited edge to address should be new member");
                     
                     break;
@@ -2642,7 +2658,7 @@ BOOST_AUTO_TEST_CASE(property_multiple_propagations_data_integrity)
                             << ", Got: " << propEdge.bondAmount);
                         
                         // Verify from address is preserved
-                        BOOST_CHECK_MESSAGE(propEdge.fromAddress == origEdge.fromAddress.ToUint160(),
+                        BOOST_CHECK_MESSAGE(propEdge.fromAddress == origEdge.fromAddress,
                             "Iteration " << i << ", Member " << member.ToString().substr(0, 16)
                             << ": From address mismatch for source "
                             << origEdge.bondTxHash.ToString().substr(0, 16));
@@ -2765,16 +2781,16 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_new_member)
             "Iteration " << i << ": Event type should be NEW_MEMBER");
         
         // PROPERTY CHECK 3: Cluster ID should match
-        BOOST_CHECK_MESSAGE(newMemberEvent.clusterId == clusterId,
+        BOOST_CHECK_MESSAGE(newMemberEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
             "Iteration " << i << ": Event cluster ID should match. "
             << "Expected: " << clusterId.ToString().substr(0, 16)
-            << ", Got: " << newMemberEvent.clusterId.ToString().substr(0, 16));
+            << ", Got: " << newMemberEvent.clusterId.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 4: Affected address should be the new member
-        BOOST_CHECK_MESSAGE(newMemberEvent.affectedAddress == newAddress,
+        BOOST_CHECK_MESSAGE(newMemberEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
             "Iteration " << i << ": Event affected address should be the new member. "
             << "Expected: " << newAddress.ToString().substr(0, 16)
-            << ", Got: " << newMemberEvent.affectedAddress.ToString().substr(0, 16));
+            << ", Got: " << newMemberEvent.affectedAddress.ToKeyString().substr(0, 16));
 
         // PROPERTY CHECK 5: Block height should be set correctly
         BOOST_CHECK_MESSAGE(newMemberEvent.blockHeight == static_cast<uint32_t>(blockHeight),
@@ -2804,10 +2820,10 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_new_member)
         BOOST_CHECK_MESSAGE(deserializedEvent.eventType == CVM::ClusterUpdateEvent::Type::NEW_MEMBER,
             "Iteration " << i << ": Deserialized event type should be NEW_MEMBER");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == clusterId,
+        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
             "Iteration " << i << ": Deserialized cluster ID should match");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == newAddress,
+        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
             "Iteration " << i << ": Deserialized affected address should match");
         
         // Clean up database keys for next iteration
@@ -2888,22 +2904,22 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_cluster_merge)
             "Iteration " << i << ": Event type should be CLUSTER_MERGE");
         
         // PROPERTY CHECK 2: Target cluster ID should match (cluster that absorbs)
-        BOOST_CHECK_MESSAGE(mergeEvent.clusterId == cluster1Id,
+        BOOST_CHECK_MESSAGE(mergeEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(cluster1Id),
             "Iteration " << i << ": Event cluster ID should be the target cluster. "
             << "Expected: " << cluster1Id.ToString().substr(0, 16)
-            << ", Got: " << mergeEvent.clusterId.ToString().substr(0, 16));
+            << ", Got: " << mergeEvent.clusterId.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 3: Merged from cluster should be set correctly
-        BOOST_CHECK_MESSAGE(mergeEvent.mergedFromCluster == cluster2Id,
+        BOOST_CHECK_MESSAGE(mergeEvent.mergedFromCluster == CVM::TrustNodeId::FromLegacyUint160(cluster2Id),
             "Iteration " << i << ": Event mergedFromCluster should be the source cluster. "
             << "Expected: " << cluster2Id.ToString().substr(0, 16)
-            << ", Got: " << mergeEvent.mergedFromCluster.ToString().substr(0, 16));
+            << ", Got: " << mergeEvent.mergedFromCluster.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 4: Affected address should be the linking address
-        BOOST_CHECK_MESSAGE(mergeEvent.affectedAddress == linkingAddress,
+        BOOST_CHECK_MESSAGE(mergeEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(linkingAddress),
             "Iteration " << i << ": Event affected address should be the linking address. "
             << "Expected: " << linkingAddress.ToString().substr(0, 16)
-            << ", Got: " << mergeEvent.affectedAddress.ToString().substr(0, 16));
+            << ", Got: " << mergeEvent.affectedAddress.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 5: Block height should be set correctly
         BOOST_CHECK_MESSAGE(mergeEvent.blockHeight == static_cast<uint32_t>(blockHeight),
@@ -2931,13 +2947,13 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_cluster_merge)
         BOOST_CHECK_MESSAGE(deserializedEvent.eventType == CVM::ClusterUpdateEvent::Type::CLUSTER_MERGE,
             "Iteration " << i << ": Deserialized event type should be CLUSTER_MERGE");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == cluster1Id,
+        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(cluster1Id),
             "Iteration " << i << ": Deserialized cluster ID should match");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.mergedFromCluster == cluster2Id,
+        BOOST_CHECK_MESSAGE(deserializedEvent.mergedFromCluster == CVM::TrustNodeId::FromLegacyUint160(cluster2Id),
             "Iteration " << i << ": Deserialized mergedFromCluster should match");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == linkingAddress,
+        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(linkingAddress),
             "Iteration " << i << ": Deserialized affected address should match");
         
         // Clean up database keys for next iteration
@@ -3017,16 +3033,16 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_trust_inherited)
             "Iteration " << i << ": Event type should be TRUST_INHERITED");
         
         // PROPERTY CHECK 2: Cluster ID should match
-        BOOST_CHECK_MESSAGE(inheritEvent.clusterId == clusterId,
+        BOOST_CHECK_MESSAGE(inheritEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
             "Iteration " << i << ": Event cluster ID should match. "
             << "Expected: " << clusterId.ToString().substr(0, 16)
-            << ", Got: " << inheritEvent.clusterId.ToString().substr(0, 16));
+            << ", Got: " << inheritEvent.clusterId.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 3: Affected address should be the new member
-        BOOST_CHECK_MESSAGE(inheritEvent.affectedAddress == newMember,
+        BOOST_CHECK_MESSAGE(inheritEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newMember),
             "Iteration " << i << ": Event affected address should be the new member. "
             << "Expected: " << newMember.ToString().substr(0, 16)
-            << ", Got: " << inheritEvent.affectedAddress.ToString().substr(0, 16));
+            << ", Got: " << inheritEvent.affectedAddress.ToKeyString().substr(0, 16));
         
         // PROPERTY CHECK 4: Inherited edge count should be set correctly
         BOOST_CHECK_MESSAGE(inheritEvent.inheritedEdgeCount == inheritedEdgeCount,
@@ -3059,10 +3075,10 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_trust_inherited)
         BOOST_CHECK_MESSAGE(deserializedEvent.eventType == CVM::ClusterUpdateEvent::Type::TRUST_INHERITED,
             "Iteration " << i << ": Deserialized event type should be TRUST_INHERITED");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == clusterId,
+        BOOST_CHECK_MESSAGE(deserializedEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
             "Iteration " << i << ": Deserialized cluster ID should match");
         
-        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == newMember,
+        BOOST_CHECK_MESSAGE(deserializedEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newMember),
             "Iteration " << i << ": Deserialized affected address should match");
         
         BOOST_CHECK_MESSAGE(deserializedEvent.inheritedEdgeCount == inheritedEdgeCount,
@@ -3170,11 +3186,11 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_exactly_one_per_change)
             "Iteration " << i << ": Event type should match created type");
 
         // PROPERTY CHECK 3: Cluster ID should be set (not null)
-        BOOST_CHECK_MESSAGE(!event.clusterId.IsNull(),
+        BOOST_CHECK_MESSAGE(!event.clusterId.data.IsNull(),
             "Iteration " << i << ": Event cluster ID should not be null");
         
         // PROPERTY CHECK 4: Affected address should be set (not null)
-        BOOST_CHECK_MESSAGE(!event.affectedAddress.IsNull(),
+        BOOST_CHECK_MESSAGE(!event.affectedAddress.data.IsNull(),
             "Iteration " << i << ": Event affected address should not be null");
         
         // PROPERTY CHECK 5: Block height should be positive
@@ -3393,9 +3409,9 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_data_completeness)
                 clusterId, affectedAddress, blockHeight, timestamp);
             
             // Required fields for NEW_MEMBER
-            BOOST_CHECK_MESSAGE(!event.clusterId.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.clusterId.data.IsNull(),
                 "Iteration " << i << ": NEW_MEMBER event clusterId should not be null");
-            BOOST_CHECK_MESSAGE(!event.affectedAddress.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.affectedAddress.data.IsNull(),
                 "Iteration " << i << ": NEW_MEMBER event affectedAddress should not be null");
             BOOST_CHECK_MESSAGE(event.blockHeight > 0,
                 "Iteration " << i << ": NEW_MEMBER event blockHeight should be positive");
@@ -3403,7 +3419,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_data_completeness)
                 "Iteration " << i << ": NEW_MEMBER event timestamp should be positive");
             
             // mergedFromCluster should be null for NEW_MEMBER
-            BOOST_CHECK_MESSAGE(event.mergedFromCluster.IsNull(),
+            BOOST_CHECK_MESSAGE(event.mergedFromCluster.data.IsNull(),
                 "Iteration " << i << ": NEW_MEMBER event mergedFromCluster should be null");
             
             // inheritedEdgeCount should be 0 for NEW_MEMBER
@@ -3417,11 +3433,11 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_data_completeness)
                 clusterId, sourceCluster, affectedAddress, blockHeight, timestamp);
             
             // Required fields for CLUSTER_MERGE
-            BOOST_CHECK_MESSAGE(!event.clusterId.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.clusterId.data.IsNull(),
                 "Iteration " << i << ": CLUSTER_MERGE event clusterId should not be null");
-            BOOST_CHECK_MESSAGE(!event.mergedFromCluster.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.mergedFromCluster.data.IsNull(),
                 "Iteration " << i << ": CLUSTER_MERGE event mergedFromCluster should not be null");
-            BOOST_CHECK_MESSAGE(!event.affectedAddress.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.affectedAddress.data.IsNull(),
                 "Iteration " << i << ": CLUSTER_MERGE event affectedAddress should not be null");
             BOOST_CHECK_MESSAGE(event.blockHeight > 0,
                 "Iteration " << i << ": CLUSTER_MERGE event blockHeight should be positive");
@@ -3439,9 +3455,9 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_data_completeness)
                 clusterId, affectedAddress, edgeCount, blockHeight, timestamp);
             
             // Required fields for TRUST_INHERITED
-            BOOST_CHECK_MESSAGE(!event.clusterId.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.clusterId.data.IsNull(),
                 "Iteration " << i << ": TRUST_INHERITED event clusterId should not be null");
-            BOOST_CHECK_MESSAGE(!event.affectedAddress.IsNull(),
+            BOOST_CHECK_MESSAGE(!event.affectedAddress.data.IsNull(),
                 "Iteration " << i << ": TRUST_INHERITED event affectedAddress should not be null");
             BOOST_CHECK_MESSAGE(event.blockHeight > 0,
                 "Iteration " << i << ": TRUST_INHERITED event blockHeight should be positive");
@@ -3456,7 +3472,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_data_completeness)
                 << "Expected: " << edgeCount << ", Got: " << event.inheritedEdgeCount);
             
             // mergedFromCluster should be null for TRUST_INHERITED
-            BOOST_CHECK_MESSAGE(event.mergedFromCluster.IsNull(),
+            BOOST_CHECK_MESSAGE(event.mergedFromCluster.data.IsNull(),
                 "Iteration " << i << ": TRUST_INHERITED event mergedFromCluster should be null");
         }
     }
@@ -3578,16 +3594,16 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_integration)
                 << retrievedEvent.GetEventTypeName());
             
             // PROPERTY CHECK 3: Cluster ID is correct
-            BOOST_CHECK_MESSAGE(retrievedEvent.clusterId == clusterId,
+            BOOST_CHECK_MESSAGE(retrievedEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
                 "Iteration " << i << ": Retrieved event cluster ID should match. "
                 << "Expected: " << clusterId.ToString().substr(0, 16)
-                << ", Got: " << retrievedEvent.clusterId.ToString().substr(0, 16));
+                << ", Got: " << retrievedEvent.clusterId.ToKeyString().substr(0, 16));
             
             // PROPERTY CHECK 4: Affected address is correct (the new member)
-            BOOST_CHECK_MESSAGE(retrievedEvent.affectedAddress == newAddress,
+            BOOST_CHECK_MESSAGE(retrievedEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
                 "Iteration " << i << ": Retrieved event affected address should be the new member. "
                 << "Expected: " << newAddress.ToString().substr(0, 16)
-                << ", Got: " << retrievedEvent.affectedAddress.ToString().substr(0, 16));
+                << ", Got: " << retrievedEvent.affectedAddress.ToKeyString().substr(0, 16));
             
             // PROPERTY CHECK 5: Block height is correct
             BOOST_CHECK_MESSAGE(retrievedEvent.blockHeight == static_cast<uint32_t>(blockHeight),
@@ -3637,11 +3653,11 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_integration)
                     << "Expected: " << inheritedCount << ", Got: " << retrievedTrustEvent.inheritedEdgeCount);
                 
                 // PROPERTY CHECK 9: TRUST_INHERITED event has correct cluster ID
-                BOOST_CHECK_MESSAGE(retrievedTrustEvent.clusterId == clusterId,
+                BOOST_CHECK_MESSAGE(retrievedTrustEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
                     "Iteration " << i << ": Trust event cluster ID should match");
                 
                 // PROPERTY CHECK 10: TRUST_INHERITED event has correct affected address
-                BOOST_CHECK_MESSAGE(retrievedTrustEvent.affectedAddress == newAddress,
+                BOOST_CHECK_MESSAGE(retrievedTrustEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress),
                     "Iteration " << i << ": Trust event affected address should be the new member");
             }
         }
@@ -3659,7 +3675,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_integration)
                 CVM::ClusterUpdateEvent event;
                 eventSs >> event;
                 
-                if (event.affectedAddress == newAddress && event.clusterId == clusterId) {
+                if (event.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(newAddress) && event.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId)) {
                     if (event.eventType == CVM::ClusterUpdateEvent::Type::NEW_MEMBER) {
                         newMemberEventCount++;
                     } else if (event.eventType == CVM::ClusterUpdateEvent::Type::TRUST_INHERITED) {
@@ -3783,22 +3799,22 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_merge_integration)
                 << retrievedEvent.GetEventTypeName());
             
             // PROPERTY CHECK 2: Target cluster ID is correct
-            BOOST_CHECK_MESSAGE(retrievedEvent.clusterId == cluster1Id,
+            BOOST_CHECK_MESSAGE(retrievedEvent.clusterId == CVM::TrustNodeId::FromLegacyUint160(cluster1Id),
                 "Iteration " << i << ": Retrieved event target cluster ID should match. "
                 << "Expected: " << cluster1Id.ToString().substr(0, 16)
-                << ", Got: " << retrievedEvent.clusterId.ToString().substr(0, 16));
+                << ", Got: " << retrievedEvent.clusterId.ToKeyString().substr(0, 16));
             
             // PROPERTY CHECK 3: Source cluster ID (mergedFromCluster) is correct
-            BOOST_CHECK_MESSAGE(retrievedEvent.mergedFromCluster == cluster2Id,
+            BOOST_CHECK_MESSAGE(retrievedEvent.mergedFromCluster == CVM::TrustNodeId::FromLegacyUint160(cluster2Id),
                 "Iteration " << i << ": Retrieved event source cluster ID should match. "
                 << "Expected: " << cluster2Id.ToString().substr(0, 16)
-                << ", Got: " << retrievedEvent.mergedFromCluster.ToString().substr(0, 16));
+                << ", Got: " << retrievedEvent.mergedFromCluster.ToKeyString().substr(0, 16));
             
             // PROPERTY CHECK 4: Linking address is correct
-            BOOST_CHECK_MESSAGE(retrievedEvent.affectedAddress == linkingAddress,
+            BOOST_CHECK_MESSAGE(retrievedEvent.affectedAddress == CVM::TrustNodeId::FromLegacyUint160(linkingAddress),
                 "Iteration " << i << ": Retrieved event linking address should match. "
                 << "Expected: " << linkingAddress.ToString().substr(0, 16)
-                << ", Got: " << retrievedEvent.affectedAddress.ToString().substr(0, 16));
+                << ", Got: " << retrievedEvent.affectedAddress.ToKeyString().substr(0, 16));
             
             // PROPERTY CHECK 5: Block height is correct
             BOOST_CHECK_MESSAGE(retrievedEvent.blockHeight == static_cast<uint32_t>(blockHeight),
@@ -3825,7 +3841,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_update_event_emission_merge_integration)
                 eventSs >> event;
                 
                 if (event.eventType == CVM::ClusterUpdateEvent::Type::CLUSTER_MERGE &&
-                    event.clusterId == cluster1Id && event.mergedFromCluster == cluster2Id) {
+                    event.clusterId == CVM::TrustNodeId::FromLegacyUint160(cluster1Id) && event.mergedFromCluster == CVM::TrustNodeId::FromLegacyUint160(cluster2Id)) {
                     mergeEventCount++;
                 }
             }
@@ -4888,7 +4904,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_merge_trust_combination)
                             << ", Got: " << edge.bondAmount);
                         
                         // Verify from address is preserved
-                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
+                        BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
                             "Iteration " << i << ": Propagated edge fromAddress mismatch");
                         
                         break;
@@ -4914,7 +4930,7 @@ BOOST_AUTO_TEST_CASE(property_cluster_merge_trust_combination)
                                 << ", Got: " << edge.bondAmount);
                             
                             // Verify from address is preserved
-                            BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress.ToUint160(),
+                            BOOST_CHECK_MESSAGE(edge.fromAddress == origEdge.fromAddress,
                                 "Iteration " << i << ": Propagated edge fromAddress mismatch");
                             
                             break;
@@ -5167,7 +5183,7 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_by_timestamp)
                 propagator.GetPropagatedEdgesForAddress(member);
             bool foundEdge = false;
             for (const auto& e : edges) {
-                if (e.fromAddress == commonTruster) {
+                if (e.fromAddress == CVM::TrustNodeId::FromLegacyUint160(commonTruster)) {
                     BOOST_CHECK_MESSAGE(e.trustWeight == weight1,
                         "Iteration " << i << ": Cluster1 member should have weight1 before merge");
                     foundEdge = true;
@@ -5183,7 +5199,7 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_by_timestamp)
                 propagator.GetPropagatedEdgesForAddress(member);
             bool foundEdge = false;
             for (const auto& e : edges) {
-                if (e.fromAddress == commonTruster) {
+                if (e.fromAddress == CVM::TrustNodeId::FromLegacyUint160(commonTruster)) {
                     BOOST_CHECK_MESSAGE(e.trustWeight == weight2,
                         "Iteration " << i << ": Cluster2 member should have weight2 before merge");
                     foundEdge = true;
@@ -5221,7 +5237,7 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_by_timestamp)
             // Find the edge from the common truster
             bool foundEdgeFromCommonTruster = false;
             for (const auto& edge : edges) {
-                if (edge.fromAddress == commonTruster) {
+                if (edge.fromAddress == CVM::TrustNodeId::FromLegacyUint160(commonTruster)) {
                     foundEdgeFromCommonTruster = true;
                     
                     // CRITICAL PROPERTY CHECK: The weight should be from the most recent edge
@@ -5390,7 +5406,7 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_equal_timestamps)
             int16_t memberWeight = 0;
             
             for (const auto& edge : edges) {
-                if (edge.fromAddress == commonTruster) {
+                if (edge.fromAddress == CVM::TrustNodeId::FromLegacyUint160(commonTruster)) {
                     edgesFromTruster++;
                     memberWeight = edge.trustWeight;
                 }
@@ -5570,7 +5586,7 @@ BOOST_AUTO_TEST_CASE(property_conflict_resolution_multiple_trusters)
                 bool foundTrusterEdge = false;
                 
                 for (const auto& edge : edges) {
-                    if (edge.fromAddress == conflict.trusterAddress) {
+                    if (edge.fromAddress == CVM::TrustNodeId::FromLegacyUint160(conflict.trusterAddress)) {
                         foundTrusterEdge = true;
                         
                         // CRITICAL: Each truster's weight should be from their newer timestamp
@@ -5820,7 +5836,7 @@ BOOST_AUTO_TEST_CASE(property_rpc_response_format_consistency)
             response.member_count = summary.memberAddresses.size();
             
             for (const auto& member : summary.memberAddresses) {
-                response.members.push_back(member.ToString());
+                response.members.push_back(member.ToKeyString());
             }
             
             // Get effective trust score
@@ -5920,9 +5936,9 @@ BOOST_AUTO_TEST_CASE(property_rpc_response_format_consistency)
                     propagator.GetPropagatedEdgesForAddress(member);
                 for (const auto& edge : propEdges) {
                     std::map<std::string, std::string> edgeMap;
-                    edgeMap["from"] = edge.fromAddress.ToString();
-                    edgeMap["to"] = edge.toAddress.ToString();
-                    edgeMap["original_target"] = edge.originalTarget.ToString();
+                    edgeMap["from"] = edge.fromAddress.ToKeyString();
+                    edgeMap["to"] = edge.toAddress.ToKeyString();
+                    edgeMap["original_target"] = edge.originalTarget.ToKeyString();
                     edgeMap["weight"] = std::to_string(edge.trustWeight);
                     edgeMap["source_txid"] = edge.sourceEdgeTx.GetHex();
                     response.propagated_edges.push_back(edgeMap);
@@ -6000,14 +6016,14 @@ BOOST_AUTO_TEST_CASE(property_rpc_cluster_id_always_present)
         CVM::ClusterTrustSummary summary = propagator.GetClusterTrustSummary(clusterId);
         
         // PROPERTY CHECK: cluster_id is always present and non-null
-        BOOST_CHECK_MESSAGE(!summary.clusterId.IsNull(),
+        BOOST_CHECK_MESSAGE(!summary.clusterId.data.IsNull(),
             "Iteration " << i << ": ClusterTrustSummary has null clusterId");
         
         // PROPERTY CHECK: cluster_id matches expected canonical address
-        BOOST_CHECK_MESSAGE(summary.clusterId == clusterId,
+        BOOST_CHECK_MESSAGE(summary.clusterId == CVM::TrustNodeId::FromLegacyUint160(clusterId),
             "Iteration " << i << ": ClusterTrustSummary clusterId mismatch. "
             << "Expected: " << clusterId.ToString().substr(0, 16)
-            << ", Got: " << summary.clusterId.ToString().substr(0, 16));
+            << ", Got: " << summary.clusterId.ToKeyString().substr(0, 16));
         
         // Clean up for next iteration
         std::vector<std::string> keysToDelete = db.ListKeysWithPrefix("trust_prop_");
@@ -6444,7 +6460,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
         // Collect addresses returned by index query
         std::set<uint160> indexedAddresses;
         for (const auto& edge : edgesBySource) {
-            indexedAddresses.insert(edge.toAddress);
+            indexedAddresses.insert(edge.toAddress.ToUint160());
         }
         
         // PROPERTY CHECK 3: Indexed addresses match cluster members exactly
@@ -6456,7 +6472,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
         // PROPERTY CHECK 4: Each indexed address has a corresponding propagated edge in storage
         for (const auto& indexedAddr : indexedAddresses) {
             // Verify the propagated edge exists in storage
-            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + indexedAddr.ToString();
+            std::string expectedKey = "trust_prop_" + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(indexedAddr).ToKeyString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -6477,11 +6493,11 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
                     << indexedAddr.ToString().substr(0, 16));
                 
                 // Verify the stored edge has correct toAddress
-                BOOST_CHECK_MESSAGE(storedEdge.toAddress == indexedAddr,
+                BOOST_CHECK_MESSAGE(storedEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(indexedAddr),
                     "Iteration " << i << ": Stored edge toAddress mismatch");
                 
                 // Verify the stored edge has correct fromAddress
-                BOOST_CHECK_MESSAGE(storedEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
+                BOOST_CHECK_MESSAGE(storedEdge.fromAddress == trustEdge.fromAddress,
                     "Iteration " << i << ": Stored edge fromAddress mismatch");
             }
         }
@@ -6505,15 +6521,15 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_consistency)
                 "Iteration " << i << ": Failed to read index entry: " << indexKey);
             
             if (indexFound) {
-                // Deserialize the target address
+                // Deserialize the target address (stored as a TrustNodeId identity)
                 CDataStream ss(indexData, SER_DISK, CLIENT_VERSION);
-                uint160 targetAddress;
+                CVM::TrustNodeId targetAddress;
                 ss >> targetAddress;
                 
-                // Verify the target address is in the cluster
-                BOOST_CHECK_MESSAGE(clusterSet.count(targetAddress) > 0,
+                // Verify the target address is in the cluster (P2PKH identities map to uint160)
+                BOOST_CHECK_MESSAGE(clusterSet.count(targetAddress.ToUint160()) > 0,
                     "Iteration " << i << ": Index entry points to address "
-                    << targetAddress.ToString().substr(0, 16) << " which is not in the cluster");
+                    << targetAddress.ToKeyString().substr(0, 16) << " which is not in the cluster");
             }
         }
         
@@ -6612,7 +6628,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_multiple_sources)
                     << ", Got: " << edge.sourceEdgeTx.ToString().substr(0, 16));
                 
                 // Verify fromAddress matches original edge
-                BOOST_CHECK_MESSAGE(edge.fromAddress == originalEdge.fromAddress.ToUint160(),
+                BOOST_CHECK_MESSAGE(edge.fromAddress == originalEdge.fromAddress,
                     "Iteration " << i << ", Source " << j << ": Edge has wrong fromAddress");
                 
                 // Verify trustWeight matches original edge
@@ -6624,7 +6640,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_multiple_sources)
             // PROPERTY CHECK 3: Collect addresses and verify they match cluster
             std::set<uint160> indexedAddresses;
             for (const auto& edge : edgesBySource) {
-                indexedAddresses.insert(edge.toAddress);
+                indexedAddresses.insert(edge.toAddress.ToUint160());
             }
             
             std::set<uint160> clusterSet(cluster.begin(), cluster.end());
@@ -6728,7 +6744,7 @@ BOOST_AUTO_TEST_CASE(property_index_round_trip_after_deletion)
         
         // PROPERTY CHECK 3: Propagated edges are removed from storage
         for (const auto& member : cluster) {
-            std::string edgeKey = "trust_prop_" + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
+            std::string edgeKey = "trust_prop_" + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString();
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(edgeKey, data);
             
@@ -6849,14 +6865,14 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 std::string toPart = addressPart.substr(underscorePos + 1);
                 
                 // Verify from address matches the trust edge's from address
-                BOOST_CHECK_MESSAGE(fromPart == trustEdge.fromAddress.ToUint160().ToString(),
+                BOOST_CHECK_MESSAGE(fromPart == trustEdge.fromAddress.ToKeyString(),
                     "Iteration " << i << ": Key from-address '" << fromPart 
-                    << "' does not match expected '" << trustEdge.fromAddress.ToUint160().ToString() << "'");
+                    << "' does not match expected '" << trustEdge.fromAddress.ToKeyString() << "'");
                 
                 // Verify to address is one of the cluster members
                 bool foundMember = false;
                 for (const auto& member : cluster) {
-                    if (toPart == member.ToString()) {
+                    if (toPart == CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString()) {
                         foundMember = true;
                         break;
                     }
@@ -6887,8 +6903,8 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 "Iteration " << i << ": GetStorageKey() returned '" << storageKey 
                 << "' which does not start with expected prefix '" << EXPECTED_PREFIX << "'");
             
-            // Verify the key format is "trust_prop_{from}_{to}"
-            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
+            // Verify the key format is "trust_prop_{fromTNI}_{toTNI}"
+            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString();
             BOOST_CHECK_MESSAGE(storageKey == expectedKey,
                 "Iteration " << i << ": GetStorageKey() returned '" << storageKey 
                 << "' but expected '" << expectedKey << "'");
@@ -6896,7 +6912,7 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
         
         // PROPERTY CHECK 4: Verify stored data can be retrieved using the key format
         for (const auto& member : cluster) {
-            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToUint160().ToString() + "_" + member.ToString();
+            std::string expectedKey = EXPECTED_PREFIX + trustEdge.fromAddress.ToKeyString() + "_" + CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString();
             
             std::vector<uint8_t> data;
             bool found = db.ReadGeneric(expectedKey, data);
@@ -6911,9 +6927,9 @@ BOOST_AUTO_TEST_CASE(property_storage_key_prefix_convention)
                 ss >> retrievedEdge;
                 
                 // Verify the retrieved edge has correct addresses
-                BOOST_CHECK_MESSAGE(retrievedEdge.fromAddress == trustEdge.fromAddress.ToUint160(),
+                BOOST_CHECK_MESSAGE(retrievedEdge.fromAddress == trustEdge.fromAddress,
                     "Iteration " << i << ": Retrieved edge fromAddress mismatch");
-                BOOST_CHECK_MESSAGE(retrievedEdge.toAddress == member,
+                BOOST_CHECK_MESSAGE(retrievedEdge.toAddress == CVM::TrustNodeId::FromLegacyUint160(member),
                     "Iteration " << i << ": Retrieved edge toAddress mismatch");
             }
         }
@@ -7022,7 +7038,7 @@ BOOST_AUTO_TEST_CASE(property_index_key_prefix_convention)
                 // Verify to address is one of the cluster members
                 bool foundMember = false;
                 for (const auto& member : cluster) {
-                    if (toPart == member.ToString()) {
+                    if (toPart == CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString()) {
                         foundMember = true;
                         break;
                     }
@@ -7053,8 +7069,8 @@ BOOST_AUTO_TEST_CASE(property_index_key_prefix_convention)
                 "Iteration " << i << ": GetIndexKey() returned '" << indexKey 
                 << "' which does not start with expected prefix '" << EXPECTED_IDX_PREFIX << "'");
             
-            // Verify the key format is "trust_prop_idx_{sourceEdgeTx}_{to}"
-            std::string expectedKey = EXPECTED_IDX_PREFIX + trustEdge.bondTxHash.ToString() + "_" + member.ToString();
+            // Verify the key format is "trust_prop_idx_{sourceEdgeTx}_{toTNI}"
+            std::string expectedKey = EXPECTED_IDX_PREFIX + trustEdge.bondTxHash.ToString() + "_" + CVM::TrustNodeId::FromLegacyUint160(member).ToKeyString();
             BOOST_CHECK_MESSAGE(indexKey == expectedKey,
                 "Iteration " << i << ": GetIndexKey() returned '" << indexKey 
                 << "' but expected '" << expectedKey << "'");

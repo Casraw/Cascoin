@@ -129,10 +129,18 @@ public:
     /**
      * Calculate final trust score
      * 
-     * @param target Address to evaluate
+     * @param target Address to evaluate (wide TrustNodeId user identity)
      * @param viewer Address viewing (for WoT personalization)
      * @return Trust score 0-100
      */
+    int16_t CalculateFinalTrust(
+        const TrustNodeId& target,
+        const TrustNodeId& viewer
+    );
+
+    //! Thin uint160 wrapper (legacy P2PKH callers). Wraps `target`/`viewer` as
+    //! TrustNodeId{P2PKH, zero-extended} and forwards to the TrustNodeId
+    //! overload. Wave 8 removes the remaining uint160 bridging at RPC sites.
     int16_t CalculateFinalTrust(
         const uint160& target,
         const uint160& viewer
@@ -143,23 +151,39 @@ public:
      * 
      * Useful for debugging and UI display.
      * 
-     * @param target Address to evaluate
+     * @param target Address to evaluate (wide TrustNodeId user identity)
      * @param viewer Address viewing
      * @return Detailed breakdown of all components
      */
+    TrustBreakdown CalculateWithBreakdown(
+        const TrustNodeId& target,
+        const TrustNodeId& viewer
+    );
+
+    //! Thin uint160 wrapper (legacy P2PKH callers).
     TrustBreakdown CalculateWithBreakdown(
         const uint160& target,
         const uint160& viewer
     );
     
-    // Component getters (for testing/analysis)
+    // Component getters (for testing/analysis) — wide TrustNodeId identities.
+    BehaviorMetrics GetBehaviorMetrics(const TrustNodeId& address);
+    GraphMetrics GetGraphMetrics(const TrustNodeId& address);
+    StakeInfo GetStakeInfo(const TrustNodeId& address);
+    TemporalMetrics GetTemporalMetrics(const TrustNodeId& address);
+
+    //! Thin uint160 wrappers (legacy P2PKH callers).
     BehaviorMetrics GetBehaviorMetrics(const uint160& address);
     GraphMetrics GetGraphMetrics(const uint160& address);
     StakeInfo GetStakeInfo(const uint160& address);
     TemporalMetrics GetTemporalMetrics(const uint160& address);
     
-    // Store metrics
+    // Store metrics — wide TrustNodeId identities.
     bool StoreBehaviorMetrics(const BehaviorMetrics& metrics);
+    bool StoreStakeInfo(const TrustNodeId& address, const StakeInfo& info);
+    bool StoreTemporalMetrics(const TrustNodeId& address, const TemporalMetrics& metrics);
+
+    //! Thin uint160 wrappers (legacy P2PKH callers).
     bool StoreStakeInfo(const uint160& address, const StakeInfo& info);
     bool StoreTemporalMetrics(const uint160& address, const TemporalMetrics& metrics);
     

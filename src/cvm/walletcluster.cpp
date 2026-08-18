@@ -5,6 +5,7 @@
 #include <cvm/walletcluster.h>
 #include <cvm/securehat.h>
 #include <cvm/reputation.h>
+#include <cvm/migration_observability.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <validation.h>
@@ -20,6 +21,12 @@
 
 namespace CVM {
 
+// Current typed key prefixes. Identity segments are exactly ToKeyString().
+static const std::string CLUSTER_PREFIX = "wc_";              // wc_<clusterTNI>
+static const std::string ADDRESS_MAP_PREFIX = "wca_";         // wca_<memberTNI>
+static const std::string TX_ADDR_INDEX_PREFIX = "txcluster_addr_"; // txcluster_addr_<TNI>
+static const std::string TX_INPUT_INDEX_PREFIX = "txcluster_tx_";  // txcluster_tx_<txid64>
+
 WalletClusterer::WalletClusterer(CVMDatabase& db) 
     : database(db), cache_valid(false)
 {
@@ -29,7 +36,12 @@ WalletClusterer::WalletClusterer(CVMDatabase& db)
 void WalletClusterer::BuildClusters()
 {
     LogPrintf("WalletClusterer: Building address clusters from blockchain...\n");
-    
+
+    // Deterministic, idempotent rebuild from active-chain/index data. This is
+    // the supported way to materialize clusters after the migration; no
+    // automatic startup chain scan is introduced (clause 3.2, 5.3).
+    RecordMigrationEvent(MigrationEvent::RebuildStart, CLUSTER_PREFIX);
+
     // Reset clusters
     address_to_cluster.clear();
     clusters.clear();
@@ -83,36 +95,42 @@ void WalletClusterer::BuildClusters()
     }
 
     // ---- Index-based analysis (transaction/address index) ------------------
-    // Clause 2.13/2.50: cluster addresses using the common-input-ownership
-    // heuristic over the persisted transaction/address index. This is the data
-    // source that GetAddressTransactions() reads from, letting clustering
-    // operate on real data even without a full chain replay.
+    // Cluster identities using the common-input-ownership heuristic over the
+    // persisted transaction/address index. This is the data source that
+    // GetAddressTransactions() reads from, letting clustering operate on real
+    // data even without a full chain replay. Identity key segments are strictly
+    // parsed as canonical TrustNodeId values; malformed/noncanonical segments
+    // are skipped, never reinterpreted.
     {
-        std::vector<std::string> addrKeys = database.ListKeysWithPrefix("txcluster_addr_");
-        const std::string addrPrefix = "txcluster_addr_";
+        std::vector<std::string> addrKeys = database.ListKeysWithPrefix(TX_ADDR_INDEX_PREFIX);
         std::set<uint256> processedTxs;
 
         for (const std::string& key : addrKeys) {
-            if (key.size() <= addrPrefix.size()) {
+            if (key.size() <= TX_ADDR_INDEX_PREFIX.size()) {
                 continue;
             }
-            std::string addrStr = key.substr(addrPrefix.size());
-            uint160 address;
-            address.SetHex(addrStr);
-            if (address.IsNull()) {
+            std::string segment = key.substr(TX_ADDR_INDEX_PREFIX.size());
+            TrustNodeId address;
+            std::string err;
+            if (!ParseKeyStringToTrustNode(segment, address, err)) {
+                RecordMigrationEvent(MigrationEvent::MalformedRecord,
+                                     TX_ADDR_INDEX_PREFIX, key);
+                LogPrintf("WalletClusterer: skipping malformed address index key \"%s\": %s\n",
+                          key, err);
                 continue;
             }
 
-            // Fetch the address's transactions from the index (clause 2.50).
+            // Fetch the identity's transactions from the index.
             std::vector<uint256> txids = GetAddressTransactions(address);
             for (const uint256& txid : txids) {
                 if (!processedTxs.insert(txid).second) {
                     continue;  // Already processed this transaction
                 }
 
-                // Common-input-ownership heuristic: all input addresses of a
-                // single transaction are grouped into the same cluster.
-                std::vector<uint160> inputs = GetTransactionInputAddresses(txid);
+                // Common-input-ownership heuristic: all input identities of a
+                // single transaction are grouped into the same cluster. Inputs
+                // are exact typed identities (no low-20-byte projection).
+                std::vector<TrustNodeId> inputs = GetTransactionInputAddresses(txid);
                 if (inputs.size() > 1) {
                     for (size_t i = 1; i < inputs.size(); ++i) {
                         UnionClusters(inputs[0], inputs[i]);
@@ -127,6 +145,8 @@ void WalletClusterer::BuildClusters()
 
     cache_valid = true;
     SaveClusters();
+
+    RecordMigrationEvent(MigrationEvent::RebuildComplete, CLUSTER_PREFIX);
 }
 
 void WalletClusterer::AnalyzeTransaction(const uint256& txid)
@@ -147,11 +167,14 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
         return;
     }
     
-    // Extract all input addresses
-    std::set<uint160> input_addresses;
+    // Extract all input identities. Every supported destination type
+    // (P2PKH/P2SH/P2WPKH/P2WSH/quantum) participates; unresolved prevouts,
+    // invalid indexes, CNoDestination and WitnessUnknown are ignored.
+    // Deduplication uses exact typed identities.
+    std::set<TrustNodeId> input_addresses;
     
     for (const CTxIn& txin : tx->vin) {
-        // Get previous transaction to find input address
+        // Get previous transaction to find input identity
         CTransactionRef prev_tx;
         uint256 prev_block;
         
@@ -161,8 +184,9 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
                 
                 CTxDestination dest;
                 if (ExtractDestination(prev_out.scriptPubKey, dest)) {
-                    if (boost::get<CKeyID>(&dest)) {
-                        input_addresses.insert(uint160(boost::get<CKeyID>(dest)));
+                    TrustNodeId id;
+                    if (TrustNodeId::FromDestination(dest, id)) {
+                        input_addresses.insert(id);
                     }
                 }
             }
@@ -170,14 +194,14 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
     }
     
     // HEURISTIC 1: Common Input Heuristic
-    // If multiple addresses are used as inputs in same transaction,
-    // they likely belong to the same wallet
+    // If multiple identities are used as inputs in the same transaction,
+    // they likely belong to the same wallet. Union when >= 2 remain after dedup.
     if (input_addresses.size() > 1) {
         auto it = input_addresses.begin();
-        uint160 first = *it;
+        TrustNodeId first = *it;
         ++it;
         
-        // Link all input addresses together
+        // Link all input identities together
         while (it != input_addresses.end()) {
             UnionClusters(first, *it);
             ++it;
@@ -185,7 +209,8 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
     }
     
     // HEURISTIC 2: Change Address Detection
-    // For 2-output transactions, the smaller output is likely change
+    // For 2-output transactions, the smaller output is likely change. Applies
+    // to any supported typed change destination.
     if (tx->vout.size() == 2 && input_addresses.size() > 0) {
         CAmount out0 = tx->vout[0].nValue;
         CAmount out1 = tx->vout[1].nValue;
@@ -195,28 +220,27 @@ void WalletClusterer::AnalyzeTransaction(const uint256& txid)
         
         CTxDestination change_dest;
         if (ExtractDestination(tx->vout[change_idx].scriptPubKey, change_dest)) {
-            if (boost::get<CKeyID>(&change_dest)) {
-                uint160 change_addr(boost::get<CKeyID>(change_dest));
-                
-                // Link change address with input addresses
-                for (const uint160& input_addr : input_addresses) {
-                    UnionClusters(input_addr, change_addr);
+            TrustNodeId change_id;
+            if (TrustNodeId::FromDestination(change_dest, change_id)) {
+                // Link change identity with input identities
+                for (const TrustNodeId& input_addr : input_addresses) {
+                    UnionClusters(input_addr, change_id);
                 }
             }
         }
     }
 }
 
-uint160 WalletClusterer::FindClusterRoot(const uint160& address)
+TrustNodeId WalletClusterer::FindClusterRoot(const TrustNodeId& address)
 {
     // Union-Find with path compression
     if (address_to_cluster.find(address) == address_to_cluster.end()) {
-        // Address not in any cluster yet, it is its own root
+        // Identity not in any cluster yet, it is its own root
         address_to_cluster[address] = address;
         return address;
     }
     
-    uint160 root = address_to_cluster[address];
+    TrustNodeId root = address_to_cluster[address];
     
     // Path compression
     if (root != address) {
@@ -227,93 +251,112 @@ uint160 WalletClusterer::FindClusterRoot(const uint160& address)
     return root;
 }
 
-void WalletClusterer::UnionClusters(const uint160& addr1, const uint160& addr2)
+void WalletClusterer::UnionClusters(const TrustNodeId& addr1, const TrustNodeId& addr2)
 {
-    uint160 root1 = FindClusterRoot(addr1);
-    uint160 root2 = FindClusterRoot(addr2);
-    
+    TrustNodeId root1 = FindClusterRoot(addr1);
+    TrustNodeId root2 = FindClusterRoot(addr2);
+
+    // Ensure each root has a cluster record that includes itself and the
+    // originally referenced identity as members. This keeps member_addresses a
+    // complete set (both endpoints and the root), independent of insertion or
+    // union order, which is required for deterministic cluster IDs.
+    if (clusters.find(root1) == clusters.end()) {
+        clusters[root1].cluster_id = root1;
+    }
+    clusters[root1].member_addresses.insert(root1);
+    clusters[root1].member_addresses.insert(addr1);
+
+    if (clusters.find(root2) == clusters.end()) {
+        clusters[root2].cluster_id = root2;
+    }
+    clusters[root2].member_addresses.insert(root2);
+    clusters[root2].member_addresses.insert(addr2);
+
     if (root1 == root2) {
         return; // Already in same cluster
     }
-    
-    // Merge smaller cluster into larger one
+
+    // Merge smaller cluster into larger one (existing near-linear union strategy)
     if (clusters[root1].member_addresses.size() < clusters[root2].member_addresses.size()) {
         std::swap(root1, root2);
     }
-    
-    // Update cluster mapping
+
+    // Merge root2's members into root1 and repoint them.
     address_to_cluster[root2] = root1;
-    
-    // Merge cluster info
-    if (clusters.find(root1) == clusters.end()) {
-        clusters[root1].cluster_id = root1;
-        clusters[root1].member_addresses.insert(root1);
+    for (const TrustNodeId& member : clusters[root2].member_addresses) {
+        clusters[root1].member_addresses.insert(member);
+        address_to_cluster[member] = root1;
     }
-    
-    if (clusters.find(root2) != clusters.end()) {
-        // Merge members
-        for (const uint160& member : clusters[root2].member_addresses) {
-            clusters[root1].member_addresses.insert(member);
-            address_to_cluster[member] = root1;
-        }
-        
-        // Update timestamps
-        if (clusters[root2].first_seen < clusters[root1].first_seen || clusters[root1].first_seen == 0) {
-            clusters[root1].first_seen = clusters[root2].first_seen;
-        }
-        
-        if (clusters[root2].last_activity > clusters[root1].last_activity) {
-            clusters[root1].last_activity = clusters[root2].last_activity;
-        }
-        
-        clusters[root1].transaction_count += clusters[root2].transaction_count;
-        
-        // Remove old cluster
-        clusters.erase(root2);
+
+    // Update timestamps
+    if (clusters[root2].first_seen < clusters[root1].first_seen || clusters[root1].first_seen == 0) {
+        clusters[root1].first_seen = clusters[root2].first_seen;
     }
-    
-    clusters[root1].member_addresses.insert(addr2);
+    if (clusters[root2].last_activity > clusters[root1].last_activity) {
+        clusters[root1].last_activity = clusters[root2].last_activity;
+    }
+    clusters[root1].transaction_count += clusters[root2].transaction_count;
+
+    // Remove old cluster
+    clusters.erase(root2);
 }
 
-uint160 WalletClusterer::GetClusterForAddress(const uint160& address)
+TrustNodeId WalletClusterer::ExternalClusterId(const TrustNodeId& root)
 {
-    return FindClusterRoot(address);
+    // The externally visible cluster ID is deterministic: the minimum member
+    // under TrustNodeId::operator<. std::set keeps members sorted, so begin()
+    // is the minimum. Lone identities are their own (minimum) cluster ID.
+    auto it = clusters.find(root);
+    if (it != clusters.end() && !it->second.member_addresses.empty()) {
+        return *it->second.member_addresses.begin();
+    }
+    return root;
 }
 
-std::set<uint160> WalletClusterer::GetClusterMembers(const uint160& address)
+TrustNodeId WalletClusterer::GetClusterForAddress(const TrustNodeId& address)
 {
-    uint160 cluster_id = GetClusterForAddress(address);
-    
-    if (clusters.find(cluster_id) != clusters.end()) {
-        return clusters[cluster_id].member_addresses;
-    }
-    
-    // Address is alone
-    return {address};
+    return ExternalClusterId(FindClusterRoot(address));
 }
 
-WalletClusterInfo WalletClusterer::GetClusterInfo(const uint160& cluster_id)
+std::set<TrustNodeId> WalletClusterer::GetClusterMembers(const TrustNodeId& address)
 {
-    if (clusters.find(cluster_id) != clusters.end()) {
-        return clusters[cluster_id];
+    TrustNodeId root = FindClusterRoot(address);
+    
+    auto it = clusters.find(root);
+    if (it != clusters.end()) {
+        return it->second.member_addresses;
     }
     
-    // Single-address cluster
+    // Identity is alone
+    return { address };
+}
+
+WalletClusterInfo WalletClusterer::GetClusterInfo(const TrustNodeId& cluster_id)
+{
+    TrustNodeId root = FindClusterRoot(cluster_id);
+    auto it = clusters.find(root);
+    if (it != clusters.end()) {
+        WalletClusterInfo info = it->second;
+        info.cluster_id = ExternalClusterId(root);
+        return info;
+    }
+    
+    // Single-identity cluster
     WalletClusterInfo info;
     info.cluster_id = cluster_id;
     info.member_addresses.insert(cluster_id);
     return info;
 }
 
-void WalletClusterer::LinkAddresses(const uint160& addr1, const uint160& addr2)
+void WalletClusterer::LinkAddresses(const TrustNodeId& addr1, const TrustNodeId& addr2)
 {
     UnionClusters(addr1, addr2);
     SaveClusters();
 }
 
-double WalletClusterer::CalculateClusterReputation(const uint160& cluster_id)
+double WalletClusterer::CalculateClusterReputation(const TrustNodeId& cluster_id)
 {
-    std::set<uint160> members = GetClusterMembers(cluster_id);
+    std::set<TrustNodeId> members = GetClusterMembers(cluster_id);
     
     if (members.empty()) {
         return 0.0;
@@ -325,7 +368,7 @@ double WalletClusterer::CalculateClusterReputation(const uint160& cluster_id)
     
     ReputationSystem rep_system(database);
     
-    for (const uint160& member : members) {
+    for (const TrustNodeId& member : members) {
         CVM::ReputationScore score;
         if (rep_system.GetReputation(member, score)) {
             // Normalize score from internal representation to 0-100 scale
@@ -342,28 +385,31 @@ double WalletClusterer::CalculateClusterReputation(const uint160& cluster_id)
     return min_reputation;
 }
 
-double WalletClusterer::GetEffectiveReputation(const uint160& address)
+double WalletClusterer::GetEffectiveReputation(const TrustNodeId& address)
 {
-    uint160 cluster_id = GetClusterForAddress(address);
+    TrustNodeId cluster_id = GetClusterForAddress(address);
     return CalculateClusterReputation(cluster_id);
 }
 
-double WalletClusterer::GetEffectiveHATScore(const uint160& address)
+double WalletClusterer::GetEffectiveHATScore(const TrustNodeId& address)
 {
-    uint160 cluster_id = GetClusterForAddress(address);
-    std::set<uint160> members = GetClusterMembers(cluster_id);
+    TrustNodeId cluster_id = GetClusterForAddress(address);
+    std::set<TrustNodeId> members = GetClusterMembers(cluster_id);
     
     if (members.empty()) {
         return 0.0;
     }
     
-    // Use MINIMUM HAT v2 score across all addresses in cluster
+    // Use MINIMUM HAT v2 score across all identities in cluster
     double min_score = 100.0;
     
     SecureHAT hat(database);
+
+    // Preserve the prior "global viewer" behavior: a zero P2PKH viewer.
+    const TrustNodeId globalViewer = TrustNodeId::FromLegacyUint160(uint160());
     
-    for (const uint160& member : members) {
-        double score = hat.CalculateFinalTrust(member, uint160());
+    for (const TrustNodeId& member : members) {
+        double score = hat.CalculateFinalTrust(member, globalViewer);
         if (score < min_score) {
             min_score = score;
         }
@@ -393,10 +439,15 @@ uint32_t WalletClusterer::GetLargestClusterSize() const
 
 std::map<uint160, uint32_t> WalletClusterer::GetClusterSizeMap() const
 {
+    // Legacy accessor: keyed by the low-20-byte projection of the cluster ID.
     std::map<uint160, uint32_t> size_map;
     
     for (const auto& pair : clusters) {
-        size_map[pair.first] = pair.second.member_addresses.size();
+        TrustNodeId cid = pair.first;
+        if (!pair.second.member_addresses.empty()) {
+            cid = *pair.second.member_addresses.begin();
+        }
+        size_map[cid.ToUint160()] = pair.second.member_addresses.size();
     }
     
     return size_map;
@@ -409,31 +460,46 @@ void WalletClusterer::InvalidateCache()
 
 void WalletClusterer::SaveClusters()
 {
-    // Save clusters to database
-    // Format: "wc-<address>" -> WalletClusterInfo
+    // Save clusters to database.
+    // Format: "wc_<clusterTNI>" -> WalletClusterInfo, where clusterTNI is the
+    // deterministic cluster ID (minimum member). Members are stored in a
+    // std::set, which is inherently sorted and deduplicated.
     
-    for (const auto& pair : clusters) {
+    for (auto& pair : clusters) {
         try {
-            std::string key = "wc_" + pair.first.ToString();
+            const std::set<TrustNodeId>& members = pair.second.member_addresses;
+            TrustNodeId cid = members.empty() ? pair.first : *members.begin();
+
+            WalletClusterInfo info = pair.second;
+            info.cluster_id = cid;
+
+            // Primary write (cluster record) precedes the secondary-index
+            // writes (per-member address mappings) — clause 5.2.
+            std::string key = CLUSTER_PREFIX + cid.ToKeyString();
             CDataStream ss(SER_DISK, CLIENT_VERSION);
-            ss << pair.second;
+            ss << info;
             std::vector<uint8_t> data(ss.begin(), ss.end());
-            database.WriteGeneric(key, data);
+            if (!database.WriteGeneric(key, data)) {
+                LogPrintf("WalletClusterer: failed to write cluster record \"%s\"\n", key);
+                continue;
+            }
+
+            // Save the per-member address mapping -> deterministic cluster ID.
+            // An index-write failure is reported (clause 5.2); a repeated
+            // idempotent SaveClusters repairs the mapping without duplicating
+            // logical state.
+            for (const TrustNodeId& member : members) {
+                std::string mkey = ADDRESS_MAP_PREFIX + member.ToKeyString();
+                CDataStream ms(SER_DISK, CLIENT_VERSION);
+                ms << cid;
+                std::vector<uint8_t> mdata(ms.begin(), ms.end());
+                if (!database.WriteGeneric(mkey, mdata)) {
+                    RecordMigrationEvent(MigrationEvent::FailedIndexWrite,
+                                         ADDRESS_MAP_PREFIX, member.ToKeyString());
+                }
+            }
         } catch (const std::exception& e) {
             LogPrintf("ERROR: Failed to serialize cluster: %s\n", e.what());
-        }
-    }
-    
-    // Save address mappings
-    for (const auto& pair : address_to_cluster) {
-        try {
-            std::string key = "wca_" + pair.first.ToString();
-            CDataStream ss(SER_DISK, CLIENT_VERSION);
-            ss << pair.second;
-            std::vector<uint8_t> data(ss.begin(), ss.end());
-            database.WriteGeneric(key, data);
-        } catch (const std::exception& e) {
-            LogPrintf("ERROR: Failed to serialize address mapping: %s\n", e.what());
         }
     }
     
@@ -452,8 +518,10 @@ void WalletClusterer::LoadClusters()
     int clusterCount = 0;
     int mappingCount = 0;
     
-    // Load cluster info records (keys starting with "wc_")
-    std::vector<std::string> clusterKeys = database.ListKeysWithPrefix("wc_");
+    // Load cluster info records (keys starting with "wc_"). The stored cluster
+    // ID is the deterministic minimum member; it becomes the union-find root on
+    // load so that reload is idempotent and order-independent.
+    std::vector<std::string> clusterKeys = database.ListKeysWithPrefix(CLUSTER_PREFIX);
     for (const std::string& key : clusterKeys) {
         try {
             std::vector<uint8_t> data;
@@ -461,7 +529,19 @@ void WalletClusterer::LoadClusters()
                 CDataStream ss(data, SER_DISK, CLIENT_VERSION);
                 WalletClusterInfo info;
                 ss >> info;
-                clusters[info.cluster_id] = info;
+                if (!ss.empty()) {
+                    RecordMigrationEvent(MigrationEvent::MalformedRecord,
+                                         CLUSTER_PREFIX, key);
+                    LogPrintf("WalletClusterer: trailing bytes in cluster record \"%s\"; skipping\n",
+                              key);
+                    continue;
+                }
+                TrustNodeId root = info.cluster_id;
+                clusters[root] = info;
+                for (const TrustNodeId& member : info.member_addresses) {
+                    address_to_cluster[member] = root;
+                }
+                address_to_cluster[root] = root;
                 clusterCount++;
             }
         } catch (const std::exception& e) {
@@ -470,20 +550,28 @@ void WalletClusterer::LoadClusters()
         }
     }
     
-    // Load address-to-cluster mappings (keys starting with "wca_")
-    std::vector<std::string> mappingKeys = database.ListKeysWithPrefix("wca_");
+    // Load address-to-cluster mappings (keys starting with "wca_"). Identity key
+    // segments are strictly parsed; malformed/noncanonical segments are skipped.
+    std::vector<std::string> mappingKeys = database.ListKeysWithPrefix(ADDRESS_MAP_PREFIX);
     for (const std::string& key : mappingKeys) {
         try {
             std::vector<uint8_t> data;
             if (database.ReadGeneric(key, data)) {
                 CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-                uint160 clusterRoot;
+                TrustNodeId clusterRoot;
                 ss >> clusterRoot;
                 
-                // Extract address from key (format: "wca_<address>")
-                std::string addrStr = key.substr(4);  // Skip "wca_"
-                uint160 address;
-                address.SetHex(addrStr);
+                // Extract identity from key (format: "wca_<memberTNI>")
+                std::string segment = key.substr(ADDRESS_MAP_PREFIX.size());
+                TrustNodeId address;
+                std::string err;
+                if (!ParseKeyStringToTrustNode(segment, address, err)) {
+                    RecordMigrationEvent(MigrationEvent::MalformedRecord,
+                                         ADDRESS_MAP_PREFIX, key);
+                    LogPrintf("WalletClusterer: skipping malformed address mapping key \"%s\": %s\n",
+                              key, err);
+                    continue;
+                }
                 
                 address_to_cluster[address] = clusterRoot;
                 mappingCount++;
@@ -505,21 +593,23 @@ void WalletClusterer::LoadClusters()
     }
 }
 
-std::vector<uint256> WalletClusterer::GetAddressTransactions(const uint160& address)
+std::vector<uint256> WalletClusterer::GetAddressTransactions(const TrustNodeId& address)
 {
     std::vector<uint256> txids;
 
-    // Clause 2.50: return the address's transactions from the persisted
-    // transaction/address index so clustering can operate on real data.
-    std::string key = "txcluster_addr_" + address.ToString();
+    // Return the identity's transactions from the persisted transaction/address
+    // index so clustering can operate on real data.
+    std::string key = TX_ADDR_INDEX_PREFIX + address.ToKeyString();
     std::vector<uint8_t> data;
     if (database.ReadGeneric(key, data)) {
         try {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
             ss >> txids;
         } catch (const std::exception& e) {
+            RecordMigrationEvent(MigrationEvent::MalformedRecord,
+                                 TX_ADDR_INDEX_PREFIX, address.ToKeyString());
             LogPrintf("WalletClusterer: Failed to deserialize address tx index for %s: %s\n",
-                      address.ToString().c_str(), e.what());
+                      address.ToKeyString(), e.what());
             txids.clear();
         }
     }
@@ -527,17 +617,19 @@ std::vector<uint256> WalletClusterer::GetAddressTransactions(const uint160& addr
     return txids;
 }
 
-std::vector<uint160> WalletClusterer::GetTransactionInputAddresses(const uint256& txid)
+std::vector<TrustNodeId> WalletClusterer::GetTransactionInputAddresses(const uint256& txid)
 {
-    std::vector<uint160> inputs;
+    std::vector<TrustNodeId> inputs;
 
-    std::string key = "txcluster_tx_" + txid.ToString();
+    std::string key = TX_INPUT_INDEX_PREFIX + txid.ToString();
     std::vector<uint8_t> data;
     if (database.ReadGeneric(key, data)) {
         try {
             CDataStream ss(data, SER_DISK, CLIENT_VERSION);
             ss >> inputs;
         } catch (const std::exception& e) {
+            RecordMigrationEvent(MigrationEvent::MalformedRecord,
+                                 TX_INPUT_INDEX_PREFIX, txid.ToString());
             LogPrintf("WalletClusterer: Failed to deserialize tx input index for %s: %s\n",
                       txid.ToString().c_str(), e.what());
             inputs.clear();
@@ -548,37 +640,69 @@ std::vector<uint160> WalletClusterer::GetTransactionInputAddresses(const uint256
 }
 
 void WalletClusterer::RecordTransactionInputs(const uint256& txid,
-                                              const std::vector<uint160>& inputAddresses)
+                                              const std::vector<TrustNodeId>& inputAddresses)
 {
-    // Persist tx -> input addresses (used by the common-input heuristic).
+    // Accept only strictly canonical identities; sort and deduplicate before
+    // upsert so the record is deterministic and idempotent.
+    std::set<TrustNodeId> uniqueInputs;
+    for (const TrustNodeId& node : inputAddresses) {
+        std::string err;
+        if (!ValidateCanonicalTrustNode(node, err)) {
+            LogPrintf("WalletClusterer: skipping noncanonical input identity for tx %s: %s\n",
+                      txid.ToString(), err);
+            continue;
+        }
+        uniqueInputs.insert(node);
+    }
+
+    std::vector<TrustNodeId> sortedInputs(uniqueInputs.begin(), uniqueInputs.end());
+
+    // Persist tx -> input identities (primary write; used by the common-input
+    // heuristic).
     try {
         CDataStream ss(SER_DISK, CLIENT_VERSION);
-        ss << inputAddresses;
+        ss << sortedInputs;
         std::vector<uint8_t> data(ss.begin(), ss.end());
-        database.WriteGeneric("txcluster_tx_" + txid.ToString(), data);
+        if (!database.WriteGeneric(TX_INPUT_INDEX_PREFIX + txid.ToString(), data)) {
+            LogPrintf("WalletClusterer: Failed to persist tx input index for %s\n",
+                      txid.ToString());
+            return;
+        }
     } catch (const std::exception& e) {
         LogPrintf("WalletClusterer: Failed to persist tx input index: %s\n", e.what());
         return;
     }
 
-    // Update per-address -> tx-list index for each input address.
-    for (const uint160& addr : inputAddresses) {
-        std::vector<uint256> txids = GetAddressTransactions(addr);
+    // Update per-identity -> tx-list secondary index for each input identity.
+    // The tx list is sorted and deduplicated before upsert, so repeating the
+    // same call is idempotent. An index-write failure is reported; a repeated
+    // idempotent upsert repairs it without duplicating logical state (5.2).
+    for (const TrustNodeId& node : sortedInputs) {
+        std::vector<uint256> txids = GetAddressTransactions(node);
         if (std::find(txids.begin(), txids.end(), txid) == txids.end()) {
             txids.push_back(txid);
+        } else {
+            // The tx is already indexed for this identity: idempotent replay.
+            RecordMigrationEvent(MigrationEvent::IdempotentSkip,
+                                 TX_ADDR_INDEX_PREFIX, node.ToKeyString());
         }
+        std::sort(txids.begin(), txids.end());
+        txids.erase(std::unique(txids.begin(), txids.end()), txids.end());
         try {
             CDataStream ss(SER_DISK, CLIENT_VERSION);
             ss << txids;
             std::vector<uint8_t> data(ss.begin(), ss.end());
-            database.WriteGeneric("txcluster_addr_" + addr.ToString(), data);
+            if (!database.WriteGeneric(TX_ADDR_INDEX_PREFIX + node.ToKeyString(), data)) {
+                RecordMigrationEvent(MigrationEvent::FailedIndexWrite,
+                                     TX_ADDR_INDEX_PREFIX, node.ToKeyString());
+            }
         } catch (const std::exception& e) {
             LogPrintf("WalletClusterer: Failed to persist address tx index: %s\n", e.what());
         }
     }
 }
 
-bool WalletClusterer::IsLikelyChangeAddress(const uint160& address)
+bool WalletClusterer::IsLikelyChangeAddress(const TrustNodeId& address)
 {
     // Heuristics for change address detection:
     // - Used only once (typical for change)
@@ -589,5 +713,61 @@ bool WalletClusterer::IsLikelyChangeAddress(const uint160& address)
     return false;
 }
 
-} // namespace CVM
+// ---------------------------------------------------------------------------
+// Thin uint160 wrappers (legacy P2PKH callers). Each zero-extends the bare
+// uint160 into a TrustNodeId{P2PKH} and forwards to the wide overload. Wave 8
+// removes the remaining uint160 bridging at the RPC/block-processing sites.
+// ---------------------------------------------------------------------------
 
+uint160 WalletClusterer::GetClusterForAddress(const uint160& address)
+{
+    return GetClusterForAddress(TrustNodeId::FromLegacyUint160(address)).ToUint160();
+}
+
+std::set<uint160> WalletClusterer::GetClusterMembers(const uint160& address)
+{
+    std::set<uint160> result;
+    for (const TrustNodeId& member : GetClusterMembers(TrustNodeId::FromLegacyUint160(address))) {
+        result.insert(member.ToUint160());
+    }
+    return result;
+}
+
+WalletClusterInfo WalletClusterer::GetClusterInfo(const uint160& cluster_id)
+{
+    return GetClusterInfo(TrustNodeId::FromLegacyUint160(cluster_id));
+}
+
+void WalletClusterer::LinkAddresses(const uint160& addr1, const uint160& addr2)
+{
+    LinkAddresses(TrustNodeId::FromLegacyUint160(addr1),
+                  TrustNodeId::FromLegacyUint160(addr2));
+}
+
+void WalletClusterer::RecordTransactionInputs(const uint256& txid,
+                                              const std::vector<uint160>& inputAddresses)
+{
+    std::vector<TrustNodeId> typed;
+    typed.reserve(inputAddresses.size());
+    for (const uint160& addr : inputAddresses) {
+        typed.push_back(TrustNodeId::FromLegacyUint160(addr));
+    }
+    RecordTransactionInputs(txid, typed);
+}
+
+double WalletClusterer::CalculateClusterReputation(const uint160& cluster_id)
+{
+    return CalculateClusterReputation(TrustNodeId::FromLegacyUint160(cluster_id));
+}
+
+double WalletClusterer::GetEffectiveReputation(const uint160& address)
+{
+    return GetEffectiveReputation(TrustNodeId::FromLegacyUint160(address));
+}
+
+double WalletClusterer::GetEffectiveHATScore(const uint160& address)
+{
+    return GetEffectiveHATScore(TrustNodeId::FromLegacyUint160(address));
+}
+
+} // namespace CVM

@@ -135,7 +135,7 @@ CTransactionRef MakeReputationVoteTx(const uint160& target, int64_t voteValue,
                                      const std::string& reason)
 {
     CVM::ReputationVoteTx v;
-    v.targetAddress = target;
+    v.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     v.voteValue = voteValue;
     v.reason = reason;
     std::vector<uint8_t> payload = v.Serialize();
@@ -407,7 +407,7 @@ BOOST_AUTO_TEST_CASE(explore_1_18_vote_attributed_to_zero_address)
     // voter and the vote is applied.
     CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
     CVM::ReputationVoteTx vote;
-    vote.targetAddress = target;
+    vote.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     vote.voteValue = 50;
     vote.reason = "explore-1.18";
 

@@ -137,6 +137,7 @@ BASE_SCRIPTS= [
     'feature_cvm_dual_path.py',
     'feature_wot_fixes.py',
     'feature_trust_activation.py',
+    'feature_trustnodeid_migration.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]

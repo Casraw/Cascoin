@@ -7,6 +7,7 @@ src/cascoin-cli
 src/cascoin-tx
 src/test/test_cascoin
 src/test/test_cascoin_fuzzy
+src/test/test_cascoin_cvm_fuzzy
 src/qt/test/test_cascoin-qt
 
 # autoreconf

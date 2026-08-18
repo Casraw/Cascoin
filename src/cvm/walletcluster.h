@@ -7,6 +7,7 @@
 
 #include <uint256.h>
 #include <cvm/cvmdb.h>
+#include <cvm/trustnodeid.h>
 #include <set>
 #include <map>
 #include <vector>
@@ -26,6 +27,15 @@
  * - Scammer cannot escape negative reputation by creating new address
  * - All addresses in wallet share lowest reputation (conservative approach)
  * - Chain analysis links wallet ownership
+ *
+ * Identity representation
+ * -----------------------
+ * Cluster IDs and members are wide TrustNodeId values: they represent every
+ * supported destination type (P2PKH/P2SH/P2WPKH/P2WSH/quantum) without
+ * truncation and never collide when they differ by type. Deduplication uses
+ * exact typed identities, not low-20-byte projections. The externally visible
+ * cluster ID is deterministic: the minimum member under TrustNodeId::operator<.
+ * Transaction and source-edge identifiers remain uint256.
  */
 
 namespace CVM {
@@ -34,12 +44,12 @@ namespace CVM {
  * WalletClusterInfo - Information about a cluster of addresses belonging to same wallet
  */
 struct WalletClusterInfo {
-    uint160 cluster_id;                      // Primary address (oldest or most active)
-    std::set<uint160> member_addresses;       // All addresses in this cluster
-    int64_t first_seen;                       // Timestamp of oldest address
-    int64_t last_activity;                    // Last transaction time
-    uint32_t transaction_count;               // Total transactions across all addresses
-    double shared_reputation;                 // Aggregated reputation score
+    TrustNodeId cluster_id;                      // Deterministic cluster ID (minimum member under operator<)
+    std::set<TrustNodeId> member_addresses;      // All addresses in this cluster (sorted/deduplicated)
+    int64_t first_seen;                          // Timestamp of oldest address
+    int64_t last_activity;                       // Last transaction time
+    uint32_t transaction_count;                  // Total transactions across all addresses
+    double shared_reputation;                    // Aggregated reputation score
     
     WalletClusterInfo() : cluster_id(), first_seen(0), last_activity(0), 
                           transaction_count(0), shared_reputation(0.0) {}
@@ -78,56 +88,75 @@ public:
      * This should be called periodically or when significant new transactions occur
      */
     virtual void BuildClusters();
-    
-    /**
-     * Find which cluster an address belongs to
-     * Returns cluster_id (primary address of cluster) or null if address is alone
-     */
-    virtual uint160 GetClusterForAddress(const uint160& address);
-    
-    /**
-     * Get all addresses in the same cluster as given address
-     */
-    virtual std::set<uint160> GetClusterMembers(const uint160& address);
-    
-    /**
-     * Get complete cluster information
-     */
-    virtual WalletClusterInfo GetClusterInfo(const uint160& cluster_id);
-    
-    /**
-     * Manually link two addresses as belonging to same wallet
-     * Useful for user-provided information or external chain analysis
-     */
-    virtual void LinkAddresses(const uint160& addr1, const uint160& addr2);
+
+    // --- Typed core API (wide user identities) ----------------------------
 
     /**
-     * Record a transaction's input addresses into the transaction/address index
-     * that feeds common-input-ownership clustering (clauses 2.13, 2.50).
+     * Find which cluster an identity belongs to.
+     * Returns the deterministic cluster ID (minimum member under operator<) or
+     * the identity itself if it is alone.
      *
-     * This persists both a tx -> input-addresses record and a per-address
-     * -> tx-list record, giving BuildClusters() and GetAddressTransactions() a
-     * real data source to operate on independently of a full chain replay.
+     * Virtual so test doubles can override the typed query surface (the primary
+     * API used by ClusterTrustQuery).
      */
+    virtual TrustNodeId GetClusterForAddress(const TrustNodeId& address);
+
+    /**
+     * Get all identities in the same cluster as the given identity.
+     *
+     * Virtual so test doubles can override the typed query surface.
+     */
+    virtual std::set<TrustNodeId> GetClusterMembers(const TrustNodeId& address);
+
+    /**
+     * Get complete cluster information for a typed cluster ID.
+     */
+    WalletClusterInfo GetClusterInfo(const TrustNodeId& cluster_id);
+
+    /**
+     * Manually link two identities as belonging to the same wallet.
+     */
+    void LinkAddresses(const TrustNodeId& addr1, const TrustNodeId& addr2);
+
+    /**
+     * Record a transaction's input identities into the transaction/address
+     * index that feeds common-input-ownership clustering. Records are sorted
+     * and deduplicated before upsert.
+     */
+    void RecordTransactionInputs(const uint256& txid,
+                                 const std::vector<TrustNodeId>& inputAddresses);
+
+    /**
+     * Calculate shared reputation for a typed cluster (MINIMUM, conservative).
+     */
+    double CalculateClusterReputation(const TrustNodeId& cluster_id);
+
+    /**
+     * Get effective reputation for a typed identity (considering cluster).
+     */
+    double GetEffectiveReputation(const TrustNodeId& address);
+
+    /**
+     * Get effective HAT v2 score for a typed identity (considering cluster).
+     */
+    double GetEffectiveHATScore(const TrustNodeId& address);
+
+    // --- Thin uint160 wrappers (legacy P2PKH callers) ---------------------
+    //
+    // Each wraps the bare uint160 as TrustNodeId{P2PKH, zero-extended} and
+    // forwards to the typed overload above. They are kept virtual so existing
+    // mocks that override the uint160 surface (e.g. TrustPropagator tests)
+    // keep working until Wave 8 removes the remaining uint160 bridging at the
+    // RPC/block-processing sites.
+
+    virtual uint160 GetClusterForAddress(const uint160& address);
+    virtual std::set<uint160> GetClusterMembers(const uint160& address);
+    virtual WalletClusterInfo GetClusterInfo(const uint160& cluster_id);
+    virtual void LinkAddresses(const uint160& addr1, const uint160& addr2);
     virtual void RecordTransactionInputs(const uint256& txid,
                                          const std::vector<uint160>& inputAddresses);
-    
-    /**
-     * Calculate shared reputation for a cluster
-     * Strategy: Use MINIMUM reputation (most conservative)
-     * Alternative: Could use weighted average, but minimum is safer
-     */
     virtual double CalculateClusterReputation(const uint160& cluster_id);
-    
-    /**
-     * Get effective reputation for an address (considering cluster)
-     * This is what should be used instead of individual address reputation
-     */
     virtual double GetEffectiveReputation(const uint160& address);
-    
-    /**
-     * Get effective HAT v2 score for an address (considering cluster)
-     */
     virtual double GetEffectiveHATScore(const uint160& address);
     
     // Statistics
@@ -143,30 +172,33 @@ public:
 private:
     CVMDatabase& database;
     
-    // Cluster mappings
-    std::map<uint160, uint160> address_to_cluster;     // address -> cluster_id
-    std::map<uint160, WalletClusterInfo> clusters;     // cluster_id -> info
+    // Cluster mappings (typed identities)
+    std::map<TrustNodeId, TrustNodeId> address_to_cluster;     // member -> union-find parent
+    std::map<TrustNodeId, WalletClusterInfo> clusters;         // union-find root -> info
     
     bool cache_valid;
     
     // Helper: Union-Find for efficient clustering
-    uint160 FindClusterRoot(const uint160& address);
-    void UnionClusters(const uint160& addr1, const uint160& addr2);
+    TrustNodeId FindClusterRoot(const TrustNodeId& address);
+    void UnionClusters(const TrustNodeId& addr1, const TrustNodeId& addr2);
+
+    // Helper: deterministic externally-visible cluster ID for a union-find root
+    // (minimum member under TrustNodeId::operator<).
+    TrustNodeId ExternalClusterId(const TrustNodeId& root);
     
     // Helper: Analyze transaction for clustering hints
     void AnalyzeTransaction(const uint256& txid);
     
     // Helper: Detect change addresses
-    bool IsLikelyChangeAddress(const uint160& address);
+    bool IsLikelyChangeAddress(const TrustNodeId& address);
     
-    // Helper: Get all transactions involving an address
-    std::vector<uint256> GetAddressTransactions(const uint160& address);
+    // Helper: Get all transactions involving an identity
+    std::vector<uint256> GetAddressTransactions(const TrustNodeId& address);
 
-    // Helper: Get the input addresses recorded for a transaction in the index
-    std::vector<uint160> GetTransactionInputAddresses(const uint256& txid);
+    // Helper: Get the input identities recorded for a transaction in the index
+    std::vector<TrustNodeId> GetTransactionInputAddresses(const uint256& txid);
 };
 
 } // namespace CVM
 
 #endif // CASCOIN_CVM_WALLETCLUSTER_H
-

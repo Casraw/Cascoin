@@ -6,6 +6,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/walletcluster.h>
 #include <cvm/trustgraph.h>
+#include <cvm/migration_observability.h>
 #include <streams.h>
 #include <clientversion.h>
 #include <util.h>
@@ -33,14 +34,14 @@ static const std::string CLUSTER_TRUST_PREFIX = "cluster_trust_";
 
 std::string PropagatedTrustEdge::GetStorageKey() const
 {
-    // Format: "trust_prop_{from}_{to}"
-    return TRUST_PROP_PREFIX + fromAddress.ToString() + "_" + toAddress.ToString();
+    // Format: "trust_prop_<fromTNI>_<toTNI>" (TNI = TrustNodeId::ToKeyString())
+    return TRUST_PROP_PREFIX + fromAddress.ToKeyString() + "_" + toAddress.ToKeyString();
 }
 
 std::string PropagatedTrustEdge::GetIndexKey() const
 {
-    // Format: "trust_prop_idx_{sourceEdgeTx}_{to}"
-    return TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + toAddress.ToString();
+    // Format: "trust_prop_idx_<sourceEdgeTx:64hex>_<toTNI>"
+    return TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + toAddress.ToKeyString();
 }
 
 //
@@ -49,8 +50,8 @@ std::string PropagatedTrustEdge::GetIndexKey() const
 
 std::string ClusterTrustSummary::GetStorageKey() const
 {
-    // Format: "cluster_trust_{clusterId}"
-    return CLUSTER_TRUST_PREFIX + clusterId.ToString();
+    // Format: "cluster_trust_<clusterTNI>" (TNI = TrustNodeId::ToKeyString())
+    return CLUSTER_TRUST_PREFIX + clusterId.ToKeyString();
 }
 
 //
@@ -83,24 +84,24 @@ bool TrustPropagator::StorePropagatedEdge(const PropagatedTrustEdge& edge)
     
     if (result) {
         LogPrint(BCLog::CVM, "TrustPropagator: Stored propagated edge from %s to %s (source tx: %s)\n",
-                 edge.fromAddress.ToString(), edge.toAddress.ToString(), 
+                 edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString(), 
                  edge.sourceEdgeTx.ToString().substr(0, 16));
     } else {
         LogPrintf("TrustPropagator: Failed to store propagated edge from %s to %s\n",
-                  edge.fromAddress.ToString(), edge.toAddress.ToString());
+                  edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString());
     }
     
     return result;
 }
 
-bool TrustPropagator::IndexPropagatedEdge(const uint256& sourceEdgeTx, const uint160& propagatedTo)
+bool TrustPropagator::IndexPropagatedEdge(const uint256& sourceEdgeTx, const TrustNodeId& propagatedTo)
 {
     // Requirement 5.2: Maintain cluster-to-trust index for efficient lookups
-    // Index format: "trust_prop_idx_{sourceEdgeTx}_{to}" -> propagatedTo address
+    // Index format: "trust_prop_idx_<sourceEdgeTx:64hex>_<toTNI>" -> propagatedTo identity
     
-    std::string key = TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + propagatedTo.ToString();
+    std::string key = TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + propagatedTo.ToKeyString();
     
-    // Serialize the target address
+    // Serialize the target identity
     CDataStream ss(SER_DISK, CLIENT_VERSION);
     ss << propagatedTo;
     
@@ -111,7 +112,7 @@ bool TrustPropagator::IndexPropagatedEdge(const uint256& sourceEdgeTx, const uin
     
     if (result) {
         LogPrint(BCLog::CVM, "TrustPropagator: Indexed propagated edge for source tx %s -> %s\n",
-                 sourceEdgeTx.ToString().substr(0, 16), propagatedTo.ToString());
+                 sourceEdgeTx.ToString().substr(0, 16), propagatedTo.ToKeyString());
     } else {
         LogPrintf("TrustPropagator: Failed to index propagated edge for source tx %s\n",
                   sourceEdgeTx.ToString().substr(0, 16));
@@ -120,40 +121,40 @@ bool TrustPropagator::IndexPropagatedEdge(const uint256& sourceEdgeTx, const uin
     return result;
 }
 
-bool TrustPropagator::RemoveIndexEntry(const uint256& sourceEdgeTx, const uint160& propagatedTo)
+bool TrustPropagator::RemoveIndexEntry(const uint256& sourceEdgeTx, const TrustNodeId& propagatedTo)
 {
-    std::string key = TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + propagatedTo.ToString();
+    std::string key = TRUST_PROP_IDX_PREFIX + sourceEdgeTx.ToString() + "_" + propagatedTo.ToKeyString();
     
     bool result = database.EraseGeneric(key);
     
     if (result) {
         LogPrint(BCLog::CVM, "TrustPropagator: Removed index entry for source tx %s -> %s\n",
-                 sourceEdgeTx.ToString().substr(0, 16), propagatedTo.ToString());
+                 sourceEdgeTx.ToString().substr(0, 16), propagatedTo.ToKeyString());
     }
     
     return result;
 }
 
-bool TrustPropagator::DeletePropagatedEdge(const uint160& fromAddress, const uint160& toAddress)
+bool TrustPropagator::DeletePropagatedEdge(const TrustNodeId& fromAddress, const TrustNodeId& toAddress)
 {
-    std::string key = TRUST_PROP_PREFIX + fromAddress.ToString() + "_" + toAddress.ToString();
+    std::string key = TRUST_PROP_PREFIX + fromAddress.ToKeyString() + "_" + toAddress.ToKeyString();
     
     bool result = database.EraseGeneric(key);
     
     if (result) {
         LogPrint(BCLog::CVM, "TrustPropagator: Deleted propagated edge from %s to %s\n",
-                 fromAddress.ToString(), toAddress.ToString());
+                 fromAddress.ToKeyString(), toAddress.ToKeyString());
     }
     
     return result;
 }
 
-void TrustPropagator::InvalidateClusterCache(const uint160& clusterId)
+void TrustPropagator::InvalidateClusterCache(const TrustNodeId& clusterId)
 {
     // Remove the cluster from the LRU cache (Requirement 7.4: Invalidate cache on cluster updates)
     if (summaryCache.Remove(clusterId)) {
         LogPrint(BCLog::CVM, "TrustPropagator: Invalidated cache for cluster %s\n",
-                 clusterId.ToString());
+                 clusterId.ToKeyString());
     }
 }
 
@@ -172,35 +173,35 @@ PropagationResult TrustPropagator::PropagateTrustEdgeWithResult(const TrustEdge&
     // 1.3: Store them with a reference to the original trust edge
     // 7.2: Limit cluster size processing to maximum of 10,000 addresses per operation
     
-    // Trust propagation and wallet clustering operate in legacy uint160 space;
-    // extract the low-20-byte identifiers from the wide TrustNodeId fields.
-    const uint160 edgeFrom = edge.fromAddress.ToUint160();
-    const uint160 edgeTo = edge.toAddress.ToUint160();
+    // Trust propagation and wallet clustering carry wide TrustNodeId identities
+    // end to end; the exact typed endpoints are preserved without truncation.
+    const TrustNodeId& edgeFrom = edge.fromAddress;
+    const TrustNodeId& edgeTo = edge.toAddress;
 
     LogPrint(BCLog::CVM, "TrustPropagator: PropagateTrustEdgeWithResult from %s to %s (weight: %d)\n",
-             edgeFrom.ToString(), edgeTo.ToString(), edge.trustWeight);
+             edgeFrom.ToKeyString(), edgeTo.ToKeyString(), edge.trustWeight);
     
     PropagationResult result;
     
-    // Requirement 1.1: Identify the wallet cluster containing the target address
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(edgeTo);
+    // Requirement 1.1: Identify the wallet cluster containing the target identity
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(edgeTo);
     
-    // Requirement 1.5: If clustering fails to identify a cluster, apply trust only to specified address
+    // Requirement 1.5: If clustering fails to identify a cluster, apply trust only to specified identity
     if (clusterMembers.empty()) {
-        LogPrint(BCLog::CVM, "TrustPropagator: No cluster found for address %s, treating as single-address cluster\n",
-                 edgeTo.ToString());
+        LogPrint(BCLog::CVM, "TrustPropagator: No cluster found for identity %s, treating as single-identity cluster\n",
+                 edgeTo.ToKeyString());
         clusterMembers.insert(edgeTo);
     }
     
     // Store original cluster size before any limiting
     result.originalClusterSize = static_cast<uint32_t>(clusterMembers.size());
     
-    // Requirement 7.2: Limit cluster size processing to maximum of 10,000 addresses per operation
+    // Requirement 7.2: Limit cluster size processing to maximum of 10,000 identities per operation
     if (clusterMembers.size() > MAX_CLUSTER_SIZE) {
         LogPrintf("TrustPropagator: Cluster size %zu exceeds MAX_CLUSTER_SIZE (%u), limiting propagation\n",
                   clusterMembers.size(), MAX_CLUSTER_SIZE);
         // Create a limited set with first MAX_CLUSTER_SIZE members
-        std::set<uint160> limitedMembers;
+        std::set<TrustNodeId> limitedMembers;
         size_t count = 0;
         for (const auto& member : clusterMembers) {
             if (count >= MAX_CLUSTER_SIZE) break;
@@ -217,14 +218,14 @@ PropagationResult TrustPropagator::PropagateTrustEdgeWithResult(const TrustEdge&
     // Get current timestamp for propagation
     uint32_t propagationTime = static_cast<uint32_t>(GetTime());
     
-    // Requirement 1.2: Create propagated trust edges to all member addresses in the cluster
+    // Requirement 1.2: Create propagated trust edges to all member identities in the cluster
     for (const auto& memberAddress : clusterMembers) {
         // Create PropagatedTrustEdge for this cluster member
         // Requirement 1.3: Store with reference to original trust edge (sourceEdgeTx)
         PropagatedTrustEdge propagatedEdge(
             edgeFrom,               // Original truster
             memberAddress,          // Propagated target (cluster member)
-            edgeTo,                 // Original target address
+            edgeTo,                 // Original target identity
             edge.bondTxHash,        // Reference to original trust edge transaction
             edge.trustWeight,       // Inherited weight
             propagationTime,        // When propagation occurred
@@ -238,23 +239,23 @@ PropagationResult TrustPropagator::PropagateTrustEdgeWithResult(const TrustEdge&
             if (IndexPropagatedEdge(edge.bondTxHash, memberAddress)) {
                 result.propagatedCount++;
                 LogPrint(BCLog::CVM, "TrustPropagator: Propagated edge to %s (count: %u)\n",
-                         memberAddress.ToString(), result.propagatedCount);
+                         memberAddress.ToKeyString(), result.propagatedCount);
             } else {
                 // Index failed but edge was stored - log warning but continue
                 // Index can be rebuilt later if needed
                 LogPrintf("TrustPropagator: Warning - failed to index propagated edge to %s\n",
-                          memberAddress.ToString());
+                          memberAddress.ToKeyString());
                 result.propagatedCount++;
             }
         } else {
             LogPrintf("TrustPropagator: Failed to store propagated edge to %s\n",
-                      memberAddress.ToString());
+                      memberAddress.ToKeyString());
         }
     }
     
     // Invalidate cache for the cluster since trust relations changed
-    uint160 clusterId = clusterer.GetClusterForAddress(edgeTo);
-    if (!clusterId.IsNull()) {
+    TrustNodeId clusterId = clusterer.GetClusterForAddress(edgeTo);
+    if (!clusterId.data.IsNull()) {
         InvalidateClusterCache(clusterId);
     }
     
@@ -271,17 +272,17 @@ PropagationResult TrustPropagator::PropagateTrustEdgeBatched(const TrustEdge& ed
     // Requirements: 7.2, 7.3
     // Process large clusters in batches to avoid memory issues
     
-    // Trust propagation and wallet clustering operate in legacy uint160 space.
-    const uint160 edgeFrom = edge.fromAddress.ToUint160();
-    const uint160 edgeTo = edge.toAddress.ToUint160();
+    // Trust propagation and wallet clustering carry wide TrustNodeId identities.
+    const TrustNodeId& edgeFrom = edge.fromAddress;
+    const TrustNodeId& edgeTo = edge.toAddress;
 
     LogPrint(BCLog::CVM, "TrustPropagator: PropagateTrustEdgeBatched from %s to %s (batch size: %u)\n",
-             edgeFrom.ToString(), edgeTo.ToString(), batchSize);
+             edgeFrom.ToKeyString(), edgeTo.ToKeyString(), batchSize);
     
     PropagationResult result;
     
     // Get cluster members
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(edgeTo);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(edgeTo);
     
     if (clusterMembers.empty()) {
         clusterMembers.insert(edgeTo);
@@ -293,7 +294,7 @@ PropagationResult TrustPropagator::PropagateTrustEdgeBatched(const TrustEdge& ed
     if (clusterMembers.size() > MAX_CLUSTER_SIZE) {
         LogPrintf("TrustPropagator: Cluster size %zu exceeds MAX_CLUSTER_SIZE (%u), limiting\n",
                   clusterMembers.size(), MAX_CLUSTER_SIZE);
-        std::set<uint160> limitedMembers;
+        std::set<TrustNodeId> limitedMembers;
         size_t count = 0;
         for (const auto& member : clusterMembers) {
             if (count >= MAX_CLUSTER_SIZE) break;
@@ -345,8 +346,8 @@ PropagationResult TrustPropagator::PropagateTrustEdgeBatched(const TrustEdge& ed
     }
     
     // Invalidate cache
-    uint160 clusterId = clusterer.GetClusterForAddress(edgeTo);
-    if (!clusterId.IsNull()) {
+    TrustNodeId clusterId = clusterer.GetClusterForAddress(edgeTo);
+    if (!clusterId.data.IsNull()) {
         InvalidateClusterCache(clusterId);
     }
     
@@ -356,22 +357,22 @@ PropagationResult TrustPropagator::PropagateTrustEdgeBatched(const TrustEdge& ed
     return result;
 }
 
-uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, const uint160& clusterId)
+uint32_t TrustPropagator::InheritTrustForNewMember(const TrustNodeId& newAddress, const TrustNodeId& clusterId)
 {
     // Requirements: 2.1, 2.2
-    // 2.1: When a new address is detected in an existing wallet cluster,
-    //      propagate all existing trust edges to the new address
+    // 2.1: When a new identity is detected in an existing wallet cluster,
+    //      propagate all existing trust edges to the new identity
     // 2.2: Preserve the original trust weight, bond amount, and timestamp
     
-    LogPrint(BCLog::CVM, "TrustPropagator: InheritTrustForNewMember for new address %s in cluster %s\n",
-             newAddress.ToString(), clusterId.ToString());
+    LogPrint(BCLog::CVM, "TrustPropagator: InheritTrustForNewMember for new identity %s in cluster %s\n",
+             newAddress.ToKeyString(), clusterId.ToKeyString());
     
     // Get all members of the cluster
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(clusterId);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(clusterId);
     
     if (clusterMembers.empty()) {
         LogPrint(BCLog::CVM, "TrustPropagator: Cluster %s has no members, nothing to inherit\n",
-                 clusterId.ToString());
+                 clusterId.ToKeyString());
         return 0;
     }
     
@@ -396,7 +397,7 @@ uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, co
             if (edgesToInherit.find(propEdge.sourceEdgeTx) == edgesToInherit.end()) {
                 edgesToInherit[propEdge.sourceEdgeTx] = propEdge;
                 LogPrint(BCLog::CVM, "TrustPropagator: Found trust edge to inherit from %s (source tx: %s)\n",
-                         propEdge.fromAddress.ToString(), propEdge.sourceEdgeTx.ToString().substr(0, 16));
+                         propEdge.fromAddress.ToKeyString(), propEdge.sourceEdgeTx.ToString().substr(0, 16));
             }
         }
         
@@ -407,11 +408,12 @@ uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, co
         for (const auto& directEdge : directEdges) {
             // Only add if we haven't seen this source edge yet
             if (edgesToInherit.find(directEdge.bondTxHash) == edgesToInherit.end()) {
-                // Create a PropagatedTrustEdge template from the direct edge
+                // Create a PropagatedTrustEdge template from the direct edge,
+                // preserving the exact typed endpoints.
                 PropagatedTrustEdge templateEdge(
-                    directEdge.fromAddress.ToUint160(),
+                    directEdge.fromAddress,
                     existingMember,  // Will be replaced with newAddress when creating
-                    directEdge.toAddress.ToUint160(),  // Original target
+                    directEdge.toAddress,  // Original target
                     directEdge.bondTxHash,
                     directEdge.trustWeight,
                     directEdge.timestamp,  // Preserve original timestamp (Requirement 2.2)
@@ -425,8 +427,8 @@ uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, co
     }
     
     if (edgesToInherit.empty()) {
-        LogPrint(BCLog::CVM, "TrustPropagator: No trust edges to inherit for new address %s\n",
-                 newAddress.ToString());
+        LogPrint(BCLog::CVM, "TrustPropagator: No trust edges to inherit for new identity %s\n",
+                 newAddress.ToKeyString());
         return 0;
     }
     
@@ -460,58 +462,58 @@ uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, co
             // Build index entry for source edge -> propagated edges
             if (IndexPropagatedEdge(templateEdge.sourceEdgeTx, newAddress)) {
                 inheritedCount++;
-                LogPrint(BCLog::CVM, "TrustPropagator: Inherited trust edge from %s to new address %s (count: %u)\n",
-                         templateEdge.fromAddress.ToString(), newAddress.ToString(), inheritedCount);
+                LogPrint(BCLog::CVM, "TrustPropagator: Inherited trust edge from %s to new identity %s (count: %u)\n",
+                         templateEdge.fromAddress.ToKeyString(), newAddress.ToKeyString(), inheritedCount);
             } else {
                 // Index failed but edge was stored - log warning but count as success
                 LogPrintf("TrustPropagator: Warning - failed to index inherited edge to %s\n",
-                          newAddress.ToString());
+                          newAddress.ToKeyString());
                 inheritedCount++;
             }
         } else {
             LogPrintf("TrustPropagator: Failed to store inherited edge to %s\n",
-                      newAddress.ToString());
+                      newAddress.ToKeyString());
         }
     }
     
     // Invalidate cache for the cluster since trust relations changed
-    if (!clusterId.IsNull()) {
+    if (!clusterId.data.IsNull()) {
         InvalidateClusterCache(clusterId);
     }
     
     LogPrint(BCLog::CVM, "TrustPropagator: InheritTrustForNewMember completed - %u edges inherited for %s\n",
-             inheritedCount, newAddress.ToString());
+             inheritedCount, newAddress.ToKeyString());
     
     return inheritedCount;
 }
 
-bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160& cluster2, 
-                                         const uint160& mergedClusterId)
+bool TrustPropagator::HandleClusterMerge(const TrustNodeId& cluster1, const TrustNodeId& cluster2, 
+                                         const TrustNodeId& mergedClusterId)
 {
     // Requirements: 6.1, 6.2, 6.4
     // 6.1: WHEN two clusters merge THEN combine their trust relations
-    // 6.2: WHEN a cluster merge occurs THEN propagate trust from both original clusters to all merged addresses
+    // 6.2: WHEN a cluster merge occurs THEN propagate trust from both original clusters to all merged identities
     // 6.4: IF conflicting trust edges exist after a merge THEN use the most recent edge as authoritative
     
     LogPrint(BCLog::CVM, "TrustPropagator: HandleClusterMerge - merging cluster %s and %s into %s\n",
-             cluster1.ToString().substr(0, 16), cluster2.ToString().substr(0, 16), 
-             mergedClusterId.ToString().substr(0, 16));
+             cluster1.ToKeyString(), cluster2.ToKeyString(), 
+             mergedClusterId.ToKeyString());
     
     // Get members from both original clusters
-    std::set<uint160> members1 = clusterer.GetClusterMembers(cluster1);
-    std::set<uint160> members2 = clusterer.GetClusterMembers(cluster2);
+    std::set<TrustNodeId> members1 = clusterer.GetClusterMembers(cluster1);
+    std::set<TrustNodeId> members2 = clusterer.GetClusterMembers(cluster2);
     
     // If either cluster is empty, try to get members using the cluster ID directly
     // (the cluster ID itself might be a member)
-    if (members1.empty() && !cluster1.IsNull()) {
+    if (members1.empty() && !cluster1.data.IsNull()) {
         members1.insert(cluster1);
     }
-    if (members2.empty() && !cluster2.IsNull()) {
+    if (members2.empty() && !cluster2.data.IsNull()) {
         members2.insert(cluster2);
     }
     
     // Combine all members into the merged cluster set
-    std::set<uint160> mergedMembers;
+    std::set<TrustNodeId> mergedMembers;
     mergedMembers.insert(members1.begin(), members1.end());
     mergedMembers.insert(members2.begin(), members2.end());
     
@@ -527,7 +529,7 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
     if (mergedMembers.size() > MAX_CLUSTER_SIZE) {
         LogPrintf("TrustPropagator: HandleClusterMerge - merged cluster size %zu exceeds MAX_CLUSTER_SIZE (%u), limiting\n",
                   mergedMembers.size(), MAX_CLUSTER_SIZE);
-        std::set<uint160> limitedMembers;
+        std::set<TrustNodeId> limitedMembers;
         size_t count = 0;
         for (const auto& member : mergedMembers) {
             if (count >= MAX_CLUSTER_SIZE) break;
@@ -541,7 +543,7 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
     // Collect all trust edges targeting any member of either original cluster
     // Key: fromAddress only - we want ONE edge per truster after conflict resolution
     // Requirement 6.4: Use most recent timestamp, with sourceEdgeTx as deterministic tie-breaker
-    std::map<uint160, PropagatedTrustEdge> combinedEdges;
+    std::map<TrustNodeId, PropagatedTrustEdge> combinedEdges;
     
     // Helper lambda to determine if edge1 should win over edge2
     // Returns true if edge1 is "better" (newer timestamp, or same timestamp with larger sourceEdgeTx)
@@ -558,14 +560,14 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
     };
     
     // Helper lambda to collect edges from a set of members
-    auto collectEdgesFromMembers = [this, &combinedEdges, &edgeWins](const std::set<uint160>& members) {
+    auto collectEdgesFromMembers = [this, &combinedEdges, &edgeWins](const std::set<TrustNodeId>& members) {
         for (const auto& member : members) {
             // Get propagated edges targeting this member
             std::vector<PropagatedTrustEdge> propEdges = GetPropagatedEdgesForAddress(member);
             
             for (const auto& edge : propEdges) {
-                // Key is just fromAddress - one edge per truster
-                uint160 key = edge.fromAddress;
+                // Key is just fromAddress - one edge per truster (exact typed identity)
+                TrustNodeId key = edge.fromAddress;
                 
                 auto it = combinedEdges.find(key);
                 if (it == combinedEdges.end()) {
@@ -575,7 +577,7 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
                     // Requirement 6.4: Handle conflicts - use edgeWins for deterministic resolution
                     if (edgeWins(edge, it->second)) {
                         LogPrint(BCLog::CVM, "TrustPropagator: HandleClusterMerge - conflict detected for edge from %s, using winning edge (ts=%u vs %u)\n",
-                                 edge.fromAddress.ToString().substr(0, 16), edge.originalTimestamp, it->second.originalTimestamp);
+                                 edge.fromAddress.ToKeyString(), edge.originalTimestamp, it->second.originalTimestamp);
                         combinedEdges[key] = edge;
                     }
                 }
@@ -585,13 +587,13 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
             std::vector<TrustEdge> directEdges = trustGraph.GetIncomingTrust(member);
             
             for (const auto& directEdge : directEdges) {
-                uint160 key = directEdge.fromAddress.ToUint160();
+                TrustNodeId key = directEdge.fromAddress;
                 
-                // Create a PropagatedTrustEdge from the direct edge
+                // Create a PropagatedTrustEdge from the direct edge (exact typed endpoints)
                 PropagatedTrustEdge propEdge(
-                    directEdge.fromAddress.ToUint160(),
+                    directEdge.fromAddress,
                     member,
-                    directEdge.toAddress.ToUint160(),
+                    directEdge.toAddress,
                     directEdge.bondTxHash,
                     directEdge.trustWeight,
                     directEdge.timestamp,
@@ -605,7 +607,7 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
                     // Requirement 6.4: Handle conflicts - use edgeWins for deterministic resolution
                     if (edgeWins(propEdge, it->second)) {
                         LogPrint(BCLog::CVM, "TrustPropagator: HandleClusterMerge - conflict detected for direct edge from %s, using winning edge (ts=%u vs %u)\n",
-                                 directEdge.fromAddress.ToUint160().ToString().substr(0, 16), directEdge.timestamp, it->second.originalTimestamp);
+                                 directEdge.fromAddress.ToKeyString(), directEdge.timestamp, it->second.originalTimestamp);
                         combinedEdges[key] = propEdge;
                     }
                 }
@@ -663,12 +665,12 @@ bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160&
                 } else {
                     // Index failed but edge was stored - count as partial success
                     LogPrint(BCLog::CVM, "TrustPropagator: HandleClusterMerge - failed to index edge to %s\n",
-                              memberAddress.ToString().substr(0, 16));
+                              memberAddress.ToKeyString());
                     totalPropagated++;
                 }
             } else {
                 LogPrintf("TrustPropagator: HandleClusterMerge - failed to store edge to %s\n",
-                          memberAddress.ToString().substr(0, 16));
+                          memberAddress.ToKeyString());
                 totalFailed++;
             }
         }
@@ -707,7 +709,8 @@ uint32_t TrustPropagator::DeletePropagatedEdges(const uint256& sourceEdgeTx)
              propagatedEdges.size());
     
     uint32_t deletedCount = 0;
-    uint160 clusterId;  // Track cluster ID for cache invalidation
+    TrustNodeId clusterId;  // Track cluster ID for cache invalidation
+    bool haveClusterId = false;
     
     // Delete each propagated edge and its index entry
     for (const auto& edge : propagatedEdges) {
@@ -718,20 +721,21 @@ uint32_t TrustPropagator::DeletePropagatedEdges(const uint256& sourceEdgeTx)
             deletedCount++;
             
             LogPrint(BCLog::CVM, "TrustPropagator: Deleted propagated edge from %s to %s\n",
-                     edge.fromAddress.ToString(), edge.toAddress.ToString());
+                     edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString());
             
             // Track cluster ID for cache invalidation (all edges should be in same cluster)
-            if (clusterId.IsNull()) {
+            if (!haveClusterId) {
                 clusterId = clusterer.GetClusterForAddress(edge.toAddress);
+                haveClusterId = true;
             }
         } else {
             LogPrintf("TrustPropagator: Failed to delete propagated edge from %s to %s\n",
-                      edge.fromAddress.ToString(), edge.toAddress.ToString());
+                      edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString());
         }
     }
     
     // Invalidate cache for the affected cluster
-    if (!clusterId.IsNull()) {
+    if (haveClusterId && !clusterId.data.IsNull()) {
         InvalidateClusterCache(clusterId);
     }
     
@@ -762,7 +766,8 @@ uint32_t TrustPropagator::UpdatePropagatedEdges(const uint256& sourceEdgeTx, int
              propagatedEdges.size());
     
     uint32_t updatedCount = 0;
-    uint160 clusterId;  // Track cluster ID for cache invalidation
+    TrustNodeId clusterId;  // Track cluster ID for cache invalidation
+    bool haveClusterId = false;
     
     // Update each propagated edge with the new weight
     for (auto& edge : propagatedEdges) {
@@ -775,20 +780,21 @@ uint32_t TrustPropagator::UpdatePropagatedEdges(const uint256& sourceEdgeTx, int
             updatedCount++;
             
             LogPrint(BCLog::CVM, "TrustPropagator: Updated propagated edge from %s to %s (weight: %d -> %d)\n",
-                     edge.fromAddress.ToString(), edge.toAddress.ToString(), oldWeight, newWeight);
+                     edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString(), oldWeight, newWeight);
             
             // Track cluster ID for cache invalidation (all edges should be in same cluster)
-            if (clusterId.IsNull()) {
+            if (!haveClusterId) {
                 clusterId = clusterer.GetClusterForAddress(edge.toAddress);
+                haveClusterId = true;
             }
         } else {
             LogPrintf("TrustPropagator: Failed to update propagated edge from %s to %s\n",
-                      edge.fromAddress.ToString(), edge.toAddress.ToString());
+                      edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString());
         }
     }
     
     // Invalidate cache for the affected cluster
-    if (!clusterId.IsNull()) {
+    if (haveClusterId && !clusterId.data.IsNull()) {
         InvalidateClusterCache(clusterId);
     }
     
@@ -798,48 +804,48 @@ uint32_t TrustPropagator::UpdatePropagatedEdges(const uint256& sourceEdgeTx, int
     return updatedCount;
 }
 
-std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesForAddress(const uint160& target) const
+std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesForAddress(const TrustNodeId& target) const
 {
-    // Requirement 1.4: When querying trust for any address in a cluster,
+    // Requirement 1.4: When querying trust for any identity in a cluster,
     // return both direct and propagated trust edges
     
     LogPrint(BCLog::CVM, "TrustPropagator: GetPropagatedEdgesForAddress for %s\n",
-             target.ToString());
+             target.ToKeyString());
     
     std::vector<PropagatedTrustEdge> result;
     
     // Get all keys with the trust_prop_ prefix
-    // Key format: "trust_prop_{from}_{to}"
+    // Key format: "trust_prop_<fromTNI>_<toTNI>"
     std::vector<std::string> allKeys = database.ListKeysWithPrefix(TRUST_PROP_PREFIX);
     
     LogPrint(BCLog::CVM, "TrustPropagator: Found %zu keys with trust_prop_ prefix\n",
              allKeys.size());
     
-    // Target address as string for comparison
-    std::string targetStr = target.ToString();
+    // Target identity key segment for comparison. ToKeyString() contains no '_',
+    // so the '_' separating <fromTNI> and <toTNI> is unambiguous.
+    std::string targetStr = target.ToKeyString();
     
-    // Iterate through all propagated edge keys and filter by target address
+    // Iterate through all propagated edge keys and filter by target identity
     for (const std::string& key : allKeys) {
-        // Key format: "trust_prop_{from}_{to}"
-        // We need to check if the key ends with the target address
+        // Key format: "trust_prop_<fromTNI>_<toTNI>"
         
         // Skip index keys (they have "trust_prop_idx_" prefix)
         if (key.find(TRUST_PROP_IDX_PREFIX) == 0) {
             continue;
         }
         
-        // Extract the "to" address from the key
-        // Key format: "trust_prop_{from}_{to}"
-        // The "to" address is after the last underscore
+        // Extract the "to" identity segment from the key. The "to" segment is
+        // after the last underscore (ToKeyString() itself has no underscore).
         size_t lastUnderscore = key.rfind('_');
         if (lastUnderscore == std::string::npos || lastUnderscore <= TRUST_PROP_PREFIX.length()) {
+            RecordMigrationEvent(MigrationEvent::MalformedRecord, TRUST_PROP_PREFIX, key);
             LogPrint(BCLog::CVM, "TrustPropagator: Skipping malformed key: %s\n", key);
             continue;
         }
         
         std::string toAddressStr = key.substr(lastUnderscore + 1);
         
-        // Check if this edge targets our address
+        // Check if this edge targets our identity
         if (toAddressStr != targetStr) {
             continue;
         }
@@ -857,11 +863,11 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesForAddress(c
             PropagatedTrustEdge edge;
             ss >> edge;
             
-            // Verify the edge targets the correct address (double-check)
+            // Verify the edge targets the correct identity (double-check, exact typed match)
             if (edge.toAddress == target) {
                 result.push_back(edge);
                 LogPrint(BCLog::CVM, "TrustPropagator: Found propagated edge from %s to %s (weight: %d)\n",
-                         edge.fromAddress.ToString(), edge.toAddress.ToString(), edge.trustWeight);
+                         edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString(), edge.trustWeight);
             }
         } catch (const std::exception& e) {
             LogPrintf("TrustPropagator: Failed to deserialize propagated edge from key %s: %s\n",
@@ -871,7 +877,7 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesForAddress(c
     }
     
     LogPrint(BCLog::CVM, "TrustPropagator: GetPropagatedEdgesForAddress returning %zu edges for %s\n",
-             result.size(), target.ToString());
+             result.size(), target.ToKeyString());
     
     return result;
 }
@@ -906,13 +912,13 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesBySource(con
             continue;
         }
         
-        // Deserialize the target address
-        uint160 targetAddress;
+        // Deserialize the target identity
+        TrustNodeId targetAddress;
         try {
             CDataStream ss(indexData, SER_DISK, CLIENT_VERSION);
             ss >> targetAddress;
         } catch (const std::exception& e) {
-            LogPrintf("TrustPropagator: Failed to deserialize target address from index key %s: %s\n",
+            LogPrintf("TrustPropagator: Failed to deserialize target identity from index key %s: %s\n",
                       indexKey, e.what());
             continue;
         }
@@ -921,7 +927,7 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesBySource(con
         // We need to search for edges where toAddress == targetAddress and sourceEdgeTx matches
         // Since we don't have the fromAddress in the index, we need to search
         
-        // Get all propagated edges for this target address
+        // Get all propagated edges for this target identity
         std::vector<PropagatedTrustEdge> targetEdges = GetPropagatedEdgesForAddress(targetAddress);
         
         // Find the edge that matches our source transaction
@@ -929,7 +935,7 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesBySource(con
             if (edge.sourceEdgeTx == sourceEdgeTx) {
                 result.push_back(edge);
                 LogPrint(BCLog::CVM, "TrustPropagator: Found propagated edge from %s to %s for source tx\n",
-                         edge.fromAddress.ToString(), edge.toAddress.ToString());
+                         edge.fromAddress.ToKeyString(), edge.toAddress.ToKeyString());
                 break;  // Only one edge per target for a given source tx
             }
         }
@@ -941,24 +947,24 @@ std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesBySource(con
     return result;
 }
 
-ClusterTrustSummary TrustPropagator::GetClusterTrustSummary(const uint160& address) const
+ClusterTrustSummary TrustPropagator::GetClusterTrustSummary(const TrustNodeId& address) const
 {
     // Requirements: 3.2, 3.4, 7.4, 7.5
     // 3.2: Return aggregated trust information for the entire wallet cluster
     // 3.4: Include cluster_id and member_count in the response
-    // 7.4: Cache cluster membership for frequently accessed addresses
+    // 7.4: Cache cluster membership for frequently accessed identities
     // 7.5: When cache size exceeds 100MB, evict least-recently-used entries
     
-    LogPrint(BCLog::CVM, "TrustPropagator: GetClusterTrustSummary for address %s\n",
-             address.ToString());
+    LogPrint(BCLog::CVM, "TrustPropagator: GetClusterTrustSummary for identity %s\n",
+             address.ToKeyString());
     
-    // Get the cluster ID for this address
-    uint160 clusterId = clusterer.GetClusterForAddress(address);
+    // Get the cluster ID for this identity
+    TrustNodeId clusterId = clusterer.GetClusterForAddress(address);
     
-    // If no cluster found, treat the address as its own cluster
-    if (clusterId.IsNull()) {
-        LogPrint(BCLog::CVM, "TrustPropagator: No cluster found for %s, treating as single-address cluster\n",
-                 address.ToString());
+    // If no cluster found, treat the identity as its own cluster
+    if (clusterId.data.IsNull()) {
+        LogPrint(BCLog::CVM, "TrustPropagator: No cluster found for %s, treating as single-identity cluster\n",
+                 address.ToKeyString());
         clusterId = address;
     }
     
@@ -966,7 +972,7 @@ ClusterTrustSummary TrustPropagator::GetClusterTrustSummary(const uint160& addre
     ClusterTrustSummary cachedSummary;
     if (summaryCache.Get(clusterId, cachedSummary)) {
         LogPrint(BCLog::CVM, "TrustPropagator: Returning cached summary for cluster %s (cache size: %zu bytes)\n",
-                 clusterId.ToString(), summaryCache.GetCurrentSize());
+                 clusterId.ToKeyString(), summaryCache.GetCurrentSize());
         return cachedSummary;
     }
     
@@ -979,29 +985,29 @@ ClusterTrustSummary TrustPropagator::GetClusterTrustSummary(const uint160& addre
     
     LogPrint(BCLog::CVM, "TrustPropagator: GetClusterTrustSummary returning summary for cluster %s "
              "(members: %zu, edges: %u, effective_score: %.4f, cache entries: %zu)\n",
-             clusterId.ToString(), summary.memberAddresses.size(), 
+             clusterId.ToKeyString(), summary.memberAddresses.size(), 
              summary.edgeCount, summary.effectiveScore, summaryCache.GetEntryCount());
     
     return summary;
 }
 
-ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clusterId) const
+ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const TrustNodeId& clusterId) const
 {
     // Build a complete trust summary for a cluster by aggregating all trust information
     // Requirements: 3.2 (aggregated trust information)
     
     LogPrint(BCLog::CVM, "TrustPropagator: BuildClusterTrustSummary for cluster %s\n",
-             clusterId.ToString());
+             clusterId.ToKeyString());
     
     ClusterTrustSummary summary(clusterId);
     
     // Get all cluster members
-    std::set<uint160> clusterMembers = clusterer.GetClusterMembers(clusterId);
+    std::set<TrustNodeId> clusterMembers = clusterer.GetClusterMembers(clusterId);
     
     // If no members found, treat clusterId as the only member
     if (clusterMembers.empty()) {
         LogPrint(BCLog::CVM, "TrustPropagator: No members found for cluster %s, using cluster ID as sole member\n",
-                 clusterId.ToString());
+                 clusterId.ToKeyString());
         clusterMembers.insert(clusterId);
     }
     
@@ -1009,7 +1015,7 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
     
     // Track unique trust edges to avoid double-counting
     // Key: fromAddress (we count one edge per truster, regardless of how many cluster members they trust)
-    std::set<uint160> uniqueTrusters;
+    std::set<TrustNodeId> uniqueTrusters;
     
     // Track minimum score across all cluster members for effective score calculation
     double minScore = std::numeric_limits<double>::max();
@@ -1021,8 +1027,8 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
         std::vector<TrustEdge> directEdges = trustGraph.GetIncomingTrust(memberAddress);
         
         for (const auto& edge : directEdges) {
-            // Track unique trusters (legacy uint160 space)
-            uniqueTrusters.insert(edge.fromAddress.ToUint160());
+            // Track unique trusters by exact typed identity
+            uniqueTrusters.insert(edge.fromAddress);
             
             // Aggregate trust weights
             if (edge.trustWeight > 0) {
@@ -1032,14 +1038,14 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
             }
             
             LogPrint(BCLog::CVM, "TrustPropagator: Direct edge from %s to %s (weight: %d)\n",
-                     edge.fromAddress.ToUint160().ToString(), memberAddress.ToString(), edge.trustWeight);
+                     edge.fromAddress.ToKeyString(), memberAddress.ToKeyString(), edge.trustWeight);
         }
         
         // Get propagated trust edges
         std::vector<PropagatedTrustEdge> propagatedEdges = GetPropagatedEdgesForAddress(memberAddress);
         
         for (const auto& propEdge : propagatedEdges) {
-            // Track unique trusters
+            // Track unique trusters by exact typed identity
             uniqueTrusters.insert(propEdge.fromAddress);
             
             // Aggregate trust weights
@@ -1050,7 +1056,7 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
             }
             
             LogPrint(BCLog::CVM, "TrustPropagator: Propagated edge from %s to %s (weight: %d)\n",
-                     propEdge.fromAddress.ToString(), memberAddress.ToString(), propEdge.trustWeight);
+                     propEdge.fromAddress.ToKeyString(), memberAddress.ToKeyString(), propEdge.trustWeight);
         }
         
         // Calculate individual member score for minimum calculation
@@ -1063,7 +1069,7 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
         foundAnyScore = true;
         
         LogPrint(BCLog::CVM, "TrustPropagator: Member %s has score %.4f\n",
-                 memberAddress.ToString(), memberScore);
+                 memberAddress.ToKeyString(), memberScore);
     }
     
     // Set edge count (unique trusters)
@@ -1088,9 +1094,9 @@ ClusterTrustSummary TrustPropagator::BuildClusterTrustSummary(const uint160& clu
     return summary;
 }
 
-double TrustPropagator::CalculateMemberScore(const uint160& memberAddress) const
+double TrustPropagator::CalculateMemberScore(const TrustNodeId& memberAddress) const
 {
-    // Calculate trust score for a single address
+    // Calculate trust score for a single identity
     // This is a helper method for BuildClusterTrustSummary
     // Score = weighted average of all incoming trust edges (weighted by bond amount)
     
@@ -1127,6 +1133,37 @@ double TrustPropagator::CalculateMemberScore(const uint160& memberAddress) const
     }
     
     return 0.0;  // Neutral score if no trust edges
+}
+
+// ---------------------------------------------------------------------------
+// Thin uint160 wrappers (legacy P2PKH callers). Each zero-extends the bare
+// uint160 into a TrustNodeId{P2PKH} via FromLegacyUint160 and forwards to the
+// wide overload. Wave 8 removes the remaining uint160 bridging at the
+// RPC/block-processing sites.
+// ---------------------------------------------------------------------------
+
+uint32_t TrustPropagator::InheritTrustForNewMember(const uint160& newAddress, const uint160& clusterId)
+{
+    return InheritTrustForNewMember(TrustNodeId::FromLegacyUint160(newAddress),
+                                    TrustNodeId::FromLegacyUint160(clusterId));
+}
+
+bool TrustPropagator::HandleClusterMerge(const uint160& cluster1, const uint160& cluster2,
+                                         const uint160& mergedClusterId)
+{
+    return HandleClusterMerge(TrustNodeId::FromLegacyUint160(cluster1),
+                              TrustNodeId::FromLegacyUint160(cluster2),
+                              TrustNodeId::FromLegacyUint160(mergedClusterId));
+}
+
+std::vector<PropagatedTrustEdge> TrustPropagator::GetPropagatedEdgesForAddress(const uint160& target) const
+{
+    return GetPropagatedEdgesForAddress(TrustNodeId::FromLegacyUint160(target));
+}
+
+ClusterTrustSummary TrustPropagator::GetClusterTrustSummary(const uint160& address) const
+{
+    return GetClusterTrustSummary(TrustNodeId::FromLegacyUint160(address));
 }
 
 } // namespace CVM

@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <cvm/cvmdb.h>
 #include <cvm/trustgraph.h>
+#include <cvm/trustnodeid.h>
 #include <set>
 #include <map>
 #include <vector>
@@ -16,14 +17,18 @@ namespace CVM {
 
 /**
  * GraphMetrics - Security metrics for trust graph analysis
+ *
+ * All identity-bearing fields (`address`, `cluster_members`,
+ * `main_entry_point`) are wide TrustNodeId user identities so every supported
+ * destination type is preserved without truncation or type erasure.
  */
 struct GraphMetrics {
-    uint160 address;
+    TrustNodeId address;
     
     // Cluster Detection
     bool in_suspicious_cluster;
     double mutual_trust_ratio;      // 0-1, high = suspicious
-    std::set<uint160> cluster_members;
+    std::set<TrustNodeId> cluster_members;
     
     // Centrality Metrics
     double betweenness_centrality;  // 0-1, how often in shortest paths
@@ -31,7 +36,7 @@ struct GraphMetrics {
     double closeness_centrality;    // 0-1, average distance to others
     
     // Entry Point Analysis
-    uint160 main_entry_point;       // Primary connection to mainnet
+    TrustNodeId main_entry_point;   // Primary connection to mainnet
     int64_t entry_point_age;        // Age of entry point account
     int nodes_through_entry;        // How many nodes through this entry
     
@@ -70,22 +75,22 @@ public:
     explicit GraphAnalyzer(CVMDatabase& db);
     
     // Cluster Detection
-    std::set<uint160> DetectSuspiciousClusters();
-    double CalculateMutualTrustRatio(const uint160& address);
-    std::set<uint160> FindClusterMembers(const uint160& address);
+    std::set<TrustNodeId> DetectSuspiciousClusters();
+    double CalculateMutualTrustRatio(const TrustNodeId& address);
+    std::set<TrustNodeId> FindClusterMembers(const TrustNodeId& address);
     
     // Centrality Analysis
-    double CalculateBetweennessCentrality(const uint160& address);
-    double CalculateDegreeCentrality(const uint160& address);
-    double CalculateClosenessCentrality(const uint160& address);
+    double CalculateBetweennessCentrality(const TrustNodeId& address);
+    double CalculateDegreeCentrality(const TrustNodeId& address);
+    double CalculateClosenessCentrality(const TrustNodeId& address);
     
     // Entry Point Detection
     void DetectSuspiciousEntryPoints();
-    uint160 FindMainEntryPoint(const uint160& address);
-    std::map<uint160, int> GetEntryPointUsage();
+    TrustNodeId FindMainEntryPoint(const TrustNodeId& address);
+    std::map<TrustNodeId, int> GetEntryPointUsage();
     
     // Get complete metrics for address
-    GraphMetrics GetMetrics(const uint160& address);
+    GraphMetrics GetMetrics(const TrustNodeId& address);
     
     // Cache management
     void InvalidateCache();
@@ -95,14 +100,15 @@ private:
     TrustGraph trust_graph;
     
     // Cache for expensive calculations
-    std::map<uint160, GraphMetrics> metrics_cache;
+    std::map<TrustNodeId, GraphMetrics> metrics_cache;
     bool cache_valid;
     
-    // Helper: Get all nodes in graph
-    std::vector<uint160> GetAllNodes();
+    // Helper: Get all nodes in graph (wide TrustNodeId identities; endpoints
+    // are never narrowed).
+    std::vector<TrustNodeId> GetAllNodes();
     
     // Helper: Check if edge exists
-    bool HasEdge(const uint160& from, const uint160& to);
+    bool HasEdge(const TrustNodeId& from, const TrustNodeId& to);
 };
 
 } // namespace CVM

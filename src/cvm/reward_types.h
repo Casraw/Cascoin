@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <amount.h>
 #include <serialize.h>
+#include <cvm/trustnodeid.h>
 #include <map>
 #include <vector>
 
@@ -56,7 +57,7 @@ inline std::string RewardTypeToString(RewardType type) {
 struct PendingReward {
     uint256 rewardId;                                       // Unique identifier (hash of disputeId + recipient + type)
     uint256 disputeId;                                      // Source dispute
-    uint160 recipient;                                      // Who can claim this reward
+    TrustNodeId recipient;                                  // Who can claim this reward (wide, lossless identity)
     CAmount amount{0};                                      // Amount in satoshis
     RewardType type{RewardType::CHALLENGER_BOND_RETURN};    // Type of reward
     uint32_t createdTime{0};                                // When reward was created (block timestamp)
@@ -67,7 +68,7 @@ struct PendingReward {
     PendingReward() = default;
     
     PendingReward(const uint256& rewardId_, const uint256& disputeId_, 
-                  const uint160& recipient_, CAmount amount_, RewardType type_,
+                  const TrustNodeId& recipient_, CAmount amount_, RewardType type_,
                   uint32_t createdTime_)
         : rewardId(rewardId_)
         , disputeId(disputeId_)
@@ -81,14 +82,15 @@ struct PendingReward {
      * Generate a unique reward ID from dispute, recipient, and type
      */
     static uint256 GenerateRewardId(const uint256& disputeId, 
-                                    const uint160& recipient, 
+                                    const TrustNodeId& recipient, 
                                     RewardType type);
     
     /**
-     * Check if this reward is valid (non-zero amount, valid recipient)
+     * Check if this reward is valid (non-zero amount, valid recipient).
+     * A recipient with type tag 0 is the null/unset identity.
      */
     bool IsValid() const {
-        return amount > 0 && !recipient.IsNull();
+        return amount > 0 && recipient.type != 0;
     }
     
     ADD_SERIALIZE_METHODS;
@@ -130,7 +132,7 @@ struct RewardDistribution {
     CAmount challengerBounty{0};             // Bounty paid to challenger
     CAmount totalDaoVoterRewards{0};         // Total paid to DAO voters
     CAmount burnedAmount{0};                 // Amount burned
-    std::map<uint160, CAmount> voterRewards; // Individual voter rewards
+    std::map<TrustNodeId, CAmount> voterRewards; // Individual voter rewards (wide identities)
     uint32_t distributedTime{0};             // When distribution occurred
     
     RewardDistribution() = default;

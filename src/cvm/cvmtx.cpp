@@ -307,14 +307,14 @@ void UpdateReputationScores(const CBlock& block, const CBlockIndex* pindex,
 
                 if (voterAddr.IsNull()) {
                     LogPrint(BCLog::ALL, "ASRS: skipping vote for %s — voter could not be resolved\n",
-                            voteTx.targetAddress.ToString());
+                            voteTx.targetAddress.ToKeyString());
                 } else if (repSystem.ApplyVote(voterAddr, voteTx, pindex->nTime)) {
                     // Update the voter's per-participant behavior score to reflect
                     // their participation in the reputation vote (bugfix 2.18).
                     repSystem.UpdateBehaviorScore(voterAddr, *tx, pindex->nHeight);
 
                     LogPrint(BCLog::ALL, "ASRS: Applied reputation vote from %s for %s\n",
-                            voterAddr.ToString(), voteTx.targetAddress.ToString());
+                            voterAddr.ToString(), voteTx.targetAddress.ToKeyString());
                 }
             }
         }

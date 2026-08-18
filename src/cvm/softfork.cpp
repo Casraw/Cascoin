@@ -7,6 +7,7 @@
 #include <cvm/cvmdb.h>
 #include <cvm/reputation.h>
 #include <cvm/securehat.h>
+#include <cvm/migration_observability.h>
 #include <consensus/params.h>
 #include <script/script.h>
 #include <script/standard.h>
@@ -184,26 +185,8 @@ bool CVMCallData::Deserialize(const std::vector<uint8_t>& data) {
     }
 }
 
-// CVMReputationData serialization
-std::vector<uint8_t> CVMReputationData::Serialize() const {
-    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-    ss << targetAddress;
-    ss << voteValue;
-    ss << timestamp;
-    return std::vector<uint8_t>(ss.begin(), ss.end());
-}
-
-bool CVMReputationData::Deserialize(const std::vector<uint8_t>& data) {
-    try {
-        CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> targetAddress;
-        ss >> voteValue;
-        ss >> timestamp;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
+// CVMReputationData serialization is defined below, after the shared
+// serialization helpers (canonical TNI33 layout).
 
 bool IsCVMSoftForkActive(int height, const Consensus::Params& params) {
     return height >= params.cvmActivationHeight || 
@@ -340,15 +323,70 @@ void AppendLE32(std::vector<uint8_t>& out, uint32_t v) {
     }
 }
 
-// Serialize a TrustNodeId as type(1) + data(32) into the v2 payload.
+// Serialize a TrustNodeId as type(1) + data(32). This is the canonical 33-byte
+// "TNI33" identity encoding shared by the v2 trust-edge payload and the four
+// newly-changed identity-bearing payloads (reputation/bonded-vote/DAO).
 void AppendTrustNode(std::vector<uint8_t>& out, const TrustNodeId& n) {
     out.push_back(n.type);
     out.insert(out.end(), n.data.begin(), n.data.end()); // uint256 == 32 bytes
 }
 
-// Fixed sizes for the two payload layouts.
+// Little-endian readers mirroring the AppendLE* writers above.
+int16_t ReadLE16(const uint8_t* p) {
+    return static_cast<int16_t>(static_cast<uint16_t>(p[0]) |
+                                (static_cast<uint16_t>(p[1]) << 8));
+}
+
+uint32_t ReadLE32(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0]) |
+           (static_cast<uint32_t>(p[1]) << 8) |
+           (static_cast<uint32_t>(p[2]) << 16) |
+           (static_cast<uint32_t>(p[3]) << 24);
+}
+
+int64_t ReadLE64(const uint8_t* p) {
+    int64_t v = 0;
+    for (int i = 0; i < 8; i++) {
+        v |= static_cast<int64_t>(p[i]) << (i * 8);
+    }
+    return v;
+}
+
+// Append a uint256 as 32 raw bytes (internal byte order), matching the previous
+// CDataStream serialization of the hash fields exactly.
+void AppendHash256(std::vector<uint8_t>& out, const uint256& h) {
+    out.insert(out.end(), h.begin(), h.end());
+}
+
+// Read a uint256 (32 raw bytes) at `offset`.
+void ReadHash256(const std::vector<uint8_t>& data, size_t offset, uint256& out) {
+    std::copy(data.begin() + offset, data.begin() + offset + 32, out.begin());
+}
+
+// Read a canonical 33-byte TrustNodeId (TNI33: type + 32-byte data) at `offset`
+// and enforce strict canonical-identity validation via the shared Wave 1 gate.
+// Returns false for any noncanonical identity (unknown tag 0 or >5, nonzero
+// high padding for the 20-byte types, or an unsupported destination). The
+// caller guarantees `data` has at least offset+33 bytes.
+bool ReadCanonicalTrustNode(const std::vector<uint8_t>& data, size_t offset, TrustNodeId& out) {
+    out.type = data[offset];
+    std::copy(data.begin() + offset + 1, data.begin() + offset + 33, out.data.begin());
+    std::string err;
+    return ValidateCanonicalTrustNode(out, err);
+}
+
+// Fixed sizes for the two trust-edge payload layouts (CVMTrustEdgeData, which
+// is intentionally EXCLUDED from the TrustNodeId migration and unchanged).
 static const size_t TRUST_EDGE_V1_SIZE = 20 + 20 + 2 + 8 + 4;              // 54
 static const size_t TRUST_EDGE_V2_SIZE = 1 + (1 + 32) + (1 + 32) + 2 + 8 + 4; // 81
+
+// Canonical exact body sizes for the four newly-changed identity payloads.
+// TNI33 = 1 type byte + 32 data bytes.
+static const size_t TNI33_SIZE               = 1 + 32;                           // 33
+static const size_t REPUTATION_PAYLOAD_SIZE  = TNI33_SIZE + 2 + 4;               // 39
+static const size_t BONDED_VOTE_PAYLOAD_SIZE = TNI33_SIZE + TNI33_SIZE + 2 + 8 + 4; // 80
+static const size_t DAO_DISPUTE_PAYLOAD_SIZE = 32 + TNI33_SIZE + 8 + 4;          // 77
+static const size_t DAO_VOTE_PAYLOAD_SIZE    = 32 + TNI33_SIZE + 1 + 8 + 4;      // 78
 
 // True when a node cannot be represented losslessly by a 20-byte uint160 and
 // therefore forces v2 emission (P2WSH / quantum).
@@ -358,6 +396,40 @@ bool IsWideNode(const TrustNodeId& n) {
 }
 
 } // anonymous namespace
+
+// CVMReputationData — canonical one-layout body (no version byte):
+//   target:TNI33, vote:int16, timestamp:uint32  => exactly 39 bytes.
+std::vector<uint8_t> CVMReputationData::Serialize() const {
+    std::vector<uint8_t> result;
+    result.reserve(REPUTATION_PAYLOAD_SIZE);
+    AppendTrustNode(result, targetAddress); // 33
+    AppendLE16(result, voteValue);           // 2
+    AppendLE32(result, timestamp);           // 4
+    return result;
+}
+
+bool CVMReputationData::Deserialize(const std::vector<uint8_t>& data) {
+    const bool ok = [&]() -> bool {
+        // Exact-size check (rejects truncated and trailing-byte payloads); the
+        // canonical layout has exactly one accepted length.
+        if (data.size() != REPUTATION_PAYLOAD_SIZE) {
+            return false;
+        }
+        // target:TNI33 with strict canonical-identity validation.
+        if (!ReadCanonicalTrustNode(data, 0, targetAddress)) {
+            return false;
+        }
+        voteValue = ReadLE16(&data[TNI33_SIZE]);        // offset 33
+        timestamp = ReadLE32(&data[TNI33_SIZE + 2]);    // offset 35
+        return true;
+    }();
+    if (!ok) {
+        // A payload that does not match the one canonical typed layout is
+        // rejected, never partially applied (clause 5.1).
+        RecordMigrationEvent(MigrationEvent::RejectedPayload, "reputation_payload");
+    }
+    return ok;
+}
 
 // Out-of-line definition for the odr-used static const member. The value is
 // initialized in the class declaration; this definition provides the storage
@@ -489,119 +561,132 @@ bool CVMTrustEdgeData::Deserialize(const std::vector<uint8_t>& data) {
     }
 }
 
+// CVMBondedVoteData — canonical one-layout body (no version byte):
+//   voter:TNI33, target:TNI33, vote:int16, bond:int64, timestamp:uint32
+//   => exactly 80 bytes.
 std::vector<uint8_t> CVMBondedVoteData::Serialize() const {
     std::vector<uint8_t> result;
-    
-    // Serialize voter (20 bytes)
-    result.insert(result.end(), voter.begin(), voter.end());
-    
-    // Serialize target (20 bytes)
-    result.insert(result.end(), target.begin(), target.end());
-    
-    // Serialize voteValue (2 bytes, little-endian)
-    result.push_back(voteValue & 0xFF);
-    result.push_back((voteValue >> 8) & 0xFF);
-    
-    // Serialize bondAmount (8 bytes, little-endian)
-    int64_t bondValue = bondAmount;
-    for (int i = 0; i < 8; i++) {
-        result.push_back((bondValue >> (i * 8)) & 0xFF);
-    }
-    
-    // Serialize timestamp (4 bytes, little-endian)
-    for (int i = 0; i < 4; i++) {
-        result.push_back((timestamp >> (i * 8)) & 0xFF);
-    }
-    
+    result.reserve(BONDED_VOTE_PAYLOAD_SIZE);
+    AppendTrustNode(result, voter);           // 33
+    AppendTrustNode(result, target);          // 33
+    AppendLE16(result, voteValue);            // 2
+    AppendLE64(result, bondAmount);           // 8
+    AppendLE32(result, timestamp);            // 4
     return result;
 }
 
 bool CVMBondedVoteData::Deserialize(const std::vector<uint8_t>& data) {
-    try {
-        if (data.size() < 54) { // 20+20+2+8+4
+    const bool ok = [&]() -> bool {
+        // Exact-size check: the canonical layout has exactly one accepted length.
+        if (data.size() != BONDED_VOTE_PAYLOAD_SIZE) {
             return false;
         }
-        
         size_t offset = 0;
-        
-        // Deserialize voter (20 bytes)
-        std::copy(data.begin() + offset, data.begin() + offset + 20, voter.begin());
-        offset += 20;
-        
-        // Deserialize target (20 bytes)
-        std::copy(data.begin() + offset, data.begin() + offset + 20, target.begin());
-        offset += 20;
-        
-        // Deserialize voteValue (2 bytes, little-endian)
-        voteValue = data[offset] | (data[offset+1] << 8);
-        offset += 2;
-        
-        // Deserialize bondAmount (8 bytes, little-endian)
-        int64_t bondValue = 0;
-        for (int i = 0; i < 8; i++) {
-            bondValue |= (int64_t(data[offset+i]) << (i * 8));
+        // voter:TNI33 and target:TNI33 with strict canonical-identity validation.
+        if (!ReadCanonicalTrustNode(data, offset, voter)) {
+            return false;
         }
-        bondAmount = bondValue;
+        offset += TNI33_SIZE;
+        if (!ReadCanonicalTrustNode(data, offset, target)) {
+            return false;
+        }
+        offset += TNI33_SIZE;
+        voteValue = ReadLE16(&data[offset]);
+        offset += 2;
+        bondAmount = ReadLE64(&data[offset]);
         offset += 8;
-        
-        // Deserialize timestamp (4 bytes, little-endian)
-        timestamp = data[offset] | (data[offset+1] << 8) | 
-                   (data[offset+2] << 16) | (data[offset+3] << 24);
-        
+        timestamp = ReadLE32(&data[offset]);
         return true;
-    } catch (const std::exception& e) {
-        LogPrintf("CVM: Failed to deserialize CVMBondedVoteData: %s\n", e.what());
-        return false;
+    }();
+    if (!ok) {
+        RecordMigrationEvent(MigrationEvent::RejectedPayload, "bonded_vote_payload");
     }
+    return ok;
 }
 
+// CVMDAODisputeData — canonical one-layout body (no version byte):
+//   originalVoteTx:uint256, challenger:TNI33, bond:int64, timestamp:uint32
+//   => exactly 77 bytes. The human-readable `reason` is intentionally NOT
+//   serialized on-chain.
 std::vector<uint8_t> CVMDAODisputeData::Serialize() const {
-    // Keep OP_RETURN payload <= 80 bytes: omit human-readable reason here.
-    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-    ss << originalVoteTxHash;   // 32 bytes
-    ss << challenger;           // 20 bytes
-    ss << challengeBond;        // 8 bytes
-    ss << timestamp;            // 4 bytes
-    return std::vector<uint8_t>(ss.begin(), ss.end());
+    std::vector<uint8_t> result;
+    result.reserve(DAO_DISPUTE_PAYLOAD_SIZE);
+    AppendHash256(result, originalVoteTxHash); // 32
+    AppendTrustNode(result, challenger);       // 33
+    AppendLE64(result, challengeBond);         // 8
+    AppendLE32(result, timestamp);             // 4
+    return result;
 }
 
 bool CVMDAODisputeData::Deserialize(const std::vector<uint8_t>& data) {
-    try {
-        CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> originalVoteTxHash;
-        ss >> challenger;
-        ss >> challengeBond;
-        ss >> timestamp;
+    const bool ok = [&]() -> bool {
+        // Exact-size check: the canonical layout has exactly one accepted length.
+        if (data.size() != DAO_DISPUTE_PAYLOAD_SIZE) {
+            return false;
+        }
+        size_t offset = 0;
+        ReadHash256(data, offset, originalVoteTxHash);
+        offset += 32;
+        // challenger:TNI33 with strict canonical-identity validation.
+        if (!ReadCanonicalTrustNode(data, offset, challenger)) {
+            return false;
+        }
+        offset += TNI33_SIZE;
+        challengeBond = ReadLE64(&data[offset]);
+        offset += 8;
+        timestamp = ReadLE32(&data[offset]);
         return true;
-    } catch (const std::exception& e) {
-        LogPrintf("CVM: Failed to deserialize CVMDAODisputeData: %s\n", e.what());
-        return false;
+    }();
+    if (!ok) {
+        RecordMigrationEvent(MigrationEvent::RejectedPayload, "dao_dispute_payload");
     }
+    return ok;
 }
 
+// CVMDAOVoteData — canonical one-layout body (no version byte):
+//   disputeId:uint256, member:TNI33, support:uint8, stake:int64,
+//   timestamp:uint32  => exactly 78 bytes.
 std::vector<uint8_t> CVMDAOVoteData::Serialize() const {
-    CDataStream ss(SER_NETWORK, PROTOCOL_VERSION);
-    ss << disputeId;
-    ss << daoMember;
-    ss << supportSlash;
-    ss << stake;
-    ss << timestamp;
-    return std::vector<uint8_t>(ss.begin(), ss.end());
+    std::vector<uint8_t> result;
+    result.reserve(DAO_VOTE_PAYLOAD_SIZE);
+    AppendHash256(result, disputeId);              // 32
+    AppendTrustNode(result, daoMember);            // 33
+    result.push_back(supportSlash ? 1 : 0);        // 1 (support:uint8)
+    AppendLE64(result, stake);                     // 8
+    AppendLE32(result, timestamp);                 // 4
+    return result;
 }
 
 bool CVMDAOVoteData::Deserialize(const std::vector<uint8_t>& data) {
-    try {
-        CDataStream ss(data, SER_NETWORK, PROTOCOL_VERSION);
-        ss >> disputeId;
-        ss >> daoMember;
-        ss >> supportSlash;
-        ss >> stake;
-        ss >> timestamp;
+    const bool ok = [&]() -> bool {
+        // Exact-size check: the canonical layout has exactly one accepted length.
+        if (data.size() != DAO_VOTE_PAYLOAD_SIZE) {
+            return false;
+        }
+        size_t offset = 0;
+        ReadHash256(data, offset, disputeId);
+        offset += 32;
+        // member:TNI33 with strict canonical-identity validation.
+        if (!ReadCanonicalTrustNode(data, offset, daoMember)) {
+            return false;
+        }
+        offset += TNI33_SIZE;
+        // support:uint8 — strict: only 0 (keep) or 1 (slash) are canonical.
+        const uint8_t support = data[offset];
+        if (support > 1) {
+            return false;
+        }
+        supportSlash = (support == 1);
+        offset += 1;
+        stake = ReadLE64(&data[offset]);
+        offset += 8;
+        timestamp = ReadLE32(&data[offset]);
         return true;
-    } catch (const std::exception& e) {
-        LogPrintf("CVM: Failed to deserialize CVMDAOVoteData: %s\n", e.what());
-        return false;
+    }();
+    if (!ok) {
+        RecordMigrationEvent(MigrationEvent::RejectedPayload, "dao_vote_payload");
     }
+    return ok;
 }
 
 // EVM Transaction Validation

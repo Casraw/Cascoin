@@ -10,42 +10,80 @@
 
 namespace CVM {
 
+namespace {
+
+//! Parse a single trust-key node segment into a canonical TrustNodeId without
+//! ever narrowing a wide identity. Two segment shapes are accepted, mirroring
+//! the TrustGraph key-shape-aware read path:
+//!   - legacy v1: a bare uint160 rendered as exactly 40 lowercase-hex chars,
+//!     migrated to TrustNodeId{P2PKH, zero-extended};
+//!   - current v2: a tagged TrustNodeId "<type:02x>-<64hex>" parsed strictly
+//!     via the Wave 1 ParseKeyStringToTrustNode helper.
+bool ParseNodeSegment(const std::string& segment, TrustNodeId& out)
+{
+    if (IsLegacyKeySegment(segment)) {
+        uint160 legacy;
+        legacy.SetHex(segment);
+        out = TrustNodeId::FromLegacyUint160(legacy);
+        return true;
+    }
+    std::string err;
+    return ParseKeyStringToTrustNode(segment, out, err);
+}
+
+//! Extract both endpoints of a canonical forward trust-edge key
+//! ("trust_<from>_<to>"). Node segments never contain '_' (legacy segments are
+//! hex; tagged segments use '-'), so the single '_' after the "trust_" prefix
+//! unambiguously separates the two node segments. Returns false if either
+//! segment is not a canonical identity.
+bool ExtractForwardEdgeEndpoints(const std::string& key, TrustNodeId& from, TrustNodeId& to)
+{
+    static const std::string kPrefix = "trust_";
+    if (key.rfind(kPrefix, 0) != 0) return false;
+    const std::string rest = key.substr(kPrefix.size());
+    const size_t sep = rest.find('_');
+    if (sep == std::string::npos) return false;
+    const std::string fromSeg = rest.substr(0, sep);
+    const std::string toSeg = rest.substr(sep + 1);
+    return ParseNodeSegment(fromSeg, from) && ParseNodeSegment(toSeg, to);
+}
+
+} // anonymous namespace
+
 GraphAnalyzer::GraphAnalyzer(CVMDatabase& db) 
     : database(db), trust_graph(db), cache_valid(false) {}
 
-std::vector<uint160> GraphAnalyzer::GetAllNodes() {
-    std::set<uint160> nodes_set;
+std::vector<TrustNodeId> GraphAnalyzer::GetAllNodes() {
+    std::set<TrustNodeId> nodes_set;
     
+    // Enumerate only canonical forward trust edges ("trust_<from>_<to>"),
+    // excluding reverse-index keys ("trust_in_...") and foreign propagator
+    // records ("trust_prop_..."/"trust_prop_idx_..."). Endpoints are read
+    // directly from the key as wide TrustNodeId identities and are never
+    // narrowed to uint160.
     std::vector<std::string> keys = database.ListKeysWithPrefix("trust_");
     
     for (const auto& key : keys) {
-        if (key.find("trust_in_") != std::string::npos) continue;
+        if (!IsCanonicalForwardEdgeKey(key)) continue;
         
-        std::vector<uint8_t> data;
-        if (database.ReadGeneric(key, data)) {
-            try {
-                CDataStream ss(data, SER_DISK, CLIENT_VERSION);
-                TrustEdge edge;
-                ss >> edge;
-                nodes_set.insert(edge.fromAddress.ToUint160());
-                nodes_set.insert(edge.toAddress.ToUint160());
-            } catch (...) {
-                continue;
-            }
-        }
+        TrustNodeId from, to;
+        if (!ExtractForwardEdgeEndpoints(key, from, to)) continue;
+        
+        nodes_set.insert(from);
+        nodes_set.insert(to);
     }
     
-    return std::vector<uint160>(nodes_set.begin(), nodes_set.end());
+    return std::vector<TrustNodeId>(nodes_set.begin(), nodes_set.end());
 }
 
-bool GraphAnalyzer::HasEdge(const uint160& from, const uint160& to) {
+bool GraphAnalyzer::HasEdge(const TrustNodeId& from, const TrustNodeId& to) {
     TrustEdge edge;
     return trust_graph.GetTrustEdge(from, to, edge);
 }
 
-std::set<uint160> GraphAnalyzer::DetectSuspiciousClusters() {
-    std::set<uint160> suspicious;
-    std::vector<uint160> all_nodes = GetAllNodes();
+std::set<TrustNodeId> GraphAnalyzer::DetectSuspiciousClusters() {
+    std::set<TrustNodeId> suspicious;
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     
     LogPrintf("GraphAnalyzer: Analyzing %d nodes for suspicious clusters\n", 
               all_nodes.size());
@@ -57,7 +95,7 @@ std::set<uint160> GraphAnalyzer::DetectSuspiciousClusters() {
         if (mutual_ratio > 0.9) {
             suspicious.insert(node);
             LogPrintf("GraphAnalyzer: SUSPICIOUS CLUSTER detected at %s (mutual ratio: %.2f)\n",
-                     node.ToString(), mutual_ratio);
+                     node.ToKeyString(), mutual_ratio);
         }
     }
     
@@ -65,7 +103,7 @@ std::set<uint160> GraphAnalyzer::DetectSuspiciousClusters() {
     return suspicious;
 }
 
-double GraphAnalyzer::CalculateMutualTrustRatio(const uint160& address) {
+double GraphAnalyzer::CalculateMutualTrustRatio(const TrustNodeId& address) {
     std::vector<TrustEdge> outgoing = trust_graph.GetOutgoingTrust(address);
     
     if (outgoing.empty()) {
@@ -75,7 +113,7 @@ double GraphAnalyzer::CalculateMutualTrustRatio(const uint160& address) {
     int mutual_count = 0;
     
     for (const auto& edge : outgoing) {
-        if (HasEdge(edge.toAddress.ToUint160(), address)) {
+        if (HasEdge(edge.toAddress, address)) {
             mutual_count++;
         }
     }
@@ -83,22 +121,22 @@ double GraphAnalyzer::CalculateMutualTrustRatio(const uint160& address) {
     return static_cast<double>(mutual_count) / outgoing.size();
 }
 
-std::set<uint160> GraphAnalyzer::FindClusterMembers(const uint160& address) {
-    std::set<uint160> cluster;
+std::set<TrustNodeId> GraphAnalyzer::FindClusterMembers(const TrustNodeId& address) {
+    std::set<TrustNodeId> cluster;
     cluster.insert(address);
     
     // BFS to find tightly connected nodes
-    std::queue<uint160> to_check;
+    std::queue<TrustNodeId> to_check;
     to_check.push(address);
     
     while (!to_check.empty() && cluster.size() < 100) {  // Max cluster size
-        uint160 current = to_check.front();
+        TrustNodeId current = to_check.front();
         to_check.pop();
         
         std::vector<TrustEdge> outgoing = trust_graph.GetOutgoingTrust(current);
         
         for (const auto& edge : outgoing) {
-            const uint160 edgeTo = edge.toAddress.ToUint160();
+            const TrustNodeId& edgeTo = edge.toAddress;
             if (cluster.count(edgeTo)) continue;
             
             // Check if this node also trusts back (mutual)
@@ -112,10 +150,10 @@ std::set<uint160> GraphAnalyzer::FindClusterMembers(const uint160& address) {
     return cluster;
 }
 
-double GraphAnalyzer::CalculateBetweennessCentrality(const uint160& address) {
+double GraphAnalyzer::CalculateBetweennessCentrality(const TrustNodeId& address) {
     // Simplified: Sample-based estimation for performance
     const int SAMPLE_SIZE = 100;
-    std::vector<uint160> all_nodes = GetAllNodes();
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     
     if (all_nodes.size() < 3) {
         return 0.0;  // Not enough nodes
@@ -126,8 +164,8 @@ double GraphAnalyzer::CalculateBetweennessCentrality(const uint160& address) {
     
     // Sample random node pairs
     for (int i = 0; i < SAMPLE_SIZE; i++) {
-        uint160 source = all_nodes[GetRand(all_nodes.size())];
-        uint160 target = all_nodes[GetRand(all_nodes.size())];
+        TrustNodeId source = all_nodes[GetRand(all_nodes.size())];
+        TrustNodeId target = all_nodes[GetRand(all_nodes.size())];
         
         if (source == target || source == address || target == address) {
             continue;
@@ -143,7 +181,7 @@ double GraphAnalyzer::CalculateBetweennessCentrality(const uint160& address) {
             for (const auto& path : paths) {
                 bool found = false;
                 for (const auto& addr : path.addresses) {
-                    if (addr.ToUint160() == address) {
+                    if (addr == address) {
                         paths_through++;
                         found = true;
                         break;
@@ -157,13 +195,13 @@ double GraphAnalyzer::CalculateBetweennessCentrality(const uint160& address) {
     return total_paths > 0 ? static_cast<double>(paths_through) / total_paths : 0.0;
 }
 
-double GraphAnalyzer::CalculateDegreeCentrality(const uint160& address) {
+double GraphAnalyzer::CalculateDegreeCentrality(const TrustNodeId& address) {
     std::vector<TrustEdge> outgoing = trust_graph.GetOutgoingTrust(address);
     std::vector<TrustEdge> incoming = trust_graph.GetIncomingTrust(address);
     
     int total_connections = outgoing.size() + incoming.size();
     
-    std::vector<uint160> all_nodes = GetAllNodes();
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     int max_possible = all_nodes.size() - 1;  // Exclude self
     
     if (max_possible == 0) return 0.0;
@@ -171,9 +209,9 @@ double GraphAnalyzer::CalculateDegreeCentrality(const uint160& address) {
     return static_cast<double>(total_connections) / max_possible;
 }
 
-double GraphAnalyzer::CalculateClosenessCentrality(const uint160& address) {
+double GraphAnalyzer::CalculateClosenessCentrality(const TrustNodeId& address) {
     // Average shortest path distance to all other nodes
-    std::vector<uint160> all_nodes = GetAllNodes();
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     
     if (all_nodes.size() <= 1) return 0.0;
     
@@ -202,33 +240,33 @@ double GraphAnalyzer::CalculateClosenessCentrality(const uint160& address) {
 }
 
 void GraphAnalyzer::DetectSuspiciousEntryPoints() {
-    std::map<uint160, int> entry_usage = GetEntryPointUsage();
+    std::map<TrustNodeId, int> entry_usage = GetEntryPointUsage();
     
     for (const auto& [entry, count] : entry_usage) {
         if (count > 20) {  // More than 20 nodes through this entry
-            // Check entry point age
-            std::string key = "behavior_" + entry.ToString();
+            // Check entry point age. The behavior store is keyed by the
+            // canonical ToKeyString() identity segment ("behavior_<TNI>").
+            std::string key = "behavior_" + entry.ToKeyString();
             std::vector<uint8_t> data;
             
             if (database.ReadGeneric(key, data)) {
                 // Parse behavior metrics to get account age
                 // For now, just log suspicious entry
                 LogPrintf("GraphAnalyzer: SUSPICIOUS ENTRY POINT: %s (%d nodes)\n",
-                         entry.ToString(), count);
+                         entry.ToKeyString(), count);
             }
         }
     }
 }
 
-uint160 GraphAnalyzer::FindMainEntryPoint(const uint160& address) {
+TrustNodeId GraphAnalyzer::FindMainEntryPoint(const TrustNodeId& address) {
     // Find the node that provides shortest path to "mainnet"
     // Simplified: return node with highest betweenness in our paths
     
-    std::vector<TrustPath> paths_to_mainnet;
-    std::vector<uint160> all_nodes = GetAllNodes();
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     
     // Sample some "mainnet" nodes (high degree)
-    std::vector<std::pair<uint160, int>> node_degrees;
+    std::vector<std::pair<TrustNodeId, int>> node_degrees;
     for (const auto& node : all_nodes) {
         int degree = trust_graph.GetOutgoingTrust(node).size() + 
                     trust_graph.GetIncomingTrust(node).size();
@@ -240,10 +278,10 @@ uint160 GraphAnalyzer::FindMainEntryPoint(const uint160& address) {
              [](const auto& a, const auto& b) { return a.second > b.second; });
     
     // Find paths to top connected nodes
-    std::map<uint160, int> entry_count;
+    std::map<TrustNodeId, int> entry_count;
     
     for (size_t i = 0; i < std::min(size_t(10), node_degrees.size()); i++) {
-        uint160 target = node_degrees[i].first;
+        TrustNodeId target = node_degrees[i].first;
         if (target == address) continue;
         
         std::vector<TrustPath> paths = trust_graph.FindTrustPaths(address, target, 5);
@@ -251,14 +289,14 @@ uint160 GraphAnalyzer::FindMainEntryPoint(const uint160& address) {
         for (const auto& path : paths) {
             if (path.addresses.size() > 1) {
                 // First hop is entry point
-                uint160 entry = path.addresses[1].ToUint160();
+                const TrustNodeId& entry = path.addresses[1];
                 entry_count[entry]++;
             }
         }
     }
     
     // Return most common entry point
-    uint160 main_entry;
+    TrustNodeId main_entry;
     int max_count = 0;
     
     for (const auto& [entry, count] : entry_count) {
@@ -271,13 +309,14 @@ uint160 GraphAnalyzer::FindMainEntryPoint(const uint160& address) {
     return main_entry;
 }
 
-std::map<uint160, int> GraphAnalyzer::GetEntryPointUsage() {
-    std::map<uint160, int> usage;
-    std::vector<uint160> all_nodes = GetAllNodes();
+std::map<TrustNodeId, int> GraphAnalyzer::GetEntryPointUsage() {
+    std::map<TrustNodeId, int> usage;
+    std::vector<TrustNodeId> all_nodes = GetAllNodes();
     
     for (const auto& node : all_nodes) {
-        uint160 entry = FindMainEntryPoint(node);
-        if (!entry.IsNull()) {
+        TrustNodeId entry = FindMainEntryPoint(node);
+        // A default-constructed TrustNodeId (type 0) means "no entry point".
+        if (entry.type != 0) {
             usage[entry]++;
         }
     }
@@ -285,7 +324,7 @@ std::map<uint160, int> GraphAnalyzer::GetEntryPointUsage() {
     return usage;
 }
 
-GraphMetrics GraphAnalyzer::GetMetrics(const uint160& address) {
+GraphMetrics GraphAnalyzer::GetMetrics(const TrustNodeId& address) {
     // Check cache
     if (cache_valid && metrics_cache.count(address)) {
         return metrics_cache[address];
@@ -312,7 +351,7 @@ GraphMetrics GraphAnalyzer::GetMetrics(const uint160& address) {
     metrics_cache[address] = metrics;
     
     LogPrint(BCLog::ALL, "GraphAnalyzer: Metrics for %s: mutual=%.2f, betweenness=%.2f, degree=%.2f\n",
-             address.ToString(), metrics.mutual_trust_ratio, 
+             address.ToKeyString(), metrics.mutual_trust_ratio, 
              metrics.betweenness_centrality, metrics.degree_centrality);
     
     return metrics;

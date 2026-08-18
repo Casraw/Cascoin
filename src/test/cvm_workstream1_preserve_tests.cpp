@@ -125,7 +125,7 @@ CTransactionRef MakeReputationVoteTx(const uint160& target, int64_t voteValue,
                                      const std::string& reason)
 {
     CVM::ReputationVoteTx v;
-    v.targetAddress = target;
+    v.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     v.voteValue = voteValue;
     v.reason = reason;
     std::vector<uint8_t> payload = v.Serialize();
@@ -148,7 +148,7 @@ CTransactionRef MakeReputationVoteTx(const uint160& target, int64_t voteValue,
 CTransactionRef MakeCVMWoTVoteTx(const uint160& target, int16_t voteValue)
 {
     CVM::CVMReputationData d;
-    d.targetAddress = target;
+    d.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     d.voteValue = voteValue;
     d.timestamp = 1700000000;
     std::vector<uint8_t> data = d.Serialize();

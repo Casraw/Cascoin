@@ -294,9 +294,9 @@ BOOST_AUTO_TEST_CASE(preserve_propagated_edge_roundtrip_property)
 {
     for (int i = 0; i < kSamples; ++i) {
         CVM::PropagatedTrustEdge in;
-        in.fromAddress = RandU160();
-        in.toAddress = RandU160();
-        in.originalTarget = RandU160();
+        in.fromAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        in.toAddress = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        in.originalTarget = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         in.sourceEdgeTx = InsecureRand256();
         in.trustWeight = static_cast<int16_t>(static_cast<int>(InsecureRandRange(201)) - 100);
         in.propagatedAt = static_cast<uint32_t>(InsecureRandRange(0xFFFFFFFFULL));
@@ -318,8 +318,10 @@ BOOST_AUTO_TEST_CASE(preserve_bonded_vote_roundtrip_property)
 {
     for (int i = 0; i < kSamples; ++i) {
         CVM::BondedVote in;
-        in.voter = RandU160();
-        in.target = RandU160();
+        // BondedVote identity fields are now wide TrustNodeId (this migration);
+        // the round-trip property still holds with typed P2PKH-shaped identities.
+        in.voter = CVM::TrustNodeId::FromLegacyUint160(RandU160());
+        in.target = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         in.voteValue = static_cast<int16_t>(static_cast<int>(InsecureRandRange(201)) - 100);
         in.bondAmount = static_cast<CAmount>(InsecureRandRange(0x7FFFFFFFFFFFULL));
         in.bondTxHash = InsecureRand256();
@@ -352,14 +354,16 @@ BOOST_AUTO_TEST_CASE(preserve_dao_dispute_roundtrip_property)
         CVM::DAODispute in;
         in.disputeId = InsecureRand256();
         in.originalVoteTx = InsecureRand256();
-        in.challenger = RandU160();
+        // Identity fields/map keys are now wide TrustNodeId (this migration);
+        // the round-trip property still holds with typed P2PKH-shaped identities.
+        in.challenger = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         in.challengeBond = static_cast<CAmount>(InsecureRandRange(0x7FFFFFFFFFFFULL));
         in.challengeReason = "dispute-" + std::to_string(i);
         in.createdTime = static_cast<uint32_t>(InsecureRandRange(0xFFFFFFFFULL));
         // A couple of DAO votes/stakes so the map serialization is exercised.
         const int nVotes = 1 + static_cast<int>(InsecureRandRange(3));
         for (int v = 0; v < nVotes; ++v) {
-            uint160 member = RandU160();
+            CVM::TrustNodeId member = CVM::TrustNodeId::FromLegacyUint160(RandU160());
             in.daoVotes[member] = (InsecureRandRange(2) == 0);
             in.daoStakes[member] = static_cast<CAmount>(InsecureRandRange(0x7FFFFFFFULL));
         }
@@ -395,7 +399,7 @@ BOOST_AUTO_TEST_CASE(preserve_reputation_record_roundtrip_property)
 {
     for (int i = 0; i < kSamples; ++i) {
         CVM::ReputationScore in;
-        in.address = RandU160();
+        in.address = CVM::TrustNodeId::FromLegacyUint160(RandU160());
         in.score = static_cast<int64_t>(InsecureRandRange(20001)) - 10000; // [-10000, 10000]
         in.voteCount = InsecureRandRange(0xFFFFFFFFULL);
         in.lastUpdated = static_cast<int64_t>(InsecureRandRange(0xFFFFFFFFULL));
@@ -792,8 +796,9 @@ BOOST_AUTO_TEST_CASE(preserve_cluster_propagation_fields_property)
             std::to_string(i) + ")");
 
         bool matched = false;
+        const CVM::TrustNodeId toNode = CVM::TrustNodeId::FromLegacyUint160(to);
         for (const auto& p : props) {
-            if (p.originalTarget == to && p.trustWeight == weight &&
+            if (p.originalTarget == toNode && p.trustWeight == weight &&
                 p.bondAmount == kBond) {
                 matched = true;
             }

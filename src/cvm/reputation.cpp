@@ -4,6 +4,7 @@
 
 #include <cvm/reputation.h>
 #include <cvm/cvmdb.h>
+#include <cvm/migration_observability.h>
 #include <streams.h>
 #include <utilstrencodings.h>
 #include <hash.h>
@@ -17,16 +18,21 @@ namespace CVM {
 static const std::string REP_MARKER = "REP";
 static const uint8_t REP_VERSION = 0x01;
 
-// Database key for reputation scores
-static const char DB_REPUTATION = 'R';
+// Generic-key prefix for the reputation primary record. This is the one
+// intentional namespace rename for the migration: the old raw 'R'+<20 bytes>
+// key is retired in favour of "reputation_<TNI>" where <TNI> is exactly
+// TrustNodeId::ToKeyString(). The rename materially avoids accidental overlap
+// with stale development raw-'R' records; no old reputation namespace is ever
+// queried.
+static const std::string REPUTATION_PREFIX = "reputation_";
 
 // Generic-key prefix for the maintained reputation index (clause 2.49). Every
-// address that has a reputation record is recorded under this prefix so the
+// identity that has a reputation record is recorded under this prefix so the
 // index accessor can enumerate them without scanning every DB key.
 static const std::string REP_INDEX_PREFIX = "repidx_";
 
-// Generic-key prefix for the per-address transaction-history index (clause
-// 2.14). Stores the block heights at which the address transacted so
+// Generic-key prefix for the per-identity transaction-history index (clause
+// 2.14). Stores the block heights at which the identity transacted so
 // DetectRapidFire can assess the rapid-fire pattern.
 static const std::string TX_HISTORY_PREFIX = "txhist_";
 
@@ -39,11 +45,33 @@ static const int64_t kRapidFireWindowBlocks = 3;
 static const uint64_t kExchangeTxThreshold = 10000;
 static const uint64_t kExchangeVolumeThreshold = 100000ULL * COIN;
 
-// Maintain the reputation index: record that `address` has a reputation record.
-static void IndexReputationAddress(CVMDatabase& database, const uint160& address) {
-    std::string idxKey = REP_INDEX_PREFIX + address.ToString();
-    std::vector<uint8_t> value(address.begin(), address.end());
-    database.WriteGeneric(idxKey, value);
+// Current typed primary key for a reputation record: "reputation_<TNI>".
+static std::string ReputationKey(const TrustNodeId& node) {
+    return REPUTATION_PREFIX + node.ToKeyString();
+}
+
+// Current typed transaction-history key for an identity: "txhist_<TNI>".
+static std::string TxHistoryKey(const TrustNodeId& node) {
+    return TX_HISTORY_PREFIX + node.ToKeyString();
+}
+
+// Maintain the reputation index: record that `node` has a reputation record.
+// The identity is captured in the canonical key segment; the stored value is
+// the serialized TrustNodeId so the record is self-describing.
+static bool IndexReputationAddress(CVMDatabase& database, const TrustNodeId& node) {
+    std::string idxKey = REP_INDEX_PREFIX + node.ToKeyString();
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << node;
+    std::vector<uint8_t> value(ss.begin(), ss.end());
+    if (!database.WriteGeneric(idxKey, value)) {
+        // Secondary-index write failed after the primary record was written
+        // (clause 5.2). Report it; a repeated idempotent UpdateReputation
+        // repairs the index without duplicating logical state.
+        RecordMigrationEvent(MigrationEvent::FailedIndexWrite, REP_INDEX_PREFIX,
+                             node.ToKeyString());
+        return false;
+    }
+    return true;
 }
 
 std::string ReputationScore::GetReputationLevel() const {
@@ -133,47 +161,99 @@ bool IsReputationVoteTransaction(const CTransaction& tx) {
 ReputationSystem::ReputationSystem(CVMDatabase& db) : database(db) {
 }
 
-bool ReputationSystem::GetReputation(const uint160& address, ReputationScore& score) {
-    std::string dbKey = std::string(1, DB_REPUTATION) + 
-                       std::string((char*)address.begin(), 20);
-    
-    if (!database.GetDB().Read(dbKey, score)) {
-        // Return default score for new addresses
+bool ReputationSystem::GetReputation(const TrustNodeId& address, ReputationScore& score) {
+    // Only a strictly canonical identity may key a reputation record. An
+    // invalid identity is never reinterpreted; it simply has no record.
+    std::string err;
+    if (!ValidateCanonicalTrustNode(address, err)) {
         score = ReputationScore();
         score.address = address;
         score.category = "normal";
         return false;
     }
-    
+
+    std::vector<uint8_t> data;
+    if (!database.ReadGeneric(ReputationKey(address), data)) {
+        // Return default score for new identities.
+        score = ReputationScore();
+        score.address = address;
+        score.category = "normal";
+        return false;
+    }
+
+    try {
+        CDataStream ss(data, SER_DISK, CLIENT_VERSION);
+        ss >> score;
+        if (!ss.empty()) {
+            // Malformed current record: reject rather than partially apply.
+            RecordMigrationEvent(MigrationEvent::MalformedRecord, REPUTATION_PREFIX,
+                                 address.ToKeyString());
+            LogPrintf("ERROR: Trailing bytes in ReputationScore record for %s\n",
+                      address.ToKeyString());
+            score = ReputationScore();
+            score.address = address;
+            score.category = "normal";
+            return false;
+        }
+    } catch (const std::exception&) {
+        RecordMigrationEvent(MigrationEvent::MalformedRecord, REPUTATION_PREFIX,
+                             address.ToKeyString());
+        LogPrintf("ERROR: Failed to deserialize ReputationScore record for %s\n",
+                  address.ToKeyString());
+        score = ReputationScore();
+        score.address = address;
+        score.category = "normal";
+        return false;
+    }
+
     return true;
 }
 
-bool ReputationSystem::UpdateReputation(const uint160& address, const ReputationScore& score) {
-    std::string dbKey = std::string(1, DB_REPUTATION) + 
-                       std::string((char*)address.begin(), 20);
-    
-    bool ok = database.GetDB().Write(dbKey, score, true);
-    if (ok) {
-        // Maintain the reputation index (clause 2.49).
-        IndexReputationAddress(database, address);
+bool ReputationSystem::UpdateReputation(const TrustNodeId& address, const ReputationScore& score) {
+    std::string err;
+    if (!ValidateCanonicalTrustNode(address, err)) {
+        LogPrintf("Rejecting reputation update for noncanonical identity: %s\n", err);
+        return false;
     }
-    return ok;
+
+    CDataStream ss(SER_DISK, CLIENT_VERSION);
+    ss << score;
+    std::vector<uint8_t> data(ss.begin(), ss.end());
+
+    // Primary write precedes the secondary-index write (clause 5.2).
+    if (!database.WriteGeneric(ReputationKey(address), data)) {
+        return false;
+    }
+    // Maintain the reputation index (clause 2.49).
+    IndexReputationAddress(database, address);
+    return true;
 }
 
-bool ReputationSystem::ApplyVote(const uint160& voterAddress, 
-                                const ReputationVoteTx& vote, 
+bool ReputationSystem::ApplyVote(const TrustNodeId& voterAddress,
+                                const ReputationVoteTx& vote,
                                 int64_t timestamp) {
     // Bugfix 2.18: a reputation vote must be attributed to a resolved voter.
-    // Reject votes from a null/zero voter address (an unresolved voter) rather
+    // Reject votes from a null/zero voter identity (an unresolved voter) rather
     // than silently applying them to the zero address.
-    if (voterAddress.IsNull()) {
-        LogPrintf("Rejecting reputation vote from unresolved (zero) voter address\n");
+    if (voterAddress.data.IsNull()) {
+        LogPrintf("Rejecting reputation vote from unresolved (zero) voter identity\n");
         return false;
     }
 
     std::string error;
+    if (!ValidateCanonicalTrustNode(voterAddress, error)) {
+        LogPrintf("Rejecting reputation vote from noncanonical voter: %s\n", error);
+        return false;
+    }
+
     if (!vote.IsValid(error)) {
         LogPrintf("Invalid reputation vote: %s\n", error);
+        return false;
+    }
+
+    // The vote target must also be a strictly canonical identity.
+    if (!ValidateCanonicalTrustNode(vote.targetAddress, error)) {
+        LogPrintf("Rejecting reputation vote for noncanonical target: %s\n", error);
         return false;
     }
     
@@ -214,21 +294,15 @@ bool ReputationSystem::ApplyVote(const uint160& voterAddress,
     } else {
         score.category = "normal";
     }
-    
-    // Write back to database
-    std::string dbKey = std::string(1, DB_REPUTATION) + 
-                       std::string((char*)score.address.begin(), 20);
-    
-    bool ok = database.GetDB().Write(dbKey, score);
-    if (ok) {
-        // Maintain the reputation index (clause 2.49).
-        IndexReputationAddress(database, vote.targetAddress);
-    }
-    return ok;
+
+    // Ensure the record self-describes its (typed) identity and persist it,
+    // keyed by the vote target, maintaining the index in one place.
+    score.address = vote.targetAddress;
+    return UpdateReputation(vote.targetAddress, score);
 }
 
-void ReputationSystem::UpdateBehaviorScore(const uint160& address, 
-                                          const CTransaction& tx, 
+void ReputationSystem::UpdateBehaviorScore(const TrustNodeId& address,
+                                          const CTransaction& tx,
                                           int blockHeight) {
     ReputationScore score;
     GetReputation(address, score);
@@ -242,7 +316,7 @@ void ReputationSystem::UpdateBehaviorScore(const uint160& address,
         score.score -= 10; // Small penalty for suspicious behavior
         
         LogPrintf("Suspicious pattern detected for %s: %s\n", 
-                 address.ToString(), reason);
+                 address.ToKeyString(), reason);
     }
     
     // Update total volume
@@ -251,17 +325,13 @@ void ReputationSystem::UpdateBehaviorScore(const uint160& address,
     }
     
     score.lastUpdated = GetTime();
-    
-    // Write back
-    std::string dbKey = std::string(1, DB_REPUTATION) + 
-                       std::string((char*)score.address.begin(), 20);
-    if (database.GetDB().Write(dbKey, score)) {
-        // Maintain the reputation index (clause 2.49).
-        IndexReputationAddress(database, address);
-    }
+
+    // Persist the updated record keyed by the identity, maintaining the index.
+    score.address = address;
+    UpdateReputation(address, score);
 }
 
-int64_t ReputationSystem::GetVotingPower(const uint160& address) {
+int64_t ReputationSystem::GetVotingPower(const TrustNodeId& address) {
     // Base voting power is 1
     int64_t power = 1;
     
@@ -288,27 +358,33 @@ int64_t ReputationSystem::GetVotingPower(const uint160& address) {
     return power;
 }
 
-std::vector<uint160> ReputationSystem::GetLowReputationAddresses(int64_t threshold) {
-    std::vector<uint160> result;
+std::vector<TrustNodeId> ReputationSystem::GetLowReputationAddresses(int64_t threshold) {
+    std::vector<TrustNodeId> result;
 
-    // Clause 2.49: enumerate the addresses that have reputation records via the
+    // Clause 2.49: enumerate the identities that have reputation records via the
     // maintained reputation index, and return those at or below the threshold.
+    // The identity is recovered by strictly parsing the canonical key segment;
+    // malformed/noncanonical segments are skipped, never reinterpreted.
     std::vector<std::string> keys = database.ListKeysWithPrefix(REP_INDEX_PREFIX);
     for (const std::string& key : keys) {
         if (key.size() <= REP_INDEX_PREFIX.size()) {
             continue;
         }
-        std::string addrStr = key.substr(REP_INDEX_PREFIX.size());
-        uint160 address;
-        address.SetHex(addrStr);
-        if (address.IsNull()) {
+        std::string segment = key.substr(REP_INDEX_PREFIX.size());
+
+        TrustNodeId node;
+        std::string err;
+        if (!ParseKeyStringToTrustNode(segment, node, err)) {
+            RecordMigrationEvent(MigrationEvent::MalformedRecord, REP_INDEX_PREFIX, key);
+            LogPrintf("WARN: skipping malformed reputation index key \"%s\": %s\n",
+                      key, err);
             continue;
         }
 
         ReputationScore score;
-        if (GetReputation(address, score)) {
+        if (GetReputation(node, score)) {
             if (score.score <= threshold) {
-                result.push_back(address);
+                result.push_back(node);
             }
         }
     }
@@ -359,9 +435,39 @@ void ReputationSystem::ApplyDecay(ReputationScore& score, int64_t currentTime) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Thin uint160 wrappers (legacy P2PKH callers). Each zero-extends the bare
+// uint160 into a TrustNodeId{P2PKH} and forwards to the wide overload. Wave 8
+// removes the remaining uint160 bridging at the RPC/block-processing sites.
+// ---------------------------------------------------------------------------
+
+bool ReputationSystem::GetReputation(const uint160& address, ReputationScore& score) {
+    return GetReputation(TrustNodeId::FromLegacyUint160(address), score);
+}
+
+bool ReputationSystem::UpdateReputation(const uint160& address, const ReputationScore& score) {
+    return UpdateReputation(TrustNodeId::FromLegacyUint160(address), score);
+}
+
+bool ReputationSystem::ApplyVote(const uint160& voterAddress,
+                                const ReputationVoteTx& vote,
+                                int64_t timestamp) {
+    return ApplyVote(TrustNodeId::FromLegacyUint160(voterAddress), vote, timestamp);
+}
+
+void ReputationSystem::UpdateBehaviorScore(const uint160& address,
+                                          const CTransaction& tx,
+                                          int blockHeight) {
+    UpdateBehaviorScore(TrustNodeId::FromLegacyUint160(address), tx, blockHeight);
+}
+
+int64_t ReputationSystem::GetVotingPower(const uint160& address) {
+    return GetVotingPower(TrustNodeId::FromLegacyUint160(address));
+}
+
 // PatternDetector implementations
-void PatternDetector::RecordAddressActivity(const uint160& address, int blockHeight, CVMDatabase& db) {
-    std::string key = TX_HISTORY_PREFIX + address.ToString();
+void PatternDetector::RecordAddressActivity(const TrustNodeId& address, int blockHeight, CVMDatabase& db) {
+    std::string key = TxHistoryKey(address);
 
     std::vector<int64_t> heights;
     std::vector<uint8_t> data;
@@ -382,12 +488,12 @@ void PatternDetector::RecordAddressActivity(const uint160& address, int blockHei
     db.WriteGeneric(key, serialized);
 }
 
-bool PatternDetector::DetectRapidFire(const uint160& address, int blockHeight, CVMDatabase& db) {
-    // Clause 2.14: consult the address's transaction-history index and return
+bool PatternDetector::DetectRapidFire(const TrustNodeId& address, int blockHeight, CVMDatabase& db) {
+    // Clause 2.14: consult the identity's transaction-history index and return
     // true when its activity matches the rapid-fire pattern (at least
     // kRapidFireMinTxs transactions within a window of kRapidFireWindowBlocks
     // blocks, at or before the supplied block height).
-    std::string key = TX_HISTORY_PREFIX + address.ToString();
+    std::string key = TxHistoryKey(address);
 
     std::vector<uint8_t> data;
     if (!db.ReadGeneric(key, data)) {
@@ -474,8 +580,8 @@ bool PatternDetector::DetectDusting(const CTransaction& tx) {
     return false;
 }
 
-bool PatternDetector::DetectExchangePattern(const uint160& address, CVMDatabase& db) {
-    // Clause 2.48: consult the address's committed reputation record and return
+bool PatternDetector::DetectExchangePattern(const TrustNodeId& address, CVMDatabase& db) {
+    // Clause 2.48: consult the identity's committed reputation record and return
     // true when its transaction volume / count matches the exchange pattern.
     ReputationSystem rep(db);
     ReputationScore score;
@@ -497,5 +603,17 @@ bool PatternDetector::DetectExchangePattern(const uint160& address, CVMDatabase&
     return false;
 }
 
-} // namespace CVM
+// Thin uint160 wrappers for PatternDetector (legacy P2PKH callers).
+bool PatternDetector::DetectRapidFire(const uint160& address, int blockHeight, CVMDatabase& db) {
+    return DetectRapidFire(TrustNodeId::FromLegacyUint160(address), blockHeight, db);
+}
 
+bool PatternDetector::DetectExchangePattern(const uint160& address, CVMDatabase& db) {
+    return DetectExchangePattern(TrustNodeId::FromLegacyUint160(address), db);
+}
+
+void PatternDetector::RecordAddressActivity(const uint160& address, int blockHeight, CVMDatabase& db) {
+    RecordAddressActivity(TrustNodeId::FromLegacyUint160(address), blockHeight, db);
+}
+
+} // namespace CVM

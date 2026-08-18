@@ -698,7 +698,9 @@ BOOST_AUTO_TEST_CASE(dao_dispute_data_serialization)
     
     CVM::CVMDAODisputeData disputeData;
     disputeData.originalVoteTxHash.SetHex("0xoriginal1234567890abcdef1234567890abcdef1234567890abcdef12345678");
-    disputeData.challenger.SetHex("0xchallenger1234567890abcdef1234567890abcd");
+    uint160 challengerId;
+    challengerId.SetHex("00000000000000000000000000000000abcd1234");
+    disputeData.challenger = CVM::TrustNodeId::FromLegacyUint160(challengerId);
     disputeData.challengeBond = 5 * COIN;
     disputeData.reason = "Fraudulent reputation claim";  // Not serialized
     disputeData.timestamp = GetTime();
@@ -707,8 +709,9 @@ BOOST_AUTO_TEST_CASE(dao_dispute_data_serialization)
     std::vector<uint8_t> serialized = disputeData.Serialize();
     BOOST_CHECK(!serialized.empty());
     
-    // Verify serialized size is within OP_RETURN limits
-    // 32 (txHash) + 20 (challenger) + 8 (bond) + 4 (timestamp) = 64 bytes
+    // Verify the canonical dispute body has the exact expected size:
+    // 32 (txHash) + 33 (challenger TNI33) + 8 (bond) + 4 (timestamp) = 77 bytes
+    BOOST_CHECK_EQUAL(serialized.size(), 77u);
     BOOST_CHECK_LE(serialized.size(), 80);
     
     // Deserialize
@@ -730,7 +733,9 @@ BOOST_AUTO_TEST_CASE(dao_vote_data_serialization)
     
     CVM::CVMDAOVoteData voteData;
     voteData.disputeId.SetHex("0xdispute1234567890abcdef1234567890abcdef1234567890abcdef12345678");
-    voteData.daoMember.SetHex("0xdaomember1234567890abcdef1234567890abcd");
+    uint160 daoMemberId;
+    daoMemberId.SetHex("0000000000000000000000000000000012345abc");
+    voteData.daoMember = CVM::TrustNodeId::FromLegacyUint160(daoMemberId);
     voteData.supportSlash = true;
     voteData.stake = 100 * COIN;
     voteData.timestamp = GetTime();
@@ -738,6 +743,9 @@ BOOST_AUTO_TEST_CASE(dao_vote_data_serialization)
     // Serialize
     std::vector<uint8_t> serialized = voteData.Serialize();
     BOOST_CHECK(!serialized.empty());
+    // Canonical DAO-vote body: 32 (disputeId) + 33 (member TNI33) + 1 (support)
+    //   + 8 (stake) + 4 (timestamp) = 78 bytes.
+    BOOST_CHECK_EQUAL(serialized.size(), 78u);
     
     // Deserialize
     CVM::CVMDAOVoteData deserialized;

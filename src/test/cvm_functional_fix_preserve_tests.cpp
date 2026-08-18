@@ -104,7 +104,7 @@ CTransactionRef MakeReputationVoteTx(const uint160& target, int64_t voteValue,
                                      const std::string& reason)
 {
     CVM::ReputationVoteTx v;
-    v.targetAddress = target;
+    v.targetAddress = CVM::TrustNodeId::FromLegacyUint160(target);
     v.voteValue = voteValue;
     v.reason = reason;
     std::vector<uint8_t> payload = v.Serialize();
@@ -240,7 +240,7 @@ BOOST_AUTO_TEST_CASE(preserve_3_3_wot_tx_is_non_contract)
     // Round-trips through the WoT parser (semantics preserved).
     CVM::ReputationVoteTx parsed;
     BOOST_REQUIRE(CVM::ParseReputationVoteTx(*tx, parsed));
-    BOOST_CHECK(parsed.targetAddress == target);
+    BOOST_CHECK(parsed.targetAddress == CVM::TrustNodeId::FromLegacyUint160(target));
     BOOST_CHECK_EQUAL(parsed.voteValue, 50);
 }
 
@@ -266,7 +266,7 @@ BOOST_AUTO_TEST_CASE(preserve_3_3_wot_tx_property)
 
         CVM::ReputationVoteTx parsed;
         BOOST_REQUIRE(CVM::ParseReputationVoteTx(*tx, parsed));
-        BOOST_REQUIRE(parsed.targetAddress == target);
+        BOOST_REQUIRE(parsed.targetAddress == CVM::TrustNodeId::FromLegacyUint160(target));
         BOOST_REQUIRE_EQUAL(parsed.voteValue, voteValue);
     }
 }
