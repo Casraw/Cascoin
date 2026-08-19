@@ -299,6 +299,18 @@ public:
     void Clear();
     
     /**
+     * @brief Rebuild the minter's aggregate state (total supply, mint events and
+     *        their indexes) from the burn registry.
+     *
+     * Used after loading persisted burn records on startup: the registry and
+     * account balances are restored from LevelDB, and this recomputes the
+     * minter's derived aggregates so GetTotalSupply()/GetMintEvents()/
+     * VerifySupplyInvariant() are consistent. Does NOT touch account balances
+     * (those live in the state manager and are loaded separately).
+     */
+    void LoadFromRegistry();
+    
+    /**
      * @brief Get the current L2 block number
      * @return Current block number
      */

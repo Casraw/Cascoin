@@ -18,12 +18,15 @@
 #include <l2/state_manager.h>
 #include <hash.h>
 #include <util.h>
+#include <dbwrapper.h>
+#include <fs.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 
 #include <chrono>
 #include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace l2 {
@@ -256,6 +259,29 @@ void L2TokenMinter::Clear() {
     // Note: Don't clear callbacks
 }
 
+void L2TokenMinter::LoadFromRegistry() {
+    LOCK(cs_minter_);
+    
+    // Reset derived aggregates and rebuild them from the (already loaded) burn
+    // registry. Each burn record corresponds 1:1 to a mint event.
+    totalSupply_ = 0;
+    totalMinted_ = 0;
+    mintEvents_.clear();
+    mintEventsByL1TxHash_.clear();
+    mintEventsByRecipient_.clear();
+    
+    std::vector<BurnRecord> records = burnRegistry_.GetAllBurns();
+    for (const auto& rec : records) {
+        size_t idx = mintEvents_.size();
+        mintEvents_.emplace_back(rec.l1TxHash, rec.l2Recipient, rec.amount,
+                                 rec.l2MintTxHash, rec.l2MintBlock, rec.timestamp);
+        mintEventsByL1TxHash_[rec.l1TxHash] = idx;
+        mintEventsByRecipient_[rec.l2Recipient].push_back(idx);
+        totalSupply_ += rec.amount;
+        totalMinted_ += rec.amount;
+    }
+}
+
 uint64_t L2TokenMinter::GetCurrentBlockNumber() const {
     LOCK(cs_minter_);
     return currentBlockNumber_;
@@ -352,6 +378,47 @@ namespace {
     };
     std::map<uint256, TrackedBurn> g_trackedBurns;
     CCriticalSection cs_trackedBurns;
+
+    // ---- Persistence (LevelDB) ----
+    // Key tags (see l2_globals.h for the schema).
+    const char DB_L2_BURN    = 'B';  // ('B', l1TxHash)   -> BurnRecord
+    const char DB_L2_ACCOUNT = 'A';  // ('A', addressKey) -> AccountState
+    const char DB_L2_HEIGHT  = 'H';  // 'H'               -> int checkpoint
+
+    std::unique_ptr<CDBWrapper> g_l2db;
+    int g_l2LastProcessedHeight = 0;
+    CCriticalSection cs_l2db;
+
+    /** Persist a freshly minted burn: its BurnRecord and the recipient account. */
+    void PersistMint(const uint256& l1TxHash, const uint160& recipient) {
+        LOCK(cs_l2db);
+        if (!g_l2db) return;
+        try {
+            auto rec = GetGlobalBurnRegistry().GetBurnRecord(l1TxHash);
+            if (!rec) return;
+            CDBBatch batch(*g_l2db);
+            batch.Write(std::make_pair(DB_L2_BURN, l1TxHash), *rec);
+            const uint256 accKey = AddressToKey(recipient);
+            const AccountState st = GetGlobalStateManager().GetAccountState(accKey);
+            batch.Write(std::make_pair(DB_L2_ACCOUNT, accKey), st);
+            g_l2db->WriteBatch(batch);
+        } catch (const std::exception& e) {
+            LogPrintf("L2: PersistMint error: %s\n", e.what());
+        }
+    }
+
+    /** Advance and persist the settled-height checkpoint (monotonic). */
+    void PersistCheckpoint(int settledHeight) {
+        LOCK(cs_l2db);
+        if (!g_l2db) return;
+        if (settledHeight <= g_l2LastProcessedHeight) return;
+        try {
+            g_l2db->Write(DB_L2_HEIGHT, settledHeight);
+            g_l2LastProcessedHeight = settledHeight;
+        } catch (const std::exception& e) {
+            LogPrintf("L2: PersistCheckpoint error: %s\n", e.what());
+        }
+    }
 } // namespace
 
 void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHeight) {
@@ -418,6 +485,8 @@ void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHei
                 LogPrintf("L2: Minted %d tokens to 0x%s for burn %s (confirmations=%d)\n",
                           tb.burnData.amount, recipient.GetHex(),
                           txHash.ToString().substr(0, 16), confirmations);
+                // Persist the minted burn + recipient balance to LevelDB.
+                PersistMint(txHash, recipient);
                 done.push_back(txHash);
             } else {
                 LogPrintf("L2: Mint failed for burn %s: %s\n",
@@ -430,6 +499,16 @@ void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHei
         }
         for (const uint256& txHash : done) {
             g_trackedBurns.erase(txHash);
+        }
+
+        // Advance the settled-height checkpoint. All burns at heights at or
+        // below (chainHeight - REQUIRED_CONFIRMATIONS + 1) are guaranteed to be
+        // matured and (if valid) minted, so the next startup can safely rescan
+        // from checkpoint+1. The checkpoint lags the tip by REQUIRED_CONFIRMATIONS
+        // so not-yet-matured burns are re-detected after a restart.
+        int settled = chainHeight - REQUIRED_CONFIRMATIONS + 1;
+        if (settled > 0) {
+            PersistCheckpoint(settled);
         }
     } catch (const std::exception& e) {
         LogPrintf("L2: ProcessConnectedBlockForBurns exception: %s\n", e.what());
@@ -453,6 +532,85 @@ void HandleBurnReorg(int height) {
         LogPrintf("L2: Dropped %u tracked burns at/above height %d due to reorg\n",
                   (unsigned)toRemove.size(), height);
     }
+}
+
+// ============================================================================
+// Persistence: open/load, shutdown, checkpoint accessor
+// ============================================================================
+
+bool InitL2Persistence(const fs::path& dbPath, bool fWipe) {
+    LOCK(cs_l2db);
+
+    try {
+        g_l2db.reset(new CDBWrapper(dbPath, 8 << 20, /*fMemory=*/false, /*fWipe=*/fWipe));
+    } catch (const std::exception& e) {
+        LogPrintf("L2: Failed to open persistence DB at %s: %s\n", dbPath.string(), e.what());
+        g_l2db.reset();
+        g_l2LastProcessedHeight = 0;
+        return false;
+    }
+
+    g_l2LastProcessedHeight = 0;
+    size_t nAccounts = 0, nBurns = 0;
+
+    try {
+        // Load the settled-height checkpoint.
+        int storedHeight = 0;
+        if (g_l2db->Read(DB_L2_HEIGHT, storedHeight) && storedHeight > 0) {
+            g_l2LastProcessedHeight = storedHeight;
+        }
+
+        L2StateManager& sm = GetGlobalStateManager();
+        BurnRegistry& reg = GetGlobalBurnRegistry();
+
+        // Load persisted account states.
+        {
+            std::unique_ptr<CDBIterator> it(g_l2db->NewIterator());
+            for (it->Seek(std::make_pair(DB_L2_ACCOUNT, uint256())); it->Valid(); it->Next()) {
+                std::pair<char, uint256> key;
+                if (!it->GetKey(key) || key.first != DB_L2_ACCOUNT) break;
+                AccountState st;
+                if (it->GetValue(st)) {
+                    sm.SetAccountState(key.second, st);
+                    nAccounts++;
+                }
+            }
+        }
+
+        // Load persisted burn records.
+        {
+            std::unique_ptr<CDBIterator> it(g_l2db->NewIterator());
+            for (it->Seek(std::make_pair(DB_L2_BURN, uint256())); it->Valid(); it->Next()) {
+                std::pair<char, uint256> key;
+                if (!it->GetKey(key) || key.first != DB_L2_BURN) break;
+                BurnRecord rec;
+                if (it->GetValue(rec)) {
+                    reg.RecordBurn(rec);
+                    nBurns++;
+                }
+            }
+        }
+
+        // Rebuild the minter's derived aggregates from the loaded registry.
+        GetGlobalMinter().LoadFromRegistry();
+    } catch (const std::exception& e) {
+        LogPrintf("L2: Error loading persisted state: %s\n", e.what());
+        // Keep whatever loaded; rescan will fill any gap.
+    }
+
+    LogPrintf("L2: Persistence loaded %u accounts, %u burns (checkpoint height %d)\n",
+              (unsigned)nAccounts, (unsigned)nBurns, g_l2LastProcessedHeight);
+    return true;
+}
+
+void ShutdownL2Persistence() {
+    LOCK(cs_l2db);
+    g_l2db.reset();
+}
+
+int GetL2LastProcessedHeight() {
+    LOCK(cs_l2db);
+    return g_l2LastProcessedHeight;
 }
 
 } // namespace l2

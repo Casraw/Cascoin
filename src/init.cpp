@@ -289,6 +289,7 @@ void Shutdown()
     
     // Cascoin: L2 Layer 2 shutdown
     l2::StopL2();
+    l2::ShutdownL2Persistence();
     
 #ifdef ENABLE_WALLET
     StopWallets();
@@ -2042,16 +2043,28 @@ bool AppInitMain()
     // block through the burn processor reconstructs the exact same L2 state. The
     // L1 chain is the source of truth, so no separate persistence is required.
     if (l2::IsL2Enabled()) {
+        // Open the L2 persistence DB and load any previously persisted state.
+        // On -reindex we wipe it so the state is rebuilt from scratch from chain.
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        l2::InitL2Persistence(GetDataDir() / "l2", fReindexTriggered);
+
         int tipHeight = 0;
         {
             LOCK(cs_main);
             tipHeight = chainActive.Height();
         }
-        if (tipHeight > 0) {
-            LogPrintf("L2: Rescanning %d blocks to rebuild burn-and-mint state...\n", tipHeight);
+        // Only replay the blocks after the persisted checkpoint (incremental
+        // rescan). The checkpoint lags the tip by REQUIRED_CONFIRMATIONS, so any
+        // burn that had not yet matured at shutdown is re-detected here.
+        int startHeight = l2::GetL2LastProcessedHeight() + 1;
+        if (startHeight < 1) startHeight = 1;
+        if (tipHeight >= startHeight) {
+            int toScan = tipHeight - startHeight + 1;
+            LogPrintf("L2: Rescanning blocks %d..%d (%d blocks) to rebuild burn-and-mint state...\n",
+                      startHeight, tipHeight, toScan);
             uiInterface.InitMessage(_("Rebuilding L2 burn-and-mint state..."));
             int scanned = 0;
-            for (int h = 1; h <= tipHeight; h++) {
+            for (int h = startHeight; h <= tipHeight; h++) {
                 CBlock block;
                 CBlockIndex* pindex = nullptr;
                 {
@@ -2071,6 +2084,9 @@ bool AppInitMain()
                 scanned++;
             }
             LogPrintf("L2: Rescan complete (%d blocks scanned)\n", scanned);
+        } else {
+            LogPrintf("L2: No blocks to rescan (checkpoint height %d, tip %d)\n",
+                      l2::GetL2LastProcessedHeight(), tipHeight);
         }
     }
 
