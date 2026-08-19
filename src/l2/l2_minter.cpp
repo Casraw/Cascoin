@@ -602,6 +602,9 @@ namespace {
     std::set<uint256> g_l2MempoolHashes;
     CCriticalSection cs_l2Mempool;
     const size_t MAX_L2_MEMPOOL = 50000;
+    // Default per-sender cap on pending transactions (anti-spam). Overridable
+    // with -l2maxpersender.
+    const size_t DEFAULT_MAX_PENDING_PER_SENDER = 100;
 } // namespace
 
 bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
@@ -624,6 +627,18 @@ bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
     if (g_l2MempoolHashes.count(h)) {
         err = "Transaction already in pool";
         return false;
+    }
+    // Anti-spam: bound how many pending transactions a single sender may have.
+    const size_t maxPerSender = (size_t)gArgs.GetArg("-l2maxpersender",
+                                                     DEFAULT_MAX_PENDING_PER_SENDER);
+    if (maxPerSender > 0) {
+        size_t fromCount = 0;
+        for (const auto& p : g_l2Mempool) {
+            if (p.from == tx.from && ++fromCount >= maxPerSender) {
+                err = "Too many pending transactions from this sender";
+                return false;
+            }
+        }
     }
     g_l2Mempool.push_back(tx);
     g_l2MempoolHashes.insert(h);

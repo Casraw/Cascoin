@@ -1083,13 +1083,26 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     
     l2::L2StateManager& stateManager = GetL2StateManager();
     
-    // Soft balance check for immediate feedback. The authoritative check is done
-    // by the sequencer when the transaction is applied in an L2 block.
+    // Optional fee (in CAS), charged to the sender and credited to the
+    // sequencer. The fee is expressed on-chain as gasPrice * gasLimit(21000),
+    // so the effective fee is floored to a multiple of the gas limit.
+    CAmount feeReq = 0;
+    if (request.params.size() > 3) {
+        feeReq = AmountFromValue(request.params[3]);
+        if (feeReq < 0) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Fee cannot be negative");
+        }
+    }
+    CAmount gasPrice = (feeReq > 0) ? (feeReq / (CAmount)l2::MIN_TX_GAS_LIMIT) : 0;
+    CAmount effectiveFee = gasPrice * (CAmount)l2::MIN_TX_GAS_LIMIT;
+    
+    // Soft balance check for immediate feedback (amount + fee). The
+    // authoritative check is done when the tx is applied in an L2 block.
     l2::AccountState fromState = stateManager.GetAccountState(from);
-    if (fromState.balance < amount) {
+    if (fromState.balance < amount + effectiveFee) {
         throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS,
             strprintf("Insufficient L2 balance: have %s, need %s",
-                      FormatMoney(fromState.balance), FormatMoney(amount)));
+                      FormatMoney(fromState.balance), FormatMoney(amount + effectiveFee)));
     }
     
     // Build a native L2 transfer transaction and enqueue it for the sequencer.
@@ -1097,7 +1110,7 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     // pool so several queued transfers get consecutive nonces.
     uint64_t nonce = fromState.nonce + l2::GetPendingCountFromSender(from);
     l2::L2Transaction tx = l2::CreateTransferTx(from, to, amount, nonce,
-                                                /*gasPrice=*/0, l2::GetL2ChainId());
+                                                gasPrice, l2::GetL2ChainId());
     
     // Authenticate the transfer: sign with the sender's private key from the
     // wallet. The L2 address is the Hash160 of the sender's public key (== its
@@ -1131,6 +1144,7 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     response.pushKV("from", "0x" + from.GetHex());
     response.pushKV("to", "0x" + to.GetHex());
     response.pushKV("amount", ValueFromAmount(amount));
+    response.pushKV("fee", ValueFromAmount(effectiveFee));
     response.pushKV("nonce", (int64_t)nonce);
     response.pushKV("status", "pending");
     response.pushKV("tokenSymbol", config.tokenSymbol);

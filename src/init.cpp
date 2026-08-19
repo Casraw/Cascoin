@@ -53,6 +53,7 @@
 #ifdef ENABLE_WALLET
 #include <wallet/init.h>
 #include <wallet/wallet.h>
+#include <wallet/coincontrol.h>
 #endif
 #include <warnings.h>
 #include <cvm/cvmdb.h>  // Cascoin: CVM Database
@@ -290,6 +291,11 @@ void Shutdown()
     // Cascoin: L2 Layer 2 shutdown
     l2::StopL2();
     l2::ShutdownL2Persistence();
+
+    // Free the validator/sequencer key while the secure-memory locked pool is
+    // still alive. It holds a CKey backed by secure_allocator; if left to static
+    // destruction at exit, the locked pool may already be gone -> SIGSEGV.
+    CVM::g_validatorKeys.reset();
     
 #ifdef ENABLE_WALLET
     StopWallets();
@@ -1303,6 +1309,72 @@ bool AppInitLockDataDirectory()
     return true;
 }
 
+#ifdef ENABLE_WALLET
+// Cascoin: L2 - periodically anchor the latest uncommitted L2 block on L1.
+// Runs on sequencer nodes via the lightweight scheduler. Builds a 0-value
+// OP_RETURN "L2COMMIT" transaction with the wallet (funded, signed, broadcast)
+// so state roots are posted to L1 automatically instead of via a manual RPC.
+static void L2AutoCommit()
+{
+    if (!l2::IsL2Enabled()) return;
+
+    size_t blockCount = l2::GetL2BlockCount();
+    if (blockCount == 0) return;
+    const uint64_t tip = blockCount - 1;
+
+    // Nothing to do if the tip is already committed on L1.
+    l2::L2Commitment latest;
+    if (l2::GetLatestL2Commitment(latest) && latest.l2BlockNumber >= tip) {
+        return;
+    }
+
+    l2::L2Block block;
+    if (!l2::GetL2BlockByNumber(tip, block)) return;
+
+    const uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
+    const CScript commitScript = l2::BuildL2CommitScript(chainId, tip, block.header.stateRoot);
+
+    // Pick an unlocked wallet with funds to pay the L1 fee.
+    CWallet* pwallet = nullptr;
+    for (CWalletRef pw : vpwallets) {
+        if (pw && !pw->IsLocked() && pw->GetBalance() > 0) {
+            pwallet = pw;
+            break;
+        }
+    }
+    if (!pwallet) {
+        LogPrint(BCLog::NET, "L2: auto-commit skipped (no unlocked funded wallet)\n");
+        return;
+    }
+
+    try {
+        LOCK2(cs_main, pwallet->cs_wallet);
+        std::vector<CRecipient> vecSend;
+        vecSend.push_back({commitScript, 0, false});
+        CWalletTx wtxNew;
+        CReserveKey reservekey(pwallet);
+        CAmount nFeeRequired = 0;
+        int nChangePosRet = -1;
+        std::string strError;
+        CCoinControl coin_control;
+        if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired,
+                                        nChangePosRet, strError, coin_control)) {
+            LogPrintf("L2: auto-commit CreateTransaction failed: %s\n", strError);
+            return;
+        }
+        CValidationState state;
+        if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+            LogPrintf("L2: auto-commit CommitTransaction failed: %s\n", state.GetRejectReason());
+            return;
+        }
+        LogPrintf("L2: auto-committed L2 block %d (stateRoot=%s) via L1 tx %s\n",
+                  (int)tip, block.header.stateRoot.GetHex(), wtxNew.GetHash().GetHex());
+    } catch (const std::exception& e) {
+        LogPrintf("L2: auto-commit exception: %s\n", e.what());
+    }
+}
+#endif // ENABLE_WALLET
+
 bool AppInitMain()
 {
     const CChainParams& chainparams = Params();
@@ -2114,6 +2186,19 @@ bool AppInitMain()
         // additionally produces blocks when this node is a sequencer.
         l2::StartL2BlockProducer(fSeq);
         LogPrintf("L2: worker started (sequencer=%d)\n", (int)fSeq);
+
+#ifdef ENABLE_WALLET
+        // Sequencers automatically anchor the latest L2 block on L1 on a timer.
+        // Interval configurable via -l2commitinterval (seconds, default 30; 0
+        // disables auto-commit and leaves it to the l2_createcommitment RPC).
+        if (fSeq) {
+            int64_t commitSecs = gArgs.GetArg("-l2commitinterval", 30);
+            if (commitSecs > 0) {
+                scheduler.scheduleEvery(&L2AutoCommit, commitSecs * 1000);
+                LogPrintf("L2: auto-commit scheduled every %ds\n", (int)commitSecs);
+            }
+        }
+#endif
     }
 
     return true;

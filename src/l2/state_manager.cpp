@@ -118,9 +118,10 @@ TxExecutionResult L2StateManager::ApplyL2Transaction(const L2Transaction& tx, ui
         return TxExecutionResult::Failure("Invalid or missing signature");
     }
 
-    // Fee = gasPrice * base gas (may be zero).
-    CAmount fee = tx.gasPrice * static_cast<CAmount>(kTransferGas);
-    if (fee < 0) {
+    // Fee = gasPrice * gasLimit (may be zero). Charged to the sender and
+    // credited to the sequencer, so the total-supply invariant is preserved.
+    CAmount fee = tx.gasPrice * static_cast<CAmount>(tx.gasLimit);
+    if (fee < 0 || (tx.gasPrice != 0 && fee / static_cast<CAmount>(tx.gasLimit) != tx.gasPrice)) {
         return TxExecutionResult::Failure("Fee overflow");
     }
     CAmount totalRequired = tx.value + fee;
