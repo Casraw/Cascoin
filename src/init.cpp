@@ -61,6 +61,8 @@
 #include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
 #include <cvm/validator_keys.h>  // Cascoin: HAT v2 validator key manager
 #include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
+#include <l2/l2_common.h>   // Cascoin: L2 enabled check
+#include <l2/l2_globals.h>  // Cascoin: L2 burn-and-mint block processor / rescan
 #include <quantum_registry.h>  // Cascoin: Quantum public key registry
 #include <stdint.h>
 #include <stdio.h>
@@ -2031,6 +2033,45 @@ bool AppInitMain()
     // Cascoin: L2 Layer 2 startup
     if (!l2::StartL2()) {
         LogPrintf("Warning: Failed to start L2 subsystem\n");
+    }
+
+    // Cascoin: L2 - rebuild the in-memory burn-and-mint state from the L1 chain.
+    // The burn-and-mint state (balances / total supply) lives in memory only, so
+    // it is lost on restart. Because a confirmed L1 burn is an objective on-chain
+    // fact and minting is fully deterministic and idempotent, replaying every
+    // block through the burn processor reconstructs the exact same L2 state. The
+    // L1 chain is the source of truth, so no separate persistence is required.
+    if (l2::IsL2Enabled()) {
+        int tipHeight = 0;
+        {
+            LOCK(cs_main);
+            tipHeight = chainActive.Height();
+        }
+        if (tipHeight > 0) {
+            LogPrintf("L2: Rescanning %d blocks to rebuild burn-and-mint state...\n", tipHeight);
+            uiInterface.InitMessage(_("Rebuilding L2 burn-and-mint state..."));
+            int scanned = 0;
+            for (int h = 1; h <= tipHeight; h++) {
+                CBlock block;
+                CBlockIndex* pindex = nullptr;
+                {
+                    LOCK(cs_main);
+                    pindex = chainActive[h];
+                }
+                if (!pindex) {
+                    continue;
+                }
+                if (!ReadBlockFromDisk(block, pindex, chainparams.GetConsensus())) {
+                    LogPrintf("L2: Rescan - failed to read block at height %d\n", h);
+                    continue;
+                }
+                // Evaluate maturity against the real chain tip so burns with
+                // >= REQUIRED_CONFIRMATIONS are minted during the rescan.
+                l2::ProcessConnectedBlockForBurns(block, h, tipHeight);
+                scanned++;
+            }
+            LogPrintf("L2: Rescan complete (%d blocks scanned)\n", scanned);
+        }
     }
 
     return true;
