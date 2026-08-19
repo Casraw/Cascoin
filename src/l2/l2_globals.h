@@ -26,13 +26,26 @@
  * this makes single-node / regtest operation work correctly.
  */
 
+#include <l2/l2_transaction.h>
+#include <l2/l2_block.h>
+#include <uint256.h>
+#include <serialize.h>
+#include <script/script.h>
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
 class CBlock;
+class CTransaction;
 
 namespace l2 {
 
 class L2StateManager;
 class BurnRegistry;
 class L2TokenMinter;
+class FraudProofSystem;
 
 /** Get the process-wide L2 state manager (balances / nonces). */
 L2StateManager& GetGlobalStateManager();
@@ -100,6 +113,131 @@ void ShutdownL2Persistence();
  *        The startup rescan should begin at GetL2LastProcessedHeight() + 1.
  */
 int GetL2LastProcessedHeight();
+
+// ----------------------------------------------------------------------------
+// Pending L2 transaction pool (Phase 1)
+//
+// A simple in-memory pool of pending native L2 transactions (transfers). The
+// sequencer block producer drains it to build L2 blocks. Submitted via the
+// l2_transfer / l2_sendtransaction RPCs and (later) via P2P.
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Submit an L2 transaction to the pending pool.
+ * @param tx   The transaction (must pass ValidateStructure()).
+ * @param err  Set to a human-readable reason on failure.
+ * @return true if accepted into the pool.
+ */
+bool SubmitL2Transaction(const L2Transaction& tx, std::string& err);
+
+/**
+ * @brief Get up to @p maxCount pending transactions (FIFO order) for block
+ *        production. Does not remove them from the pool.
+ */
+std::vector<L2Transaction> GetPendingL2Transactions(size_t maxCount);
+
+/**
+ * @brief Remove transactions (by hash) from the pool after inclusion in a block.
+ */
+void RemoveL2Transactions(const std::vector<uint256>& hashes);
+
+/**
+ * @brief Number of transactions currently pending.
+ */
+size_t GetL2MempoolSize();
+
+/**
+ * @brief Count pending transactions originating from @p sender (used to compute
+ *        the correct next nonce when queueing several transfers before a block).
+ */
+size_t GetPendingCountFromSender(const uint160& sender);
+
+// ----------------------------------------------------------------------------
+// Sequencer block production + L2 block store (Phase 1)
+// ----------------------------------------------------------------------------
+
+/** Start the background L2 worker thread (produces blocks if @p isSequencer,
+ *  and always performs pull-based block sync with peers). */
+void StartL2BlockProducer(bool isSequencer);
+
+/** Stop and join the worker thread. */
+void StopL2BlockProducer();
+
+/** Number of L2 blocks (tip height + 1), 0 if the chain is empty. */
+size_t GetL2BlockCount();
+
+/** Read an L2 block by number from the persistent store. */
+bool GetL2BlockByNumber(uint64_t number, L2Block& out);
+
+/** Ingest an L2 block received from a peer (validate parent, apply txs,
+ *  persist). Returns false (with @p err) if it does not extend our tip or a
+ *  transaction cannot be applied; err=="gap" signals missing ancestors. */
+bool IngestL2Block(const L2Block& block, std::string& err);
+
+// ----------------------------------------------------------------------------
+// L1 anchoring: L2COMMIT commitments (Phase 1e)
+//
+// The sequencer periodically posts an L2 state-root commitment to L1 as an
+// OP_RETURN output: "L2COMMIT" <chainId:4> <l2BlockNumber:8> <stateRoot:32>.
+// These commitments anchor the L2 chain to L1 and are the basis for later
+// fraud proofs / finalization.
+// ----------------------------------------------------------------------------
+
+/** A state-root commitment recorded from an L1 OP_RETURN. */
+struct L2Commitment {
+    uint32_t chainId = 0;
+    uint64_t l2BlockNumber = 0;
+    uint256 stateRoot;
+    uint64_t l1Height = 0;   // L1 block height the commitment was mined at
+    uint256 l1TxHash;        // L1 transaction hash carrying the commitment
+
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(chainId);
+        READWRITE(l2BlockNumber);
+        READWRITE(stateRoot);
+        READWRITE(l1Height);
+        READWRITE(l1TxHash);
+    }
+};
+
+/** Build the OP_RETURN commitment script for a given L2 block/state root. */
+CScript BuildL2CommitScript(uint32_t chainId, uint64_t l2BlockNumber, const uint256& stateRoot);
+
+/** Parse an L2COMMIT commitment from a transaction (l1Height/l1TxHash unset). */
+std::optional<L2Commitment> ParseL2Commitment(const CTransaction& tx);
+
+/** Scan a connected L1 block for L2COMMIT commitments and record them. */
+void ProcessConnectedBlockForCommits(const CBlock& block, int height);
+
+/** Read a recorded commitment for an L2 block number. */
+bool GetL2Commitment(uint64_t l2BlockNumber, L2Commitment& out);
+
+/** Read the latest recorded commitment (highest committed L2 block). */
+bool GetLatestL2Commitment(L2Commitment& out);
+
+// ----------------------------------------------------------------------------
+// Fraud proofs (Phase 3): process-wide fraud-proof system.
+// Each recorded L1 commitment opens a challenge window (RegisterStateRoot).
+// A challenger can prove a committed state root is invalid (differs from the
+// honest re-execution), slashing the sequencer.
+// ----------------------------------------------------------------------------
+
+/** Get the process-wide fraud-proof system (lazily constructed). */
+FraudProofSystem& GetGlobalFraudProofSystem();
+
+// ----------------------------------------------------------------------------
+// Forced inclusion (Phase 3b): censorship resistance via an L1 OP_RETURN.
+// A user posts "L2FORCE" <from><to><value><nonce> on L1; every node queues it
+// into the L2 pool on block connect, so the sequencer cannot censor it.
+// ----------------------------------------------------------------------------
+
+/** Build the OP_RETURN script for a forced-inclusion transfer. */
+CScript BuildL2ForceScript(const uint160& from, const uint160& to, CAmount value, uint64_t nonce);
+
+/** Scan a connected L1 block for L2FORCE forced-inclusion transfers and queue them. */
+void ProcessConnectedBlockForForced(const CBlock& block, int height);
 
 } // namespace l2
 

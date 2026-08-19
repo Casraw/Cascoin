@@ -170,6 +170,10 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "l2_getsequencers", 0, "eligibleonly" },
     // Task 12: l2_deposit and l2_withdraw removed (Requirements: 11.1, 11.4)
     // Use the new burn-and-mint model: l2_createburntx, l2_sendburntx, l2_getburnstatus
+    { "l2_createcommitment", 0, "blocknumber" },
+    { "l2_getcommitment", 0, "blocknumber" },
+    { "l2_submitfraudproof", 0, "blocknumber" },
+    { "l2_createforcedtx", 3, "nonce" },
     { "l2_getminthistory", 0, "from_block" },
     { "l2_getminthistory", 1, "to_block" },
     { "l2_getwithdrawalstatus", 1, "chainid" },

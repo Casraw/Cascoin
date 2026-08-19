@@ -28,6 +28,7 @@
 #include <l2/l2_registry.h>
 #include <l2/state_manager.h>
 #include <l2/l2_globals.h>
+#include <l2/fraud_proof.h>
 #include <l2/sequencer_discovery.h>
 #include <l2/leader_election.h>
 #include <l2/bridge_contract.h>
@@ -260,14 +261,11 @@ UniValue l2_getblockbynumber(const JSONRPCRequest& request)
         verbose = request.params[1].get_bool();
     }
     
-    LOCK(cs_l2);
-    
-    // Check if block exists
-    if (blockNumber >= g_l2Blocks.size()) {
+    // Read the block from the persistent L2 block store.
+    l2::L2Block block;
+    if (!l2::GetL2BlockByNumber(blockNumber, block)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Block not found");
     }
-    
-    const l2::L2Block& block = g_l2Blocks[blockNumber];
     
     UniValue result(UniValue::VOBJ);
     result.pushKV("number", (int64_t)block.header.blockNumber);
@@ -1076,44 +1074,46 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     l2::L2TokenManager& tokenManager = GetL2TokenManager();
     const l2::L2TokenConfig& config = tokenManager.GetConfig();
     
-    CAmount fee = config.minTransferFee;
-    if (request.params.size() > 3) {
-        fee = AmountFromValue(request.params[3]);
-    }
-    
     // Validate amount
     if (amount <= 0) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
     }
-    
-    // Validate fee
-    if (fee < config.minTransferFee) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER,
-            strprintf("Fee must be at least %s %s", 
-                      FormatMoney(config.minTransferFee), config.tokenSymbol));
-    }
+    // Note: the optional fee parameter is accepted for backward compatibility
+    // but not charged in the current phase (transfers use gasPrice 0).
     
     l2::L2StateManager& stateManager = GetL2StateManager();
     
-    l2::TransferResult result = tokenManager.ProcessTransfer(from, to, amount, fee, stateManager);
-    
-    UniValue response(UniValue::VOBJ);
-    response.pushKV("success", result.success);
-    
-    if (result.success) {
-        response.pushKV("txHash", result.txHash.GetHex());
-        response.pushKV("from", "0x" + from.GetHex());
-        response.pushKV("to", "0x" + to.GetHex());
-        response.pushKV("amount", ValueFromAmount(amount));
-        response.pushKV("fee", ValueFromAmount(fee));
-        response.pushKV("newStateRoot", result.newStateRoot.GetHex());
-        response.pushKV("tokenSymbol", config.tokenSymbol);
-        response.pushKV("message", "Transfer completed successfully");
-    } else {
-        response.pushKV("error", result.error);
-        response.pushKV("message", result.error);
+    // Soft balance check for immediate feedback. The authoritative check is done
+    // by the sequencer when the transaction is applied in an L2 block.
+    l2::AccountState fromState = stateManager.GetAccountState(from);
+    if (fromState.balance < amount) {
+        throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS,
+            strprintf("Insufficient L2 balance: have %s, need %s",
+                      FormatMoney(fromState.balance), FormatMoney(amount)));
     }
     
+    // Build a native L2 transfer transaction and enqueue it for the sequencer.
+    // The nonce accounts for transfers from this sender already pending in the
+    // pool so several queued transfers get consecutive nonces.
+    uint64_t nonce = fromState.nonce + l2::GetPendingCountFromSender(from);
+    l2::L2Transaction tx = l2::CreateTransferTx(from, to, amount, nonce,
+                                                /*gasPrice=*/0, l2::GetL2ChainId());
+    
+    std::string err;
+    if (!l2::SubmitL2Transaction(tx, err)) {
+        throw JSONRPCError(RPC_TRANSACTION_REJECTED, "L2 transaction rejected: " + err);
+    }
+    
+    UniValue response(UniValue::VOBJ);
+    response.pushKV("success", true);
+    response.pushKV("txHash", tx.GetHash().GetHex());
+    response.pushKV("from", "0x" + from.GetHex());
+    response.pushKV("to", "0x" + to.GetHex());
+    response.pushKV("amount", ValueFromAmount(amount));
+    response.pushKV("nonce", (int64_t)nonce);
+    response.pushKV("status", "pending");
+    response.pushKV("tokenSymbol", config.tokenSymbol);
+    response.pushKV("message", "Transfer queued; will be included in the next L2 block");
     return response;
 }
 
@@ -1147,8 +1147,334 @@ UniValue l2_gettransfer(const JSONRPCRequest& request)
     result.pushKV("found", false);
     result.pushKV("txHash", txHash.GetHex());
     result.pushKV("status", "unknown");
-    result.pushKV("message", "Transfer lookup not yet implemented - transfers are processed immediately");
+    result.pushKV("message", "Use l2_getblockbynumber to find an included transfer");
     
+    return result;
+}
+
+UniValue l2_sendtransaction(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 1)
+        throw std::runtime_error(
+            "l2_sendtransaction \"hexstring\"\n"
+            "\nSubmit a raw (serialized) L2 transaction to the pending pool.\n"
+            "\nThe transaction is included by the sequencer in the next L2 block.\n"
+            "\nArguments:\n"
+            "1. \"hexstring\"   (string, required) Hex-encoded serialized L2Transaction\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"txHash\": \"xxx\",     (string) L2 transaction hash\n"
+            "  \"from\": \"xxx\",       (string) Sender address\n"
+            "  \"to\": \"xxx\",         (string) Recipient address\n"
+            "  \"value\": n,           (numeric) Value\n"
+            "  \"nonce\": n,           (numeric) Nonce\n"
+            "  \"status\": \"pending\"  (string) Pool status\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_sendtransaction", "\"0100...\"")
+            + HelpExampleRpc("l2_sendtransaction", "\"0100...\"")
+        );
+
+    EnsureL2Enabled();
+
+    if (!request.params[0].isStr() || !IsHex(request.params[0].get_str())) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "hexstring must be a hex string");
+    }
+    std::vector<unsigned char> data = ParseHex(request.params[0].get_str());
+    l2::L2Transaction tx;
+    if (!tx.Deserialize(data)) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Failed to decode L2 transaction");
+    }
+
+    std::string err;
+    if (!l2::SubmitL2Transaction(tx, err)) {
+        throw JSONRPCError(RPC_TRANSACTION_REJECTED, "L2 transaction rejected: " + err);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txHash", tx.GetHash().GetHex());
+    result.pushKV("from", "0x" + tx.from.GetHex());
+    result.pushKV("to", "0x" + tx.to.GetHex());
+    result.pushKV("value", ValueFromAmount(tx.value));
+    result.pushKV("nonce", (int64_t)tx.nonce);
+    result.pushKV("status", "pending");
+    result.pushKV("message", "Transaction queued; will be included in the next L2 block");
+    return result;
+}
+
+
+// ============================================================================
+// L1 anchoring RPCs (Phase 1e): L2COMMIT commitments
+// ============================================================================
+
+UniValue l2_createcommitment(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 2)
+        throw std::runtime_error(
+            "l2_createcommitment ( blocknumber \"staterootoverride\" )\n"
+            "\nBuild an unsigned L1 transaction that anchors an L2 state-root\n"
+            "commitment (OP_RETURN \"L2COMMIT\") for the given L2 block.\n"
+            "Fund it with fundrawtransaction, sign it with signrawtransaction,\n"
+            "then broadcast with sendrawtransaction.\n"
+            "\nArguments:\n"
+            "1. blocknumber        (numeric, optional) L2 block to commit (default: latest)\n"
+            "2. staterootoverride  (string, optional) TEST ONLY: commit this state root\n"
+            "                       instead of the block's real one (to simulate fraud)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"hex\": \"xxx\",           (string) Unsigned raw tx with the commitment output\n"
+            "  \"l2BlockNumber\": n,      (numeric) Committed L2 block number\n"
+            "  \"stateRoot\": \"xxx\",     (string) Committed L2 state root\n"
+            "  \"commitScript\": \"xxx\"   (string) The OP_RETURN script (hex)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_createcommitment", "")
+            + HelpExampleCli("l2_createcommitment", "5")
+        );
+
+    EnsureL2Enabled();
+
+    size_t blockCount = l2::GetL2BlockCount();
+    if (blockCount == 0) {
+        throw JSONRPCError(RPC_MISC_ERROR, "No L2 blocks have been produced yet");
+    }
+
+    uint64_t blockNumber = blockCount - 1;  // latest
+    if (request.params.size() > 0) {
+        blockNumber = request.params[0].get_int64();
+    }
+
+    l2::L2Block block;
+    if (!l2::GetL2BlockByNumber(blockNumber, block)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "L2 block not found");
+    }
+
+    uint256 committedRoot = block.header.stateRoot;
+    if (request.params.size() > 1) {
+        // TEST ONLY: allow committing an arbitrary (possibly wrong) state root
+        // so a fraud proof can be demonstrated.
+        committedRoot.SetHex(request.params[1].get_str());
+    }
+
+    uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
+    CScript commitScript = l2::BuildL2CommitScript(chainId, blockNumber, committedRoot);
+
+    // Build a raw transaction with a single 0-value OP_RETURN output. The caller
+    // funds it (adds inputs + change + fee), signs, and broadcasts.
+    CMutableTransaction rawTx;
+    rawTx.vout.push_back(CTxOut(0, commitScript));
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("hex", EncodeHexTx(rawTx));
+    result.pushKV("l2BlockNumber", (int64_t)blockNumber);
+    result.pushKV("stateRoot", committedRoot.GetHex());
+    result.pushKV("honestStateRoot", block.header.stateRoot.GetHex());
+    result.pushKV("commitScript", HexStr(commitScript.begin(), commitScript.end()));
+    result.pushKV("message", "Fund with fundrawtransaction, sign with signrawtransaction, then sendrawtransaction");
+    return result;
+}
+
+UniValue l2_getcommitment(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() > 1)
+        throw std::runtime_error(
+            "l2_getcommitment ( blocknumber )\n"
+            "\nGet the L1-anchored state-root commitment for an L2 block.\n"
+            "\nArguments:\n"
+            "1. blocknumber   (numeric, optional) L2 block number (default: latest committed)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"found\": bool,\n"
+            "  \"l2BlockNumber\": n,\n"
+            "  \"stateRoot\": \"xxx\",\n"
+            "  \"l1Height\": n,\n"
+            "  \"l1TxHash\": \"xxx\"\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getcommitment", "")
+            + HelpExampleCli("l2_getcommitment", "5")
+        );
+
+    EnsureL2Enabled();
+
+    l2::L2Commitment c;
+    bool found = false;
+    if (request.params.size() > 0) {
+        found = l2::GetL2Commitment(request.params[0].get_int64(), c);
+    } else {
+        found = l2::GetLatestL2Commitment(c);
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("found", found);
+    if (found) {
+        result.pushKV("l2BlockNumber", (int64_t)c.l2BlockNumber);
+        result.pushKV("stateRoot", c.stateRoot.GetHex());
+        result.pushKV("l1Height", (int64_t)c.l1Height);
+        result.pushKV("l1TxHash", c.l1TxHash.GetHex());
+        // Challenge-window / finalization status.
+        l2::FraudProofSystem& fps = l2::GetGlobalFraudProofSystem();
+        uint64_t now = (uint64_t)GetTime();
+        result.pushKV("challengeDeadline", (int64_t)fps.GetChallengeDeadline(c.stateRoot));
+        result.pushKV("finalized", fps.IsStateRootFinalized(c.stateRoot, now));
+    } else {
+        result.pushKV("message", "No commitment recorded");
+    }
+    return result;
+}
+
+UniValue l2_submitfraudproof(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "l2_submitfraudproof blocknumber ( \"challengeraddress\" )\n"
+            "\nChallenge the L1-anchored state-root commitment for an L2 block.\n"
+            "The node compares the committed state root (from L1) against the\n"
+            "honest state root it computed for that block. If they differ, the\n"
+            "fraud proof is valid and the sequencer is slashed.\n"
+            "\nArguments:\n"
+            "1. blocknumber         (numeric, required) Committed L2 block number to challenge\n"
+            "2. challengeraddress   (string, optional) Challenger L2 address (0x...)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"blockNumber\": n,\n"
+            "  \"committedStateRoot\": \"xxx\",   (from L1)\n"
+            "  \"honestStateRoot\": \"xxx\",      (recomputed locally)\n"
+            "  \"fraudProven\": bool,\n"
+            "  \"sequencer\": \"xxx\",\n"
+            "  \"slashedAmount\": n,             (if fraud proven)\n"
+            "  \"challengerReward\": n           (if fraud proven)\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_submitfraudproof", "1")
+            + HelpExampleCli("l2_submitfraudproof", "1 \"0xabc...\"")
+        );
+
+    EnsureL2Enabled();
+
+    uint64_t blockNumber = request.params[0].get_int64();
+
+    // The committed (claimed) state root must be anchored on L1.
+    l2::L2Commitment commit;
+    if (!l2::GetL2Commitment(blockNumber, commit)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER,
+            "No L1 commitment recorded for that L2 block (nothing to challenge)");
+    }
+
+    // The honest state root for that block, as computed by this full node.
+    l2::L2Block block;
+    if (!l2::GetL2BlockByNumber(blockNumber, block)) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "L2 block not found locally");
+    }
+    const uint256 honestRoot = block.header.stateRoot;
+
+    // Previous block's state root (proof structure requires it).
+    uint256 prevRoot;
+    if (blockNumber > 0) {
+        l2::L2Block prev;
+        if (l2::GetL2BlockByNumber(blockNumber - 1, prev)) {
+            prevRoot = prev.header.stateRoot;
+        }
+    }
+    if (prevRoot.IsNull()) prevRoot = honestRoot;  // fallback so structure validates
+
+    uint160 challenger;
+    if (request.params.size() > 1) {
+        challenger = ParseL2Address(request.params[1].get_str());
+    } else {
+        challenger.SetHex("1111111111111111111111111111111111111111");
+    }
+
+    l2::FraudProofSystem& fps = l2::GetGlobalFraudProofSystem();
+    uint64_t now = (uint64_t)GetTime();
+
+    l2::FraudProof proof;
+    proof.type = l2::FraudProofType::INVALID_STATE_TRANSITION;
+    proof.disputedStateRoot = commit.stateRoot;
+    proof.disputedBlockNumber = blockNumber;
+    proof.previousStateRoot = prevRoot;
+    proof.l2ChainId = l2::GetL2ChainId();
+    proof.challengerAddress = challenger;
+    proof.challengeBond = l2::FRAUD_PROOF_CHALLENGE_BOND;
+    proof.submittedAt = now;
+    proof.sequencerAddress = block.header.sequencer;
+
+    fps.SubmitFraudProof(proof, now);
+
+    // Fraud condition: the L1-committed root differs from the honest root.
+    bool fraudProven = (commit.stateRoot != honestRoot);
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("blockNumber", (int64_t)blockNumber);
+    result.pushKV("committedStateRoot", commit.stateRoot.GetHex());
+    result.pushKV("honestStateRoot", honestRoot.GetHex());
+    result.pushKV("fraudProven", fraudProven);
+    result.pushKV("sequencer", "0x" + block.header.sequencer.GetHex());
+
+    if (fraudProven) {
+        l2::SlashingRecord rec = fps.SlashSequencer(block.header.sequencer, proof, now);
+        result.pushKV("slashedAmount", ValueFromAmount(rec.slashedAmount));
+        result.pushKV("challengerReward", ValueFromAmount(rec.challengerReward));
+        result.pushKV("message", "Fraud proven: committed state root does not match honest execution; sequencer slashed");
+    } else {
+        result.pushKV("message", "No fraud: committed state root matches the honest execution");
+    }
+    return result;
+}
+
+UniValue l2_createforcedtx(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
+        throw std::runtime_error(
+            "l2_createforcedtx \"from\" \"to\" amount ( nonce )\n"
+            "\nBuild an unsigned L1 transaction that forces an L2 transfer via an\n"
+            "OP_RETURN \"L2FORCE\" output (censorship resistance). Fund it with\n"
+            "fundrawtransaction, sign with signrawtransaction, then sendrawtransaction.\n"
+            "Every node queues the transfer into the L2 pool on block connect, so\n"
+            "the sequencer cannot censor it.\n"
+            "\nArguments:\n"
+            "1. \"from\"    (string, required) Sender L2 address (0x...)\n"
+            "2. \"to\"      (string, required) Recipient L2 address (0x...)\n"
+            "3. amount     (numeric, required) Amount to transfer\n"
+            "4. nonce      (numeric, optional) Sender nonce (default: current account nonce)\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"hex\": \"xxx\",        (string) Unsigned raw tx with the L2FORCE output\n"
+            "  \"from\": \"xxx\", \"to\": \"xxx\", \"amount\": n, \"nonce\": n\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_createforcedtx", "\"0xabc...\" \"0xdef...\" 5")
+        );
+
+    EnsureL2Enabled();
+
+    uint160 from = ParseL2Address(request.params[0].get_str());
+    uint160 to = ParseL2Address(request.params[1].get_str());
+    CAmount amount = AmountFromValue(request.params[2]);
+    if (amount <= 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Amount must be positive");
+    }
+
+    uint64_t nonce;
+    if (request.params.size() > 3) {
+        nonce = request.params[3].get_int64();
+    } else {
+        nonce = l2::GetGlobalStateManager().GetAccountState(from).nonce
+                + l2::GetPendingCountFromSender(from);
+    }
+
+    CScript forceScript = l2::BuildL2ForceScript(from, to, amount, nonce);
+    CMutableTransaction rawTx;
+    rawTx.vout.push_back(CTxOut(0, forceScript));
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("hex", EncodeHexTx(rawTx));
+    result.pushKV("from", "0x" + from.GetHex());
+    result.pushKV("to", "0x" + to.GetHex());
+    result.pushKV("amount", ValueFromAmount(amount));
+    result.pushKV("nonce", (int64_t)nonce);
+    result.pushKV("forceScript", HexStr(forceScript.begin(), forceScript.end()));
+    result.pushKV("message", "Fund with fundrawtransaction, sign, then sendrawtransaction to force inclusion");
     return result;
 }
 
@@ -1787,6 +2113,7 @@ static const CRPCCommand commands[] =
     
     // Task 8.3: Transfer RPC (Requirements: 2.5, 7.3)
     { "l2",                   "l2_transfer",            &l2_transfer,            {"from", "to", "amount", "fee"} },
+    { "l2",                   "l2_sendtransaction",     &l2_sendtransaction,     {"hexstring"} },
     { "l2",                   "l2_gettransfer",         &l2_gettransfer,         {"txhash"} },
     
     // Task 8.4: Faucet RPC (Requirements: 5.1, 5.5)
@@ -1799,6 +2126,14 @@ static const CRPCCommand commands[] =
     // See src/rpc/l2_burn.cpp for the new implementation
     
     { "l2",                   "l2_getwithdrawalstatus", &l2_getwithdrawalstatus, {"withdrawalid"} },
+    
+    // Phase 1e: L1 anchoring commitments
+    { "l2",                   "l2_createcommitment",    &l2_createcommitment,    {"blocknumber", "staterootoverride"} },
+    { "l2",                   "l2_getcommitment",       &l2_getcommitment,       {"blocknumber"} },
+    
+    // Phase 3: fraud proofs + forced inclusion
+    { "l2",                   "l2_submitfraudproof",    &l2_submitfraudproof,    {"blocknumber", "challengeraddress"} },
+    { "l2",                   "l2_createforcedtx",      &l2_createforcedtx,      {"from", "to", "amount", "nonce"} },
     
     // Task 21.1: L2 Registry RPC (Requirements: 1.1, 1.2, 1.3, 1.4, 1.5)
     { "l2",                   "l2_registerchain",       &l2_registerchain,       {"name", "stake", "blocktime", "gaslimit", "challengeperiod", "minseqstake", "minseqhatscore"} },

@@ -184,8 +184,9 @@ bool L2Transaction::ValidateStructure() const {
             break;
     }
     
-    // Gas price validation (at least one must be set for non-deposit tx)
-    if (type != L2TxType::DEPOSIT) {
+    // Gas price validation. Simple value transfers may be fee-free (gasPrice 0);
+    // other execution types must set a fee to deter spam.
+    if (type != L2TxType::DEPOSIT && type != L2TxType::TRANSFER) {
         if (gasPrice == 0 && maxFeePerGas == 0) {
             return false;
         }

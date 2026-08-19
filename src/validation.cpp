@@ -2245,6 +2245,10 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // Reached only when fJustCheck == false. Never throws.
     if (l2::IsL2Enabled()) {
         l2::ProcessConnectedBlockForBurns(block, pindex->nHeight, pindex->nHeight);
+        // Record any L2 state-root commitments (L2COMMIT) anchored in this block.
+        l2::ProcessConnectedBlockForCommits(block, pindex->nHeight);
+        // Queue any forced-inclusion (L2FORCE) transfers posted on L1.
+        l2::ProcessConnectedBlockForForced(block, pindex->nHeight);
     }
 
     // Cascoin: Quantum Registry - Register public keys from registration transactions

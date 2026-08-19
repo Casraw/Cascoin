@@ -19,6 +19,7 @@
 #include <l2/account_state.h>
 #include <l2/sparse_merkle_tree.h>
 #include <l2/l2_common.h>
+#include <l2/l2_transaction.h>
 #include <uint256.h>
 #include <primitives/transaction.h>
 #include <sync.h>
@@ -155,6 +156,23 @@ public:
     TxExecutionResult ApplyTransaction(const CTransaction& tx, uint64_t blockNumber);
 
     /**
+     * @brief Apply a native L2 transaction (Phase 1: value transfers).
+     *
+     * Performs replay protection (nonce must equal the sender's current nonce),
+     * balance checks (value + fee), atomic debit/credit, and updates the Sparse
+     * Merkle Tree. The gas fee (gasPrice * base gas) is credited to
+     * @p feeRecipient (the block's sequencer) so the total-supply invariant is
+     * preserved; if @p feeRecipient is null the fee is burned.
+     *
+     * @param tx           The L2 transaction (currently only L2TxType::TRANSFER).
+     * @param blockNumber  The L2 block number this tx is included in.
+     * @param feeRecipient The sequencer address to receive the fee (may be null).
+     * @return Execution result with gasUsed and the new state root.
+     */
+    TxExecutionResult ApplyL2Transaction(const L2Transaction& tx, uint64_t blockNumber,
+                                         const uint160& feeRecipient);
+
+    /**
      * @brief Apply a batch of transactions atomically
      * @param txs Vector of transactions to apply
      * @param blockNumber Current L2 block number
@@ -254,6 +272,15 @@ public:
      * @return Account count
      */
     size_t GetAccountCount() const;
+
+    /**
+     * @brief Sum of balances across all accounts.
+     *
+     * Used to verify the supply invariant (sum of all balances must equal the
+     * total minted supply) in a way that remains correct across transfers,
+     * which move value between arbitrary accounts.
+     */
+    CAmount GetTotalBalances() const;
 
     /**
      * @brief Clear all state (for testing)

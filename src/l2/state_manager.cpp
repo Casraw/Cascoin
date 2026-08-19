@@ -85,6 +85,89 @@ TxExecutionResult L2StateManager::ApplyTransaction(const CTransaction& tx, uint6
     return TxExecutionResult::Success(21000, newRoot);  // Base gas cost
 }
 
+TxExecutionResult L2StateManager::ApplyL2Transaction(const L2Transaction& tx, uint64_t blockNumber,
+                                                     const uint160& feeRecipient)
+{
+    LOCK(cs_state_);
+
+    // Base gas for a simple value transfer.
+    static const uint64_t kTransferGas = 21000;
+
+    // Replay protection / chain binding.
+    if (tx.l2ChainId != chainId_) {
+        return TxExecutionResult::Failure("Wrong L2 chain id");
+    }
+    // Phase 1 only supports native value transfers.
+    if (tx.type != L2TxType::TRANSFER) {
+        return TxExecutionResult::Failure("Unsupported L2 transaction type");
+    }
+    if (tx.from.IsNull()) {
+        return TxExecutionResult::Failure("Null sender");
+    }
+    if (tx.to.IsNull()) {
+        return TxExecutionResult::Failure("Null recipient");
+    }
+    if (tx.value < 0) {
+        return TxExecutionResult::Failure("Negative value");
+    }
+
+    // Fee = gasPrice * base gas (may be zero).
+    CAmount fee = tx.gasPrice * static_cast<CAmount>(kTransferGas);
+    if (fee < 0) {
+        return TxExecutionResult::Failure("Fee overflow");
+    }
+    CAmount totalRequired = tx.value + fee;
+    if (totalRequired < tx.value || totalRequired < fee) {
+        return TxExecutionResult::Failure("Amount overflow");
+    }
+
+    const uint256 fromKey = AddressToKey(tx.from);
+    AccountState fromState = GetAccountState(fromKey);
+
+    // Nonce must match the account's current nonce.
+    if (tx.nonce != fromState.nonce) {
+        return TxExecutionResult::Failure("Bad nonce");
+    }
+    if (fromState.balance < totalRequired) {
+        return TxExecutionResult::Failure("Insufficient balance");
+    }
+
+    const uint256 toKey = AddressToKey(tx.to);
+    AccountState toState = GetAccountState(toKey);
+    if (toState.balance + tx.value < toState.balance) {
+        return TxExecutionResult::Failure("Recipient balance overflow");
+    }
+
+    // Atomic debit/credit.
+    fromState.balance -= totalRequired;
+    fromState.nonce++;
+    fromState.lastActivity = blockNumber;
+
+    // to == from edge case: re-read after debit so we don't lose the debit.
+    if (toKey == fromKey) {
+        toState = fromState;
+    }
+    toState.balance += tx.value;
+    toState.lastActivity = blockNumber;
+
+    SetAccountState(fromKey, fromState);
+    SetAccountState(toKey, toState);
+
+    // Credit the fee to the sequencer so the total-supply invariant holds.
+    if (fee > 0 && !feeRecipient.IsNull()) {
+        const uint256 feeKey = AddressToKey(feeRecipient);
+        AccountState feeState = (feeKey == fromKey) ? GetAccountState(fromKey)
+                              : (feeKey == toKey)   ? GetAccountState(toKey)
+                                                    : GetAccountState(feeKey);
+        feeState.balance += fee;
+        feeState.lastActivity = blockNumber;
+        SetAccountState(feeKey, feeState);
+    }
+
+    currentBlockNumber_ = blockNumber;
+    return TxExecutionResult::Success(kTransferGas, stateTree_.GetRoot());
+}
+
 std::vector<TxExecutionResult> L2StateManager::ApplyBatch(
     const std::vector<CTransaction>& txs,
     uint64_t blockNumber)
@@ -362,6 +445,16 @@ size_t L2StateManager::GetAccountCount() const
 {
     LOCK(cs_state_);
     return stateTree_.Size();
+}
+
+CAmount L2StateManager::GetTotalBalances() const
+{
+    LOCK(cs_state_);
+    CAmount total = 0;
+    for (const auto& entry : accountCache_) {
+        total += entry.second.balance;
+    }
+    return total;
 }
 
 void L2StateManager::Clear()

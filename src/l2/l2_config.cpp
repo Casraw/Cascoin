@@ -5,6 +5,8 @@
 #include <l2/l2_config.h>
 #include <l2/l2_chainparams.h>
 #include <l2/leader_election.h>
+#include <l2/sequencer_consensus.h>
+#include <l2/l2_globals.h>
 #include <util.h>
 #include <chainparamsbase.h>
 #include <utilmoneystr.h>
@@ -105,6 +107,12 @@ bool StartL2()
     if (!IsLeaderElectionInitialized()) {
         InitLeaderElection(GetL2ChainId());
     }
+
+    // Initialize the sequencer consensus engine so L2VOTE messages are
+    // processed and multi-sequencer block finalization can operate.
+    if (!IsSequencerConsensusInitialized()) {
+        InitSequencerConsensus(GetL2ChainId());
+    }
     
     // Note: the burn-and-mint runtime (state manager, burn registry and token
     // minter) is provided by the shared singletons in l2_globals.* and is
@@ -127,10 +135,8 @@ void StopL2()
     
     LogPrintf("L2: Stopping subsystem...\n");
     
-    // TODO: Cleanup L2 components
-    // - Flush state
-    // - Close connections
-    // - etc.
+    // Stop the sequencer block producer thread (safe if never started).
+    StopL2BlockProducer();
     
     LogPrintf("L2: Subsystem stopped\n");
 }
@@ -143,7 +149,8 @@ void InterruptL2()
     
     LogPrintf("L2: Interrupting subsystem...\n");
     
-    // TODO: Signal L2 threads to stop
+    // Stop the sequencer block producer before chain state is torn down.
+    StopL2BlockProducer();
 }
 
 } // namespace l2

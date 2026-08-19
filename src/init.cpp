@@ -1196,6 +1196,11 @@ bool AppInitParameterInteraction()
     if (gArgs.GetBoolArg("-rialto", DEFAULT_RIALTO_SUPPORT))
         nLocalServices = ServiceFlags(nLocalServices | NODE_RIALTO);
 
+    // Cascoin: L2 - advertise L2 service capability so peers gossip/relay L2
+    // blocks, transactions and sync requests to us.
+    if (gArgs.GetBoolArg("-l2", true))
+        nLocalServices = ServiceFlags(nLocalServices | NODE_L2);
+
     if (gArgs.GetArg("-rpcserialversion", DEFAULT_RPC_SERIALIZE_VERSION) < 0)
         return InitError("rpcserialversion must be non-negative.");
 
@@ -2081,6 +2086,8 @@ bool AppInitMain()
                 // Evaluate maturity against the real chain tip so burns with
                 // >= REQUIRED_CONFIRMATIONS are minted during the rescan.
                 l2::ProcessConnectedBlockForBurns(block, h, tipHeight);
+                // Re-record L2 state-root commitments (idempotent).
+                l2::ProcessConnectedBlockForCommits(block, h);
                 scanned++;
             }
             LogPrintf("L2: Rescan complete (%d blocks scanned)\n", scanned);
@@ -2088,6 +2095,25 @@ bool AppInitMain()
             LogPrintf("L2: No blocks to rescan (checkpoint height %d, tip %d)\n",
                       l2::GetL2LastProcessedHeight(), tipHeight);
         }
+
+        // Phase 1: start the sequencer block producer if this node acts as a
+        // sequencer. Default on for regtest (single-node dev), off otherwise.
+        // Started here (after persistence load + rescan) so it continues from
+        // the correct L2 tip. Reuses the validator key as the sequencer key.
+        bool fDefaultSeq = (chainparams.NetworkIDString() == "regtest");
+        bool fSeq = gArgs.GetBoolArg("-l2sequencer", fDefaultSeq);
+        if (fSeq) {
+            if (CVM::g_validatorKeys && !CVM::g_validatorKeys->HasValidatorKey()) {
+                if (CVM::g_validatorKeys->GenerateNewKey()) {
+                    LogPrintf("L2: Generated sequencer key %s\n",
+                              CVM::g_validatorKeys->GetValidatorAddress().ToString());
+                }
+            }
+        }
+        // The L2 worker runs on all L2 nodes: it syncs blocks from peers, and
+        // additionally produces blocks when this node is a sequencer.
+        l2::StartL2BlockProducer(fSeq);
+        LogPrintf("L2: worker started (sequencer=%d)\n", (int)fSeq);
     }
 
     return true;

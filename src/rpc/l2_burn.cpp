@@ -802,17 +802,10 @@ UniValue l2_verifysupply(const JSONRPCRequest& request)
         l2::L2TokenMinter& minter = l2::GetGlobalMinter();
         totalSupply = minter.GetTotalSupply();
         totalMinted = minter.GetTotalMintedL2();
-        invariantValid = minter.VerifySupplyInvariant();
-        
-        // Calculate sum of balances from mint events
-        std::vector<l2::MintEvent> events = minter.GetMintEvents();
-        std::set<uint160> recipients;
-        for (const auto& event : events) {
-            recipients.insert(event.recipient);
-        }
-        for (const uint160& addr : recipients) {
-            sumOfBalances += minter.GetBalance(addr);
-        }
+        // Sum balances across ALL accounts so the invariant stays correct after
+        // transfers move value between arbitrary (non-mint-recipient) accounts.
+        sumOfBalances = l2::GetGlobalStateManager().GetTotalBalances();
+        invariantValid = (totalSupply == totalBurned) && (sumOfBalances == totalSupply);
     }
 
     bool supplyMatchesBurned = (totalSupply == totalBurned);

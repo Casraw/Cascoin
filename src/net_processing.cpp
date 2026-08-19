@@ -44,6 +44,8 @@
 #include <l2/l2_block.h> // Cascoin: L2 Block structures
 #include <l2/l2_transaction.h> // Cascoin: L2 Transaction structures
 #include <l2/l2_peer_manager.h> // Cascoin: L2 Peer Management
+#include <l2/l2_globals.h> // Cascoin: L2 block store / ingestion / sync
+#include <l2/l2_common.h> // Cascoin: L2 enabled / chain id
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -3648,18 +3650,32 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return false;
         }
         
-        // Process the block (this would integrate with L2 state manager)
-        // For now, relay to other L2-capable peers
-        connman->ForEachNode([&](CNode* pnode) {
-            if (pnode->fSuccessfullyConnected && 
-                pnode->GetId() != pfrom->GetId() &&
-                (pnode->nServices & NODE_L2)) {
-                connman->PushMessage(pnode,
-                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2BLOCK, block));
-            }
-        });
-        
-        LogPrint(BCLog::NET, "L2: Relayed L2 block #%llu to L2-capable peers\n", block.GetBlockNumber());
+        // Ingest the block into our L2 state/store.
+        std::string l2err;
+        bool accepted = l2::IngestL2Block(block, l2err);
+        if (accepted) {
+            // Relay to other L2-capable peers.
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->fSuccessfullyConnected &&
+                    pnode->GetId() != pfrom->GetId() &&
+                    (pnode->nServices & NODE_L2)) {
+                    connman->PushMessage(pnode,
+                        CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2BLOCK, block));
+                }
+            });
+            LogPrint(BCLog::NET, "L2: Accepted+relayed L2 block #%llu\n", block.GetBlockNumber());
+        } else if (l2err == "gap") {
+            // Missing ancestors: request the gap from this peer.
+            uint64_t start = (uint64_t)l2::GetL2BlockCount();
+            uint64_t end = block.GetBlockNumber();
+            uint64_t chainId = l2::GetL2ChainId();
+            connman->PushMessage(pfrom,
+                CNetMsgMaker(pfrom->GetSendVersion()).Make(NetMsgType::L2GETBLOCKS, start, end, chainId));
+            LogPrint(BCLog::NET, "L2: block #%llu ahead of tip, requesting %llu..%llu\n",
+                     block.GetBlockNumber(), start, end);
+        } else {
+            LogPrint(BCLog::NET, "L2: rejected L2 block #%llu: %s\n", block.GetBlockNumber(), l2err);
+        }
     }
 
     // Cascoin: L2 Network - Sequencer Vote
@@ -3719,15 +3735,20 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return false;
         }
         
-        // Relay to other L2-capable peers
-        connman->ForEachNode([&](CNode* pnode) {
-            if (pnode->fSuccessfullyConnected && 
-                pnode->GetId() != pfrom->GetId() &&
-                (pnode->nServices & NODE_L2)) {
-                connman->PushMessage(pnode,
-                    CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
-            }
-        });
+        // Add to our pending pool (so a sequencer can include it). Relay only if
+        // it was newly accepted, to avoid gossip loops.
+        std::string l2err;
+        bool added = l2::SubmitL2Transaction(tx, l2err);
+        if (added) {
+            connman->ForEachNode([&](CNode* pnode) {
+                if (pnode->fSuccessfullyConnected &&
+                    pnode->GetId() != pfrom->GetId() &&
+                    (pnode->nServices & NODE_L2)) {
+                    connman->PushMessage(pnode,
+                        CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
+                }
+            });
+        }
     }
 
     // Cascoin: L2 Network - L2 Inventory
@@ -3822,8 +3843,19 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return true;
         }
         
-        // This would look up blocks and send them back
-        // For now, just log the request
+        // Send the requested blocks (that we have) back as L2BLOCK messages.
+        int sent = 0;
+        for (uint64_t n = startBlock; n <= endBlock; n++) {
+            l2::L2Block b;
+            if (l2::GetL2BlockByNumber(n, b)) {
+                connman->PushMessage(pfrom,
+                    CNetMsgMaker(pfrom->GetSendVersion()).Make(NetMsgType::L2BLOCK, b));
+                sent++;
+            } else {
+                break;  // no contiguous block beyond this point
+            }
+        }
+        LogPrint(BCLog::NET, "L2: Served %d L2 block(s) to peer=%d\n", sent, pfrom->GetId());
     }
 
     // Cascoin: L2 Network - L2 Get Headers
