@@ -59,6 +59,7 @@
 #include <cvm/blockprocessor.h>  // Cascoin: CVM Block Processor and Trust Propagation
 #include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
 #include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
+#include <cvm/validator_keys.h>  // Cascoin: HAT v2 validator key manager
 #include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
 #include <quantum_registry.h>  // Cascoin: Quantum public key registry
 #include <stdint.h>
@@ -1722,6 +1723,19 @@ bool AppInitMain()
     }
     LogPrintf("CVM database initialized successfully\n");
     
+    // Initialize the HAT v2 validator key manager. The manager must exist for
+    // the validator RPCs (generatevalidatorkey, getvalidatorinfo, ...) to work.
+    // Initialize() loads an existing validator.key (or one referenced by
+    // -validatoraddress); if none exists it returns false but the manager is
+    // still available so a key can be generated later via RPC.
+    LogPrintf("Initializing validator key manager...\n");
+    CVM::g_validatorKeys = std::unique_ptr<CVM::ValidatorKeyManager>(new CVM::ValidatorKeyManager());
+    if (CVM::g_validatorKeys->Initialize(GetDataDir())) {
+        LogPrintf("Validator key manager initialized (validator key loaded)\n");
+    } else {
+        LogPrintf("Validator key manager initialized (no validator key configured yet)\n");
+    }
+
     // Initialize trust propagation components (Requirements: 2.4, 16.1)
     LogPrintf("Initializing trust propagation components...\n");
     if (!CVM::InitTrustPropagation(*CVM::g_cvmdb)) {

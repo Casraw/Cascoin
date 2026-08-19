@@ -10,12 +10,21 @@
  */
 
 #include <l2/l2_minter.h>
+#include <l2/l2_globals.h>
 #include <l2/account_state.h>
+#include <l2/burn_parser.h>
+#include <l2/burn_registry.h>
+#include <l2/burn_validator.h>
+#include <l2/state_manager.h>
 #include <hash.h>
 #include <util.h>
+#include <primitives/block.h>
+#include <primitives/transaction.h>
 
 #include <chrono>
+#include <map>
 #include <memory>
+#include <vector>
 
 namespace l2 {
 
@@ -309,6 +318,141 @@ uint256 L2TokenMinter::GenerateL2TxHash(
     ss << amount;
     ss << blockNumber;
     return ss.GetHash();
+}
+
+// ============================================================================
+// Shared L2 runtime singletons and burn-and-mint block processor
+//
+// The RPC layer (l2_getbalance, l2_gettotalsupply, l2_getburnstatus, ...) and
+// the block-connection code below MUST share the same state manager, burn
+// registry and minter so that mints are visible through the RPC interface.
+// ============================================================================
+
+L2StateManager& GetGlobalStateManager() {
+    static L2StateManager stateManager(GetL2ChainId());
+    return stateManager;
+}
+
+BurnRegistry& GetGlobalBurnRegistry() {
+    static BurnRegistry burnRegistry;
+    return burnRegistry;
+}
+
+L2TokenMinter& GetGlobalMinter() {
+    static L2TokenMinter minter(GetGlobalStateManager(), GetGlobalBurnRegistry());
+    return minter;
+}
+
+namespace {
+    /** A burn detected on L1 that is waiting for enough confirmations to mint. */
+    struct TrackedBurn {
+        BurnData burnData;
+        int height;
+        uint256 blockHash;
+    };
+    std::map<uint256, TrackedBurn> g_trackedBurns;
+    CCriticalSection cs_trackedBurns;
+} // namespace
+
+void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHeight) {
+    if (!IsL2Enabled()) {
+        return;
+    }
+
+    try {
+        const uint32_t ourChainId = static_cast<uint32_t>(GetL2ChainId());
+        BurnRegistry& registry = GetGlobalBurnRegistry();
+        L2TokenMinter& minter = GetGlobalMinter();
+
+        LOCK(cs_trackedBurns);
+
+        // 1. Detect new burn transactions in this block.
+        const uint256 blockHash = block.GetHash();
+        for (const auto& tx : block.vtx) {
+            auto burnOpt = BurnTransactionParser::ParseBurnTransaction(*tx);
+            if (!burnOpt) {
+                continue;
+            }
+            if (burnOpt->chainId != ourChainId) {
+                continue;  // Burn destined for a different L2 chain
+            }
+            const uint256 txHash = tx->GetHash();
+            if (registry.IsProcessed(txHash)) {
+                continue;  // Already minted
+            }
+            if (g_trackedBurns.find(txHash) == g_trackedBurns.end()) {
+                TrackedBurn tb;
+                tb.burnData = *burnOpt;
+                tb.height = height;
+                tb.blockHash = blockHash;
+                g_trackedBurns[txHash] = tb;
+                LogPrintf("L2: Detected burn %s (amount=%d, chainId=%u) at height %d\n",
+                          txHash.ToString().substr(0, 16), burnOpt->amount,
+                          burnOpt->chainId, height);
+            }
+        }
+
+        // 2. Mint any tracked burn that now has REQUIRED_CONFIRMATIONS.
+        //    A confirmed L1 burn is an objective fact, so minting 1:1 is
+        //    deterministic and needs no multi-sequencer voting.
+        std::vector<uint256> done;
+        for (auto& entry : g_trackedBurns) {
+            const uint256& txHash = entry.first;
+            const TrackedBurn& tb = entry.second;
+            int confirmations = chainHeight - tb.height + 1;
+            if (confirmations < REQUIRED_CONFIRMATIONS) {
+                continue;
+            }
+            if (registry.IsProcessed(txHash)) {
+                done.push_back(txHash);
+                continue;
+            }
+            // Use the L1 height as the L2 mint block number so the burn record
+            // is valid (l2MintBlock must be > 0).
+            minter.SetCurrentBlockNumber(static_cast<uint64_t>(chainHeight));
+            uint160 recipient = tb.burnData.GetRecipientAddress();
+            MintResult result = minter.MintTokensWithDetails(
+                txHash, static_cast<uint64_t>(tb.height), tb.blockHash,
+                recipient, tb.burnData.amount);
+            if (result.success) {
+                LogPrintf("L2: Minted %d tokens to 0x%s for burn %s (confirmations=%d)\n",
+                          tb.burnData.amount, recipient.GetHex(),
+                          txHash.ToString().substr(0, 16), confirmations);
+                done.push_back(txHash);
+            } else {
+                LogPrintf("L2: Mint failed for burn %s: %s\n",
+                          txHash.ToString().substr(0, 16), result.errorMessage);
+                // If it was already processed, stop tracking it.
+                if (registry.IsProcessed(txHash)) {
+                    done.push_back(txHash);
+                }
+            }
+        }
+        for (const uint256& txHash : done) {
+            g_trackedBurns.erase(txHash);
+        }
+    } catch (const std::exception& e) {
+        LogPrintf("L2: ProcessConnectedBlockForBurns exception: %s\n", e.what());
+    } catch (...) {
+        LogPrintf("L2: ProcessConnectedBlockForBurns unknown exception\n");
+    }
+}
+
+void HandleBurnReorg(int height) {
+    LOCK(cs_trackedBurns);
+    std::vector<uint256> toRemove;
+    for (const auto& entry : g_trackedBurns) {
+        if (entry.second.height >= height) {
+            toRemove.push_back(entry.first);
+        }
+    }
+    for (const uint256& txHash : toRemove) {
+        g_trackedBurns.erase(txHash);
+    }
+    if (!toRemove.empty()) {
+        LogPrintf("L2: Dropped %u tracked burns at/above height %d due to reorg\n",
+                  (unsigned)toRemove.size(), height);
+    }
 }
 
 } // namespace l2

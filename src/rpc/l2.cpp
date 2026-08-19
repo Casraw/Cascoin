@@ -27,6 +27,7 @@
 #include <l2/l2_block.h>
 #include <l2/l2_registry.h>
 #include <l2/state_manager.h>
+#include <l2/l2_globals.h>
 #include <l2/sequencer_discovery.h>
 #include <l2/leader_election.h>
 #include <l2/bridge_contract.h>
@@ -68,14 +69,12 @@ static void EnsureL2Enabled()
     }
 }
 
-// Helper function to get or create state manager
+// Helper function to get the shared L2 state manager.
+// Delegates to the process-wide singleton so that balances minted by the
+// block-connection code (ProcessConnectedBlockForBurns) are visible here.
 static l2::L2StateManager& GetL2StateManager()
 {
-    LOCK(cs_l2);
-    if (!g_l2StateManager) {
-        g_l2StateManager = std::make_unique<l2::L2StateManager>(l2::GetL2ChainId());
-    }
-    return *g_l2StateManager;
+    return l2::GetGlobalStateManager();
 }
 
 // Helper function to get or create bridge contract
@@ -120,10 +119,16 @@ static uint160 ParseL2Address(const std::string& addressStr)
         addrHex = addrHex.substr(2);
     }
     
-    // If it's 40 hex chars, parse directly
+    // If it's 40 hex chars, parse directly.
+    // L2 addresses are displayed as "0x" + uint160::GetHex(), which emits the
+    // internal bytes in reversed (big-endian) order. Parse them back with
+    // SetHex() so the string<->uint160 round-trip is consistent. Using
+    // uint160(ParseHex(...)) here would NOT reverse and produce a mirrored
+    // address, causing balance lookups to miss the key the minter wrote.
     if (addrHex.length() == 40 && IsHex(addrHex)) {
-        std::vector<unsigned char> addressBytes = ParseHex(addrHex);
-        return uint160(addressBytes);
+        uint160 addr;
+        addr.SetHex(addrHex);
+        return addr;
     }
     
     // Try base58 decode

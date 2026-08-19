@@ -4826,8 +4826,11 @@ UniValue getvalidatorinfo(const JSONRPCRequest& request)
 
         // Get validator statistics from database
         try {
-            // Create database instance
-            CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+            // Use the shared CVM database instance (avoid a second LevelDB lock).
+            if (!CVM::g_cvmdb) {
+                throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+            }
+            CVM::CVMDatabase& db = *CVM::g_cvmdb;
             
             // Create required components
             CVM::TrustGraph trustGraph(db);
@@ -5029,8 +5032,13 @@ UniValue listvalidators(const JSONRPCRequest& request)
         minReputation = request.params[0].get_int();
     }
 
-    // Create database instance
-    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    // Use the shared CVM database instance. Opening a second CVMDatabase handle
+    // on the same LevelDB directory fails with "Database I/O error" because the
+    // daemon already holds the LevelDB lock.
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
     
     // Create required components
     CVM::TrustGraph trustGraph(db);
@@ -5407,8 +5415,11 @@ UniValue getvalidatorstats(const JSONRPCRequest& request)
     uint160 addr;
     memcpy(addr.begin(), addrData.data(), 20);
 
-    // Create database instance
-    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    // Use the shared CVM database instance (avoid a second LevelDB lock).
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
     
     // Create required components
     CVM::TrustGraph trustGraph(db);
@@ -5499,8 +5510,11 @@ UniValue getvalidationhistory(const JSONRPCRequest& request)
     uint160 addr;
     memcpy(addr.begin(), addrData.data(), 20);
 
-    // Create database instance
-    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    // Use the shared CVM database instance (avoid a second LevelDB lock).
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
     
     // Create required components
     CVM::TrustGraph trustGraph(db);
@@ -5558,8 +5572,11 @@ UniValue detectsybilnetwork(const JSONRPCRequest& request)
     uint160 addr;
     memcpy(addr.begin(), addrData.data(), 20);
 
-    // Create database instance
-    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    // Use the shared CVM database instance (avoid a second LevelDB lock).
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
     
     // Create required components
     CVM::TrustGraph trustGraph(db);
@@ -5631,8 +5648,12 @@ UniValue getsybilalerts(const JSONRPCRequest& request)
         }
     }
 
-    // Create database instance
-    CVM::CVMDatabase db(GetDataDir() / "cvm", 100 * 1024 * 1024, false, false);
+    // Use the shared CVM database instance (avoid a second LevelDB lock).
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
+    (void)db;
 
     UniValue result(UniValue::VARR);
 

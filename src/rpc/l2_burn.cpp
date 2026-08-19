@@ -28,6 +28,7 @@
 #include <l2/burn_registry.h>
 #include <l2/mint_consensus.h>
 #include <l2/l2_minter.h>
+#include <l2/l2_globals.h>
 #include <l2/state_manager.h>
 #include <validation.h>
 #include <consensus/validation.h>
@@ -66,14 +67,13 @@ static void EnsureL2Enabled()
     }
 }
 
-// Helper function to get or create burn registry
+// Helper function to get the shared burn registry.
+// Delegates to the process-wide singleton so that burns minted by the
+// block-connection code (ProcessConnectedBlockForBurns) are reflected in
+// l2_gettotalsupply / l2_getburnstatus here.
 static l2::BurnRegistry& GetBurnRegistry()
 {
-    LOCK(cs_burn);
-    if (!g_burnRegistry) {
-        g_burnRegistry = std::make_unique<l2::BurnRegistry>();
-    }
-    return *g_burnRegistry;
+    return l2::GetGlobalBurnRegistry();
 }
 
 // Helper function to get or create burn validator
@@ -739,14 +739,11 @@ UniValue l2_gettotalsupply(const JSONRPCRequest& request)
     result.pushKV("totalSupply", ValueFromAmount(totalBurned));
     result.pushKV("totalBurnedL1", ValueFromAmount(totalBurned));
     
-    // Get minted amount from L2TokenMinter if available
-    if (l2::IsL2TokenMinterInitialized()) {
-        l2::L2TokenMinter& minter = l2::GetL2TokenMinter();
+    // Get minted amount from the shared process-wide token minter.
+    {
+        l2::L2TokenMinter& minter = l2::GetGlobalMinter();
         result.pushKV("totalMintedL2", ValueFromAmount(minter.GetTotalMintedL2()));
         result.pushKV("invariantValid", minter.VerifySupplyInvariant());
-    } else {
-        result.pushKV("totalMintedL2", ValueFromAmount(totalBurned));
-        result.pushKV("invariantValid", true);
     }
     
     result.pushKV("burnCount", (int64_t)burnCount);
@@ -799,8 +796,10 @@ UniValue l2_verifysupply(const JSONRPCRequest& request)
     CAmount sumOfBalances = 0;
     bool invariantValid = true;
     
-    if (l2::IsL2TokenMinterInitialized()) {
-        l2::L2TokenMinter& minter = l2::GetL2TokenMinter();
+    // Use the shared process-wide minter (the same instance the block-connection
+    // code mints into), so the reported supply and balances match reality.
+    {
+        l2::L2TokenMinter& minter = l2::GetGlobalMinter();
         totalSupply = minter.GetTotalSupply();
         totalMinted = minter.GetTotalMintedL2();
         invariantValid = minter.VerifySupplyInvariant();

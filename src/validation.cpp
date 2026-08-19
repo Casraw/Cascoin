@@ -65,6 +65,8 @@ using namespace boost::placeholders;
 #include <cvm/cvmdb.h>   // Cascoin: CVM Database
 #include <cvm/blockprocessor.h>   // Cascoin: CVM Block Processor
 #include <cvm/softfork.h>   // Cascoin: CVM Soft Fork
+#include <l2/l2_common.h>   // Cascoin: L2 enabled check
+#include <l2/l2_globals.h>  // Cascoin: L2 burn-and-mint block processor
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -1659,6 +1661,12 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
 {
     bool fClean = true;
 
+    // Cascoin: L2 - drop tracked (not-yet-minted) burns at/above this height so
+    // they are re-detected if the chain is rebuilt.
+    if (l2::IsL2Enabled() && pindex) {
+        l2::HandleBurnReorg(pindex->nHeight);
+    }
+
     CBlockUndo blockUndo;
     if (!UndoReadFromDisk(blockUndo, pindex)) {
         error("DisconnectBlock(): failure reading undo data");
@@ -2229,6 +2237,14 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
         } else {
             LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
         }
+    }
+
+    // Cascoin: L2 - Burn-and-Mint processing (soft fork).
+    // Detect OP_RETURN "L2BURN" outputs and, once a burn has enough L1
+    // confirmations, deterministically mint 1:1 L2 tokens to the recipient.
+    // Reached only when fJustCheck == false. Never throws.
+    if (l2::IsL2Enabled()) {
+        l2::ProcessConnectedBlockForBurns(block, pindex->nHeight, pindex->nHeight);
     }
 
     // Cascoin: Quantum Registry - Register public keys from registration transactions

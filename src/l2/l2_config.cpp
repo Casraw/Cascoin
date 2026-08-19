@@ -4,6 +4,7 @@
 
 #include <l2/l2_config.h>
 #include <l2/l2_chainparams.h>
+#include <l2/leader_election.h>
 #include <util.h>
 #include <chainparamsbase.h>
 #include <utilmoneystr.h>
@@ -99,11 +100,16 @@ bool StartL2()
     
     LogPrintf("L2: Starting subsystem...\n");
     
-    // TODO: Initialize L2 components based on mode
-    // - State manager
-    // - Sequencer discovery
-    // - Bridge contract interface
-    // - etc.
+    // Initialize the leader election engine so l2_getleader and the sequencer
+    // consensus paths have a valid global instance.
+    if (!IsLeaderElectionInitialized()) {
+        InitLeaderElection(GetL2ChainId());
+    }
+    
+    // Note: the burn-and-mint runtime (state manager, burn registry and token
+    // minter) is provided by the shared singletons in l2_globals.* and is
+    // created lazily on first use. Burns are detected and minted from
+    // ConnectBlock via l2::ProcessConnectedBlockForBurns().
     
     const L2Params& params = GetL2Params();
     LogPrintf("L2: Using parameters - minSequencerStake=%s, challengePeriod=%lu seconds\n",
