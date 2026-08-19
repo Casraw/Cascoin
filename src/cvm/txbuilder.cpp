@@ -119,6 +119,11 @@ CMutableTransaction CVMTransactionBuilder::BuildDeployTransaction(
     CVMDeployData deployData;
     deployData.codeHash = Hash(bytecode.begin(), bytecode.end());
     deployData.gasLimit = gasLimit;
+    // Embed the full bytecode in the deployment payload so it travels on-chain
+    // in the OP_RETURN. Without this the block validator only sees the codeHash
+    // and registers a metadata-only contract with empty code, so getcontractinfo
+    // reports a zero-length bytecode and calls can never execute.
+    deployData.bytecode = bytecode;
     
     // 2. Create OP_RETURN output
     std::vector<uint8_t> deployBytes = deployData.Serialize();

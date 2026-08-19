@@ -33,6 +33,7 @@
 #include <cvm/softfork.h>  // Cascoin: CVM/EVM contract transactions
 #include <cvm/cvm.h>  // Cascoin: CVM constants and validation
 #include <cvm/contract.h>  // Cascoin: CVM contract validation
+#include <cvm/fee_calculator.h>  // Cascoin: CVM gas-based fee floor for deploy/call
 #include <crypto/quantum/falcon.h>  // Cascoin: Quantum Hive support
 #include <address_quantum.h>        // Cascoin: Quantum address support
 
@@ -5207,6 +5208,58 @@ CTxDestination CWallet::AddAndGetDestinationForScript(const CScript& script, Out
  * Create a transaction for deploying a smart contract (CVM or EVM)
  * This creates a soft-fork compatible OP_RETURN transaction
  */
+// Cascoin: CVM/EVM contract transactions must clear a gas-based minimum fee
+// enforced by consensus in AcceptToMemoryPool ("cvm fee not met"). That floor
+// is derived from the transaction's gas limit (via CVM::FeeCalculator) and is
+// independent of transaction size, so the wallet's standard per-byte fee can
+// fall below it — in which case the transaction is accepted into the wallet but
+// silently rejected by the mempool and never relayed or mined. This helper
+// recomputes the CVM effective fee with the same (uninitialized) FeeCalculator
+// that validation uses and, if the freshly built transaction underpays, rebuilds
+// it with an explicit fee rate high enough to clear the floor.
+static bool EnsureCVMMinimumFee(CWallet* wallet, const std::vector<CRecipient>& vecSend,
+                                CWalletTx& wtxNew, CReserveKey& reservekey, CAmount& nFeeRet,
+                                std::string& strFailReason, const CCoinControl& controlRef)
+{
+    if (!wtxNew.tx) {
+        return true;
+    }
+
+    CVM::FeeCalculator feeCalc;  // mirror validation's uninitialized calculator
+    CVM::FeeCalculationResult cvmFee = feeCalc.CalculateFee(*wtxNew.tx, chainActive.Height());
+    if (!cvmFee.IsValid() || cvmFee.isFreeGas || nFeeRet >= cvmFee.effectiveFee) {
+        return true;  // already meets (or is exempt from) the CVM fee floor
+    }
+
+    unsigned int nBytes = GetVirtualTransactionSize(*wtxNew.tx);
+    if (nBytes == 0) {
+        nBytes = 1;
+    }
+    // Pay the CVM floor plus a margin (10%, at least 1000 sat) to absorb any
+    // size/rounding drift when the transaction is rebuilt at the higher rate.
+    CAmount targetFee = cvmFee.effectiveFee + std::max<CAmount>(cvmFee.effectiveFee / 10, 1000);
+
+    CCoinControl feeControl = controlRef;
+    feeControl.fOverrideFeeRate = true;
+    feeControl.m_feerate = CFeeRate(targetFee, nBytes);
+
+    CWalletTx rebuiltTx;
+    CAmount rebuiltFee = 0;
+    int changePos = -1;
+    std::string rebuildError;
+    if (!wallet->CreateTransaction(vecSend, rebuiltTx, reservekey, rebuiltFee, changePos,
+                                   rebuildError, feeControl, true)) {
+        strFailReason = "Failed to fund CVM minimum fee: " + rebuildError;
+        return false;
+    }
+
+    wtxNew = rebuiltTx;
+    nFeeRet = rebuiltFee;
+    LogPrintf("CVM: Adjusted fee to meet gas-based minimum (effective=%d, paid=%d)\n",
+              cvmFee.effectiveFee, nFeeRet);
+    return true;
+}
+
 bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& bytecode, uint64_t gasLimit,
                                                   const std::vector<uint8_t>& initData, CWalletTx& wtxNew,
                                                   CReserveKey& reservekey, CAmount& nFeeRet, std::string& strFailReason,
@@ -5266,6 +5319,12 @@ bool CWallet::CreateContractDeploymentTransaction(const std::vector<uint8_t>& by
     bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
     
     if (!result) {
+        return false;
+    }
+    
+    // Ensure the transaction clears the gas-based CVM minimum fee; otherwise the
+    // mempool rejects it with "cvm fee not met" and it never confirms.
+    if (!EnsureCVMMinimumFee(this, vecSend, wtxNew, reservekey, nFeeRet, strFailReason, controlRef)) {
         return false;
     }
     
@@ -5344,6 +5403,12 @@ bool CWallet::CreateContractCallTransaction(const uint160& contractAddress, cons
     bool result = CreateTransaction(vecSend, wtxNew, reservekey, nFeeRet, nChangePosInOut, strFailReason, controlRef, true);
     
     if (!result) {
+        return false;
+    }
+    
+    // Ensure the transaction clears the gas-based CVM minimum fee; otherwise the
+    // mempool rejects it with "cvm fee not met" and it never confirms.
+    if (!EnsureCVMMinimumFee(this, vecSend, wtxNew, reservekey, nFeeRet, strFailReason, controlRef)) {
         return false;
     }
     
