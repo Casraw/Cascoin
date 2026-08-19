@@ -233,11 +233,22 @@ FraudProofSystem& GetGlobalFraudProofSystem();
 // into the L2 pool on block connect, so the sequencer cannot censor it.
 // ----------------------------------------------------------------------------
 
-/** Build the OP_RETURN script for a forced-inclusion transfer. */
-CScript BuildL2ForceScript(const uint160& from, const uint160& to, CAmount value, uint64_t nonce);
+/** Build the OP_RETURN script embedding a signed forced-inclusion L2Transaction. */
+CScript BuildL2ForceScript(const L2Transaction& l2tx);
 
 /** Scan a connected L1 block for L2FORCE forced-inclusion transfers and queue them. */
 void ProcessConnectedBlockForForced(const CBlock& block, int height);
+
+// ----------------------------------------------------------------------------
+// L1-reorg rollback (Phase 3b): snapshot L2 state per L1 height and revert on
+// an L1 reorg so mints from orphaned L1 blocks are undone.
+// ----------------------------------------------------------------------------
+
+/** Snapshot the full L2 state after connecting the L1 block at @p l1Height. */
+void SnapshotL2State(int l1Height);
+
+/** Revert L2 state to the snapshot taken at L1 @p forkHeight (on L1 reorg). */
+void HandleL1StateReorg(int forkHeight);
 
 } // namespace l2
 

@@ -1099,6 +1099,27 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     l2::L2Transaction tx = l2::CreateTransferTx(from, to, amount, nonce,
                                                 /*gasPrice=*/0, l2::GetL2ChainId());
     
+    // Authenticate the transfer: sign with the sender's private key from the
+    // wallet. The L2 address is the Hash160 of the sender's public key (== its
+    // CKeyID), so the wallet must control that key to authorize the transfer.
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "A wallet is required to sign L2 transfers");
+    }
+    {
+        LOCK2(cs_main, pwallet->cs_wallet);
+        EnsureWalletIsUnlocked(pwallet);
+        CKey key;
+        CKeyID keyid(from);
+        if (!pwallet->GetKey(keyid, key)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "No private key for the sender L2 address in this wallet (cannot authorize transfer)");
+        }
+        if (!tx.Sign(key)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign L2 transaction");
+        }
+    }
+    
     std::string err;
     if (!l2::SubmitL2Transaction(tx, err)) {
         throw JSONRPCError(RPC_TRANSACTION_REJECTED, "L2 transaction rejected: " + err);
@@ -1113,6 +1134,7 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     response.pushKV("nonce", (int64_t)nonce);
     response.pushKV("status", "pending");
     response.pushKV("tokenSymbol", config.tokenSymbol);
+    response.pushKV("rawtx", HexStr(tx.Serialize()));
     response.pushKV("message", "Transfer queued; will be included in the next L2 block");
     return response;
 }
@@ -1463,7 +1485,30 @@ UniValue l2_createforcedtx(const JSONRPCRequest& request)
                 + l2::GetPendingCountFromSender(from);
     }
 
-    CScript forceScript = l2::BuildL2ForceScript(from, to, amount, nonce);
+    // Build and SIGN the forced transfer with the sender's wallet key. The
+    // forced tx is authenticated by its own signature; the L1 posting is only
+    // the censorship-resistant delivery channel.
+    l2::L2Transaction ftx = l2::CreateTransferTx(from, to, amount, nonce,
+                                                 /*gasPrice=*/0, l2::GetL2ChainId());
+    {
+        CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+        if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "A wallet is required to sign the forced transfer");
+        }
+        LOCK2(cs_main, pwallet->cs_wallet);
+        EnsureWalletIsUnlocked(pwallet);
+        CKey key;
+        CKeyID keyid(from);
+        if (!pwallet->GetKey(keyid, key)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "No private key for the sender L2 address in this wallet");
+        }
+        if (!ftx.Sign(key)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Failed to sign forced L2 transaction");
+        }
+    }
+
+    CScript forceScript = l2::BuildL2ForceScript(ftx);
     CMutableTransaction rawTx;
     rawTx.vout.push_back(CTxOut(0, forceScript));
 

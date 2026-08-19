@@ -1665,6 +1665,9 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
     // they are re-detected if the chain is rebuilt.
     if (l2::IsL2Enabled() && pindex) {
         l2::HandleBurnReorg(pindex->nHeight);
+        // Revert the full L2 state (accounts/mints/tip) to the snapshot at the
+        // fork point (the parent of the block being disconnected).
+        l2::HandleL1StateReorg(pindex->nHeight - 1);
     }
 
     CBlockUndo blockUndo;
@@ -2249,6 +2252,8 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
         l2::ProcessConnectedBlockForCommits(block, pindex->nHeight);
         // Queue any forced-inclusion (L2FORCE) transfers posted on L1.
         l2::ProcessConnectedBlockForForced(block, pindex->nHeight);
+        // Snapshot the resulting L2 state so it can be reverted on an L1 reorg.
+        l2::SnapshotL2State(pindex->nHeight);
     }
 
     // Cascoin: Quantum Registry - Register public keys from registration transactions

@@ -283,6 +283,17 @@ public:
     CAmount GetTotalBalances() const;
 
     /**
+     * @brief Export a full copy of all account states (for L1-reorg snapshots).
+     */
+    std::map<uint256, AccountState> ExportAccounts() const;
+
+    /**
+     * @brief Replace the entire account set with @p accounts (rebuilds the SMT).
+     *        Used to revert L2 state on an L1 reorg.
+     */
+    void ImportAccounts(const std::map<uint256, AccountState>& accounts);
+
+    /**
      * @brief Clear all state (for testing)
      */
     void Clear();

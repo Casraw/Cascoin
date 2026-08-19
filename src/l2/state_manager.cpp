@@ -111,6 +111,13 @@ TxExecutionResult L2StateManager::ApplyL2Transaction(const L2Transaction& tx, ui
         return TxExecutionResult::Failure("Negative value");
     }
 
+    // Authentication: the transaction must carry a valid signature whose
+    // recovered signer matches the declared sender. This prevents anyone from
+    // moving another account's balance.
+    if (!tx.VerifySignature()) {
+        return TxExecutionResult::Failure("Invalid or missing signature");
+    }
+
     // Fee = gasPrice * base gas (may be zero).
     CAmount fee = tx.gasPrice * static_cast<CAmount>(kTransferGas);
     if (fee < 0) {
@@ -455,6 +462,26 @@ CAmount L2StateManager::GetTotalBalances() const
         total += entry.second.balance;
     }
     return total;
+}
+
+std::map<uint256, AccountState> L2StateManager::ExportAccounts() const
+{
+    LOCK(cs_state_);
+    return accountCache_;
+}
+
+void L2StateManager::ImportAccounts(const std::map<uint256, AccountState>& accounts)
+{
+    LOCK(cs_state_);
+    // Rebuild the state tree and cache from the provided account set.
+    stateTree_.Clear();
+    accountCache_.clear();
+    for (const auto& entry : accounts) {
+        if (!entry.second.IsEmpty()) {
+            stateTree_.Set(entry.first, entry.second.Serialize());
+            accountCache_[entry.first] = entry.second;
+        }
+    }
 }
 
 void L2StateManager::Clear()

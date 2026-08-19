@@ -406,10 +406,11 @@ namespace {
     const size_t L2COMMIT_PAYLOAD_SIZE = 8 + 4 + 8 + 32;  // marker+chainId+blockNum+stateRoot
 
     // L2FORCE OP_RETURN marker: a forced-inclusion transfer posted on L1 so the
-    // sequencer cannot censor it. Layout: marker + from(20) + to(20) + value(8) + nonce(8).
+    // sequencer cannot censor it. Layout: marker + serialized (signed) L2Transaction.
+    // Because it carries a full signature it exceeds the default OP_RETURN size,
+    // so L2-enabled nodes must run with a raised -datacarriersize.
     const char L2FORCE_MARKER[] = "L2FORCE";        // 7 bytes (no NUL)
     const size_t L2FORCE_MARKER_SIZE = 7;
-    const size_t L2FORCE_PAYLOAD_SIZE = 7 + 20 + 20 + 8 + 8;  // = 63 bytes
 
     std::unique_ptr<CDBWrapper> g_l2db;
     int g_l2LastProcessedHeight = 0;
@@ -606,6 +607,12 @@ namespace {
 bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
     if (!tx.ValidateStructure()) {
         err = "Invalid transaction structure";
+        return false;
+    }
+    // Authentication: transfers must be signed by their declared sender.
+    // (Defense in depth; ApplyL2Transaction re-checks at block application.)
+    if (tx.type == L2TxType::TRANSFER && !tx.VerifySignature()) {
+        err = "Invalid or missing signature";
         return false;
     }
     LOCK(cs_l2Mempool);
@@ -1150,24 +1157,18 @@ bool GetLatestL2Commitment(L2Commitment& out) {
 // Forced inclusion (Phase 3b): censorship resistance via an L1 OP_RETURN.
 // ============================================================================
 
-CScript BuildL2ForceScript(const uint160& from, const uint160& to, CAmount value, uint64_t nonce) {
+CScript BuildL2ForceScript(const L2Transaction& l2tx) {
     std::vector<unsigned char> payload;
-    payload.reserve(L2FORCE_PAYLOAD_SIZE);
     payload.insert(payload.end(), L2FORCE_MARKER, L2FORCE_MARKER + L2FORCE_MARKER_SIZE);
-    payload.insert(payload.end(), from.begin(), from.end());
-    payload.insert(payload.end(), to.begin(), to.end());
-    unsigned char b8[8];
-    WriteLE64(b8, (uint64_t)value);
-    payload.insert(payload.end(), b8, b8 + 8);
-    WriteLE64(b8, nonce);
-    payload.insert(payload.end(), b8, b8 + 8);
+    std::vector<unsigned char> ser = l2tx.Serialize();
+    payload.insert(payload.end(), ser.begin(), ser.end());
 
     CScript script;
     script << OP_RETURN << payload;
     return script;
 }
 
-/** Parse an L2FORCE forced-transfer from a transaction into an L2Transaction. */
+/** Parse an L2FORCE forced-transfer (a serialized signed L2Transaction). */
 static std::optional<L2Transaction> ParseL2ForceTx(const CTransaction& tx) {
     for (const auto& out : tx.vout) {
         const CScript& script = out.scriptPubKey;
@@ -1177,18 +1178,12 @@ static std::optional<L2Transaction> ParseL2ForceTx(const CTransaction& tx) {
         std::vector<unsigned char> data;
         if (!script.GetOp(pc, opcode) || opcode != OP_RETURN) continue;
         if (!script.GetOp(pc, opcode, data)) continue;
-        if (data.size() != L2FORCE_PAYLOAD_SIZE) continue;
+        if (data.size() <= L2FORCE_MARKER_SIZE) continue;
         if (memcmp(data.data(), L2FORCE_MARKER, L2FORCE_MARKER_SIZE) != 0) continue;
 
-        size_t off = L2FORCE_MARKER_SIZE;
-        uint160 from, to;
-        memcpy(from.begin(), &data[off], 20); off += 20;
-        memcpy(to.begin(), &data[off], 20); off += 20;
-        CAmount value = (CAmount)ReadLE64(&data[off]); off += 8;
-        uint64_t nonce = ReadLE64(&data[off]);
-
-        L2Transaction l2tx = CreateTransferTx(from, to, value, nonce, /*gasPrice=*/0, GetL2ChainId());
-        l2tx.type = L2TxType::FORCED_INCLUSION;
+        std::vector<unsigned char> ser(data.begin() + L2FORCE_MARKER_SIZE, data.end());
+        L2Transaction l2tx;
+        if (!l2tx.Deserialize(ser)) continue;
         l2tx.l1TxHash = tx.GetHash();
         return l2tx;
     }
@@ -1201,10 +1196,11 @@ void ProcessConnectedBlockForForced(const CBlock& block, int height) {
         for (const auto& tx : block.vtx) {
             auto ftxOpt = ParseL2ForceTx(*tx);
             if (!ftxOpt) continue;
-            // Forced-inclusion transactions are TRANSFERs at the protocol level;
-            // reset the type so ValidateStructure/apply treat them as transfers.
             L2Transaction ftx = *ftxOpt;
-            ftx.type = L2TxType::TRANSFER;
+            // The forced tx is a signed L2Transaction delivered via L1; submit it
+            // to the pool so the sequencer must include it. It is authenticated by
+            // its own signature (verified when applied), so posting it on L1 does
+            // not let anyone move another account's funds.
             std::string err;
             if (SubmitL2Transaction(ftx, err)) {
                 LogPrintf("L2: Forced-inclusion tx from L1 %s queued (from=0x%s to=0x%s value=%d)\n",
@@ -1220,6 +1216,183 @@ void ProcessConnectedBlockForForced(const CBlock& block, int height) {
     } catch (...) {
         LogPrintf("L2: ProcessConnectedBlockForForced unknown exception\n");
     }
+}
+
+// ============================================================================
+// L1-reorg rollback of L2 state (Phase 3b)
+//
+// After processing each connected L1 block we snapshot the full L2 state
+// (accounts + burn records + L2 chain tip), keyed by L1 height. On an L1 reorg
+// (DisconnectBlock), we revert the L2 state to the snapshot at the fork point,
+// undoing mints from orphaned L1 blocks and returning any orphaned L2-block
+// transfers to the pool. The L1 chain remains the source of truth for mints.
+// ============================================================================
+
+namespace {
+    struct L2ReorgSnapshot {
+        std::map<uint256, AccountState> accounts;
+        std::vector<BurnRecord> burns;
+        std::map<uint256, TrackedBurn> trackedBurns;  // pending (not-yet-minted) burns
+        uint64_t tipNumber = 0;
+        uint256 tipHash;
+        bool hasTip = false;
+    };
+    std::map<int, L2ReorgSnapshot> g_l2ReorgSnapshots;  // L1 height -> snapshot
+    CCriticalSection cs_l2Reorg;
+    const int MAX_L2_REORG_SNAPSHOTS = 300;
+
+    /** Rewrite the persisted account/burn set + tip to exactly match a snapshot. */
+    void ReconcilePersistenceToSnapshot(const L2ReorgSnapshot& snap) {
+        LOCK(cs_l2db);
+        if (!g_l2db) return;
+        try {
+            CDBBatch batch(*g_l2db);
+            // Erase all persisted account entries.
+            {
+                std::unique_ptr<CDBIterator> it(g_l2db->NewIterator());
+                for (it->Seek(std::make_pair(DB_L2_ACCOUNT, uint256())); it->Valid(); it->Next()) {
+                    std::pair<char, uint256> k;
+                    if (!it->GetKey(k) || k.first != DB_L2_ACCOUNT) break;
+                    batch.Erase(k);
+                }
+            }
+            // Erase all persisted burn entries.
+            {
+                std::unique_ptr<CDBIterator> it(g_l2db->NewIterator());
+                for (it->Seek(std::make_pair(DB_L2_BURN, uint256())); it->Valid(); it->Next()) {
+                    std::pair<char, uint256> k;
+                    if (!it->GetKey(k) || k.first != DB_L2_BURN) break;
+                    batch.Erase(k);
+                }
+            }
+            // Rewrite from the snapshot.
+            for (const auto& e : snap.accounts) {
+                batch.Write(std::make_pair(DB_L2_ACCOUNT, e.first), e.second);
+            }
+            for (const auto& rec : snap.burns) {
+                batch.Write(std::make_pair(DB_L2_BURN, rec.l1TxHash), rec);
+            }
+            if (snap.hasTip) {
+                batch.Write(DB_L2_TIP, (uint64_t)snap.tipNumber);
+            }
+            g_l2db->WriteBatch(batch);
+        } catch (const std::exception& e) {
+            LogPrintf("L2: ReconcilePersistenceToSnapshot error: %s\n", e.what());
+        }
+    }
+} // namespace
+
+void SnapshotL2State(int l1Height) {
+    if (!IsL2Enabled()) return;
+    try {
+        L2ReorgSnapshot snap;
+        snap.accounts = GetGlobalStateManager().ExportAccounts();
+        snap.burns = GetGlobalBurnRegistry().GetAllBurns();
+        {
+            LOCK(cs_trackedBurns);
+            snap.trackedBurns = g_trackedBurns;
+        }
+        {
+            LOCK(cs_l2Chain);
+            snap.tipNumber = g_l2TipNumber;
+            snap.tipHash = g_l2TipHash;
+            snap.hasTip = g_l2HasTip;
+        }
+        LOCK(cs_l2Reorg);
+        g_l2ReorgSnapshots[l1Height] = std::move(snap);
+        while (g_l2ReorgSnapshots.size() > (size_t)MAX_L2_REORG_SNAPSHOTS) {
+            g_l2ReorgSnapshots.erase(g_l2ReorgSnapshots.begin());
+        }
+    } catch (const std::exception& e) {
+        LogPrintf("L2: SnapshotL2State error: %s\n", e.what());
+    }
+}
+
+void HandleL1StateReorg(int forkHeight) {
+    if (!IsL2Enabled()) return;
+    if (forkHeight < 0) return;
+
+    L2ReorgSnapshot snap;
+    {
+        LOCK(cs_l2Reorg);
+        auto it = g_l2ReorgSnapshots.find(forkHeight);
+        if (it == g_l2ReorgSnapshots.end()) {
+            LogPrintf("L2: No L2 snapshot at L1 height %d; cannot precisely revert "
+                      "(reorg deeper than snapshot window). L2 mint state will be "
+                      "rebuilt from the new chain; transfers in that window are lost.\n",
+                      forkHeight);
+            return;
+        }
+        snap = it->second;
+        // Drop snapshots above the fork point.
+        for (auto i = g_l2ReorgSnapshots.begin(); i != g_l2ReorgSnapshots.end(); ) {
+            if (i->first > forkHeight) i = g_l2ReorgSnapshots.erase(i); else ++i;
+        }
+    }
+
+    // Collect transfers from L2 blocks that will be orphaned, to re-queue them.
+    std::vector<L2Transaction> orphaned;
+    {
+        LOCK(cs_l2Chain);
+        if (g_l2HasTip) {
+            for (uint64_t n = snap.tipNumber + 1; n <= g_l2TipNumber; n++) {
+                L2Block b;
+                if (GetL2BlockByNumber(n, b)) {
+                    for (const auto& tx : b.transactions) {
+                        if (tx.type == L2TxType::TRANSFER) orphaned.push_back(tx);
+                    }
+                }
+            }
+        }
+    }
+
+    // Revert in-memory L2 state to the fork snapshot.
+    GetGlobalStateManager().ImportAccounts(snap.accounts);
+    {
+        BurnRegistry& reg = GetGlobalBurnRegistry();
+        reg.Clear();
+        for (const auto& r : snap.burns) reg.RecordBurn(r);
+    }
+    GetGlobalMinter().LoadFromRegistry();
+    {
+        // Restore the pending (not-yet-minted) burn tracking so that, as the new
+        // L1 chain reconnects blocks, matured burns are re-minted correctly.
+        LOCK(cs_trackedBurns);
+        g_trackedBurns = snap.trackedBurns;
+    }
+    {
+        LOCK(cs_l2Chain);
+        g_l2TipNumber = snap.tipNumber;
+        g_l2TipHash = snap.tipHash;
+        g_l2HasTip = snap.hasTip;
+    }
+
+    // Reconcile persistence to the snapshot so a restart is consistent.
+    ReconcilePersistenceToSnapshot(snap);
+
+    // Roll the burn checkpoint back so a restart re-scans the new chain's burns.
+    {
+        LOCK(cs_l2db);
+        int newcp = forkHeight - REQUIRED_CONFIRMATIONS;
+        if (newcp < 0) newcp = 0;
+        if (g_l2db && newcp < g_l2LastProcessedHeight) {
+            g_l2LastProcessedHeight = newcp;
+            try { g_l2db->Write(DB_L2_HEIGHT, newcp); } catch (...) {}
+        }
+    }
+
+    // Return orphaned transfers to the pool (the sequencer may re-include the
+    // ones that are still valid against the reverted state).
+    int requeued = 0;
+    for (const auto& tx : orphaned) {
+        std::string e;
+        if (SubmitL2Transaction(tx, e)) requeued++;
+    }
+
+    LogPrintf("L2: Reverted L2 state to L1 fork height %d (L2 tip=%llu, %u accounts, "
+              "%u burns); re-queued %d transfer(s)\n",
+              forkHeight, (unsigned long long)snap.tipNumber,
+              (unsigned)snap.accounts.size(), (unsigned)snap.burns.size(), requeued);
 }
 
 } // namespace l2

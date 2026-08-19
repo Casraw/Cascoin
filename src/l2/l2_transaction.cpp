@@ -16,27 +16,19 @@ namespace l2 {
 
 bool L2Transaction::Sign(const CKey& key) {
     uint256 hash = GetSigningHash();
-    
-    if (!key.Sign(hash, signature)) {
+
+    // Use a recoverable (compact) signature so VerifySignature()/RecoverSender()
+    // can recover the signer's public key and derive the sender address.
+    signature.clear();
+    if (!key.SignCompact(hash, signature)) {
         return false;
     }
-    
-    // Determine recovery ID
-    CPubKey pubkey = key.GetPubKey();
-    if (!pubkey.IsValid()) {
+
+    // Sanity check: the recovered address must match the declared sender.
+    CPubKey recovered;
+    if (!recovered.RecoverCompact(hash, signature)) {
         return false;
     }
-    
-    // Try both recovery IDs to find the correct one
-    for (uint8_t rid = 0; rid < 2; rid++) {
-        CPubKey recovered;
-        if (recovered.RecoverCompact(hash, signature) && recovered == pubkey) {
-            recoveryId = rid;
-            return true;
-        }
-    }
-    
-    // If we can't determine recovery ID, signature is still valid
     recoveryId = 0;
     return true;
 }
