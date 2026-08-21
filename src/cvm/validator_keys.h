@@ -73,6 +73,16 @@ public:
      * @return true if signed successfully
      */
     bool Sign(const uint256& hash, std::vector<uint8_t>& signature) const;
+
+    /**
+     * Sign data with a recoverable (compact) signature so the public key can be
+     * recovered from the signature alone. Used for L2 block signatures so peers
+     * can verify the signer matches the claimed sequencer address.
+     * @param hash Data hash to sign
+     * @param signature Output 65-byte recoverable signature
+     * @return true if signed successfully
+     */
+    bool SignCompact(const uint256& hash, std::vector<uint8_t>& signature) const;
     
     /**
      * Verify signature with validator public key

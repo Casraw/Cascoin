@@ -181,7 +181,13 @@ public:
         consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
         consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
         consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
-        
+
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height. Set to a
+        // coordinated future block so all nodes begin recognising L2COMMIT /
+        // L2FORCE outputs and burn-minting at the same L1 height. Adjust to the
+        // real upgrade height before mainnet release.
+        consensus.l2ActivationHeight        = 400000;                                   // Activate L2 anchoring/minting at block 400000 (future coordinated upgrade)
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 220000;                                   // Activate ASRS at block 220000 (2+ months for network upgrade)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -371,6 +377,9 @@ public:
         consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
         consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
 
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height (testnet: early).
+        consensus.l2ActivationHeight        = 500;                                      // Activate L2 anchoring/minting at block 500 (earlier for testing)
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -514,6 +523,9 @@ public:
         consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
         consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
         consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
+
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height (regtest: immediate).
+        consensus.l2ActivationHeight        = 0;                                        // Activate L2 anchoring/minting immediately for regtest
 
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest

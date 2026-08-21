@@ -18,6 +18,7 @@ Encodes, as a repeatable regression suite, the properties verified manually:
      honest commitment is not.
 """
 
+import time
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
@@ -88,9 +89,12 @@ class L2FeatureTest(BitcoinTestFramework):
 
         self.test_burn_and_mint()
         self.test_onchain_transfer_and_signature()
+        self.test_block_signed()
         self.test_transfer_fees()
         self.test_nonce_ordering()
+        self.test_data_availability_reindex()
         self.test_persistence_across_restart()
+        self.test_sequencer_registry()
         self.test_commitment_and_fraud_proof()
         self.test_l1_reorg_rollback()
         self.test_auto_commit()
@@ -134,6 +138,28 @@ class L2FeatureTest(BitcoinTestFramework):
         assert_raises_rpc_error(-26, "Invalid or missing signature",
                                 node.l2_sendtransaction, tampered)
         self.log.info("   transfer applied; tampered tx rejected")
+
+    def test_block_signed(self):
+        node = self.nodes[0]
+        self.log.info("Sig) Produced L2 block is signed by its sequencer ...")
+        # Block 1 (the first non-genesis block, produced in the transfer test)
+        # must carry a recoverable sequencer signature. This is what lets any
+        # peer authenticate the block and reject forgeries at ingest.
+        blk = node.l2_getblockbynumber(1, False)
+        seq = blk['sequencer']
+        # A real sequencer address, not the zero (genesis) address.
+        assert seq != '0x' + '0' * 40, "block 1 has no sequencer"
+        assert_greater_than(blk['signatureCount'], 0)
+        sigs = blk['signatures']
+        assert any(s['sequencer'] == seq for s in sigs), \
+            "no signature from the block's sequencer"
+        # Single active sequencer -> the 2/3 quorum is 1, so the block is final
+        # immediately (M3 finality reduces to the sole signer here).
+        assert_equal(blk['isFinalized'], True)
+        # Remember for the registry test: the sequencer identity must persist
+        # across node restarts (validator key persistence).
+        self.block1_seq = seq
+        self.log.info("   block 1 signed + finalized by sequencer %s" % seq)
 
     def test_transfer_fees(self):
         node = self.nodes[0]
@@ -184,6 +210,39 @@ class L2FeatureTest(BitcoinTestFramework):
         assert_equal(node.l2_getbalance(frm)['nonce'], start_nonce + n)
         self.log.info("   %d transfers applied in order; nonce advanced by %d" % (n, n))
 
+    def test_data_availability_reindex(self):
+        node = self.nodes[0]
+        self.log.info("DA) L2 data on L1 -> transfers survive -reindex ...")
+        # Restart with fast data-availability posting so the sequencer anchors
+        # every L2 block's data to L1 quickly.
+        self.restart_node(0, extra_args=self.l2_args + ['-l2datainterval=2'])
+
+        # A recipient that ONLY ever received tokens via an L2 transfer (never a
+        # burn/mint). Its balance can therefore only be restored after -reindex
+        # if the transfer data was available on L1 and reconstructed - which is
+        # exactly what M1 Data Availability provides.
+        da_addr = '0x7777777777777777777777777777777777777777'
+        before = self.l2bal(da_addr)
+        node.l2_transfer(self.mint_addr, da_addr, 2)
+        wait_until(lambda: self.l2bal(da_addr) == before + 2 * COIN, timeout=30)
+        expected = self.l2bal(da_addr)
+
+        # Wait until the sequencer reports all block data posted, mining L1
+        # blocks so the L2DATA transactions get confirmed on-chain.
+        def data_posted_and_mined():
+            self.gen(1)
+            time.sleep(0.5)
+            return node.l2_getdatastatus()['dataComplete']
+        wait_until(data_posted_and_mined, timeout=90)
+        # A couple more blocks so the last data txs are safely confirmed.
+        self.gen(3)
+
+        # Reindex wipes the L2 database and rebuilds L2 state purely from L1.
+        self.restart_node(0, extra_args=self.l2_args + ['-reindex'])
+        assert_equal(self.l2bal(da_addr), expected)
+        assert_equal(node.l2_verifysupply()['valid'], True)
+        self.log.info("   transfer recipient reconstructed from L1 data after -reindex")
+
     def test_persistence_across_restart(self):
         node = self.nodes[0]
         self.log.info("4) Persistence across restart ...")
@@ -195,6 +254,29 @@ class L2FeatureTest(BitcoinTestFramework):
         assert_equal(self.l2bal('0x1111111111111111111111111111111111111111'), bal_to)
         assert_equal(node.l2_gettotalsupply()['totalSupply'], supply)
         self.log.info("   balances and supply survived restart")
+
+    def test_sequencer_registry(self):
+        node = self.nodes[0]
+        self.log.info("Reg) On-chain sequencer registration ...")
+        # This node's own sequencer registers on-chain by burning CAS as stake.
+        res = node.l2_registersequencer(5)
+        addr = res['address']
+        assert_equal(res['action'], 'register')
+        # The sequencer identity must be the SAME as when block 1 was produced,
+        # despite the DA-reindex and persistence restarts in between. This proves
+        # the validator key persists across restarts (regression: it used to be
+        # regenerated every restart because the key file was saved incorrectly).
+        assert_equal(addr, self.block1_seq)
+        self.gen(2)  # confirm the registration on L1
+        seqs = node.l2_listsequencers()
+        match = [s for s in seqs if s['address'] == addr]
+        assert len(match) == 1, "sequencer not registered on-chain"
+        assert_equal(match[0]['active'], True)
+        assert_equal(match[0]['excluded'], False)
+        assert_equal(match[0]['stake'], Decimal('5'))
+        # Remember for later milestones/tests.
+        self.seq_addr = addr
+        self.log.info("   sequencer %s registered on-chain with 5 CAS burned stake" % addr)
 
     def test_commitment_and_fraud_proof(self):
         node = self.nodes[0]
@@ -224,7 +306,13 @@ class L2FeatureTest(BitcoinTestFramework):
         fp2 = node.l2_submitfraudproof(block_num)
         assert_equal(fp2['fraudProven'], True)
         assert_greater_than(fp2['slashedAmount'], 0)
-        self.log.info("   honest commit clean; bogus commit slashed")
+        # M4: proven fraud excludes the sequencer from the active set (exclusion
+        # model - the burned stake is simply lost, no payout).
+        assert_equal(fp2['sequencerExcluded'], True)
+        seqs_after = node.l2_listsequencers()
+        assert not any(s['address'] == self.seq_addr for s in seqs_after), \
+            "excluded sequencer still listed as active"
+        self.log.info("   honest commit clean; bogus commit slashed + sequencer excluded")
 
     def test_l1_reorg_rollback(self):
         node = self.nodes[0]

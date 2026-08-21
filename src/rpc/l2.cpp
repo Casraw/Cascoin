@@ -47,6 +47,10 @@
 #include <random.h>
 #include <wallet/wallet.h>
 #include <wallet/rpcwallet.h>
+#include <wallet/coincontrol.h>
+#include <cvm/validator_keys.h>
+#include <net.h>
+#include <consensus/validation.h>
 
 #include <memory>
 #include <chrono>
@@ -1359,6 +1363,156 @@ UniValue l2_getcommitment(const JSONRPCRequest& request)
     return result;
 }
 
+UniValue l2_registersequencer(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
+        throw std::runtime_error(
+            "l2_registersequencer stake ( \"action\" )\n"
+            "\nRegister (or deregister) THIS node as an L2 sequencer on-chain.\n"
+            "Broadcasts an L1 transaction with an L2SEQREG OP_RETURN output whose\n"
+            "value is CAS burned as stake (Sybil resistance; never returned).\n"
+            "The node's sequencer (validator) key authorises the action.\n"
+            "\nArguments:\n"
+            "1. stake     (numeric) CAS to burn as stake (ignored for deregister)\n"
+            "2. action    (string, optional) \"register\" (default) or \"deregister\"\n"
+            "\nResult:\n"
+            "{ \"txid\": \"xxx\", \"address\": \"0x..\", \"stake\": n, \"action\": \"register\" }\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_registersequencer", "10")
+            + HelpExampleCli("l2_registersequencer", "0 \"deregister\"")
+        );
+
+    EnsureL2Enabled();
+
+    if (!CVM::g_validatorKeys || !CVM::g_validatorKeys->HasValidatorKey()) {
+        throw JSONRPCError(RPC_MISC_ERROR,
+            "This node has no sequencer key (start with -l2sequencer=1)");
+    }
+
+    l2::L2SeqRegAction action = l2::L2SeqRegAction::REGISTER;
+    if (request.params.size() > 1) {
+        std::string a = request.params[1].get_str();
+        if (a == "deregister") action = l2::L2SeqRegAction::DEREGISTER;
+        else if (a != "register") throw JSONRPCError(RPC_INVALID_PARAMETER, "action must be register or deregister");
+    }
+
+    CAmount stake = 0;
+    if (action == l2::L2SeqRegAction::REGISTER) {
+        stake = AmountFromValue(request.params[0]);
+        CAmount minStake = gArgs.GetArg("-l2minsequencerstake", 1);
+        if (stake < minStake) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER,
+                strprintf("Stake below minimum (%s)", FormatMoney(minStake)));
+        }
+    }
+
+    const uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
+    const uint160 address = CVM::g_validatorKeys->GetValidatorAddress();
+    const CPubKey pubkey = CVM::g_validatorKeys->GetValidatorPubKey();
+
+    const uint256 sighash = l2::GetL2SeqRegSigHash(chainId, action, address);
+    std::vector<unsigned char> sig;
+    if (!CVM::g_validatorKeys->SignCompact(sighash, sig)) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Failed to sign registration");
+    }
+
+    const CScript regScript = l2::BuildL2SeqRegScript(chainId, action, address, pubkey, sig);
+
+    CWallet* pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        throw JSONRPCError(RPC_WALLET_ERROR, "A wallet is required to fund the registration");
+    }
+
+    CWalletTx wtxNew;
+    {
+        LOCK2(cs_main, pwallet->cs_wallet);
+        EnsureWalletIsUnlocked(pwallet);
+        std::vector<CRecipient> vecSend;
+        // The OP_RETURN output carries the staked (burned) value.
+        vecSend.push_back({regScript, stake, false});
+        CReserveKey reservekey(pwallet);
+        CAmount nFeeRequired = 0;
+        int nChangePosRet = -1;
+        std::string strError;
+        CCoinControl coin_control;
+        if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired,
+                                        nChangePosRet, strError, coin_control)) {
+            throw JSONRPCError(RPC_WALLET_ERROR, strError);
+        }
+        CValidationState state;
+        if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "Registration tx rejected: " + state.GetRejectReason());
+        }
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("txid", wtxNew.GetHash().GetHex());
+    result.pushKV("address", "0x" + address.GetHex());
+    result.pushKV("stake", ValueFromAmount(stake));
+    result.pushKV("action", action == l2::L2SeqRegAction::REGISTER ? "register" : "deregister");
+    result.pushKV("message", "Broadcast; becomes effective once confirmed on L1");
+    return result;
+}
+
+UniValue l2_listsequencers(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "l2_listsequencers\n"
+            "\nList the active on-chain-registered L2 sequencers.\n"
+            "\nResult:\n"
+            "[ { \"address\": \"0x..\", \"stake\": n, \"active\": bool,\n"
+            "    \"excluded\": bool, \"l1Height\": n } , ... ]\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_listsequencers", "")
+        );
+
+    EnsureL2Enabled();
+
+    std::vector<l2::SequencerRegistration> seqs = l2::GetActiveSequencers();
+    UniValue arr(UniValue::VARR);
+    for (const auto& s : seqs) {
+        UniValue o(UniValue::VOBJ);
+        o.pushKV("address", "0x" + s.address.GetHex());
+        o.pushKV("stake", ValueFromAmount(s.stake));
+        o.pushKV("active", s.active);
+        o.pushKV("excluded", s.excluded);
+        o.pushKV("l1Height", (int64_t)s.l1Height);
+        arr.push_back(o);
+    }
+    return arr;
+}
+
+UniValue l2_getdatastatus(const JSONRPCRequest& request)
+{
+    if (request.fHelp || request.params.size() != 0)
+        throw std::runtime_error(
+            "l2_getdatastatus\n"
+            "\nReport the L2 data-availability posting status of this node.\n"
+            "\nResult:\n"
+            "{\n"
+            "  \"l2Tip\": n,          (numeric) Highest local L2 block number\n"
+            "  \"nextDataPost\": n,   (numeric) Next L2 block whose data will be posted to L1\n"
+            "  \"dataComplete\": bool (boolean) True if data for every block up to the tip is posted\n"
+            "}\n"
+            "\nExamples:\n"
+            + HelpExampleCli("l2_getdatastatus", "")
+        );
+
+    EnsureL2Enabled();
+
+    size_t blockCount = l2::GetL2BlockCount();
+    int64_t tip = blockCount == 0 ? -1 : (int64_t)(blockCount - 1);
+    uint64_t next = l2::GetNextL2DataPostBlock();
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("l2Tip", tip);
+    result.pushKV("nextDataPost", (int64_t)next);
+    result.pushKV("dataComplete", tip < 0 || (int64_t)next > tip);
+    return result;
+}
+
 UniValue l2_submitfraudproof(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
@@ -1397,12 +1551,21 @@ UniValue l2_submitfraudproof(const JSONRPCRequest& request)
             "No L1 commitment recorded for that L2 block (nothing to challenge)");
     }
 
-    // The honest state root for that block, as computed by this full node.
+    // The honest state root for that block. This node derived it by INDEPENDENT
+    // re-execution: IngestL2Block re-applies every block's transactions and
+    // rejects any block whose recomputed state root does not equal the header's,
+    // and the producer computes the root from real state. Minted-account state is
+    // now path-independent (mint lastActivity is stamped with the burn's L1
+    // height), so this root is identical on every honest full node.
     l2::L2Block block;
     if (!l2::GetL2BlockByNumber(blockNumber, block)) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "L2 block not found locally");
     }
     const uint256 honestRoot = block.header.stateRoot;
+
+    // Data availability: a fraud proof is only trustless if the disputed block's
+    // data is on L1, so any node can independently re-derive the honest root.
+    const bool dataAvailable = (l2::GetNextL2DataPostBlock() > blockNumber);
 
     // Previous block's state root (proof structure requires it).
     uint256 prevRoot;
@@ -1445,15 +1608,26 @@ UniValue l2_submitfraudproof(const JSONRPCRequest& request)
     result.pushKV("committedStateRoot", commit.stateRoot.GetHex());
     result.pushKV("honestStateRoot", honestRoot.GetHex());
     result.pushKV("fraudProven", fraudProven);
+    result.pushKV("dataAvailable", dataAvailable);
     result.pushKV("sequencer", "0x" + block.header.sequencer.GetHex());
 
     if (fraudProven) {
         l2::SlashingRecord rec = fps.SlashSequencer(block.header.sequencer, proof, now);
         result.pushKV("slashedAmount", ValueFromAmount(rec.slashedAmount));
         result.pushKV("challengerReward", ValueFromAmount(rec.challengerReward));
-        result.pushKV("message", "Fraud proven: committed state root does not match honest execution; sequencer slashed");
+        // Exclusion-model consequence (M4): a sequencer that anchored a state
+        // root differing from the independently re-executed honest root is
+        // removed from the active set on-chain. It can no longer produce or
+        // finalize blocks (and its burned stake is gone - burn-only, no payout).
+        l2::ExcludeSequencer(block.header.sequencer,
+            strprintf("fraudulent state-root commitment at L2 block %llu",
+                      (unsigned long long)blockNumber));
+        result.pushKV("sequencerExcluded", true);
+        result.pushKV("message", "Fraud proven: committed state root does not match "
+                                 "independent re-execution; sequencer slashed and excluded");
     } else {
-        result.pushKV("message", "No fraud: committed state root matches the honest execution");
+        result.pushKV("sequencerExcluded", false);
+        result.pushKV("message", "No fraud: committed state root matches the honest re-execution");
     }
     return result;
 }
@@ -2189,6 +2363,9 @@ static const CRPCCommand commands[] =
     // Phase 1e: L1 anchoring commitments
     { "l2",                   "l2_createcommitment",    &l2_createcommitment,    {"blocknumber", "staterootoverride"} },
     { "l2",                   "l2_getcommitment",       &l2_getcommitment,       {"blocknumber"} },
+    { "l2",                   "l2_getdatastatus",       &l2_getdatastatus,       {} },
+    { "l2",                   "l2_registersequencer",   &l2_registersequencer,   {"stake", "action"} },
+    { "l2",                   "l2_listsequencers",      &l2_listsequencers,      {} },
     
     // Phase 3: fraud proofs + forced inclusion
     { "l2",                   "l2_submitfraudproof",    &l2_submitfraudproof,    {"blocknumber", "challengeraddress"} },

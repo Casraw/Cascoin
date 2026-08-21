@@ -138,6 +138,9 @@ struct Params {
     uint64_t cvmMaxGasPerBlock;         // Maximum gas allowed per block
     uint64_t cvmMaxGasPerTx;            // Maximum gas allowed per transaction
     uint64_t cvmMaxCodeSize;            // Maximum contract bytecode size
+
+    // Cascoin: L2 (Layer 2 burn-and-mint) related consensus fields
+    int l2ActivationHeight;             // Block height at which L2 L1-anchoring (L2COMMIT/L2FORCE) and burn-minting activate
     
     // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
     int asrsActivationHeight;           // Block height at which ASRS activates

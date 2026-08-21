@@ -169,9 +169,17 @@ size_t GetL2BlockCount();
 /** Read an L2 block by number from the persistent store. */
 bool GetL2BlockByNumber(uint64_t number, L2Block& out);
 
-/** Ingest an L2 block received from a peer (validate parent, apply txs,
- *  persist). Returns false (with @p err) if it does not extend our tip or a
- *  transaction cannot be applied; err=="gap" signals missing ancestors. */
+/** Verify that @p block carries a valid recoverable signature from the
+ *  sequencer named in its header (header.sequencer). Recovers the signer's
+ *  public key from the signature over the block hash and checks that its
+ *  Hash160 equals header.sequencer. Genesis (block 0) needs no signature. */
+bool VerifyL2BlockSignature(const L2Block& block);
+
+/** Ingest an L2 block received from a peer (validate parent, verify the
+ *  sequencer signature, re-execute transactions and verify the state root,
+ *  then persist). Returns false (with @p err) if it does not extend our tip,
+ *  has a bad signature/state root, or a transaction cannot be applied;
+ *  err=="gap" signals missing ancestors. */
 bool IngestL2Block(const L2Block& block, std::string& err);
 
 // ----------------------------------------------------------------------------
@@ -202,8 +210,72 @@ struct L2Commitment {
     }
 };
 
+/** An on-chain sequencer registration recorded from an L1 L2SEQREG output.
+ *  In the exclusion-based (burn-only) model the stake is CAS burned into the
+ *  registration output; it is never returned. It provides Sybil resistance and
+ *  a magnitude for prioritising honest sequencers, not a slashable deposit. */
+struct SequencerRegistration {
+    uint160 address;         // sequencer address (Hash160 of its pubkey)
+    CAmount stake = 0;       // cumulative CAS burned into registrations
+    bool active = false;     // false once deregistered or excluded
+    bool excluded = false;   // true if excluded for provable misbehaviour (M3/M4)
+    uint64_t l1Height = 0;   // L1 height of the (latest) registration
+    uint256 l1TxHash;        // L1 tx hash of the (latest) registration
+
+    ADD_SERIALIZE_METHODS;
+    template <typename Stream, typename Operation>
+    inline void SerializationOp(Stream& s, Operation ser_action) {
+        READWRITE(address);
+        READWRITE(stake);
+        READWRITE(active);
+        READWRITE(excluded);
+        READWRITE(l1Height);
+        READWRITE(l1TxHash);
+    }
+};
+
 /** Build the OP_RETURN commitment script for a given L2 block/state root. */
 CScript BuildL2CommitScript(uint32_t chainId, uint64_t l2BlockNumber, const uint256& stateRoot);
+
+// ----------------------------------------------------------------------------
+// M2: On-chain sequencer registry (L2SEQREG)
+//
+// A sequencer registers by broadcasting an L1 transaction with an L2SEQREG
+// OP_RETURN output whose value is CAS burned as stake (Sybil resistance). The
+// payload proves control of the sequencer key. Deregistration / exclusion are
+// also recorded on-chain, so the active sequencer set is objective and derived
+// from L1 by every node.
+// ----------------------------------------------------------------------------
+
+/** Registry action encoded in an L2SEQREG output. */
+enum class L2SeqRegAction : uint8_t { REGISTER = 0, DEREGISTER = 1 };
+
+/** Build the OP_RETURN script for a sequencer registration/deregistration.
+ *  The stake (burned) value is set on the CTxOut carrying this script. */
+CScript BuildL2SeqRegScript(uint32_t chainId, L2SeqRegAction action,
+                            const uint160& address, const CPubKey& pubkey,
+                            const std::vector<unsigned char>& sig);
+
+/** Hash signed by the sequencer to authorise a registry action. */
+uint256 GetL2SeqRegSigHash(uint32_t chainId, L2SeqRegAction action, const uint160& address);
+
+/** Scan a connected L1 block for L2SEQREG outputs and update the registry. */
+void ProcessConnectedBlockForSeqReg(const CBlock& block, int height);
+
+/** Read a sequencer's on-chain registration (returns false if never seen). */
+bool GetSequencerRegistration(const uint160& address, SequencerRegistration& out);
+
+/** All active (registered, not deregistered/excluded) sequencers. */
+std::vector<SequencerRegistration> GetActiveSequencers();
+
+/** True if @p address is a currently active on-chain sequencer. */
+bool IsRegisteredSequencer(const uint160& address);
+
+/** On-chain burned stake for @p address (0 if none / excluded). */
+CAmount GetOnChainSequencerStake(const uint160& address);
+
+/** Mark a sequencer excluded for provable misbehaviour (M3/M4). Persisted. */
+void ExcludeSequencer(const uint160& address, const std::string& reason);
 
 /** Parse an L2COMMIT commitment from a transaction (l1Height/l1TxHash unset). */
 std::optional<L2Commitment> ParseL2Commitment(const CTransaction& tx);
@@ -216,6 +288,27 @@ bool GetL2Commitment(uint64_t l2BlockNumber, L2Commitment& out);
 
 /** Read the latest recorded commitment (highest committed L2 block). */
 bool GetLatestL2Commitment(L2Commitment& out);
+
+// ----------------------------------------------------------------------------
+// M1: Data Availability (L2DATA)
+//
+// The sequencer posts each L2 block's full serialized bytes to L1 as one or
+// more "L2DATA" OP_RETURN chunks so any node can reconstruct and independently
+// verify the L2 chain from L1 alone (no data-withholding trust assumption).
+// ----------------------------------------------------------------------------
+
+/** Build the OP_RETURN scripts (one per chunk) carrying a block's data. */
+std::vector<CScript> BuildL2DataScripts(const L2Block& block);
+
+/** Scan a connected L1 block for L2DATA chunks; reassemble and, in L2-block
+ *  order, reconstruct+apply any L2 blocks we are missing. */
+void ProcessConnectedBlockForData(const CBlock& block, int height);
+
+/** The next L2 block number whose data should be posted to L1 (sequencer). */
+uint64_t GetNextL2DataPostBlock();
+
+/** Persist the next-to-post pointer after posting a block's data to L1. */
+void SetNextL2DataPostBlock(uint64_t nextBlock);
 
 // ----------------------------------------------------------------------------
 // Fraud proofs (Phase 3): process-wide fraud-proof system.

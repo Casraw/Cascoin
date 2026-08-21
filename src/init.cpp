@@ -1311,9 +1311,50 @@ bool AppInitLockDataDirectory()
 
 #ifdef ENABLE_WALLET
 // Cascoin: L2 - periodically anchor the latest uncommitted L2 block on L1.
-// Runs on sequencer nodes via the lightweight scheduler. Builds a 0-value
-// OP_RETURN "L2COMMIT" transaction with the wallet (funded, signed, broadcast)
-// so state roots are posted to L1 automatically instead of via a manual RPC.
+// Pick an unlocked wallet with spendable funds to pay L1 fees for L2 anchoring.
+static CWallet* L2FindFundedWallet()
+{
+    for (CWalletRef pw : vpwallets) {
+        if (pw && !pw->IsLocked() && pw->GetBalance() > 0) return pw;
+    }
+    return nullptr;
+}
+
+// Build, fund, sign and broadcast a single 0-value OP_RETURN transaction
+// carrying @p script. Returns true on success.
+static bool L2SendOpReturnTx(CWallet* pwallet, const CScript& script, std::string& txid)
+{
+    try {
+        LOCK2(cs_main, pwallet->cs_wallet);
+        std::vector<CRecipient> vecSend;
+        vecSend.push_back({script, 0, false});
+        CWalletTx wtxNew;
+        CReserveKey reservekey(pwallet);
+        CAmount nFeeRequired = 0;
+        int nChangePosRet = -1;
+        std::string strError;
+        CCoinControl coin_control;
+        if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired,
+                                        nChangePosRet, strError, coin_control)) {
+            LogPrintf("L2: OP_RETURN CreateTransaction failed: %s\n", strError);
+            return false;
+        }
+        CValidationState state;
+        if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+            LogPrintf("L2: OP_RETURN CommitTransaction failed: %s\n", state.GetRejectReason());
+            return false;
+        }
+        txid = wtxNew.GetHash().GetHex();
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("L2: OP_RETURN tx exception: %s\n", e.what());
+        return false;
+    }
+}
+
+// Runs on sequencer nodes via the lightweight scheduler. Posts a 0-value
+// OP_RETURN "L2COMMIT" transaction with the wallet so state roots are anchored
+// to L1 automatically instead of via a manual RPC.
 static void L2AutoCommit()
 {
     if (!l2::IsL2Enabled()) return;
@@ -1331,46 +1372,60 @@ static void L2AutoCommit()
     l2::L2Block block;
     if (!l2::GetL2BlockByNumber(tip, block)) return;
 
-    const uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
-    const CScript commitScript = l2::BuildL2CommitScript(chainId, tip, block.header.stateRoot);
-
-    // Pick an unlocked wallet with funds to pay the L1 fee.
-    CWallet* pwallet = nullptr;
-    for (CWalletRef pw : vpwallets) {
-        if (pw && !pw->IsLocked() && pw->GetBalance() > 0) {
-            pwallet = pw;
-            break;
-        }
-    }
+    CWallet* pwallet = L2FindFundedWallet();
     if (!pwallet) {
         LogPrint(BCLog::NET, "L2: auto-commit skipped (no unlocked funded wallet)\n");
         return;
     }
 
-    try {
-        LOCK2(cs_main, pwallet->cs_wallet);
-        std::vector<CRecipient> vecSend;
-        vecSend.push_back({commitScript, 0, false});
-        CWalletTx wtxNew;
-        CReserveKey reservekey(pwallet);
-        CAmount nFeeRequired = 0;
-        int nChangePosRet = -1;
-        std::string strError;
-        CCoinControl coin_control;
-        if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired,
-                                        nChangePosRet, strError, coin_control)) {
-            LogPrintf("L2: auto-commit CreateTransaction failed: %s\n", strError);
-            return;
-        }
-        CValidationState state;
-        if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
-            LogPrintf("L2: auto-commit CommitTransaction failed: %s\n", state.GetRejectReason());
-            return;
-        }
+    const uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
+    const CScript commitScript = l2::BuildL2CommitScript(chainId, tip, block.header.stateRoot);
+    std::string txid;
+    if (L2SendOpReturnTx(pwallet, commitScript, txid)) {
         LogPrintf("L2: auto-committed L2 block %d (stateRoot=%s) via L1 tx %s\n",
-                  (int)tip, block.header.stateRoot.GetHex(), wtxNew.GetHash().GetHex());
-    } catch (const std::exception& e) {
-        LogPrintf("L2: auto-commit exception: %s\n", e.what());
+                  (int)tip, block.header.stateRoot.GetHex(), txid);
+    }
+}
+
+// M1 Data Availability: posts each not-yet-posted L2 block's full serialized
+// data to L1 as one or more "L2DATA" OP_RETURN transactions (one OP_RETURN per
+// tx). A node that later reindexes or joins fresh can reconstruct the entire L2
+// chain from L1 alone. Bounded per run so a large backlog is drained gradually.
+static void L2AutoPostData()
+{
+    if (!l2::IsL2Enabled()) return;
+
+    size_t blockCount = l2::GetL2BlockCount();
+    if (blockCount == 0) return;
+    const uint64_t tip = blockCount - 1;
+
+    uint64_t next = l2::GetNextL2DataPostBlock();
+    if (next > tip) return;
+
+    CWallet* pwallet = L2FindFundedWallet();
+    if (!pwallet) {
+        LogPrint(BCLog::NET, "L2: data-post skipped (no unlocked funded wallet)\n");
+        return;
+    }
+
+    const int maxBlocksPerRun = (int)gArgs.GetArg("-l2datapostperrun", 25);
+    int done = 0;
+    for (uint64_t n = next; n <= tip && done < maxBlocksPerRun; n++) {
+        l2::L2Block block;
+        if (!l2::GetL2BlockByNumber(n, block)) break;  // stop at first gap
+        std::vector<CScript> scripts = l2::BuildL2DataScripts(block);
+        bool allOk = true;
+        for (const CScript& s : scripts) {
+            std::string txid;
+            if (!L2SendOpReturnTx(pwallet, s, txid)) { allOk = false; break; }
+        }
+        if (!allOk) break;  // retry this block on the next run
+        l2::SetNextL2DataPostBlock(n + 1);
+        done++;
+    }
+    if (done > 0) {
+        LogPrintf("L2: posted data for %d L2 block(s) to L1 (through block %llu)\n",
+                  done, (unsigned long long)(next + done - 1));
     }
 }
 #endif // ENABLE_WALLET
@@ -2158,8 +2213,13 @@ bool AppInitMain()
                 // Evaluate maturity against the real chain tip so burns with
                 // >= REQUIRED_CONFIRMATIONS are minted during the rescan.
                 l2::ProcessConnectedBlockForBurns(block, h, tipHeight);
+                // M2: rebuild the on-chain sequencer registry (idempotent).
+                l2::ProcessConnectedBlockForSeqReg(block, h);
                 // Re-record L2 state-root commitments (idempotent).
                 l2::ProcessConnectedBlockForCommits(block, h);
+                // M1: reconstruct L2 blocks from L1-posted data (idempotent).
+                // On -reindex (wiped L2 DB) this rebuilds transfers from L1.
+                l2::ProcessConnectedBlockForData(block, h);
                 scanned++;
             }
             LogPrintf("L2: Rescan complete (%d blocks scanned)\n", scanned);
@@ -2196,6 +2256,13 @@ bool AppInitMain()
             if (commitSecs > 0) {
                 scheduler.scheduleEvery(&L2AutoCommit, commitSecs * 1000);
                 LogPrintf("L2: auto-commit scheduled every %ds\n", (int)commitSecs);
+            }
+            // M1: post L2 block data to L1 for data availability. Slightly more
+            // frequent than commits so the DA log keeps up with block production.
+            int64_t dataSecs = gArgs.GetArg("-l2datainterval", 10);
+            if (dataSecs > 0) {
+                scheduler.scheduleEvery(&L2AutoPostData, dataSecs * 1000);
+                LogPrintf("L2: data-availability posting scheduled every %ds\n", (int)dataSecs);
             }
         }
 #endif

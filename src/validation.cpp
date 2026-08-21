@@ -2248,8 +2248,14 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     // Reached only when fJustCheck == false. Never throws.
     if (l2::IsL2Enabled()) {
         l2::ProcessConnectedBlockForBurns(block, pindex->nHeight, pindex->nHeight);
+        // M2: update the on-chain sequencer registry (L2SEQREG). Runs before
+        // commits so a block's committed stake reflects the latest registry.
+        l2::ProcessConnectedBlockForSeqReg(block, pindex->nHeight);
         // Record any L2 state-root commitments (L2COMMIT) anchored in this block.
         l2::ProcessConnectedBlockForCommits(block, pindex->nHeight);
+        // M1 Data Availability: reconstruct L2 blocks from any L2DATA posted on
+        // L1 (runs after burns so mint state is present before transfers apply).
+        l2::ProcessConnectedBlockForData(block, pindex->nHeight);
         // Queue any forced-inclusion (L2FORCE) transfers posted on L1.
         l2::ProcessConnectedBlockForForced(block, pindex->nHeight);
         // Snapshot the resulting L2 state so it can be reverted on an L1 reorg.

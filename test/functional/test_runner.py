@@ -139,6 +139,7 @@ BASE_SCRIPTS= [
     'feature_trust_activation.py',
     'feature_trustnodeid_migration.py',
     'feature_l2.py',
+    'feature_l2_multinode.py',
     # Don't append tests at the end to avoid merge conflicts
     # Put them in a random line within the section that fits their approximate run-time
 ]

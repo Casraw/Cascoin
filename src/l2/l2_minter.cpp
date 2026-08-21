@@ -19,6 +19,7 @@
 #include <hash.h>
 #include <util.h>
 #include <utiltime.h>
+#include <utilmoneystr.h>
 #include <dbwrapper.h>
 #include <fs.h>
 #include <crypto/common.h>
@@ -399,6 +400,8 @@ namespace {
     const char DB_L2_TIP     = 'T';  // 'T'                       -> uint64 tip number
     const char DB_L2_COMMIT  = 'C';  // ('C', uint64 l2BlockNumber) -> L2Commitment
     const char DB_L2_LATESTCOMMIT = 'L';  // 'L'                  -> uint64 latest committed L2 block
+    const char DB_L2_LATESTDATA = 'D';    // 'D'                  -> uint64 latest L2 block whose data is available on L1
+    const char DB_L2_SEQREG  = 'S';  // ('S', addressKey) -> SequencerRegistration
 
     // L2COMMIT OP_RETURN marker and payload layout.
     const char L2COMMIT_MARKER[] = "L2COMMIT";      // 8 bytes (no NUL)
@@ -412,6 +415,24 @@ namespace {
     const char L2FORCE_MARKER[] = "L2FORCE";        // 7 bytes (no NUL)
     const size_t L2FORCE_MARKER_SIZE = 7;
 
+    // L2DATA OP_RETURN marker (M1 Data Availability): carries a chunk of a
+    // serialized L2 block so any node can reconstruct the full L2 state from L1
+    // alone (no need to trust the sequencer for data). One chunk per OP_RETURN,
+    // one OP_RETURN per L1 transaction (network policy allows a single OP_RETURN
+    // output per tx). Layout:
+    //   marker + chainId(4 LE) + blockNumber(8 LE) + chunkIndex(2 LE)
+    //          + chunkCount(2 LE) + payloadChunk
+    const char L2DATA_MARKER[] = "L2DATA";           // 6 bytes (no NUL)
+    const size_t L2DATA_MARKER_SIZE = 6;
+    const size_t L2DATA_HEADER_SIZE = L2DATA_MARKER_SIZE + 4 + 8 + 2 + 2;  // 22
+
+    // L2SEQREG OP_RETURN marker (M2 on-chain sequencer registry). Layout:
+    //   marker + chainId(4 LE) + action(1) + address(20) + pubkey(33) + sig(65)
+    // The output's nValue is the CAS burned as stake (exclusion model).
+    const char L2SEQREG_MARKER[] = "L2SEQREG";        // 8 bytes (no NUL)
+    const size_t L2SEQREG_MARKER_SIZE = 8;
+    const size_t L2SEQREG_PAYLOAD_SIZE = 8 + 4 + 1 + 20 + 33 + 65;  // 131
+
     std::unique_ptr<CDBWrapper> g_l2db;
     int g_l2LastProcessedHeight = 0;
     CCriticalSection cs_l2db;
@@ -420,19 +441,6 @@ namespace {
     uint64_t g_l2TipNumber = 0;
     uint256 g_l2TipHash;
     bool g_l2HasTip = false;
-
-    /** Persist a single account's current state to the L2 DB. */
-    void PersistAccountState(const uint160& addr) {
-        LOCK(cs_l2db);
-        if (!g_l2db) return;
-        try {
-            const uint256 k = AddressToKey(addr);
-            const AccountState st = GetGlobalStateManager().GetAccountState(k);
-            g_l2db->Write(std::make_pair(DB_L2_ACCOUNT, k), st);
-        } catch (const std::exception& e) {
-            LogPrintf("L2: PersistAccountState error: %s\n", e.what());
-        }
-    }
 
     /** Persist a produced L2 block and advance the persisted tip pointer. */
     void PersistL2BlockToDb(const L2Block& block) {
@@ -445,6 +453,40 @@ namespace {
             g_l2db->WriteBatch(batch);
         } catch (const std::exception& e) {
             LogPrintf("L2: PersistL2BlockToDb error: %s\n", e.what());
+        }
+    }
+
+    /** Persist only a block record (('K',num)->block), without touching the tip
+     *  pointer. Used when merging additional signatures into an existing block. */
+    void PersistL2BlockRecordOnly(const L2Block& block) {
+        LOCK(cs_l2db);
+        if (!g_l2db) return;
+        try {
+            g_l2db->Write(std::make_pair(DB_L2_BLOCK, (uint64_t)block.header.blockNumber), block);
+        } catch (const std::exception& e) {
+            LogPrintf("L2: PersistL2BlockRecordOnly error: %s\n", e.what());
+        }
+    }
+
+    /** Atomically persist the touched account states, the block, and the tip
+     *  pointer in a single write batch. Using one batch means a crash cannot
+     *  leave account balances and the block/tip out of sync. */
+    void PersistBlockAndAccounts(const L2Block& block, const std::set<uint160>& touched) {
+        LOCK(cs_l2db);
+        if (!g_l2db) return;
+        try {
+            CDBBatch batch(*g_l2db);
+            L2StateManager& sm = GetGlobalStateManager();
+            for (const uint160& addr : touched) {
+                const uint256 k = AddressToKey(addr);
+                const AccountState st = sm.GetAccountState(k);
+                batch.Write(std::make_pair(DB_L2_ACCOUNT, k), st);
+            }
+            batch.Write(std::make_pair(DB_L2_BLOCK, (uint64_t)block.header.blockNumber), block);
+            batch.Write(DB_L2_TIP, (uint64_t)block.header.blockNumber);
+            g_l2db->WriteBatch(batch);
+        } catch (const std::exception& e) {
+            LogPrintf("L2: PersistBlockAndAccounts error: %s\n", e.what());
         }
     }
 
@@ -480,8 +522,16 @@ namespace {
     }
 } // namespace
 
+// True once L2 is both enabled at runtime and past the consensus activation
+// height, so every node begins recognising burns / L2COMMIT / L2FORCE at the
+// same coordinated L1 height.
+static bool IsL2ActiveAtHeight(int height) {
+    if (!IsL2Enabled()) return false;
+    return height >= Params().GetConsensus().l2ActivationHeight;
+}
+
 void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHeight) {
-    if (!IsL2Enabled()) {
+    if (!IsL2ActiveAtHeight(height)) {
         return;
     }
 
@@ -533,9 +583,15 @@ void ProcessConnectedBlockForBurns(const CBlock& block, int height, int chainHei
                 done.push_back(txHash);
                 continue;
             }
-            // Use the L1 height as the L2 mint block number so the burn record
-            // is valid (l2MintBlock must be > 0).
-            minter.SetCurrentBlockNumber(static_cast<uint64_t>(chainHeight));
+            // Deterministically stamp the minted account's lastActivity with the
+            // burn's own L1 block height (an objective on-chain fact), NOT the
+            // current chain height. The current height differs between the live
+            // connect path (pindex height) and the -reindex rescan path (tip
+            // height); using it would make a minted account's SMT leaf - and thus
+            // the L2 state root - depend on how the node processed the chain,
+            // breaking Data-Availability reconstruction and independent
+            // re-execution. The burn L1 height is identical on every node.
+            minter.SetCurrentBlockNumber(static_cast<uint64_t>(tb.height));
             uint160 recipient = tb.burnData.GetRecipientAddress();
             MintResult result = minter.MintTokensWithDetails(
                 txHash, static_cast<uint64_t>(tb.height), tb.blockHash,
@@ -619,10 +675,6 @@ bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
         return false;
     }
     LOCK(cs_l2Mempool);
-    if (g_l2Mempool.size() >= MAX_L2_MEMPOOL) {
-        err = "L2 mempool full";
-        return false;
-    }
     const uint256 h = tx.GetHash();
     if (g_l2MempoolHashes.count(h)) {
         err = "Transaction already in pool";
@@ -640,6 +692,30 @@ bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
             }
         }
     }
+    // When the pool is full, allow a higher-fee transaction to displace the
+    // lowest-fee one instead of rejecting outright. To avoid creating a nonce
+    // gap we evict the highest-nonce transaction among those paying the lowest
+    // gasPrice (i.e. a sender's tail).
+    if (g_l2Mempool.size() >= MAX_L2_MEMPOOL) {
+        size_t victim = (size_t)-1;
+        CAmount victimPrice = 0;
+        uint64_t victimNonce = 0;
+        for (size_t i = 0; i < g_l2Mempool.size(); i++) {
+            const auto& m = g_l2Mempool[i];
+            if (victim == (size_t)-1 || m.gasPrice < victimPrice ||
+                (m.gasPrice == victimPrice && m.nonce > victimNonce)) {
+                victim = i;
+                victimPrice = m.gasPrice;
+                victimNonce = m.nonce;
+            }
+        }
+        if (victim == (size_t)-1 || tx.gasPrice <= victimPrice) {
+            err = "L2 mempool full";
+            return false;
+        }
+        g_l2MempoolHashes.erase(g_l2Mempool[victim].GetHash());
+        g_l2Mempool.erase(g_l2Mempool.begin() + victim);
+    }
     g_l2Mempool.push_back(tx);
     g_l2MempoolHashes.insert(h);
     return true;
@@ -647,10 +723,46 @@ bool SubmitL2Transaction(const L2Transaction& tx, std::string& err) {
 
 std::vector<L2Transaction> GetPendingL2Transactions(size_t maxCount) {
     LOCK(cs_l2Mempool);
-    std::vector<L2Transaction> out;
+    if (g_l2Mempool.empty() || maxCount == 0) return {};
+
+    // Group transactions by sender, keeping each sender's transactions in
+    // strict nonce order. Nonce order MUST be preserved because the state
+    // machine only applies a transaction whose nonce equals the account's
+    // current nonce; reordering a sender's transactions would make all but the
+    // first fail.
+    std::map<uint160, std::vector<const L2Transaction*>> bySender;
     for (const auto& tx : g_l2Mempool) {
-        if (out.size() >= maxCount) break;
-        out.push_back(tx);
+        bySender[tx.from].push_back(&tx);
+    }
+    for (auto& kv : bySender) {
+        std::sort(kv.second.begin(), kv.second.end(),
+                  [](const L2Transaction* a, const L2Transaction* b) {
+                      return a->nonce < b->nonce;
+                  });
+    }
+
+    // Order senders by the fee (gasPrice) of their next (lowest-nonce)
+    // transaction, highest first, so higher-fee transfers are included
+    // preferentially. This gives a fee market without ever reordering a single
+    // sender's nonce sequence.
+    std::vector<uint160> senders;
+    senders.reserve(bySender.size());
+    for (auto& kv : bySender) senders.push_back(kv.first);
+    std::sort(senders.begin(), senders.end(), [&](const uint160& a, const uint160& b) {
+        const L2Transaction* ta = bySender[a].front();
+        const L2Transaction* tb = bySender[b].front();
+        if (ta->gasPrice != tb->gasPrice) return ta->gasPrice > tb->gasPrice;
+        if (ta->nonce != tb->nonce) return ta->nonce < tb->nonce;  // older sequences first
+        return a < b;
+    });
+
+    std::vector<L2Transaction> out;
+    out.reserve(std::min(maxCount, g_l2Mempool.size()));
+    for (const uint160& s : senders) {
+        for (const L2Transaction* tx : bySender[s]) {
+            if (out.size() >= maxCount) return out;
+            out.push_back(*tx);
+        }
     }
     return out;
 }
@@ -782,6 +894,12 @@ int GetL2LastProcessedHeight() {
 // Sequencer block production (Phase 1: single sequencer)
 // ============================================================================
 
+// Forward declarations for the M3 finality helpers (defined below, near the
+// block-ingest path) so the producer can compute finality at production time.
+static bool HasFinalityQuorum(const L2Block& block,
+                              const std::vector<SequencerRegistration>& active);
+static bool AddLocalSignatureIfSequencer(L2Block& b);
+
 namespace {
     CCriticalSection cs_l2Chain;              // guards the L2 chain tip + production
     std::atomic<bool> g_producerStop{true};
@@ -860,20 +978,34 @@ namespace {
                       g_l2TipHash.ToString().substr(0, 16));
         }
 
-        // Leader gating (multi-sequencer): if more than one eligible sequencer
-        // is known, only the elected leader for the next slot may produce. With
-        // zero/one known sequencers (e.g. single-node regtest) we always produce.
-        if (IsSequencerDiscoveryInitialized() && IsLeaderElectionInitialized()) {
-            std::vector<SequencerInfo> eligible = GetSequencerDiscovery().GetEligibleSequencers();
-            if (eligible.size() > 1) {
-                LeaderElection& le = GetLeaderElection();
-                le.SetLocalSequencerAddress(seq);
-                uint64_t slot = le.GetSlotForBlock(g_l2TipNumber + 1);
-                uint256 seed = le.GenerateElectionSeed(slot);
-                LeaderElectionResult res = le.ElectLeader(slot, eligible, seed);
-                if (res.isValid && res.leaderAddress != seq) {
-                    return;  // Not our turn to produce this slot.
-                }
+        // The active sequencer set is the on-chain registry (M2). Used for both
+        // leader election (who may produce) and finality (2/3 signature quorum).
+        std::vector<SequencerRegistration> activeSeqs = GetActiveSequencers();
+        const size_t activeCount = activeSeqs.size();
+
+        // Leader gating (multi-sequencer): if more than one sequencer is
+        // registered on-chain, only the leader elected for this slot (from
+        // deterministic L1-derived randomness) may produce. With 0/1 registered
+        // sequencers (bootstrap / single-node) we always produce.
+        if (activeCount > 1 && IsLeaderElectionInitialized()) {
+            std::vector<SequencerInfo> eligible;
+            eligible.reserve(activeSeqs.size());
+            for (const auto& r : activeSeqs) {
+                SequencerInfo si;
+                si.address = r.address;
+                si.verifiedStake = r.stake;
+                si.isEligible = true;
+                si.isVerified = true;
+                si.l2ChainId = GetL2ChainId();
+                eligible.push_back(si);
+            }
+            LeaderElection& le = GetLeaderElection();
+            le.SetLocalSequencerAddress(seq);
+            uint64_t slot = le.GetSlotForBlock(g_l2TipNumber + 1);
+            uint256 seed = le.GenerateElectionSeed(slot);
+            LeaderElectionResult res = le.ElectLeader(slot, eligible, seed);
+            if (res.isValid && res.leaderAddress != seq) {
+                return;  // Not our turn to produce this slot.
             }
         }
 
@@ -894,14 +1026,25 @@ namespace {
         block.header.l1AnchorBlock = l1Height;
         block.header.l1AnchorHash = l1Hash;
 
+        const uint64_t blockGasLimit = block.header.gasLimit;
+
         std::set<uint160> touched;
         std::vector<uint256> consumed;  // remove from pool (included or invalid)
         uint64_t gasUsed = 0;
 
         for (auto tx : pending) {
-            consumed.push_back(tx.GetHash());
+            // Enforce the per-block gas limit: a transaction that would push the
+            // block past its gas limit is deferred (left in the pool) for a
+            // later block rather than dropped. We only defer once the block is
+            // non-empty so a single oversized tx cannot wedge the pool.
+            const uint64_t txGas = tx.gasLimit;
+            if (!block.transactions.empty() && gasUsed + txGas > blockGasLimit) {
+                break;
+            }
+
             TxExecutionResult r = GetGlobalStateManager().ApplyL2Transaction(tx, blockNum, seq);
             if (r.success) {
+                consumed.push_back(tx.GetHash());
                 tx.gasUsed = r.gasUsed;
                 tx.success = true;
                 block.transactions.push_back(tx);
@@ -910,6 +1053,8 @@ namespace {
                 touched.insert(tx.to);
                 touched.insert(seq);
             } else {
+                // Invalid transaction: drop it from the pool.
+                consumed.push_back(tx.GetHash());
                 LogPrintf("L2 producer: dropping invalid tx %s: %s\n",
                           tx.GetHash().ToString().substr(0, 16), r.error);
             }
@@ -925,22 +1070,24 @@ namespace {
         block.header.stateRoot = GetGlobalStateManager().GetStateRoot();
         block.header.transactionsRoot = block.ComputeTransactionsRoot();
 
-        // Sign the block with the sequencer key (enables Phase 2/3 verification).
+        // Sign the block with the sequencer key using a recoverable signature
+        // so any peer can verify the signer matches header.sequencer.
         if (CVM::g_validatorKeys && CVM::g_validatorKeys->HasValidatorKey()) {
             std::vector<unsigned char> sig;
             const uint256 bh = block.GetHash();
-            if (CVM::g_validatorKeys->Sign(bh, sig)) {
+            if (CVM::g_validatorKeys->SignCompact(bh, sig)) {
                 block.AddSignature(SequencerSignature(seq, sig, NowSeconds()));
             }
         }
-        // Single-sequencer: finalize immediately (multi-sequencer voting is Phase 2).
-        block.isFinalized = true;
+        // Finality (M3): a block is final once a 2/3 supermajority of the active
+        // sequencer set has signed it. A sole/bootstrap sequencer (activeCount
+        // <= 1) finalizes immediately with its own signature; a multi-sequencer
+        // set starts non-final and finalizes as peer signatures aggregate.
+        block.isFinalized = HasFinalityQuorum(block, activeSeqs);
 
-        // Persist the touched account balances and the block itself.
-        for (const uint160& a : touched) {
-            PersistAccountState(a);
-        }
-        PersistL2BlockToDb(block);
+        // Atomically persist the touched account balances + the block + the tip
+        // in a single write batch (crash-consistent).
+        PersistBlockAndAccounts(block, touched);
 
         g_l2TipNumber = blockNum;
         g_l2TipHash = block.GetHash();
@@ -1017,6 +1164,103 @@ bool GetL2BlockByNumber(uint64_t number, L2Block& out) {
     return g_l2db->Read(std::make_pair(DB_L2_BLOCK, number), out);
 }
 
+// Verify a single recoverable signature over the block hash resolves to @p addr.
+static bool VerifyBlockSigForAddress(const uint256& blockHash,
+                                     const SequencerSignature& sig,
+                                     const uint160& addr) {
+    if (sig.sequencerAddress != addr) return false;
+    if (sig.signature.size() != 65) return false;  // recoverable signatures are 65 bytes
+    CPubKey pub;
+    if (!pub.RecoverCompact(blockHash, sig.signature)) return false;
+    uint160 recovered;
+    CHash160().Write(pub.begin(), pub.size()).Finalize(recovered.begin());
+    return recovered == addr;
+}
+
+bool VerifyL2BlockSignature(const L2Block& block) {
+    // Genesis carries no sequencer / no signature.
+    if (block.header.blockNumber == 0) return true;
+
+    const uint160& expected = block.header.sequencer;
+    if (expected.IsNull()) return false;  // non-genesis blocks must name a sequencer
+
+    const uint256 bh = block.GetHash();
+    for (const auto& sig : block.signatures) {
+        if (VerifyBlockSigForAddress(bh, sig, expected)) return true;
+    }
+    return false;
+}
+
+// 2/3 supermajority threshold (ceil) of the active sequencer set. A set of size
+// 0 or 1 finalizes with a single signature (bootstrap / sole sequencer).
+static size_t QuorumThreshold(size_t activeCount) {
+    if (activeCount <= 1) return 1;
+    return (activeCount * 2 + 2) / 3;  // ceil(2n/3)
+}
+
+// Count distinct active sequencers that have a valid signature on the block.
+static size_t CountValidSequencerSignatures(const L2Block& block,
+                                            const std::set<uint160>& activeSet) {
+    const uint256 bh = block.GetHash();
+    std::set<uint160> counted;
+    for (const auto& sig : block.signatures) {
+        if (counted.count(sig.sequencerAddress)) continue;
+        if (!activeSet.empty() && !activeSet.count(sig.sequencerAddress)) continue;
+        if (VerifyBlockSigForAddress(bh, sig, sig.sequencerAddress)) {
+            counted.insert(sig.sequencerAddress);
+        }
+    }
+    return counted.size();
+}
+
+// True if the block has reached 2/3 signature quorum over the active set.
+static bool HasFinalityQuorum(const L2Block& block,
+                              const std::vector<SequencerRegistration>& active) {
+    std::set<uint160> activeSet;
+    for (const auto& r : active) activeSet.insert(r.address);
+    size_t haveSigs = CountValidSequencerSignatures(block, activeSet);
+    return haveSigs >= QuorumThreshold(activeSet.size());
+}
+
+// If this node is an active on-chain sequencer and has not yet signed @p b, add
+// its recoverable signature (a "vote" toward finality). Returns true if added.
+static bool AddLocalSignatureIfSequencer(L2Block& b) {
+    if (b.header.blockNumber == 0) return false;
+    if (!CVM::g_validatorKeys || !CVM::g_validatorKeys->HasValidatorKey()) return false;
+    const uint160 me = CVM::g_validatorKeys->GetValidatorAddress();
+    if (!IsRegisteredSequencer(me)) return false;
+    for (const auto& s : b.signatures)
+        if (s.sequencerAddress == me) return false;  // already signed
+    std::vector<unsigned char> sig;
+    if (!CVM::g_validatorKeys->SignCompact(b.GetHash(), sig)) return false;
+    b.AddSignature(SequencerSignature(me, sig, NowSeconds()));
+    return true;
+}
+
+// Merge any new valid sequencer signatures from @p incoming into @p stored, add
+// our own if applicable, and recompute finality. Returns true if @p stored
+// changed (so the caller should persist + re-broadcast).
+static bool MergeSignaturesAndFinalize(L2Block& stored, const L2Block& incoming) {
+    const uint256 bh = stored.GetHash();
+    bool changed = false;
+    for (const auto& sig : incoming.signatures) {
+        bool present = false;
+        for (const auto& s : stored.signatures)
+            if (s.sequencerAddress == sig.sequencerAddress) { present = true; break; }
+        if (present) continue;
+        if (VerifyBlockSigForAddress(bh, sig, sig.sequencerAddress)) {
+            stored.AddSignature(sig);
+            changed = true;
+        }
+    }
+    if (AddLocalSignatureIfSequencer(stored)) changed = true;
+    const std::vector<SequencerRegistration> active = GetActiveSequencers();
+    const bool wasFinal = stored.isFinalized;
+    stored.isFinalized = HasFinalityQuorum(stored, active);
+    if (stored.isFinalized != wasFinal) changed = true;
+    return changed;
+}
+
 bool IngestL2Block(const L2Block& block, std::string& err) {
     LOCK(cs_l2Chain);
     const uint64_t num = block.header.blockNumber;
@@ -1033,36 +1277,106 @@ bool IngestL2Block(const L2Block& block, std::string& err) {
     }
 
     if (!g_l2HasTip) { err = "no genesis yet"; return false; }
-    if (num <= g_l2TipNumber) { return true; }          // already have it
+    if (num <= g_l2TipNumber) {
+        // We already have a block at this height. Two cases:
+        //  (a) same block, possibly carrying additional signatures -> merge them
+        //      and re-evaluate finality (BFT-style signature aggregation).
+        //  (b) a DIFFERENT block at the same height signed by the same sequencer
+        //      -> equivocation -> exclude that sequencer from the active set.
+        L2Block stored;
+        if (!GetL2BlockByNumber(num, stored)) return true;
+        if (stored.GetHash() == block.GetHash()) {
+            if (MergeSignaturesAndFinalize(stored, block)) {
+                PersistL2BlockRecordOnly(stored);
+                BroadcastL2Block(stored);
+            }
+            return true;
+        }
+        if (!block.header.sequencer.IsNull() &&
+            block.header.sequencer == stored.header.sequencer &&
+            VerifyL2BlockSignature(block)) {
+            ExcludeSequencer(block.header.sequencer,
+                strprintf("equivocation at L2 height %llu", (unsigned long long)num));
+            err = "equivocation";
+            return false;
+        }
+        err = "conflicting block";
+        return false;
+    }
     if (num != g_l2TipNumber + 1) { err = "gap"; return false; }
     if (block.header.parentHash != g_l2TipHash) { err = "parent mismatch"; return false; }
 
-    // Apply the block's transactions to our local state. On a shared L1 the
-    // mint-derived base state matches the sequencer's, so applying the same
-    // transfers in order reproduces the balances.
-    const uint160 seq = block.header.sequencer;
-    std::set<uint160> touched;
-    for (const auto& tx : block.transactions) {
-        TxExecutionResult r = GetGlobalStateManager().ApplyL2Transaction(tx, num, seq);
-        if (!r.success) {
-            err = "tx apply failed: " + r.error;
-            return false;  // cannot accept a block we cannot reproduce
-        }
-        touched.insert(tx.from);
-        touched.insert(tx.to);
-        touched.insert(seq);
+    // Authenticate the block: it must be signed by the sequencer it names.
+    if (!VerifyL2BlockSignature(block)) {
+        err = "bad signature";
+        return false;
     }
 
-    for (const uint160& a : touched) {
-        PersistAccountState(a);
+    // Apply the block's transactions to our local state and INDEPENDENTLY
+    // verify the sequencer's claimed state root. On a shared L1 the mint-derived
+    // base state matches the sequencer's, so replaying the same transfers in
+    // order must reproduce both the balances and the exact state root. If it
+    // does not, the block anchors a forged/invalid state and we reject it.
+    //
+    // The apply is atomic: we snapshot every account the block can touch and
+    // roll it back on any failure, so a rejected block never leaves our
+    // in-memory state partially mutated.
+    const uint160 seq = block.header.sequencer;
+    L2StateManager& sm = GetGlobalStateManager();
+
+    std::set<uint160> touched;
+    std::map<uint256, AccountState> saved;
+    auto remember = [&](const uint160& a) {
+        touched.insert(a);
+        const uint256 k = AddressToKey(a);
+        if (!saved.count(k)) saved[k] = sm.GetAccountState(k);
+    };
+    for (const auto& tx : block.transactions) { remember(tx.from); remember(tx.to); }
+    remember(seq);
+
+    bool ok = true;
+    std::string applyErr;
+    for (const auto& tx : block.transactions) {
+        TxExecutionResult r = sm.ApplyL2Transaction(tx, num, seq);
+        if (!r.success) { ok = false; applyErr = "tx apply failed: " + r.error; break; }
     }
-    PersistL2BlockToDb(block);
+    if (ok) {
+        const uint256 computedRoot = sm.GetStateRoot();
+        if (computedRoot != block.header.stateRoot) {
+            ok = false;
+            applyErr = "state root mismatch (computed " + computedRoot.ToString().substr(0, 16)
+                     + " != header " + block.header.stateRoot.ToString().substr(0, 16) + ")";
+        }
+    }
+    if (!ok) {
+        // Roll back every touched account to its pre-block state.
+        for (const auto& e : saved) sm.SetAccountState(e.first, e.second);
+        err = applyErr;
+        return false;  // cannot accept a block we cannot reproduce
+    }
+
+    // Atomically persist the touched account balances + the block + the tip.
+    PersistBlockAndAccounts(block, touched);
     g_l2TipNumber = num;
     g_l2TipHash = block.GetHash();
     g_l2HasTip = true;
 
-    LogPrintf("L2 sync: ingested block %llu with %u tx(s)\n",
-              (unsigned long long)num, (unsigned)block.transactions.size());
+    LogPrintf("L2 sync: ingested block %llu with %u tx(s), verified stateRoot=%s\n",
+              (unsigned long long)num, (unsigned)block.transactions.size(),
+              block.header.stateRoot.ToString().substr(0, 16));
+
+    // Voter (M3): if this node is an active on-chain sequencer, co-sign the
+    // accepted block and re-broadcast it so signatures aggregate toward the 2/3
+    // finality quorum. No-op for non-sequencer / single-sequencer nodes.
+    {
+        L2Block signedCopy = block;
+        if (AddLocalSignatureIfSequencer(signedCopy)) {
+            std::vector<SequencerRegistration> active = GetActiveSequencers();
+            signedCopy.isFinalized = HasFinalityQuorum(signedCopy, active);
+            PersistL2BlockRecordOnly(signedCopy);
+            BroadcastL2Block(signedCopy);
+        }
+    }
     return true;
 }
 
@@ -1112,7 +1426,7 @@ std::optional<L2Commitment> ParseL2Commitment(const CTransaction& tx) {
 }
 
 void ProcessConnectedBlockForCommits(const CBlock& block, int height) {
-    if (!IsL2Enabled()) return;
+    if (!IsL2ActiveAtHeight(height)) return;
     try {
         const uint32_t ourChainId = static_cast<uint32_t>(GetL2ChainId());
         for (const auto& tx : block.vtx) {
@@ -1143,8 +1457,10 @@ void ProcessConnectedBlockForCommits(const CBlock& block, int height) {
             L2Block committedBlock;
             if (GetL2BlockByNumber(c->l2BlockNumber, committedBlock) &&
                 !committedBlock.header.sequencer.IsNull()) {
-                // Register a nominal sequencer stake so slashing has effect.
-                fps.SetSequencerStake(committedBlock.header.sequencer, 100 * COIN);
+                // Use the sequencer's real on-chain burned stake (M2). Falls back
+                // to 0 if the sequencer never registered on-chain.
+                CAmount onchainStake = GetOnChainSequencerStake(committedBlock.header.sequencer);
+                fps.SetSequencerStake(committedBlock.header.sequencer, onchainStake);
             }
         }
     } catch (const std::exception& e) {
@@ -1166,6 +1482,371 @@ bool GetLatestL2Commitment(L2Commitment& out) {
     uint64_t latest = 0;
     if (!g_l2db->Read(DB_L2_LATESTCOMMIT, latest)) return false;
     return g_l2db->Read(std::make_pair(DB_L2_COMMIT, latest), out);
+}
+
+// ============================================================================
+// M1: Data Availability - post/reconstruct L2 block data via L1 (L2DATA)
+//
+// The sequencer posts each L2 block's full serialized bytes to L1 as one or
+// more L2DATA OP_RETURN chunks. Any node - including one that never talked to
+// the sequencer over P2P - can then reconstruct the entire L2 chain purely
+// from L1, re-executing and verifying every block. This removes the data-
+// withholding trust assumption: transfers survive even a full L2-DB wipe
+// (-reindex), because their data lives on L1.
+// ============================================================================
+
+std::vector<CScript> BuildL2DataScripts(const L2Block& block) {
+    const uint32_t chainId = static_cast<uint32_t>(block.header.l2ChainId);
+    const uint64_t blockNumber = block.header.blockNumber;
+    const std::vector<unsigned char> ser = block.Serialize();
+
+    // Chunk payload size = the node's configured OP_RETURN capacity minus our
+    // fixed header. L2-aware nodes run a raised -datacarriersize (as with
+    // L2FORCE), so block data fits in a small number of chunks.
+    size_t carrier = (size_t)gArgs.GetArg("-datacarriersize", 83);
+    size_t maxChunk = (carrier > L2DATA_HEADER_SIZE + 8) ? (carrier - L2DATA_HEADER_SIZE) : 8;
+
+    size_t chunkCount = ser.empty() ? 1 : (ser.size() + maxChunk - 1) / maxChunk;
+    if (chunkCount > 0xFFFF) chunkCount = 0xFFFF;  // bounded; blocks this large should not occur
+
+    std::vector<CScript> scripts;
+    scripts.reserve(chunkCount);
+    for (size_t idx = 0; idx < chunkCount; idx++) {
+        const size_t start = idx * maxChunk;
+        const size_t len = (start < ser.size()) ? std::min(maxChunk, ser.size() - start) : 0;
+
+        std::vector<unsigned char> payload;
+        payload.reserve(L2DATA_HEADER_SIZE + len);
+        payload.insert(payload.end(), L2DATA_MARKER, L2DATA_MARKER + L2DATA_MARKER_SIZE);
+        unsigned char b4[4]; WriteLE32(b4, chainId);              payload.insert(payload.end(), b4, b4 + 4);
+        unsigned char b8[8]; WriteLE64(b8, blockNumber);          payload.insert(payload.end(), b8, b8 + 8);
+        unsigned char ci[2]; WriteLE16(ci, (uint16_t)idx);        payload.insert(payload.end(), ci, ci + 2);
+        unsigned char cc[2]; WriteLE16(cc, (uint16_t)chunkCount); payload.insert(payload.end(), cc, cc + 2);
+        if (len > 0) payload.insert(payload.end(), ser.begin() + start, ser.begin() + start + len);
+
+        CScript s;
+        s << OP_RETURN << payload;
+        scripts.push_back(s);
+    }
+    return scripts;
+}
+
+namespace {
+    struct L2DataChunk {
+        uint32_t chainId = 0;
+        uint64_t blockNumber = 0;
+        uint16_t index = 0;
+        uint16_t count = 0;
+        std::vector<unsigned char> payload;
+    };
+
+    std::optional<L2DataChunk> ParseL2DataChunk(const CTransaction& tx) {
+        for (const auto& out : tx.vout) {
+            const CScript& script = out.scriptPubKey;
+            if (script.empty() || script[0] != OP_RETURN) continue;
+            CScript::const_iterator pc = script.begin();
+            opcodetype opcode;
+            std::vector<unsigned char> data;
+            if (!script.GetOp(pc, opcode) || opcode != OP_RETURN) continue;
+            if (!script.GetOp(pc, opcode, data)) continue;
+            if (data.size() < L2DATA_HEADER_SIZE) continue;
+            if (memcmp(data.data(), L2DATA_MARKER, L2DATA_MARKER_SIZE) != 0) continue;
+
+            L2DataChunk ch;
+            size_t off = L2DATA_MARKER_SIZE;
+            ch.chainId = ReadLE32(&data[off]); off += 4;
+            ch.blockNumber = ReadLE64(&data[off]); off += 8;
+            ch.index = ReadLE16(&data[off]); off += 2;
+            ch.count = ReadLE16(&data[off]); off += 2;
+            ch.payload.assign(data.begin() + off, data.end());
+            return ch;
+        }
+        return std::nullopt;
+    }
+
+    // Reassembly buffers for L2 blocks being reconstructed from L1 data.
+    std::map<uint64_t, std::map<uint16_t, std::vector<unsigned char>>> g_l2DataChunks;  // partial chunk sets
+    std::map<uint64_t, L2Block> g_l2DataPending;  // fully-reassembled, awaiting in-order apply
+    CCriticalSection cs_l2Data;
+    const size_t MAX_L2_DATA_PENDING = 10000;
+
+    /** Apply reconstructed blocks from the pending buffer in strict L2-block
+     *  order onto our current tip (parent/signature/state-root all re-verified
+     *  by IngestL2Block). */
+    void DrainL2DataPending() {
+        for (;;) {
+            uint64_t want;
+            {
+                LOCK(cs_l2Chain);
+                want = g_l2HasTip ? (g_l2TipNumber + 1) : 0;
+            }
+            L2Block b;
+            {
+                LOCK(cs_l2Data);
+                auto it = g_l2DataPending.find(want);
+                if (it == g_l2DataPending.end()) break;
+                b = it->second;
+            }
+            std::string err;
+            bool applied = IngestL2Block(b, err);
+            {
+                LOCK(cs_l2Data);
+                g_l2DataPending.erase(want);
+            }
+            if (!applied) {
+                LogPrintf("L2 DA: reconstructed block %llu rejected: %s\n",
+                          (unsigned long long)want, err.c_str());
+                break;  // do not skip past a bad block
+            }
+        }
+    }
+} // namespace
+
+void ProcessConnectedBlockForData(const CBlock& block, int height) {
+    if (!IsL2ActiveAtHeight(height)) return;
+    const uint32_t ourChainId = static_cast<uint32_t>(GetL2ChainId());
+    try {
+        bool anyAssembled = false;
+        {
+            LOCK(cs_l2Data);
+            for (const auto& tx : block.vtx) {
+                auto chOpt = ParseL2DataChunk(*tx);
+                if (!chOpt) continue;
+                const L2DataChunk& ch = *chOpt;
+                if (ch.chainId != ourChainId || ch.count == 0) continue;
+
+                // If we already have this L2 block locally, nothing to reconstruct.
+                {
+                    L2Block existing;
+                    if (GetL2BlockByNumber(ch.blockNumber, existing)) continue;
+                }
+
+                auto& chunks = g_l2DataChunks[ch.blockNumber];
+                if (ch.index < ch.count) chunks[ch.index] = ch.payload;
+
+                if (chunks.size() == (size_t)ch.count) {
+                    std::vector<unsigned char> ser;
+                    bool complete = true;
+                    for (uint16_t i = 0; i < ch.count; i++) {
+                        auto it = chunks.find(i);
+                        if (it == chunks.end()) { complete = false; break; }
+                        ser.insert(ser.end(), it->second.begin(), it->second.end());
+                    }
+                    g_l2DataChunks.erase(ch.blockNumber);
+                    if (!complete) continue;
+
+                    L2Block b;
+                    if (b.Deserialize(ser) && b.header.blockNumber == ch.blockNumber) {
+                        g_l2DataPending[ch.blockNumber] = b;
+                        anyAssembled = true;
+                    } else {
+                        LogPrintf("L2 DA: failed to deserialize reconstructed block %llu\n",
+                                  (unsigned long long)ch.blockNumber);
+                    }
+                }
+            }
+            // Bound memory of the pending buffers.
+            while (g_l2DataPending.size() > MAX_L2_DATA_PENDING)
+                g_l2DataPending.erase(g_l2DataPending.begin());
+            while (g_l2DataChunks.size() > MAX_L2_DATA_PENDING)
+                g_l2DataChunks.erase(g_l2DataChunks.begin());
+        }
+
+        if (anyAssembled) DrainL2DataPending();
+    } catch (const std::exception& e) {
+        LogPrintf("L2: ProcessConnectedBlockForData exception: %s\n", e.what());
+    } catch (...) {
+        LogPrintf("L2: ProcessConnectedBlockForData unknown exception\n");
+    }
+}
+
+// Pointer semantics: the NEXT L2 block number whose data should be posted to
+// L1. Default 0 means "start from genesis". After posting block N, the pointer
+// is advanced to N+1.
+uint64_t GetNextL2DataPostBlock() {
+    LOCK(cs_l2db);
+    if (!g_l2db) return 0;
+    uint64_t v = 0;
+    g_l2db->Read(DB_L2_LATESTDATA, v);
+    return v;
+}
+
+void SetNextL2DataPostBlock(uint64_t nextBlock) {
+    LOCK(cs_l2db);
+    if (!g_l2db) return;
+    try { g_l2db->Write(DB_L2_LATESTDATA, nextBlock); } catch (...) {}
+}
+
+// ============================================================================
+// M2: On-chain sequencer registry (L2SEQREG)
+// ============================================================================
+
+uint256 GetL2SeqRegSigHash(uint32_t chainId, L2SeqRegAction action, const uint160& address) {
+    CHashWriter ss(SER_GETHASH, 0);
+    ss << std::string("L2SEQREG");
+    ss << chainId;
+    ss << static_cast<uint8_t>(action);
+    ss << address;
+    return ss.GetHash();
+}
+
+CScript BuildL2SeqRegScript(uint32_t chainId, L2SeqRegAction action,
+                            const uint160& address, const CPubKey& pubkey,
+                            const std::vector<unsigned char>& sig) {
+    std::vector<unsigned char> payload;
+    payload.reserve(L2SEQREG_PAYLOAD_SIZE);
+    payload.insert(payload.end(), L2SEQREG_MARKER, L2SEQREG_MARKER + L2SEQREG_MARKER_SIZE);
+    unsigned char b4[4]; WriteLE32(b4, chainId); payload.insert(payload.end(), b4, b4 + 4);
+    payload.push_back(static_cast<uint8_t>(action));
+    payload.insert(payload.end(), address.begin(), address.end());          // 20
+    // Public key, zero-padded to 33 bytes (compressed length).
+    std::vector<unsigned char> pk(pubkey.begin(), pubkey.end());
+    pk.resize(33, 0);
+    payload.insert(payload.end(), pk.begin(), pk.end());                     // 33
+    std::vector<unsigned char> s = sig;
+    s.resize(65, 0);
+    payload.insert(payload.end(), s.begin(), s.end());                       // 65
+
+    CScript script;
+    script << OP_RETURN << payload;
+    return script;
+}
+
+namespace {
+    struct L2SeqRegParsed {
+        L2SeqRegAction action = L2SeqRegAction::REGISTER;
+        uint160 address;
+        CAmount stake = 0;   // value burned into this registration output
+        uint256 l1TxHash;
+    };
+
+    // Parse and cryptographically verify an L2SEQREG output. Verification:
+    // recover the signer from the compact signature over the canonical sig hash
+    // and require its Hash160 == the declared address (and == the payload pubkey).
+    std::optional<L2SeqRegParsed> ParseL2SeqReg(const CTransaction& tx, uint32_t ourChainId) {
+        for (const auto& out : tx.vout) {
+            const CScript& script = out.scriptPubKey;
+            if (script.empty() || script[0] != OP_RETURN) continue;
+            CScript::const_iterator pc = script.begin();
+            opcodetype opcode;
+            std::vector<unsigned char> data;
+            if (!script.GetOp(pc, opcode) || opcode != OP_RETURN) continue;
+            if (!script.GetOp(pc, opcode, data)) continue;
+            if (data.size() != L2SEQREG_PAYLOAD_SIZE) continue;
+            if (memcmp(data.data(), L2SEQREG_MARKER, L2SEQREG_MARKER_SIZE) != 0) continue;
+
+            size_t off = L2SEQREG_MARKER_SIZE;
+            uint32_t chainId = ReadLE32(&data[off]); off += 4;
+            if (chainId != ourChainId) continue;
+            uint8_t actionByte = data[off]; off += 1;
+            if (actionByte > 1) continue;
+            L2SeqRegParsed p;
+            p.action = static_cast<L2SeqRegAction>(actionByte);
+            memcpy(p.address.begin(), &data[off], 20); off += 20;
+            std::vector<unsigned char> pkBytes(data.begin() + off, data.begin() + off + 33); off += 33;
+            std::vector<unsigned char> sig(data.begin() + off, data.begin() + off + 65); off += 65;
+
+            // Authenticate: recover the signer and require it matches address.
+            const uint256 h = GetL2SeqRegSigHash(chainId, p.action, p.address);
+            CPubKey recovered;
+            if (!recovered.RecoverCompact(h, sig)) continue;
+            if (recovered.GetID() != p.address) continue;
+            CPubKey stated(pkBytes.begin(), pkBytes.end());
+            if (stated.IsFullyValid() && stated.GetID() != p.address) continue;
+
+            p.stake = out.nValue;  // CAS burned into this OP_RETURN output
+            p.l1TxHash = tx.GetHash();
+            return p;
+        }
+        return std::nullopt;
+    }
+} // namespace
+
+void ProcessConnectedBlockForSeqReg(const CBlock& block, int height) {
+    if (!IsL2ActiveAtHeight(height)) return;
+    const uint32_t ourChainId = static_cast<uint32_t>(GetL2ChainId());
+    try {
+        for (const auto& tx : block.vtx) {
+            auto pOpt = ParseL2SeqReg(*tx, ourChainId);
+            if (!pOpt) continue;
+            const L2SeqRegParsed& p = *pOpt;
+
+            LOCK(cs_l2db);
+            if (!g_l2db) continue;
+
+            SequencerRegistration reg;
+            g_l2db->Read(std::make_pair(DB_L2_SEQREG, p.address), reg);  // defaults if absent
+            reg.address = p.address;
+            reg.l1Height = (uint64_t)height;
+            reg.l1TxHash = p.l1TxHash;
+
+            if (p.action == L2SeqRegAction::REGISTER) {
+                // Registrations can only raise the burned stake (idempotent under
+                // rescan). An excluded sequencer cannot silently re-activate.
+                if (p.stake > reg.stake) reg.stake = p.stake;
+                if (!reg.excluded) reg.active = true;
+                LogPrintf("L2: Sequencer %s registered (stake=%s) at L1 height %d\n",
+                          p.address.ToString(), FormatMoney(reg.stake), height);
+            } else {
+                reg.active = false;
+                LogPrintf("L2: Sequencer %s deregistered at L1 height %d\n",
+                          p.address.ToString(), height);
+            }
+            try { g_l2db->Write(std::make_pair(DB_L2_SEQREG, p.address), reg); } catch (...) {}
+        }
+    } catch (const std::exception& e) {
+        LogPrintf("L2: ProcessConnectedBlockForSeqReg exception: %s\n", e.what());
+    } catch (...) {
+        LogPrintf("L2: ProcessConnectedBlockForSeqReg unknown exception\n");
+    }
+}
+
+bool GetSequencerRegistration(const uint160& address, SequencerRegistration& out) {
+    LOCK(cs_l2db);
+    if (!g_l2db) return false;
+    return g_l2db->Read(std::make_pair(DB_L2_SEQREG, address), out);
+}
+
+std::vector<SequencerRegistration> GetActiveSequencers() {
+    std::vector<SequencerRegistration> result;
+    LOCK(cs_l2db);
+    if (!g_l2db) return result;
+    std::unique_ptr<CDBIterator> it(g_l2db->NewIterator());
+    for (it->Seek(std::make_pair(DB_L2_SEQREG, uint160())); it->Valid(); it->Next()) {
+        std::pair<char, uint160> key;
+        if (!it->GetKey(key) || key.first != DB_L2_SEQREG) break;
+        SequencerRegistration reg;
+        if (it->GetValue(reg) && reg.active && !reg.excluded) {
+            result.push_back(reg);
+        }
+    }
+    return result;
+}
+
+bool IsRegisteredSequencer(const uint160& address) {
+    SequencerRegistration reg;
+    if (!GetSequencerRegistration(address, reg)) return false;
+    return reg.active && !reg.excluded;
+}
+
+CAmount GetOnChainSequencerStake(const uint160& address) {
+    SequencerRegistration reg;
+    if (!GetSequencerRegistration(address, reg)) return 0;
+    if (reg.excluded) return 0;
+    return reg.stake;
+}
+
+void ExcludeSequencer(const uint160& address, const std::string& reason) {
+    LOCK(cs_l2db);
+    if (!g_l2db) return;
+    SequencerRegistration reg;
+    if (!g_l2db->Read(std::make_pair(DB_L2_SEQREG, address), reg)) {
+        reg.address = address;
+    }
+    reg.active = false;
+    reg.excluded = true;
+    try { g_l2db->Write(std::make_pair(DB_L2_SEQREG, address), reg); } catch (...) {}
+    LogPrintf("L2: Sequencer %s EXCLUDED (%s)\n", address.ToString(), reason);
 }
 
 // ============================================================================
@@ -1206,7 +1887,7 @@ static std::optional<L2Transaction> ParseL2ForceTx(const CTransaction& tx) {
 }
 
 void ProcessConnectedBlockForForced(const CBlock& block, int height) {
-    if (!IsL2Enabled()) return;
+    if (!IsL2ActiveAtHeight(height)) return;
     try {
         for (const auto& tx : block.vtx) {
             auto ftxOpt = ParseL2ForceTx(*tx);
@@ -1313,9 +1994,16 @@ void SnapshotL2State(int l1Height) {
             snap.tipHash = g_l2TipHash;
             snap.hasTip = g_l2HasTip;
         }
+        // Bound the in-memory snapshot window. The default (300 L1 blocks) is
+        // ~12.5 hours at a 2.5-minute block time; a reorg deeper than that would
+        // be a catastrophic chain split, not a routine reorg. Configurable via
+        // -l2reorgwindow for operators who want a deeper safety margin.
+        size_t window = (size_t)gArgs.GetArg("-l2reorgwindow", MAX_L2_REORG_SNAPSHOTS);
+        if (window < 1) window = 1;
+
         LOCK(cs_l2Reorg);
         g_l2ReorgSnapshots[l1Height] = std::move(snap);
-        while (g_l2ReorgSnapshots.size() > (size_t)MAX_L2_REORG_SNAPSHOTS) {
+        while (g_l2ReorgSnapshots.size() > window) {
             g_l2ReorgSnapshots.erase(g_l2ReorgSnapshots.begin());
         }
     } catch (const std::exception& e) {

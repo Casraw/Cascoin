@@ -1782,6 +1782,33 @@ bool static ProcessHeadersMessage(CNode *pfrom, CConnman *connman, const std::ve
     return true;
 }
 
+// Cascoin: L2 - lightweight per-peer token-bucket rate limiter for L2 gossip
+// (L2TX / L2BLOCK). Prevents a single peer from flooding the node. The bucket
+// refills over time; a burst up to the capacity is allowed (e.g. block sync),
+// then the sustained rate is capped. Returns true if a message is allowed.
+static bool L2RateLimitOk(NodeId id)
+{
+    static CCriticalSection cs_l2rate;
+    static std::map<NodeId, std::pair<double, int64_t>> buckets;  // id -> (tokens, lastMicros)
+    const double capacity = 1000.0;      // burst size (messages)
+    const double refillPerSec = 200.0;   // sustained messages/second
+
+    LOCK(cs_l2rate);
+    // Bound memory: entries for long-gone peers are harmless but we cap the map.
+    if (buckets.size() > 10000) buckets.clear();
+
+    int64_t now = GetTimeMicros();
+    auto& b = buckets[id];
+    if (b.second == 0) { b.first = capacity; b.second = now; }
+    double elapsed = (now - b.second) / 1e6;
+    if (elapsed < 0) elapsed = 0;
+    b.second = now;
+    b.first = std::min(capacity, b.first + elapsed * refillPerSec);
+    if (b.first < 1.0) return false;
+    b.first -= 1.0;
+    return true;
+}
+
 bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStream& vRecv, int64_t nTimeReceived, const CChainParams& chainparams, CConnman* connman, const std::atomic<bool>& interruptMsgProc)
 {
     LogPrint(BCLog::NET, "received: %s (%u bytes) peer=%d\n", SanitizeString(strCommand), vRecv.size(), pfrom->GetId());
@@ -3635,6 +3662,12 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
             return true;
         }
 
+        // Rate-limit L2 block gossip per peer (anti-flooding).
+        if (!L2RateLimitOk(pfrom->GetId())) {
+            LogPrint(BCLog::NET, "L2: rate-limiting L2 block from peer=%d\n", pfrom->GetId());
+            return true;
+        }
+
         l2::L2Block block;
         vRecv >> block;
         
@@ -3675,6 +3708,18 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
                      block.GetBlockNumber(), start, end);
         } else {
             LogPrint(BCLog::NET, "L2: rejected L2 block #%llu: %s\n", block.GetBlockNumber(), l2err);
+            // Provably-bad data (forged state root, bad signature, or an
+            // unexecutable transaction) is a protocol violation -> punish.
+            // "parent mismatch" can happen benignly during reorgs, so we do not
+            // ban on it.
+            auto startsWith = [&](const std::string& p) {
+                return l2err.rfind(p, 0) == 0;
+            };
+            if (l2err == "bad signature" || startsWith("state root mismatch") ||
+                startsWith("tx apply failed")) {
+                LOCK(cs_main);
+                Misbehaving(pfrom->GetId(), 50);
+            }
         }
     }
 
@@ -3718,6 +3763,12 @@ bool static ProcessMessage(CNode* pfrom, const std::string& strCommand, CDataStr
         // Check if L2 is enabled
         if (!gArgs.GetBoolArg("-l2", true)) {
             LogPrint(BCLog::NET, "L2: Ignoring L2 transaction (L2 disabled)\n");
+            return true;
+        }
+
+        // Rate-limit L2 transaction gossip per peer (anti-flooding).
+        if (!L2RateLimitOk(pfrom->GetId())) {
+            LogPrint(BCLog::NET, "L2: rate-limiting L2 transaction from peer=%d\n", pfrom->GetId());
             return true;
         }
 

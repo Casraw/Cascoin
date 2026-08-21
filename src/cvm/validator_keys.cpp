@@ -97,6 +97,20 @@ bool ValidatorKeyManager::Sign(const uint256& hash, std::vector<uint8_t>& signat
     return validatorKey.Sign(hash, signature);
 }
 
+bool ValidatorKeyManager::SignCompact(const uint256& hash, std::vector<uint8_t>& signature) const
+{
+    LOCK(cs_keys);
+
+    if (!hasValidatorKey) {
+        return false;
+    }
+
+    // Recoverable (compact) signature: any node can recover the signer's public
+    // key from the signature and the block hash, then derive the sequencer
+    // address (Hash160 of the pubkey) to verify it matches the claimed signer.
+    return validatorKey.SignCompact(hash, signature);
+}
+
 bool ValidatorKeyManager::Verify(const uint256& hash, const std::vector<uint8_t>& signature, const CPubKey& pubkey)
 {
     return pubkey.Verify(hash, signature);
@@ -253,14 +267,15 @@ bool ValidatorKeyManager::SaveKeyToFile()
             return false;
         }
         
-        // Get private key bytes
-        CPrivKey privkey = validatorKey.GetPrivKey();
-        if (privkey.size() < 32) {
+        // Write the raw 32-byte private key secret. NOTE: CKey::GetPrivKey()
+        // returns the DER-encoded key (~279 bytes), whose first 32 bytes are NOT
+        // the secret - writing those made the key unrecoverable on reload, so the
+        // node regenerated a fresh validator key on every restart. CKey stores
+        // the raw 32-byte secret at begin()..end().
+        if (!validatorKey.IsValid()) {
             return false;
         }
-        
-        // Write first 32 bytes
-        file.write(reinterpret_cast<const char*>(privkey.data()), 32);
+        file.write(reinterpret_cast<const char*>(validatorKey.begin()), 32);
         if (!file.good()) {
             return false;
         }
