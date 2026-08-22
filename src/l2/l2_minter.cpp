@@ -1365,6 +1365,17 @@ bool IngestL2Block(const L2Block& block, std::string& err) {
               (unsigned long long)num, (unsigned)block.transactions.size(),
               block.header.stateRoot.ToString().substr(0, 16));
 
+    // Drop any of this block's transactions from our local mempool: they are
+    // now confirmed on L2, so they must not linger (and be re-gossiped by the
+    // periodic rebroadcast). Mirrors the producer path, which removes consumed
+    // transactions after building a block.
+    if (!block.transactions.empty()) {
+        std::vector<uint256> included;
+        included.reserve(block.transactions.size());
+        for (const auto& tx : block.transactions) included.push_back(tx.GetHash());
+        RemoveL2Transactions(included);
+    }
+
     // Voter (M3): if this node is an active on-chain sequencer, co-sign the
     // accepted block and re-broadcast it so signatures aggregate toward the 2/3
     // finality quorum. No-op for non-sequencer / single-sequencer nodes.
@@ -1492,6 +1503,48 @@ void BroadcastL2Transaction(const L2Transaction& tx) {
                 CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
         }
     });
+}
+
+size_t RebroadcastL2Mempool() {
+    if (!g_connman) return 0;
+
+    // Snapshot the pool under its lock, then release before touching the state
+    // manager / network to avoid holding cs_l2Mempool across other locks.
+    std::vector<L2Transaction> pending;
+    {
+        LOCK(cs_l2Mempool);
+        if (g_l2Mempool.empty()) return 0;
+        pending = g_l2Mempool;
+    }
+
+    // SubmitL2Transaction intentionally does not validate nonce against account
+    // state (that happens at block application), so re-gossiping a transaction
+    // that has ALREADY been applied could make peers re-accept a confirmed tx.
+    // Guard against that here: any transaction whose nonce is below the
+    // sender's current account nonce is already applied -> prune it from the
+    // pool instead of rebroadcasting. This also cleans up stale transactions
+    // that were applied via a path that does not drain the mempool.
+    L2StateManager& sm = GetGlobalStateManager();
+    std::vector<uint256> stale;
+    std::vector<const L2Transaction*> toSend;
+    toSend.reserve(pending.size());
+    for (const auto& tx : pending) {
+        const uint64_t acctNonce = sm.GetAccountState(AddressToKey(tx.from)).nonce;
+        if (tx.nonce < acctNonce) {
+            stale.push_back(tx.GetHash());
+        } else {
+            toSend.push_back(&tx);
+        }
+    }
+    if (!stale.empty()) RemoveL2Transactions(stale);
+    if (toSend.empty()) return 0;
+
+    for (const L2Transaction* tx : toSend) {
+        BroadcastL2Transaction(*tx);
+    }
+    LogPrint(BCLog::NET, "L2: rebroadcast %u pending transaction(s) (pruned %u stale)\n",
+             (unsigned)toSend.size(), (unsigned)stale.size());
+    return toSend.size();
 }
 
 // ============================================================================

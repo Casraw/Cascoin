@@ -136,6 +136,19 @@ bool SubmitL2Transaction(const L2Transaction& tx, std::string& err);
 void BroadcastL2Transaction(const L2Transaction& tx);
 
 /**
+ * @brief Re-gossip all still-pending L2 transactions to NODE_L2 peers.
+ *
+ * Called periodically (see -l2rebroadcastinterval) so a transaction submitted
+ * while no sequencer was reachable is still delivered once connectivity is
+ * restored - L2 transactions are otherwise only gossiped once, at submit time.
+ * Transactions that have already been applied on L2 (nonce below the sender's
+ * current account nonce) are pruned from the pool instead of being rebroadcast.
+ *
+ * @return the number of transactions rebroadcast.
+ */
+size_t RebroadcastL2Mempool();
+
+/**
  * @brief Get up to @p maxCount pending transactions (FIFO order) for block
  *        production. Does not remove them from the pool.
  */

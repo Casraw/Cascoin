@@ -1430,6 +1430,17 @@ static void L2AutoPostData()
 }
 #endif // ENABLE_WALLET
 
+// Cascoin: L2 - periodically re-gossip still-pending L2 transactions. L2
+// transactions are otherwise only broadcast once (at submit time), so a
+// transfer submitted while the sequencer was unreachable would be stuck in the
+// local pool forever. This runs on every L2 node (no wallet required) and
+// prunes already-applied transactions as a side effect.
+static void L2AutoRebroadcast()
+{
+    if (!l2::IsL2Enabled()) return;
+    l2::RebroadcastL2Mempool();
+}
+
 bool AppInitMain()
 {
     const CChainParams& chainparams = Params();
@@ -2246,6 +2257,17 @@ bool AppInitMain()
         // additionally produces blocks when this node is a sequencer.
         l2::StartL2BlockProducer(fSeq);
         LogPrintf("L2: worker started (sequencer=%d)\n", (int)fSeq);
+
+        // Re-gossip still-pending L2 transactions on a timer so a transfer
+        // submitted while the sequencer was unreachable is delivered once
+        // connectivity is restored. Runs on all L2 nodes (submitters included),
+        // independent of wallet/sequencer role. -l2rebroadcastinterval seconds,
+        // default 60; 0 disables.
+        int64_t rebroadcastSecs = gArgs.GetArg("-l2rebroadcastinterval", 60);
+        if (rebroadcastSecs > 0) {
+            scheduler.scheduleEvery(&L2AutoRebroadcast, rebroadcastSecs * 1000);
+            LogPrintf("L2: pending-tx rebroadcast scheduled every %ds\n", (int)rebroadcastSecs);
+        }
 
 #ifdef ENABLE_WALLET
         // Sequencers automatically anchor the latest L2 block on L1 on a timer.
