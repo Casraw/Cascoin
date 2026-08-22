@@ -270,8 +270,10 @@ bool ExecuteCVMBlock(const CBlock& block, const CBlockIndex* pindex,
 
     // Enforce the per-block subsidy maximum (bugfix 2.1). Reject any block whose
     // accumulated subsidy exceeds the budget, even when the raw gas total is
-    // under the block gas cap.
-    if (totalSubsidy > maxSubsidyPerBlock) {
+    // under the block gas cap. Gated by cvmSubsidyMaxActivationHeight so it is
+    // not applied retroactively to historical blocks that predate the rule.
+    if (pindex->nHeight >= params.cvmSubsidyMaxActivationHeight &&
+        totalSubsidy > maxSubsidyPerBlock) {
         LogPrintf("ERROR: Block exceeds per-block subsidy maximum: %llu > %llu\n",
                  totalSubsidy, maxSubsidyPerBlock);
         return false;

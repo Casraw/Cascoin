@@ -188,6 +188,11 @@ public:
         // real upgrade height before mainnet release.
         consensus.l2ActivationHeight        = 400000;                                   // Activate L2 anchoring/minting at block 400000 (future coordinated upgrade)
 
+        // Cascoin: CVM per-block subsidy maximum enforced from a future height so
+        // existing mainnet history is not retroactively invalidated. Adjust to
+        // the coordinated upgrade height before release (current mainnet ~276k).
+        consensus.cvmSubsidyMaxActivationHeight = 500000;                               // Enforce CVM per-block subsidy cap from block 500000
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 220000;                                   // Activate ASRS at block 220000 (2+ months for network upgrade)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -380,6 +385,14 @@ public:
         // Cascoin: L2 (Layer 2 burn-and-mint) activation height (testnet: early).
         consensus.l2ActivationHeight        = 500;                                      // Activate L2 anchoring/minting at block 500 (earlier for testing)
 
+        // Cascoin: CVM per-block subsidy maximum. The live testnet chain (tip
+        // ~7131) already contains blocks that predate this stricter rule and
+        // whose subsidy exceeds the cap; enforcing it from cvmActivationHeight
+        // (500) retroactively rejected them and stalled every upgraded node.
+        // Activate it just above the current tip so existing history stays valid
+        // and the cap applies only to newly mined blocks.
+        consensus.cvmSubsidyMaxActivationHeight = 7132;                                 // Enforce CVM per-block subsidy cap from block 7132 (current tip 7131 + 1)
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -526,6 +539,10 @@ public:
 
         // Cascoin: L2 (Layer 2 burn-and-mint) activation height (regtest: immediate).
         consensus.l2ActivationHeight        = 0;                                        // Activate L2 anchoring/minting immediately for regtest
+
+        // Cascoin: CVM per-block subsidy maximum active from genesis in regtest
+        // so the subsidy-cap unit/functional tests keep exercising the rule.
+        consensus.cvmSubsidyMaxActivationHeight = 0;                                    // Enforce CVM per-block subsidy cap immediately for regtest
 
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest

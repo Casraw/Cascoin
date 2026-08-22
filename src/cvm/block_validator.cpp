@@ -295,8 +295,10 @@ BlockValidationResult BlockValidator::ValidateBlock(
     // Enforce the per-block subsidy maximum (bugfix 2.1). Accumulate the actual
     // per-transaction subsidies and reject the block when the total exceeds the
     // cvmMaxGasPerBlock-derived subsidy maximum. This is done before saving
-    // state so a block that over-subsidizes is never persisted.
-    {
+    // state so a block that over-subsidizes is never persisted. Gated by
+    // cvmSubsidyMaxActivationHeight so historical blocks that predate the rule
+    // are not retroactively invalidated.
+    if (pindex->nHeight >= chainparams.cvmSubsidyMaxActivationHeight) {
         uint64_t accumulatedSubsidy = 0;
         if (!AccumulateBlockSubsidy(block, accumulatedSubsidy)) {
             const uint64_t maxSubsidyPerBlock = GetMaxSubsidyPerBlock(chainparams);

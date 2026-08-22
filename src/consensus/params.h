@@ -141,6 +141,13 @@ struct Params {
 
     // Cascoin: L2 (Layer 2 burn-and-mint) related consensus fields
     int l2ActivationHeight;             // Block height at which L2 L1-anchoring (L2COMMIT/L2FORCE) and burn-minting activate
+
+    // Cascoin: CVM per-block subsidy maximum activation. The subsidy-max rule
+    // (bugfix 2.1) is a newer, stricter consensus rule; enforcing it from the
+    // original CVM activation height would retroactively invalidate historical
+    // blocks that were valid when mined. Gate it behind this (later) height so
+    // existing chain history stays valid and the cap only applies to new blocks.
+    int cvmSubsidyMaxActivationHeight;  // Block height at which the CVM per-block subsidy maximum is enforced
     
     // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
     int asrsActivationHeight;           // Block height at which ASRS activates
