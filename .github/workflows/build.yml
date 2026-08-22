@@ -141,6 +141,11 @@ jobs:
           git clone --recursive https://github.com/ethereum/evmone.git
           cd evmone
           git checkout v0.18.0
+          # The initial --recursive clone only fetched the default branch's
+          # submodules; after checking out the v0.18.0 tag we must (re-)init the
+          # submodules for that tag, otherwise evmone's CMake aborts with
+          # "Git submodules not initialized".
+          git submodule update --init --recursive
           mkdir -p build && cd build
           cmake .. \
             -DCMAKE_BUILD_TYPE=Release \
