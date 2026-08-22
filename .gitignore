@@ -122,3 +122,8 @@ src/.vscode/
 just*.sh
 
 mcp.json
+
+# External CPU miner (not part of the Cascoin build)
+cpuminer/
+cpuminer
+mine-testnet.sh

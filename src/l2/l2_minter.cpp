@@ -1484,6 +1484,16 @@ bool GetLatestL2Commitment(L2Commitment& out) {
     return g_l2db->Read(std::make_pair(DB_L2_COMMIT, latest), out);
 }
 
+void BroadcastL2Transaction(const L2Transaction& tx) {
+    if (!g_connman) return;
+    g_connman->ForEachNode([&](CNode* pnode) {
+        if (pnode->fSuccessfullyConnected && (pnode->nServices & NODE_L2)) {
+            g_connman->PushMessage(pnode,
+                CNetMsgMaker(pnode->GetSendVersion()).Make(NetMsgType::L2TX, tx));
+        }
+    });
+}
+
 // ============================================================================
 // M1: Data Availability - post/reconstruct L2 block data via L1 (L2DATA)
 //

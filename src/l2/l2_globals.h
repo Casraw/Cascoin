@@ -130,6 +130,11 @@ int GetL2LastProcessedHeight();
  */
 bool SubmitL2Transaction(const L2Transaction& tx, std::string& err);
 
+/** Broadcast a locally-originated L2 transaction to all NODE_L2 peers so it can
+ *  reach a sequencer. (Peers relay it further on receipt.) Call this after
+ *  SubmitL2Transaction for RPC-submitted transactions on non-sequencer nodes. */
+void BroadcastL2Transaction(const L2Transaction& tx);
+
 /**
  * @brief Get up to @p maxCount pending transactions (FIFO order) for block
  *        production. Does not remove them from the pool.

@@ -1141,6 +1141,8 @@ UniValue l2_transfer(const JSONRPCRequest& request)
     if (!l2::SubmitL2Transaction(tx, err)) {
         throw JSONRPCError(RPC_TRANSACTION_REJECTED, "L2 transaction rejected: " + err);
     }
+    // Broadcast to NODE_L2 peers so a (possibly remote) sequencer can include it.
+    l2::BroadcastL2Transaction(tx);
     
     UniValue response(UniValue::VOBJ);
     response.pushKV("success", true);
@@ -1230,6 +1232,8 @@ UniValue l2_sendtransaction(const JSONRPCRequest& request)
     if (!l2::SubmitL2Transaction(tx, err)) {
         throw JSONRPCError(RPC_TRANSACTION_REJECTED, "L2 transaction rejected: " + err);
     }
+    // Broadcast to NODE_L2 peers so a (possibly remote) sequencer can include it.
+    l2::BroadcastL2Transaction(tx);
 
     UniValue result(UniValue::VOBJ);
     result.pushKV("txHash", tx.GetHash().GetHex());
