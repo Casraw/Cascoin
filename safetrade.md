@@ -184,6 +184,7 @@ I would rather you have the caveats up front than find them yourself. If it is u
 ## Socials
 
 - Discord (primary community): https://discord.gg/J2NxATBS8z
+- BitcoinTalk: https://bitcointalk.org/index.php?topic=5544330
 - There is a X account too. But i dont really use it.
 
 I'm happy to provide, testnet coins, brand assets/logo, or any additional documentation you need for the listing and integration. Just let me know.
