@@ -4,6 +4,7 @@
 
 #include <cvm/cvm.h>
 #include <cvm/opcodes.h>
+#include <chainparams.h>
 #include <hash.h>
 #include <pubkey.h>
 #include <key.h>
@@ -70,6 +71,30 @@ bool PopVarBytes(VMState& state, std::vector<uint8_t>& out, size_t maxLen) {
         ArithWordToBytesBE(word, chunkLen, out.data() + start);
     }
     return true;
+}
+
+// Upper bound for a decoded variable-length stack field, chosen well above a
+// FALCON-512 signature so every supported algorithm fits.
+static constexpr size_t kMaxFieldBytes = 4096;
+
+// True once the opcode-completion rules are active for the height being
+// executed. Two native opcodes were declared and gas-costed but not functional:
+// OP_PUBKEY had no handler (which aborted the program with no diagnosis) and
+// OP_CALL never executed the callee (so a call always reported failure). Making
+// them work changes the observable result of any contract that uses them, so the
+// new behaviour is gated to keep already-validated history reproducible.
+bool IsOpcodeV2Active(const VMState& state) {
+    return state.GetBlockHeight() >= Params().GetConsensus().cvmOpcodeV2ActivationHeight;
+}
+
+// Fold a 20-byte address into a single stack word, matching how OP_ADDRESS and
+// OP_CALLER surface addresses.
+arith_uint256 AddressToWord(const uint160& addr) {
+    arith_uint256 value;
+    for (int i = 0; i < 20; ++i) {
+        value = (value << 8) | arith_uint256(addr.begin()[i]);
+    }
+    return value;
 }
 
 } // anonymous namespace
@@ -481,9 +506,6 @@ bool CVM::HandleCrypto(OpCode opcode, VMState& state) {
             return false;
         }
 
-        // Bound the decoded field sizes generously (well above FALCON-512).
-        static constexpr size_t kMaxFieldBytes = 4096;
-
         std::vector<uint8_t> pubkey, signature, message;
         bool decoded = PopVarBytes(state, pubkey, kMaxFieldBytes) &&
                        PopVarBytes(state, signature, kMaxFieldBytes) &&
@@ -521,6 +543,54 @@ bool CVM::HandleCrypto(OpCode opcode, VMState& state) {
         }
 
         state.Push(verifyResult ? arith_uint256(1) : arith_uint256());
+        return true;
+    } else if (opcode == OpCode::OP_PUBKEY) {
+        // Recover the signer identity from a compact (recoverable) signature.
+        //
+        // OP_PUBKEY was previously declared and gas-costed but had no handler at
+        // all: execution fell through and aborted the program with no error set.
+        //
+        // Stack layout (top-first): signature field (length-prefixed, per the
+        // encoding helpers above), then a 32-byte message hash word. The
+        // recovered public key is surfaced as its 20-byte key id folded into one
+        // word, so a contract can compare it directly against OP_CALLER or a
+        // stored address. A malformed or unrecoverable signature pushes 0
+        // deterministically instead of aborting, matching the OP_VERIFY_SIG
+        // family's behaviour.
+        if (!IsOpcodeV2Active(state)) {
+            // Pre-activation: preserve the previous outcome (execution fails),
+            // but report it as a clean, deterministic error rather than halting
+            // with an empty diagnosis.
+            state.SetError("PUBKEY: opcode not active at this height");
+            state.SetStatus(VMState::Status::INVALID_OPCODE);
+            return false;
+        }
+
+        if (state.StackSize() < 2) {
+            state.SetError("PUBKEY: Stack underflow");
+            state.SetStatus(VMState::Status::STACK_UNDERFLOW);
+            return false;
+        }
+
+        std::vector<uint8_t> signature;
+        bool decoded = PopVarBytes(state, signature, kMaxFieldBytes) &&
+                       state.StackSize() >= 1;
+
+        uint256 messageHash;
+        if (decoded) {
+            arith_uint256 msgWord = state.Pop();
+            ArithWordToBytesBE(msgWord, 32, messageHash.begin());
+        }
+
+        // Only compact signatures carry the recovery id needed to recover a key.
+        CPubKey recovered;
+        const bool recoveredOk =
+            decoded &&
+            signature.size() == CPubKey::COMPACT_SIGNATURE_SIZE &&
+            recovered.RecoverCompact(messageHash, signature) &&
+            recovered.IsValid();
+
+        state.Push(recoveredOk ? AddressToWord(recovered.GetID()) : arith_uint256());
         return true;
     }
     
@@ -617,6 +687,15 @@ bool CVM::HandleCall(const std::vector<uint8_t>& code, VMState& state, ContractS
     uint64_t availableGas = state.GetGasRemaining();
     uint64_t callGas = std::min(requestedGas, availableGas);
 
+    // Bound recursion explicitly. Gas alone is not a sufficient guard: at the
+    // CALL base cost a single transaction's budget permits well over a thousand
+    // nested calls, which would recurse deep enough to overflow the native
+    // stack. Exceeding the depth is a deterministic call failure, not an abort.
+    if (state.GetCallDepth() + 1 > MAX_CALL_DEPTH) {
+        state.Push(arith_uint256());
+        return true;
+    }
+
     // Execute the target contract with an isolated child state that inherits the
     // caller context, value and forwarded gas. CallContract returns false when
     // the target cannot be loaded/executed with the available backend, which is
@@ -629,13 +708,19 @@ bool CVM::HandleCall(const std::vector<uint8_t>& code, VMState& state, ContractS
     childState.SetBlockHeight(state.GetBlockHeight());
     childState.SetBlockHash(state.GetBlockHash());
     childState.SetTimestamp(state.GetTimestamp());
+    childState.SetCallDepth(state.GetCallDepth() + 1);
 
     bool success = CallContract(target, std::vector<uint8_t>(), childState, storage);
 
-    // Account for the gas consumed by the sub-call against the caller.
+    // Charge the caller for the gas the sub-call consumed. This must happen
+    // whether or not the callee succeeded: a reverting or out-of-gas callee
+    // still consumed the gas it burned, and not charging it would let a contract
+    // run unbounded work for free by calling a failing target repeatedly.
+    state.UseGas(childState.GetGasUsed());
+
     if (success) {
-        state.UseGas(childState.GetGasUsed());
-        // Propagate any logs emitted by the sub-call to the caller's log set.
+        // Logs from a failed sub-call are discarded along with its state
+        // changes, mirroring the EVM's treatment of a reverted frame.
         for (const auto& log : childState.GetLogs()) {
             state.AddLog(log);
         }
@@ -758,22 +843,38 @@ bool CVM::DeployContract(const std::vector<uint8_t>& code, const uint160& contra
 
 bool CVM::CallContract(const uint160& contractAddr, const std::vector<uint8_t>& inputData,
                       VMState& state, ContractStorage* storage) {
-    // Load and execute the target contract with proper gas/state handling
-    // (bugfix 2.25). The core VM's ContractStorage interface exposes persistent
-    // key/value storage but not contract *bytecode*; bytecode retrieval and full
-    // cross-contract execution are provided by the higher-level EnhancedVM /
-    // CVMDatabase layer. When no executable target is available through the
-    // supplied backend, the call fails deterministically (returning false) with
-    // no placeholder error, so the caller (HandleCall) reports a 0 success flag
-    // per the EVM CALL convention rather than aborting the program.
+    // Execute the target contract against the caller-prepared child state.
+    //
+    // `state` is the child state built by HandleCall: it already carries the
+    // forwarded gas, the callee as contract address, the caller as caller
+    // address, the call value and the block context. Returning false reports a
+    // deterministic call failure, which HandleCall surfaces as a 0 success flag
+    // per the EVM CALL convention rather than aborting the calling program.
     if (!storage || !storage->Exists(contractAddr)) {
         return false;
     }
 
-    // A target contract exists in storage but its bytecode is not retrievable
-    // through the base ContractStorage interface, so execution cannot proceed
-    // deterministically at this layer. Report a defined failure.
-    return false;
+    // Pre-activation: cross-contract calls never executed the callee and always
+    // reported failure. Preserve that outcome so historical blocks reproduce.
+    if (!IsOpcodeV2Active(state)) {
+        return false;
+    }
+
+    // Retrieve the callee's bytecode. Backends that only provide key/value
+    // storage report no code, which is a defined call failure.
+    std::vector<uint8_t> code;
+    if (!storage->LoadCode(contractAddr, code) || code.empty()) {
+        return false;
+    }
+
+    if (code.size() > MAX_CODE_SIZE) {
+        return false;
+    }
+
+    // Execute the callee. A nested OP_CALL inside `code` recurses through
+    // HandleCall, which enforces MAX_CALL_DEPTH.
+    CVM callee;
+    return callee.Execute(code, state, storage);
 }
 
 ExecutionResult ExecuteContract(

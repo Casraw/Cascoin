@@ -2586,7 +2586,7 @@ ManipulationDetection HATConsensusValidator::AnalyzeTransactionVoting(const uint
     return m_voteManipulationDetector->AnalyzeTransaction(txHash);
 }
 
-ManipulationDetection HATConsensusValidator::AnalyzeAddressReputation(const uint160& address)
+ManipulationDetection HATConsensusValidator::AnalyzeAddressReputation(const TrustNodeId& address)
 {
     return m_voteManipulationDetector->AnalyzeAddress(address);
 }

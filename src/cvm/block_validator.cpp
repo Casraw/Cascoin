@@ -158,6 +158,19 @@ void BlockValidator::SnapshotContractState()
         return;
     }
     
+    // When ConnectBlock is driving validation it has already opened a per-block
+    // reverse journal on the database, which reverts contract code/metadata,
+    // storage, nonces, balances and the WoT keyspace on any early return. That
+    // journal is a strict superset of this snapshot, so copying every contract
+    // here would be redundant work that grows with the size of the contract set.
+    //
+    // Keep the eager snapshot only for direct/standalone use of BlockValidator
+    // (unit tests, tooling) where no journal is recording.
+    if (m_db->IsRecordingUndo()) {
+        LogPrint(BCLog::CVM, "BlockValidator: Using database undo journal for rollback\n");
+        return;
+    }
+    
     // Record every contract address present at block begin, along with its
     // current value, so both newly-written and modified contracts can be
     // reverted on failure.
@@ -669,14 +682,17 @@ bool BlockValidator::DeployContract(
         return true;
         
     } catch (const std::exception& e) {
-        // Same semantics: a deployment throwing should not invalidate the whole block.
-        LogPrint(BCLog::CVM, "BlockValidator: Contract deployment exception (tx=%s, deployer=%s): %s\n",
-                 tx.GetHash().ToString(), deployer.ToString(), e.what());
-
-        gasUsed = deployData.gasLimit;
-
-        error.clear();
-        return true;
+        // As in ExecuteContractCall: a deterministic deployment failure is
+        // reported via result.success == false above (gas consumed, block still
+        // valid). An escaping exception instead signals a node-local or
+        // infrastructure fault, which is not reproducible across nodes, so
+        // accepting the block would risk a silent CVM state divergence. Fail
+        // validation rather than diverge.
+        error = strprintf("CVM host fault during contract deployment (tx=%s, deployer=%s): %s",
+                          tx.GetHash().ToString(), deployer.ToString(), e.what());
+        LogPrintf("BlockValidator: %s\n", error);
+        gasUsed = 0;
+        return false;
     }
 }
 
@@ -781,12 +797,23 @@ bool BlockValidator::ExecuteContractCall(
         return true;
         
     } catch (const std::exception& e) {
-        LogPrint(BCLog::CVM, "BlockValidator: Contract call exception (tx=%s, caller=%s, contract=%s): %s\n",
-                 tx.GetHash().ToString(), caller.ToString(), callData.contractAddress.ToString(), e.what());
-
-        gasUsed = callData.gasLimit;
-        error.clear();
-        return true;
+        // An exception escaping the VM is NOT a deterministic contract failure.
+        // Deterministic failures (revert, out-of-gas, invalid opcode) are
+        // reported through result.success == false above and correctly consume
+        // gas without invalidating the block.
+        //
+        // Reaching here means a node-local or infrastructure fault (database
+        // error, allocation failure, or an internal invariant violation). Those
+        // are NOT reproducible across nodes, so accepting the block anyway would
+        // let this node commit CVM state that differs from the rest of the
+        // network while still following the chain — a silent state divergence.
+        // Fail validation instead: halting on this node is recoverable, silent
+        // divergence is not.
+        error = strprintf("CVM host fault during contract call (tx=%s, contract=%s): %s",
+                          tx.GetHash().ToString(), callData.contractAddress.ToString(), e.what());
+        LogPrintf("BlockValidator: %s\n", error);
+        gasUsed = 0;
+        return false;
     }
 }
 
@@ -842,6 +869,16 @@ void BlockValidator::RollbackContractState()
     // must never be reverted (preservation 3.17 / 3.23).
     if (m_stateCommitted) {
         LogPrint(BCLog::CVM, "BlockValidator: State already committed; nothing to roll back\n");
+        return;
+    }
+    
+    // When a per-block reverse journal is recording, the database owns the
+    // revert and SnapshotContractState() deliberately skipped the eager copy.
+    // The snapshot-based path below MUST NOT run in that case: with an empty
+    // snapshot it would treat every existing contract as "written by this block"
+    // and erase the entire contract set.
+    if (m_db->IsRecordingUndo()) {
+        LogPrint(BCLog::CVM, "BlockValidator: Rollback delegated to database undo journal\n");
         return;
     }
     

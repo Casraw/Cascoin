@@ -7,6 +7,8 @@
 #include <util.h>
 #include <clientversion.h>
 
+#include <algorithm>
+
 namespace CVM {
 
 std::unique_ptr<CVMDatabase> g_cvmdb;
@@ -45,6 +47,9 @@ bool CVMDatabase::Load(const uint160& contractAddr, const uint256& key, uint256&
 }
 
 bool CVMDatabase::Store(const uint160& contractAddr, const uint256& key, const uint256& value) {
+    // Capture the pre-block value so a disconnect can restore it.
+    JournalStorage(contractAddr, key);
+
     // Update cache
     auto cacheKey = std::make_pair(contractAddr, key);
     storageCache[cacheKey] = value;
@@ -63,6 +68,9 @@ bool CVMDatabase::Exists(const uint160& contractAddr) {
 }
 
 bool CVMDatabase::WriteContract(const uint160& address, const Contract& contract) {
+    // Capture the pre-block contract record so a disconnect can restore it.
+    JournalContract(address);
+
     std::string dbKey = std::string(1, DB_CONTRACT) + 
                        std::string((char*)address.begin(), 20);
     
@@ -84,6 +92,8 @@ bool CVMDatabase::WriteContract(const uint160& address, const Contract& contract
     }
     
     if (!found) {
+        // The index is rewritten wholesale, so journal its prior snapshot.
+        JournalContractList();
         contracts.push_back(address);
         db->Write(listKey, contracts);
     }
@@ -108,10 +118,17 @@ bool CVMDatabase::LoadContract(const uint160& address, std::vector<uint8_t>& cod
 }
 
 bool CVMDatabase::DeleteContract(const uint160& address) {
+    // Capture the pre-block contract record so a disconnect can restore it.
+    JournalContract(address);
+
     std::string dbKey = std::string(1, DB_CONTRACT) + 
                        std::string((char*)address.begin(), 20);
     
     return db->Erase(dbKey);
+}
+
+bool CVMDatabase::LoadCode(const uint160& contractAddr, std::vector<uint8_t>& code) {
+    return LoadContract(contractAddr, code);
 }
 
 std::vector<uint160> CVMDatabase::ListContracts() {
@@ -124,6 +141,9 @@ std::vector<uint160> CVMDatabase::ListContracts() {
 }
 
 bool CVMDatabase::WriteNonce(const uint160& address, uint64_t nonce) {
+    // Capture the pre-block nonce so a disconnect can restore it.
+    JournalNonce(address);
+
     nonceCache[address] = nonce;
     
     std::string dbKey = std::string(1, DB_NONCE) + 
@@ -167,6 +187,9 @@ uint64_t CVMDatabase::GetNextNonce(const uint160& address) {
 }
 
 bool CVMDatabase::WriteBalance(const uint160& address, uint64_t balance) {
+    // Capture the pre-block balance so a disconnect can restore it.
+    JournalBalance(address);
+
     std::string dbKey = std::string(1, DB_BALANCE) + 
                        std::string((char*)address.begin(), 20);
     
@@ -187,6 +210,11 @@ bool CVMDatabase::ReadBalance(const uint160& address, uint64_t& balance) {
 
 // Generic key-value storage for extensions (Web-of-Trust, etc.)
 bool CVMDatabase::WriteGeneric(const std::string& key, const std::vector<uint8_t>& value) {
+    // The generic keyspace backs the Web-of-Trust (trust edges, bonded votes,
+    // DAO disputes, reputation), so journaling it is what makes WoT state
+    // reorg-safe.
+    JournalGeneric(key);
+
     return db->Write(key, value);
 }
 
@@ -199,6 +227,8 @@ bool CVMDatabase::ExistsGeneric(const std::string& key) {
 }
 
 bool CVMDatabase::EraseGeneric(const std::string& key) {
+    JournalGeneric(key);
+
     return db->Erase(key);
 }
 
@@ -230,6 +260,230 @@ std::vector<std::string> CVMDatabase::ListKeysWithPrefix(const std::string& pref
 
 bool CVMDatabase::Flush() {
     return db->Flush();
+}
+
+// ===== Block undo journal (reorg safety) =====
+//
+// ConnectBlock brackets all CVM work for a block between BeginBlockUndo and
+// CommitBlockUndo. Every mutating accessor records the key's pre-block value on
+// first touch, so DisconnectBlock can restore the exact prior CVM state. Undo
+// application writes through `db` directly so restores are never re-journaled.
+
+void CVMDatabase::ClearCaches() {
+    storageCache.clear();
+    nonceCache.clear();
+}
+
+void CVMDatabase::JournalContract(const uint160& address) {
+    if (!m_undoRecording) return;
+    if (m_undo.contracts.count(address)) return;  // first touch already captured
+
+    Contract prior;
+    const bool existed = ReadContract(address, prior);
+    m_undo.contracts.emplace(address,
+        CVMUndoValue<Contract>(existed, existed ? prior : Contract()));
+}
+
+void CVMDatabase::JournalStorage(const uint160& contractAddr, const uint256& key) {
+    if (!m_undoRecording) return;
+
+    const auto cacheKey = std::make_pair(contractAddr, key);
+    if (m_undo.storage.count(cacheKey)) return;
+
+    uint256 prior;
+    const bool existed = Load(contractAddr, key, prior);
+    m_undo.storage.emplace(cacheKey,
+        CVMUndoValue<uint256>(existed, existed ? prior : uint256()));
+}
+
+void CVMDatabase::JournalNonce(const uint160& address) {
+    if (!m_undoRecording) return;
+    if (m_undo.nonces.count(address)) return;
+
+    uint64_t prior = 0;
+    const bool existed = ReadNonce(address, prior);
+    m_undo.nonces.emplace(address,
+        CVMUndoValue<uint64_t>(existed, existed ? prior : 0));
+}
+
+void CVMDatabase::JournalBalance(const uint160& address) {
+    if (!m_undoRecording) return;
+    if (m_undo.balances.count(address)) return;
+
+    uint64_t prior = 0;
+    const bool existed = ReadBalance(address, prior);
+    m_undo.balances.emplace(address,
+        CVMUndoValue<uint64_t>(existed, existed ? prior : 0));
+}
+
+void CVMDatabase::JournalGeneric(const std::string& key) {
+    if (!m_undoRecording) return;
+    if (m_undo.generic.count(key)) return;
+
+    std::vector<uint8_t> prior;
+    const bool existed = db->Read(key, prior);
+    m_undo.generic.emplace(key,
+        CVMUndoValue<std::vector<uint8_t>>(existed, existed ? prior : std::vector<uint8_t>()));
+}
+
+void CVMDatabase::JournalContractList() {
+    if (!m_undoRecording) return;
+    if (m_undo.contractListCaptured) return;
+
+    const std::string listKey(1, DB_CONTRACT_LIST);
+    std::vector<uint160> prior;
+    const bool existed = db->Read(listKey, prior);
+
+    m_undo.contractListCaptured = true;
+    m_undo.contractList = CVMUndoValue<std::vector<uint160>>(
+        existed, existed ? prior : std::vector<uint160>());
+}
+
+bool CVMDatabase::ApplyUndoRecord(const CVMUndoRecord& rec) {
+    bool ok = true;
+
+    for (const auto& entry : rec.contracts) {
+        const std::string dbKey = std::string(1, DB_CONTRACT) +
+                                  std::string((const char*)entry.first.begin(), 20);
+        ok = (entry.second.existed ? db->Write(dbKey, entry.second.value)
+                                   : db->Erase(dbKey)) && ok;
+    }
+
+    for (const auto& entry : rec.storage) {
+        const std::string dbKey = std::string(1, DB_STORAGE) +
+                                  std::string((const char*)entry.first.first.begin(), 20) +
+                                  std::string((const char*)entry.first.second.begin(), 32);
+        ok = (entry.second.existed ? db->Write(dbKey, entry.second.value)
+                                   : db->Erase(dbKey)) && ok;
+    }
+
+    for (const auto& entry : rec.nonces) {
+        const std::string dbKey = std::string(1, DB_NONCE) +
+                                  std::string((const char*)entry.first.begin(), 20);
+        ok = (entry.second.existed ? db->Write(dbKey, entry.second.value)
+                                   : db->Erase(dbKey)) && ok;
+    }
+
+    for (const auto& entry : rec.balances) {
+        const std::string dbKey = std::string(1, DB_BALANCE) +
+                                  std::string((const char*)entry.first.begin(), 20);
+        ok = (entry.second.existed ? db->Write(dbKey, entry.second.value)
+                                   : db->Erase(dbKey)) && ok;
+    }
+
+    // Restores the Web-of-Trust keyspace (trust edges, bonded votes, DAO
+    // disputes, reputation records).
+    for (const auto& entry : rec.generic) {
+        ok = (entry.second.existed ? db->Write(entry.first, entry.second.value)
+                                   : db->Erase(entry.first)) && ok;
+    }
+
+    if (rec.contractListCaptured) {
+        const std::string listKey(1, DB_CONTRACT_LIST);
+        ok = (rec.contractList.existed ? db->Write(listKey, rec.contractList.value)
+                                       : db->Erase(listKey)) && ok;
+    }
+
+    // Cached reads may now be stale relative to the restored state.
+    ClearCaches();
+
+    return ok;
+}
+
+void CVMDatabase::BeginBlockUndo(int height) {
+    if (m_undoRecording) {
+        // A previous journal was never committed or aborted (interrupted
+        // connect). Revert its entries so they cannot leak into this block.
+        LogPrintf("CVM: undo journal for height %d left open; reverting before height %d\n",
+                  m_undo.height, height);
+        ApplyUndoRecord(m_undo);
+    }
+
+    m_undo = CVMUndoRecord();
+    m_undo.height = height;
+    m_undoRecording = true;
+}
+
+bool CVMDatabase::CommitBlockUndo(const uint256& blockHash) {
+    if (!m_undoRecording) {
+        return true;
+    }
+    m_undoRecording = false;
+
+    CVMUndoRecord rec = m_undo;
+    m_undo = CVMUndoRecord();
+
+    // A block that touched no CVM state needs no journal.
+    if (rec.IsEmpty()) {
+        return true;
+    }
+
+    const std::string undoKey = std::string(1, DB_UNDO) +
+                                std::string((const char*)blockHash.begin(), 32);
+    if (!db->Write(undoKey, rec)) {
+        LogPrintf("CVM: ERROR - failed to persist undo journal for block %s\n",
+                  blockHash.ToString());
+        return false;
+    }
+
+    // Bounded index so journals outside the retention window can be pruned.
+    const std::string idxKey(1, DB_UNDO_INDEX);
+    std::vector<std::pair<int32_t, uint256>> index;
+    db->Read(idxKey, index);
+    index.emplace_back(rec.height, blockHash);
+
+    while (index.size() > (size_t)CVM_UNDO_KEEP_BLOCKS) {
+        const std::string staleKey = std::string(1, DB_UNDO) +
+                                     std::string((const char*)index.front().second.begin(), 32);
+        db->Erase(staleKey);
+        index.erase(index.begin());
+    }
+
+    return db->Write(idxKey, index);
+}
+
+void CVMDatabase::AbortBlockUndo() {
+    if (!m_undoRecording) {
+        return;
+    }
+    m_undoRecording = false;
+
+    ApplyUndoRecord(m_undo);
+    m_undo = CVMUndoRecord();
+}
+
+bool CVMDatabase::UndoBlock(const uint256& blockHash) {
+    const std::string undoKey = std::string(1, DB_UNDO) +
+                                std::string((const char*)blockHash.begin(), 32);
+
+    CVMUndoRecord rec;
+    if (!db->Read(undoKey, rec)) {
+        // No journal: either the block touched no CVM state, or it was
+        // connected by a build that predates the journal.
+        return false;
+    }
+
+    const bool ok = ApplyUndoRecord(rec);
+
+    db->Erase(undoKey);
+
+    const std::string idxKey(1, DB_UNDO_INDEX);
+    std::vector<std::pair<int32_t, uint256>> index;
+    if (db->Read(idxKey, index)) {
+        index.erase(std::remove_if(index.begin(), index.end(),
+                        [&blockHash](const std::pair<int32_t, uint256>& e) {
+                            return e.second == blockHash;
+                        }),
+                    index.end());
+        db->Write(idxKey, index);
+    }
+
+    Flush();
+
+    LogPrintf("CVM: reverted state for disconnected block %s (height %d)\n",
+              blockHash.ToString(), rec.height);
+
+    return ok;
 }
 
 // Batch operations

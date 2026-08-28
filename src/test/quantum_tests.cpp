@@ -1678,7 +1678,10 @@ BOOST_AUTO_TEST_CASE(consensus_quantum_parameters)
     // Test testnet parameters
     SelectParams(CBaseChainParams::TESTNET);
     const Consensus::Params& testParams = Params().GetConsensus();
-    BOOST_CHECK_EQUAL(testParams.quantumActivationHeight, 50000);
+    // Testnet quantum activation was lowered to 5680 so the live testnet (whose
+    // tip is already well past that height) actually exercises quantum; the
+    // originally-planned 50000 was never reached before the change.
+    BOOST_CHECK_EQUAL(testParams.quantumActivationHeight, 5680);
     BOOST_CHECK_EQUAL(testParams.maxQuantumSignatureSize, 700u);
     BOOST_CHECK_EQUAL(testParams.maxQuantumPubKeySize, 897u);
     
@@ -1744,14 +1747,15 @@ BOOST_AUTO_TEST_CASE(property16_activation_height_enforcement)
     const Consensus::Params& mainParams = Params().GetConsensus();
     BOOST_CHECK_EQUAL(mainParams.quantumActivationHeight, 350000);
     
-    // Testnet activation height is 50000
+    // Testnet activation height is 5680 (lowered from the originally-planned
+    // 50000 so the live testnet actually reaches and exercises quantum).
     SelectParams(CBaseChainParams::TESTNET);
     const Consensus::Params& testParams = Params().GetConsensus();
-    BOOST_CHECK_EQUAL(testParams.quantumActivationHeight, 50000);
+    BOOST_CHECK_EQUAL(testParams.quantumActivationHeight, 5680);
     
     BOOST_TEST_MESSAGE("Property 16: Activation height enforcement validated");
     BOOST_TEST_MESSAGE("  - Mainnet: 350000");
-    BOOST_TEST_MESSAGE("  - Testnet: 50000");
+    BOOST_TEST_MESSAGE("  - Testnet: 5680");
     BOOST_TEST_MESSAGE("  - Regtest: 1");
 }
 

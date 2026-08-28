@@ -9,7 +9,7 @@ namespace CVM {
 
 VMState::VMState() 
     : programCounter(0), gasRemaining(0), gasLimit(0), 
-      callValue(0), blockHeight(0), timestamp(0),
+      callValue(0), blockHeight(0), timestamp(0), callDepth(0),
       status(Status::RUNNING) {
 }
 

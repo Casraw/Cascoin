@@ -5,6 +5,7 @@
 #include <quantum_registry.h>
 #include <chainparams.h>
 #include <hash.h>
+#include <crypto/sha256.h>
 #include <random.h>
 #include <test/test_bitcoin.h>
 
@@ -21,6 +22,18 @@
  */
 
 static constexpr int PROPERTY_TEST_ITERATIONS = 100;
+
+// Canonical quantum pubkey hash used as the registry key: SINGLE SHA256 of the
+// public key, matching CPubKey::GetQuantumID(), the quantum address witness
+// program, and ParseQuantumWitness(). The registry previously keyed by double
+// SHA256 (Hash()); these tests were updated to the canonical single SHA256 when
+// that inconsistency was fixed.
+static uint256 QuantumPubKeyKey(const std::vector<unsigned char>& pubkey)
+{
+    uint256 result;
+    CSHA256().Write(pubkey.data(), pubkey.size()).Finalize(result.begin());
+    return result;
+}
 
 /**
  * Test fixture that creates a temporary quantum registry for testing
@@ -81,7 +94,7 @@ BOOST_AUTO_TEST_CASE(property1_registration_round_trip)
             "Registration should succeed for iteration " << i);
         
         // Compute the expected hash
-        uint256 expectedHash = Hash(originalPubkey.begin(), originalPubkey.end());
+        uint256 expectedHash = QuantumPubKeyKey(originalPubkey);
         
         // Look up the public key by hash
         std::vector<unsigned char> retrievedPubkey;
@@ -115,14 +128,14 @@ BOOST_AUTO_TEST_CASE(property2_hash_integrity_on_retrieval)
         BOOST_REQUIRE(registry->RegisterPubKey(pubkey));
         
         // Compute the hash used for lookup
-        uint256 lookupHash = Hash(pubkey.begin(), pubkey.end());
+        uint256 lookupHash = QuantumPubKeyKey(pubkey);
         
         // Retrieve the public key
         std::vector<unsigned char> retrievedPubkey;
         BOOST_REQUIRE(registry->LookupPubKey(lookupHash, retrievedPubkey));
         
         // Compute hash of retrieved key
-        uint256 retrievedHash = Hash(retrievedPubkey.begin(), retrievedPubkey.end());
+        uint256 retrievedHash = QuantumPubKeyKey(retrievedPubkey);
         
         // Verify hash integrity: computed hash must equal lookup hash
         BOOST_CHECK_MESSAGE(retrievedHash == lookupHash,
@@ -180,7 +193,7 @@ BOOST_AUTO_TEST_CASE(is_registered_check)
 {
     // Generate and register a key
     std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    uint256 hash = QuantumPubKeyKey(pubkey);
     
     // Should not be registered initially
     BOOST_CHECK(!registry->IsRegistered(hash));
@@ -226,7 +239,7 @@ BOOST_AUTO_TEST_CASE(multiple_unique_registrations)
     // Register multiple unique keys
     for (int i = 0; i < numKeys; i++) {
         std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         
         BOOST_REQUIRE(registry->RegisterPubKey(pubkey));
         keys.push_back(pubkey);
@@ -249,7 +262,7 @@ BOOST_AUTO_TEST_CASE(multiple_unique_registrations)
 BOOST_AUTO_TEST_CASE(cache_statistics)
 {
     std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    uint256 hash = QuantumPubKeyKey(pubkey);
     
     // Register the key
     BOOST_REQUIRE(registry->RegisterPubKey(pubkey));
@@ -287,7 +300,7 @@ BOOST_AUTO_TEST_CASE(property9_lru_cache_eviction)
     // Register exactly cache_size keys
     for (size_t i = 0; i < testCacheSize; i++) {
         std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         
         BOOST_REQUIRE_MESSAGE(registry->RegisterPubKey(pubkey),
             "Registration should succeed for key " << i);
@@ -353,7 +366,7 @@ BOOST_AUTO_TEST_CASE(property10_registration_count_accuracy)
     for (int i = 0; i < PROPERTY_TEST_ITERATIONS; i++) {
         // Generate a random public key
         std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         
         // Track unique hashes (in case of collision, which is extremely unlikely)
         bool isNewKey = registeredHashes.find(hash) == registeredHashes.end();
@@ -437,7 +450,7 @@ BOOST_AUTO_TEST_CASE(property6_witness_parsing_correctness)
                 "Extracted signature should match original for iteration " << i);
             
             // Verify hash is computed correctly
-            uint256 expectedHash = Hash(originalPubkey.begin(), originalPubkey.end());
+            uint256 expectedHash = QuantumPubKeyKey(originalPubkey);
             BOOST_CHECK_MESSAGE(parsed.pubkeyHash == expectedHash,
                 "Computed hash should match expected for iteration " << i);
         }
@@ -570,7 +583,7 @@ BOOST_AUTO_TEST_CASE(property8_address_derivation_verification)
         std::vector<unsigned char> pubkey = GenerateRandomPubKey();
         
         // Compute the expected quantum address program (SHA256 of pubkey)
-        uint256 expectedProgram = Hash(pubkey.begin(), pubkey.end());
+        uint256 expectedProgram = QuantumPubKeyKey(pubkey);
         
         // Register the public key
         BOOST_REQUIRE(registry->RegisterPubKey(pubkey));
@@ -592,7 +605,7 @@ BOOST_AUTO_TEST_CASE(property8_address_derivation_verification)
         BOOST_REQUIRE_MESSAGE(parsed.isValid, "Witness parsing should succeed");
         
         // Verify the address derivation: SHA256(pubkey) should match the expected program
-        uint256 derivedProgram = Hash(parsed.pubkey.begin(), parsed.pubkey.end());
+        uint256 derivedProgram = QuantumPubKeyKey(parsed.pubkey);
         BOOST_CHECK_MESSAGE(derivedProgram == expectedProgram,
             "Derived program should match expected for iteration " << i);
         
@@ -621,7 +634,7 @@ BOOST_AUTO_TEST_CASE(property8_address_derivation_verification)
             "Looked up pubkey should match original for iteration " << i);
         
         // Verify SHA256(looked up pubkey) matches the reference hash
-        uint256 lookedUpHash = Hash(lookedUpPubkey.begin(), lookedUpPubkey.end());
+        uint256 lookedUpHash = QuantumPubKeyKey(lookedUpPubkey);
         BOOST_CHECK_MESSAGE(lookedUpHash == refParsed.pubkeyHash,
             "SHA256 of looked up pubkey should match reference hash for iteration " << i);
     }
@@ -795,7 +808,7 @@ BOOST_AUTO_TEST_CASE(property11_activation_height_enforcement)
         BOOST_CHECK_EQUAL(witnessData[0], QUANTUM_WITNESS_MARKER_REGISTRATION);
         
         // Test reference witness as well
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         
         std::vector<unsigned char> refWitnessData;
         refWitnessData.push_back(QUANTUM_WITNESS_MARKER_REFERENCE);
@@ -889,7 +902,7 @@ BOOST_AUTO_TEST_CASE(property3_registration_idempotence)
             << " (got " << finalStats.totalKeys << ")");
         
         // Verify the key can still be looked up correctly
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         std::vector<unsigned char> retrieved;
         bool lookupResult = registry->LookupPubKey(hash, retrieved);
         BOOST_CHECK_MESSAGE(lookupResult,
@@ -958,7 +971,7 @@ BOOST_AUTO_TEST_CASE(rpc_getquantumpubkey_valid)
     BOOST_REQUIRE(g_quantumRegistry->RegisterPubKey(pubkey));
     
     // Compute the hash
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    uint256 hash = QuantumPubKeyKey(pubkey);
     
     // Look up via registry directly to verify
     std::vector<unsigned char> retrieved;
@@ -1037,7 +1050,7 @@ BOOST_AUTO_TEST_CASE(rpc_isquantumpubkeyregistered_responses)
 {
     // Generate a public key
     std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    uint256 hash = QuantumPubKeyKey(pubkey);
     
     // Should not be registered initially
     BOOST_CHECK(!g_quantumRegistry->IsRegistered(hash));
@@ -1067,7 +1080,7 @@ BOOST_AUTO_TEST_CASE(rpc_multiple_operations)
     // Register multiple keys
     for (int i = 0; i < numKeys; i++) {
         std::vector<unsigned char> pubkey = GenerateRandomPubKey();
-        uint256 hash = Hash(pubkey.begin(), pubkey.end());
+        uint256 hash = QuantumPubKeyKey(pubkey);
         
         BOOST_REQUIRE(g_quantumRegistry->RegisterPubKey(pubkey));
         
@@ -1104,7 +1117,7 @@ BOOST_AUTO_TEST_CASE(rpc_hash_format_validation)
     std::vector<unsigned char> pubkey = GenerateRandomPubKey();
     BOOST_REQUIRE(g_quantumRegistry->RegisterPubKey(pubkey));
     
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    uint256 hash = QuantumPubKeyKey(pubkey);
     
     // Verify hash is 32 bytes (64 hex characters)
     std::string hashHex = hash.GetHex();

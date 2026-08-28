@@ -73,6 +73,14 @@ public:
     void SetTimestamp(int64_t ts) { timestamp = ts; }
     int64_t GetTimestamp() const { return timestamp; }
 
+    // Contract-to-contract call depth. Each nested OP_CALL executes the callee
+    // on a child state one level deeper. Gas alone does not bound recursion
+    // tightly enough to protect the native stack (a 1M gas budget allows well
+    // over a thousand nested calls at the CALL base cost), so the depth is
+    // tracked explicitly and capped at MAX_CALL_DEPTH.
+    void SetCallDepth(uint32_t depth) { callDepth = depth; }
+    uint32_t GetCallDepth() const { return callDepth; }
+
     // Account balances (source for OP_BALANCE).
     // The core VM executes against a ContractStorage/VMState pair; the balance
     // source is carried on the state so a funded account reports its real
@@ -170,6 +178,7 @@ private:
     int blockHeight;
     uint256 blockHash;
     int64_t timestamp;
+    uint32_t callDepth;
 
     // Account balances keyed by address (source for OP_BALANCE).
     std::map<uint160, uint64_t> balances;
@@ -202,6 +211,22 @@ public:
     virtual bool Load(const uint160& contractAddr, const uint256& key, uint256& value) = 0;
     virtual bool Store(const uint160& contractAddr, const uint256& key, const uint256& value) = 0;
     virtual bool Exists(const uint160& contractAddr) = 0;
+
+    /**
+     * Load a contract's bytecode.
+     *
+     * Required for contract-to-contract calls (OP_CALL): the callee's code must
+     * be retrievable through the storage backend for the sub-call to execute.
+     *
+     * The default reports "no code available" so storage-only backends stay
+     * valid; backends that persist contract code (the LevelDB-backed
+     * CVMDatabase) override this to enable cross-contract calls.
+     */
+    virtual bool LoadCode(const uint160& contractAddr, std::vector<uint8_t>& code) {
+        (void)contractAddr;
+        (void)code;
+        return false;
+    }
 };
 
 } // namespace CVM

@@ -1670,6 +1670,17 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
         l2::HandleL1StateReorg(pindex->nHeight - 1);
     }
 
+    // Cascoin: CVM - Revert every CVM state change this block made, using the
+    // reverse journal written by ConnectBlock. Without this a reorg would leave
+    // committed contract state, trust edges, bonded votes and DAO records behind
+    // that no longer correspond to the active chain.
+    //
+    // A missing journal is not an error: the block may have touched no CVM state,
+    // or it may have been connected by a build that predates the journal.
+    if (CVM::g_cvmdb && pindex) {
+        CVM::g_cvmdb->UndoBlock(pindex->GetBlockHash());
+    }
+
     CBlockUndo blockUndo;
     if (!UndoReadFromDisk(blockUndo, pindex)) {
         error("DisconnectBlock(): failure reading undo data");
@@ -1906,6 +1917,55 @@ static int64_t nTimeCallbacks = 0;
 static int64_t nTimeTotal = 0;
 static int64_t nBlocksTotal = 0;
 
+namespace {
+
+/**
+ * RAII guard for the CVM per-block undo journal.
+ *
+ * Begins the journal on construction and, unless Commit() is called, reverts
+ * every CVM write made while it was in scope. This makes CVM state changes
+ * all-or-nothing for a block: any early return out of ConnectBlock (a failed
+ * CVM/consensus check, or a validation-only fJustCheck pass) leaves no CVM
+ * state behind, and a committed block gets a persisted journal that
+ * DisconnectBlock can replay on a reorg.
+ */
+class CVMUndoGuard
+{
+public:
+    explicit CVMUndoGuard(int height)
+    {
+        if (CVM::g_cvmdb) {
+            CVM::g_cvmdb->BeginBlockUndo(height);
+            m_active = true;
+        }
+    }
+
+    ~CVMUndoGuard()
+    {
+        if (m_active && CVM::g_cvmdb) {
+            CVM::g_cvmdb->AbortBlockUndo();
+        }
+    }
+
+    /** Persist the journal for `blockHash` and stop guarding. */
+    bool Commit(const uint256& blockHash)
+    {
+        if (!m_active || !CVM::g_cvmdb) {
+            return true;
+        }
+        m_active = false;
+        return CVM::g_cvmdb->CommitBlockUndo(blockHash);
+    }
+
+    CVMUndoGuard(const CVMUndoGuard&) = delete;
+    CVMUndoGuard& operator=(const CVMUndoGuard&) = delete;
+
+private:
+    bool m_active = false;
+};
+
+} // anonymous namespace
+
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
  *  can fail if those validity checks fail (among other reasons). */
@@ -2101,6 +2161,20 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     int64_t nTime3 = GetTimeMicros(); nTimeConnect += nTime3 - nTime2;
     LogPrint(BCLog::BENCH, "      - Connect %u transactions: %.2fms (%.3fms/tx, %.3fms/txin) [%.2fs (%.2fms/blk)]\n", (unsigned)block.vtx.size(), MILLI * (nTime3 - nTime2), MILLI * (nTime3 - nTime2) / block.vtx.size(), nInputs <= 1 ? 0 : MILLI * (nTime3 - nTime2) / (nInputs-1), nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
+    // Cascoin: CVM - Begin the per-block reverse journal.
+    //
+    // Everything the CVM writes for this block (contract code/metadata, contract
+    // storage, nonces, balances, and the generic keyspace backing the
+    // Web-of-Trust) is recorded so DisconnectBlock can restore the exact
+    // pre-block CVM state. The guard brackets BOTH the contract execution below
+    // and the non-contract WoT persistence further down, so a reorg reverts the
+    // block's CVM effects atomically instead of leaving them committed.
+    //
+    // Because the guard reverts on destruction unless Commit() runs, every early
+    // return out of ConnectBlock (CVM failure, fJustCheck, or any consensus
+    // check further down) is automatically free of CVM side effects.
+    CVMUndoGuard cvmUndoGuard(pindex->nHeight);
+
     // Cascoin: CVM/EVM - Validate and execute CVM/EVM transactions
     {
         static CVM::BlockValidator blockValidator;
@@ -2164,13 +2238,25 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
         baseBlockReward += nFees;
         
         if (!CheckCoinbaseValidatorPayments(block, baseBlockReward)) {
-            // Log warning but don't reject block during transition period
-            // This allows blocks without validator payments to be accepted
-            // until the network fully transitions to the new system
-            LogPrint(BCLog::CVM, "ConnectBlock(): Validator payment validation failed (non-fatal during transition)\n");
-            // TODO: Make this a consensus rule after activation height
-            // return state.DoS(100, error("ConnectBlock(): invalid validator payments"),
-            //                  REJECT_INVALID, "bad-coinbase-validator-payments");
+            // The 70/30 miner/validator split becomes a consensus rule at
+            // cvmValidatorPaymentActivationHeight. Before that height it stays
+            // advisory: the existing chains contain blocks mined before validator
+            // payouts existed, and rejecting them retroactively would stall every
+            // upgraded node.
+            //
+            // Note this only ever bites for blocks that actually owe a validator
+            // share; a block with no gas-fee-bearing contract transactions owes
+            // nothing and passes regardless.
+            if (pindex->nHeight >= chainparams.GetConsensus().cvmValidatorPaymentActivationHeight) {
+                return state.DoS(100,
+                    error("ConnectBlock(): invalid validator payments (70/30 split not honoured) at height %d",
+                          pindex->nHeight),
+                    REJECT_INVALID, "bad-coinbase-validator-payments");
+            }
+
+            LogPrint(BCLog::CVM, "ConnectBlock(): Validator payment validation failed at height %d "
+                     "(advisory until height %d)\n",
+                     pindex->nHeight, chainparams.GetConsensus().cvmValidatorPaymentActivationHeight);
         }
     }
 
@@ -2240,6 +2326,13 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
         } else {
             LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
         }
+    }
+
+    // Cascoin: CVM - All CVM work for this block is done; persist the reverse
+    // journal so a later DisconnectBlock can restore the pre-block CVM state.
+    // Past this point the guard no longer reverts on scope exit.
+    if (!cvmUndoGuard.Commit(pindex->GetBlockHash())) {
+        return AbortNode(state, "Failed to write CVM undo journal");
     }
 
     // Cascoin: L2 - Burn-and-Mint processing (soft fork).

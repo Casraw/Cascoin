@@ -26,6 +26,24 @@
 // Global quantum registry instance
 std::unique_ptr<QuantumPubKeyRegistry> g_quantumRegistry;
 
+namespace {
+// Canonical quantum pubkey hash: SINGLE SHA256 of the public key bytes.
+//
+// This MUST match the identifier used everywhere else in the quantum system:
+// CPubKey::GetQuantumID(), GetQuantumWitnessProgram() (the address program),
+// ParseQuantumWitness()'s registration pubkeyHash, and the CSHA256 check in
+// VerifyQuantumTransaction(). The registry previously keyed pubkeys by double
+// SHA256 (Hash()), so a reference transaction — whose witness carries the
+// single-SHA256 address program — could never resolve its registered pubkey.
+// Keying the registry by the same single SHA256 fixes that lookup.
+uint256 QuantumPubKeyHash(const std::vector<unsigned char>& pubkey)
+{
+    uint256 result;
+    CSHA256().Write(pubkey.data(), pubkey.size()).Finalize(result.begin());
+    return result;
+}
+} // namespace
+
 QuantumPubKeyRegistry::QuantumPubKeyRegistry(const fs::path& dbPath, 
                                              size_t nCacheSize,
                                              bool fMemory, 
@@ -70,8 +88,9 @@ bool QuantumPubKeyRegistry::RegisterPubKey(const std::vector<unsigned char>& pub
         return false;
     }
     
-    // Requirements: 2.1 - Compute SHA256 hash of the public key
-    uint256 hash = Hash(pubkey.begin(), pubkey.end());
+    // Requirements: 2.1 - Compute the canonical SINGLE-SHA256 hash of the public
+    // key (consistent with GetQuantumID / the address witness program).
+    uint256 hash = QuantumPubKeyHash(pubkey);
     
     // Requirements: 2.2, 2.3 - Check if already registered (idempotent)
     std::pair<char, uint256> key = std::make_pair(DB_QUANTUM_PUBKEY, hash);
@@ -135,8 +154,9 @@ bool QuantumPubKeyRegistry::LookupPubKey(const uint256& hash, std::vector<unsign
         return false;
     }
     
-    // Requirements: 3.3 - Verify hash integrity on retrieval
-    uint256 computedHash = Hash(pubkey.begin(), pubkey.end());
+    // Requirements: 3.3 - Verify hash integrity on retrieval using the same
+    // canonical single-SHA256 identifier the key was stored under.
+    uint256 computedHash = QuantumPubKeyHash(pubkey);
     if (computedHash != hash) {
         // Requirements: 3.4 - Log error and return failure on hash mismatch
         m_lastError = "Hash verification failed on retrieval - data corruption detected";

@@ -11,6 +11,8 @@
 #include <pubkey.h>
 #include <utilstrencodings.h>
 
+#include <algorithm>
+
 namespace address {
 
 std::string GetQuantumHRP(const CChainParams& params)
@@ -139,6 +141,15 @@ DecodedAddress DecodeAddress(const std::string& address, const CChainParams& par
                 if (bechResult.hrp == expectedHRP) {
                     result.isValid = true;
                     result.isQuantum = true;
+
+                    // Reverse the witness program BE->LE so result.program is in
+                    // the same byte order as GetQuantumID() / the uint256 witness
+                    // program. EncodeQuantumAddress() reverses LE->BE before
+                    // Bech32m encoding (a quantum program is a little-endian
+                    // uint256), and DecodeDestination() reverses back on the
+                    // consensus path; this decode must match so the address
+                    // round-trips to the original program.
+                    std::reverse(result.program.begin(), result.program.end());
                 } else {
                     // HRP doesn't match network - invalid
                     // Requirements: 3.9 (reject addresses with witness version 2 but incorrect HRP)

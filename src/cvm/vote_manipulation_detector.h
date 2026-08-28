@@ -8,6 +8,7 @@
 #include <uint256.h>
 #include <primitives/transaction.h>
 #include <cvm/cvmdb.h>
+#include <cvm/trustnodeid.h>
 #include <map>
 #include <vector>
 #include <set>
@@ -45,15 +46,15 @@ static constexpr double COLLUSION_AGREEMENT_THRESHOLD = 0.95;
  * Vote record for pattern analysis
  */
 struct VoteRecord {
-    uint256 txHash;           // Transaction being validated
-    uint160 validatorAddress; // Validator who voted
-    bool voteAccept;          // true = ACCEPT, false = REJECT
-    int64_t timestamp;        // Vote timestamp (milliseconds)
-    int16_t scoreDifference;  // Difference between claimed and calculated score
+    uint256 txHash;                        // Transaction being validated
+    CVM::TrustNodeId validatorAddress;     // Validator who voted (wide identity)
+    bool voteAccept;                       // true = ACCEPT, false = REJECT
+    int64_t timestamp;                     // Vote timestamp (milliseconds)
+    int16_t scoreDifference;               // Difference between claimed and calculated score
     
     VoteRecord() : voteAccept(false), timestamp(0), scoreDifference(0) {}
     
-    VoteRecord(const uint256& tx, const uint160& validator, bool accept, 
+    VoteRecord(const uint256& tx, const CVM::TrustNodeId& validator, bool accept, 
                int64_t time, int16_t diff)
         : txHash(tx), validatorAddress(validator), voteAccept(accept),
           timestamp(time), scoreDifference(diff) {}
@@ -63,7 +64,7 @@ struct VoteRecord {
  * Reputation change record for spike detection
  */
 struct ReputationChange {
-    uint160 address;
+    CVM::TrustNodeId address;
     int blockHeight;
     int16_t oldScore;
     int16_t newScore;
@@ -72,7 +73,7 @@ struct ReputationChange {
     
     ReputationChange() : blockHeight(0), oldScore(0), newScore(0), change(0) {}
     
-    ReputationChange(const uint160& addr, int height, int16_t old_score, 
+    ReputationChange(const CVM::TrustNodeId& addr, int height, int16_t old_score, 
                     int16_t new_score, const std::string& rsn)
         : address(addr), blockHeight(height), oldScore(old_score),
           newScore(new_score), change(new_score - old_score), reason(rsn) {}
@@ -92,7 +93,7 @@ struct ManipulationDetection {
     };
     
     Type type;
-    std::vector<uint160> suspiciousAddresses;
+    std::vector<CVM::TrustNodeId> suspiciousAddresses;
     std::vector<uint256> suspiciousTxs;
     double confidence;        // 0.0-1.0
     std::string description;
@@ -113,14 +114,14 @@ private:
     // Vote history for pattern analysis
     std::map<uint256, std::vector<VoteRecord>> voteHistory;
     
-    // Reputation change history
-    std::map<uint160, std::vector<ReputationChange>> reputationHistory;
+    // Reputation change history, keyed by wide identity
+    std::map<CVM::TrustNodeId, std::vector<ReputationChange>> reputationHistory;
     
     // Validator pair correlation scores
-    std::map<std::pair<uint160, uint160>, double> validatorCorrelations;
+    std::map<std::pair<CVM::TrustNodeId, CVM::TrustNodeId>, double> validatorCorrelations;
     
     // Flagged addresses
-    std::set<uint160> flaggedAddresses;
+    std::set<CVM::TrustNodeId> flaggedAddresses;
     
 public:
     explicit VoteManipulationDetector(CVM::CVMDatabase& database);
@@ -128,13 +129,13 @@ public:
     /**
      * Record a validator vote for pattern analysis
      */
-    void RecordVote(const uint256& txHash, const uint160& validatorAddress,
+    void RecordVote(const uint256& txHash, const CVM::TrustNodeId& validatorAddress,
                    bool voteAccept, int64_t timestamp, int16_t scoreDifference);
     
     /**
      * Record a reputation change for spike detection
      */
-    void RecordReputationChange(const uint160& address, int blockHeight,
+    void RecordReputationChange(const CVM::TrustNodeId& address, int blockHeight,
                                int16_t oldScore, int16_t newScore,
                                const std::string& reason);
     
@@ -154,14 +155,14 @@ public:
      * Detect sudden reputation spikes
      * Returns detection result if suspicious spike found
      */
-    ManipulationDetection DetectReputationSpike(const uint160& address);
+    ManipulationDetection DetectReputationSpike(const CVM::TrustNodeId& address);
     
     /**
      * Detect validator collusion (always agreeing/disagreeing)
      * Returns detection result if collusion detected
      */
-    ManipulationDetection DetectValidatorCollusion(const uint160& validator1,
-                                                   const uint160& validator2);
+    ManipulationDetection DetectValidatorCollusion(const CVM::TrustNodeId& validator1,
+                                                   const CVM::TrustNodeId& validator2);
     
     /**
      * Analyze all patterns for a transaction
@@ -173,34 +174,34 @@ public:
      * Analyze all patterns for an address
      * Returns most significant detection result
      */
-    ManipulationDetection AnalyzeAddress(const uint160& address);
+    ManipulationDetection AnalyzeAddress(const CVM::TrustNodeId& address);
     
     /**
      * Get flagged addresses
      */
-    std::set<uint160> GetFlaggedAddresses() const { return flaggedAddresses; }
+    std::set<CVM::TrustNodeId> GetFlaggedAddresses() const { return flaggedAddresses; }
     
     /**
      * Flag an address as suspicious
      */
-    void FlagAddress(const uint160& address);
+    void FlagAddress(const CVM::TrustNodeId& address);
     
     /**
      * Unflag an address (after DAO investigation)
      */
-    void UnflagAddress(const uint160& address);
+    void UnflagAddress(const CVM::TrustNodeId& address);
     
     /**
      * Check if address is flagged
      */
-    bool IsAddressFlagged(const uint160& address) const;
+    bool IsAddressFlagged(const CVM::TrustNodeId& address) const;
     
     /**
      * Calculate correlation between two validators
      * Returns correlation coefficient (0.0-1.0)
      */
-    double CalculateValidatorCorrelation(const uint160& validator1,
-                                        const uint160& validator2);
+    double CalculateValidatorCorrelation(const CVM::TrustNodeId& validator1,
+                                        const CVM::TrustNodeId& validator2);
     
     /**
      * Get vote history for a transaction
@@ -210,7 +211,7 @@ public:
     /**
      * Get reputation change history for an address
      */
-    std::vector<ReputationChange> GetReputationHistory(const uint160& address) const;
+    std::vector<ReputationChange> GetReputationHistory(const CVM::TrustNodeId& address) const;
     
     /**
      * Clear old vote history (keep last N transactions)

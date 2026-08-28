@@ -19,7 +19,7 @@ VoteManipulationDetector::VoteManipulationDetector(CVM::CVMDatabase& database)
 }
 
 void VoteManipulationDetector::RecordVote(const uint256& txHash, 
-                                         const uint160& validatorAddress,
+                                         const CVM::TrustNodeId& validatorAddress,
                                          bool voteAccept, int64_t timestamp,
                                          int16_t scoreDifference)
 {
@@ -27,11 +27,11 @@ void VoteManipulationDetector::RecordVote(const uint256& txHash,
     voteHistory[txHash].push_back(record);
     
     LogPrint(BCLog::CVM, "VoteManipulationDetector: Recorded vote for tx %s from validator %s: %s (diff=%d)\n",
-             txHash.ToString(), validatorAddress.ToString(),
+             txHash.ToString(), validatorAddress.ToKeyString(),
              voteAccept ? "ACCEPT" : "REJECT", scoreDifference);
 }
 
-void VoteManipulationDetector::RecordReputationChange(const uint160& address,
+void VoteManipulationDetector::RecordReputationChange(const CVM::TrustNodeId& address,
                                                      int blockHeight,
                                                      int16_t oldScore,
                                                      int16_t newScore,
@@ -41,7 +41,7 @@ void VoteManipulationDetector::RecordReputationChange(const uint160& address,
     reputationHistory[address].push_back(change);
     
     LogPrint(BCLog::CVM, "VoteManipulationDetector: Recorded reputation change for %s: %d -> %d (%s)\n",
-             address.ToString(), oldScore, newScore, reason);
+             address.ToKeyString(), oldScore, newScore, reason);
 }
 
 ManipulationDetection VoteManipulationDetector::DetectCoordinatedVoting(const uint256& txHash)
@@ -56,7 +56,7 @@ ManipulationDetection VoteManipulationDetector::DetectCoordinatedVoting(const ui
     const auto& votes = it->second;
     
     // Count identical voting patterns
-    std::map<bool, std::vector<uint160>> voteGroups;
+    std::map<bool, std::vector<CVM::TrustNodeId>> voteGroups;
     for (const auto& vote : votes) {
         voteGroups[vote.voteAccept].push_back(vote.validatorAddress);
     }
@@ -108,8 +108,8 @@ ManipulationDetection VoteManipulationDetector::AnalyzeVoteTimingCorrelation(con
              });
     
     // Detect clusters of votes within timing window
-    std::vector<std::vector<uint160>> timingClusters;
-    std::vector<uint160> currentCluster;
+    std::vector<std::vector<CVM::TrustNodeId>> timingClusters;
+    std::vector<CVM::TrustNodeId> currentCluster;
     int64_t clusterStartTime = 0;
     
     for (const auto& vote : sortedVotes) {
@@ -162,7 +162,7 @@ ManipulationDetection VoteManipulationDetector::AnalyzeVoteTimingCorrelation(con
     return result;
 }
 
-ManipulationDetection VoteManipulationDetector::DetectReputationSpike(const uint160& address)
+ManipulationDetection VoteManipulationDetector::DetectReputationSpike(const CVM::TrustNodeId& address)
 {
     ManipulationDetection result;
     
@@ -195,7 +195,7 @@ ManipulationDetection VoteManipulationDetector::DetectReputationSpike(const uint
             result.escalateToDAO = (changeRate >= REPUTATION_SPIKE_THRESHOLD * 2);
             
             LogPrintf("VoteManipulationDetector: Reputation spike detected for %s: +%d in %d blocks\n",
-                     address.ToString(), totalChange, blockSpan);
+                     address.ToKeyString(), totalChange, blockSpan);
             
             FlagAddress(address);
         }
@@ -204,8 +204,8 @@ ManipulationDetection VoteManipulationDetector::DetectReputationSpike(const uint
     return result;
 }
 
-ManipulationDetection VoteManipulationDetector::DetectValidatorCollusion(const uint160& validator1,
-                                                                         const uint160& validator2)
+ManipulationDetection VoteManipulationDetector::DetectValidatorCollusion(const CVM::TrustNodeId& validator1,
+                                                                         const CVM::TrustNodeId& validator2)
 {
     ManipulationDetection result;
     
@@ -221,7 +221,7 @@ ManipulationDetection VoteManipulationDetector::DetectValidatorCollusion(const u
         result.escalateToDAO = true;
         
         LogPrintf("VoteManipulationDetector: Collusion detected between %s and %s: %.1f%% agreement\n",
-                 validator1.ToString(), validator2.ToString(), correlation * 100);
+                 validator1.ToKeyString(), validator2.ToKeyString(), correlation * 100);
         
         FlagAddress(validator1);
         FlagAddress(validator2);
@@ -230,8 +230,8 @@ ManipulationDetection VoteManipulationDetector::DetectValidatorCollusion(const u
     return result;
 }
 
-double VoteManipulationDetector::CalculateValidatorCorrelation(const uint160& validator1,
-                                                               const uint160& validator2)
+double VoteManipulationDetector::CalculateValidatorCorrelation(const CVM::TrustNodeId& validator1,
+                                                               const CVM::TrustNodeId& validator2)
 {
     // Check cache first
     auto key = std::make_pair(validator1, validator2);
@@ -309,7 +309,7 @@ ManipulationDetection VoteManipulationDetector::AnalyzeTransaction(const uint256
     return result;
 }
 
-ManipulationDetection VoteManipulationDetector::AnalyzeAddress(const uint160& address)
+ManipulationDetection VoteManipulationDetector::AnalyzeAddress(const CVM::TrustNodeId& address)
 {
     // Check for reputation spike
     ManipulationDetection result = DetectReputationSpike(address);
@@ -326,25 +326,25 @@ ManipulationDetection VoteManipulationDetector::AnalyzeAddress(const uint160& ad
     return result;
 }
 
-void VoteManipulationDetector::FlagAddress(const uint160& address)
+void VoteManipulationDetector::FlagAddress(const CVM::TrustNodeId& address)
 {
     if (flaggedAddresses.insert(address).second) {
         LogPrintf("VoteManipulationDetector: Flagged address %s as suspicious\n",
-                 address.ToString());
+                 address.ToKeyString());
         SaveFlaggedAddresses();
     }
 }
 
-void VoteManipulationDetector::UnflagAddress(const uint160& address)
+void VoteManipulationDetector::UnflagAddress(const CVM::TrustNodeId& address)
 {
     if (flaggedAddresses.erase(address) > 0) {
         LogPrintf("VoteManipulationDetector: Unflagged address %s\n",
-                 address.ToString());
+                 address.ToKeyString());
         SaveFlaggedAddresses();
     }
 }
 
-bool VoteManipulationDetector::IsAddressFlagged(const uint160& address) const
+bool VoteManipulationDetector::IsAddressFlagged(const CVM::TrustNodeId& address) const
 {
     return flaggedAddresses.find(address) != flaggedAddresses.end();
 }
@@ -358,7 +358,7 @@ std::vector<VoteRecord> VoteManipulationDetector::GetVoteHistory(const uint256& 
     return std::vector<VoteRecord>();
 }
 
-std::vector<ReputationChange> VoteManipulationDetector::GetReputationHistory(const uint160& address) const
+std::vector<ReputationChange> VoteManipulationDetector::GetReputationHistory(const CVM::TrustNodeId& address) const
 {
     auto it = reputationHistory.find(address);
     if (it != reputationHistory.end()) {
@@ -427,17 +427,33 @@ void VoteManipulationDetector::PruneReputationHistory(int keepBlocks)
              keepBlocks);
 }
 
+// Persisted flag-set keys.
+//
+// The legacy key held a bare concatenation of 20-byte uint160 values, which
+// cannot represent a P2WSH or quantum identity. The current key stores canonical
+// 33-byte TNI33 records (1 type byte + 32 data bytes) so every supported
+// destination round-trips without truncation.
+//
+// A separate key is used rather than a version prefix because a byte length can
+// be an exact multiple of both 20 and 33 (e.g. 660), so the two layouts are not
+// reliably distinguishable from the payload alone.
+static const char* FLAGGED_ADDRESSES_KEY_LEGACY = "flagged_addresses";
+static const char* FLAGGED_ADDRESSES_KEY = "flagged_addresses_v2";
+
+// TNI33: 1 type byte + 32 data bytes.
+static constexpr size_t TNI33_RECORD_SIZE = 1 + 32;
+
 void VoteManipulationDetector::SaveFlaggedAddresses()
 {
-    // Serialize flagged addresses to database
     std::vector<uint8_t> data;
-    data.reserve(flaggedAddresses.size() * 20);
+    data.reserve(flaggedAddresses.size() * TNI33_RECORD_SIZE);
     
-    for (const auto& addr : flaggedAddresses) {
-        data.insert(data.end(), addr.begin(), addr.end());
+    for (const auto& node : flaggedAddresses) {
+        data.push_back(node.type);
+        data.insert(data.end(), node.data.begin(), node.data.end());
     }
     
-    db.WriteGeneric("flagged_addresses", data);
+    db.WriteGeneric(FLAGGED_ADDRESSES_KEY, data);
     
     LogPrint(BCLog::CVM, "VoteManipulationDetector: Saved %d flagged addresses to database\n",
              flaggedAddresses.size());
@@ -446,8 +462,41 @@ void VoteManipulationDetector::SaveFlaggedAddresses()
 void VoteManipulationDetector::LoadFlaggedAddresses()
 {
     std::vector<uint8_t> data;
-    if (!db.ReadGeneric("flagged_addresses", data)) {
-        return; // No data
+    
+    if (db.ReadGeneric(FLAGGED_ADDRESSES_KEY, data)) {
+        flaggedAddresses.clear();
+        
+        size_t rejected = 0;
+        for (size_t i = 0; i + TNI33_RECORD_SIZE <= data.size(); i += TNI33_RECORD_SIZE) {
+            CVM::TrustNodeId node;
+            node.type = data[i];
+            std::copy(data.begin() + i + 1, data.begin() + i + TNI33_RECORD_SIZE,
+                      node.data.begin());
+            
+            // Only accept strictly canonical identities so a corrupt or
+            // hand-edited record cannot inject an unusable node.
+            std::string err;
+            if (!CVM::ValidateCanonicalTrustNode(node, err)) {
+                ++rejected;
+                continue;
+            }
+            flaggedAddresses.insert(node);
+        }
+        
+        if (rejected > 0) {
+            LogPrintf("VoteManipulationDetector: Skipped %d noncanonical flagged-address records\n",
+                      rejected);
+        }
+        
+        LogPrint(BCLog::CVM, "VoteManipulationDetector: Loaded %d flagged addresses from database\n",
+                 flaggedAddresses.size());
+        return;
+    }
+    
+    // Fall back to the legacy 20-byte layout written by earlier builds. Those
+    // records were all uint160-shaped, so they migrate to P2PKH TrustNodeIds.
+    if (!db.ReadGeneric(FLAGGED_ADDRESSES_KEY_LEGACY, data)) {
+        return; // No data in either layout
     }
     
     flaggedAddresses.clear();
@@ -455,9 +504,12 @@ void VoteManipulationDetector::LoadFlaggedAddresses()
     for (size_t i = 0; i + 20 <= data.size(); i += 20) {
         uint160 addr;
         std::copy(data.begin() + i, data.begin() + i + 20, addr.begin());
-        flaggedAddresses.insert(addr);
+        flaggedAddresses.insert(CVM::TrustNodeId::FromLegacyUint160(addr));
     }
     
-    LogPrint(BCLog::CVM, "VoteManipulationDetector: Loaded %d flagged addresses from database\n",
-             flaggedAddresses.size());
+    LogPrintf("VoteManipulationDetector: Migrated %d flagged addresses from the legacy "
+              "20-byte layout to TNI33\n", flaggedAddresses.size());
+    
+    // Persist in the current layout so the migration happens once.
+    SaveFlaggedAddresses();
 }

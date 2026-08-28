@@ -21,6 +21,10 @@ void RegisterMiningRPCCommands(CRPCTable &tableRPC);
 void RegisterRawTransactionRPCCommands(CRPCTable &tableRPC);
 /** Register CVM and reputation RPC commands (includes validator management) */
 void RegisterCVMRPCCommands(CRPCTable &tableRPC);
+/** Register CVM security monitoring RPC commands */
+void RegisterSecurityRPCCommands(CRPCTable &tableRPC);
+/** Register CVM vote-manipulation analysis RPC commands */
+void RegisterVoteManipulationRPCCommands(CRPCTable &tableRPC);
 /** Register L2 (Layer 2) RPC commands */
 void RegisterL2RPCCommands(CRPCTable &tableRPC);
 /** Register L2 Burn-and-Mint RPC commands */
@@ -36,6 +40,8 @@ static inline void RegisterAllCoreRPCCommands(CRPCTable &t)
     RegisterMiningRPCCommands(t);
     RegisterRawTransactionRPCCommands(t);
     RegisterCVMRPCCommands(t);
+    RegisterSecurityRPCCommands(t);
+    RegisterVoteManipulationRPCCommands(t);
     RegisterL2RPCCommands(t);
     RegisterL2BurnRPCCommands(t);
     RegisterQuantumRPCCommands(t);

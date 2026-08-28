@@ -906,7 +906,9 @@ public:
      * @param address Address to analyze
      * @return Manipulation detection result
      */
-    ManipulationDetection AnalyzeAddressReputation(const uint160& address);
+    // Unqualified: this declaration is already inside namespace CVM, where the
+    // name `CVM` resolves to the VM class rather than the namespace.
+    ManipulationDetection AnalyzeAddressReputation(const TrustNodeId& address);
     
     /**
      * Analyze address for trust graph manipulation

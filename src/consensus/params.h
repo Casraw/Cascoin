@@ -148,6 +148,21 @@ struct Params {
     // blocks that were valid when mined. Gate it behind this (later) height so
     // existing chain history stays valid and the cap only applies to new blocks.
     int cvmSubsidyMaxActivationHeight;  // Block height at which the CVM per-block subsidy maximum is enforced
+
+    // Cascoin: CVM opcode-completion activation. Two native opcodes were
+    // declared and gas-costed but not functional: OP_PUBKEY (no handler, which
+    // aborted the program) and OP_CALL (the callee was never executed, so the
+    // call always reported failure). Making them work changes the observable
+    // outcome of any contract that uses them, so the new behaviour is gated
+    // behind this height to keep already-validated history reproducible.
+    // Below the height both opcodes keep their previous outcome, but as a clean
+    // deterministic failure rather than an abort with no error.
+    int cvmOpcodeV2ActivationHeight;    // Block height at which OP_PUBKEY and cross-contract OP_CALL become functional
+
+    // Cascoin: HAT v2 validator-payment enforcement. The 70/30 coinbase split
+    // between miner and validators is only advisory until this height, after
+    // which a block with incorrect validator payments is rejected.
+    int cvmValidatorPaymentActivationHeight;
     
     // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
     int asrsActivationHeight;           // Block height at which ASRS activates

@@ -211,7 +211,13 @@ BOOST_AUTO_TEST_CASE(p1_per_block_subsidy_max_enforced_property)
 
     for (int i = 0; i < kSamplesBlock; ++i) {
         CBlockIndex index;
-        index.nHeight = params.cvmActivationHeight + 1;
+        // The per-block subsidy maximum is gated behind
+        // cvmSubsidyMaxActivationHeight (so it never retroactively invalidates
+        // pre-rule history). Run the property at a height where the rule is
+        // active; it is also above cvmActivationHeight, so the CVM-active and
+        // gas-cap checks still apply and a rejection can only come from subsidy
+        // accounting.
+        index.nHeight = params.cvmSubsidyMaxActivationHeight + 1;
         index.nTime = 1700000000 + i;
 
         CCoinsView backing;

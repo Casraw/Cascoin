@@ -193,6 +193,17 @@ public:
         // the coordinated upgrade height before release (current mainnet ~276k).
         consensus.cvmSubsidyMaxActivationHeight = 500000;                               // Enforce CVM per-block subsidy cap from block 500000
 
+        // Cascoin: CVM opcode completion (OP_PUBKEY + cross-contract OP_CALL).
+        // Scheduled together with the other pending CVM consensus tightenings so
+        // the network performs a single coordinated upgrade. Must stay above the
+        // live tip until the release ships.
+        consensus.cvmOpcodeV2ActivationHeight = 500000;                                 // OP_PUBKEY / OP_CALL become functional at block 500000
+
+        // Cascoin: HAT v2 validator payments become a consensus rule here.
+        // Advisory (log-only) before this height so blocks mined during the
+        // transition, which predate validator payouts, stay valid.
+        consensus.cvmValidatorPaymentActivationHeight = 500000;                         // Enforce coinbase validator payments from block 500000
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 220000;                                   // Activate ASRS at block 220000 (2+ months for network upgrade)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -393,6 +404,19 @@ public:
         // and the cap applies only to newly mined blocks.
         consensus.cvmSubsidyMaxActivationHeight = 7132;                                 // Enforce CVM per-block subsidy cap from block 7132 (current tip 7131 + 1)
 
+        // Cascoin: CVM opcode completion (OP_PUBKEY + cross-contract OP_CALL).
+        // Set above the live testnet tip (~7222) so already-validated history
+        // keeps reproducing, while staying close enough to be reached by mining
+        // and exercised on testnet before the mainnet upgrade.
+        consensus.cvmOpcodeV2ActivationHeight = 7500;                                    // OP_PUBKEY / OP_CALL become functional at block 7500
+
+        // Cascoin: HAT v2 validator payments become a consensus rule here.
+        // MUST stay above the live tip: the existing testnet chain contains
+        // blocks that pay 100% to the miner, and enforcing the split
+        // retroactively would reject them and stall every upgraded node (the
+        // same failure mode documented for the subsidy cap above).
+        consensus.cvmValidatorPaymentActivationHeight = 7500;                            // Enforce coinbase validator payments from block 7500
+
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
         consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
@@ -543,6 +567,14 @@ public:
         // Cascoin: CVM per-block subsidy maximum active from genesis in regtest
         // so the subsidy-cap unit/functional tests keep exercising the rule.
         consensus.cvmSubsidyMaxActivationHeight = 0;                                    // Enforce CVM per-block subsidy cap immediately for regtest
+
+        // Cascoin: CVM opcode completion and validator-payment enforcement are
+        // active from genesis in regtest so the unit/functional tests exercise
+        // the post-activation rules directly. A block with no gas-fee-bearing
+        // contract transactions owes no validator share, so ordinary regtest
+        // mining is unaffected.
+        consensus.cvmOpcodeV2ActivationHeight = 0;                                      // OP_PUBKEY / OP_CALL functional immediately for regtest
+        consensus.cvmValidatorPaymentActivationHeight = 0;                              // Enforce coinbase validator payments immediately for regtest
 
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest

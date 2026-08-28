@@ -563,7 +563,10 @@ UniValue votereputation(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 3 || request.params.size() > 4)
         throw std::runtime_error(
             "votereputation \"address\" vote \"reason\" ( \"proof\" )\n"
-            "\nVote on an address's reputation.\n"
+            "\nPrepare a reputation vote WITHOUT applying or broadcasting it.\n"
+            "\nThis builds the soft-fork OP_RETURN payload for the vote and reports it,\n"
+            "but does not change any stored reputation score. Use sendcvmvote to cast a\n"
+            "vote that is broadcast to the network and applied during block processing.\n"
             "\nArguments:\n"
             "1. \"address\"     (string, required) Address to vote on\n"
             "2. vote          (numeric, required) Vote value (-100 to +100)\n"
@@ -571,9 +574,16 @@ UniValue votereputation(const JSONRPCRequest& request)
             "4. \"proof\"       (string, optional) Proof/evidence in hex format\n"
             "\nResult:\n"
             "{\n"
-            "  \"txid\": \"xxx\",        (string) Transaction ID\n"
-            "  \"vote\": n,             (numeric) Vote value\n"
-            "  \"reason\": \"xxx\"       (string) Vote reason\n"
+            "  \"status\": \"xxx\",             (string) Human-readable status\n"
+            "  \"applied\": false,             (boolean) Always false; nothing is stored\n"
+            "  \"address\": \"xxx\",            (string) Address voted on\n"
+            "  \"vote\": n,                    (numeric) Vote value\n"
+            "  \"reason\": \"xxx\",             (string) Vote reason\n"
+            "  \"timestamp\": n,               (numeric) Payload timestamp\n"
+            "  \"current_score\": n,           (numeric) Currently stored score (unchanged)\n"
+            "  \"required_bond\": n,           (numeric) Bond sendcvmvote would require\n"
+            "  \"op_return_script\": \"hex\",   (string) Soft-fork OP_RETURN payload\n"
+            "  \"softfork_compatible\": true   (boolean) Old nodes accept this payload\n"
             "}\n"
             "\nExamples:\n"
             + HelpExampleCli("votereputation", "\"DXG7Yx...\" -50 \"Suspected scam\"")
@@ -609,38 +619,38 @@ UniValue votereputation(const JSONRPCRequest& request)
     std::vector<uint8_t> repBytes = repData.Serialize();
     CScript cvmScript = CVM::BuildCVMOpReturn(CVM::CVMOpType::REPUTATION_VOTE, repBytes);
     
-    // For now, just store vote directly in database (simulated on-chain)
-    // In production, this would create a real transaction
-    if (CVM::g_cvmdb) {
-        CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
-        CVM::ReputationScore score;
-        repSystem.GetReputation(node, score);
-        
-        // Update score
-        score.score += voteValue;
-        score.voteCount++;
-        score.lastUpdated = repData.timestamp;
-        
-        // Store updated score
-        repSystem.UpdateReputation(node, score);
-        
-        LogPrintf("CVM: Reputation vote recorded for %s: %+d (new score: %d)\n",
-                  addressStr, voteValue, score.score);
-    }
-    
+    // This command PREPARES a vote; it deliberately does not mutate stored
+    // reputation.
+    //
+    // It previously applied the vote straight to the reputation store, which let
+    // any caller with RPC access move any address's score arbitrarily: no
+    // transaction, no bond, no cost, and no record other nodes could verify.
+    // Because block processing also derives reputation from on-chain votes, a
+    // local write silently diverged this node's reputation state from the rest of
+    // the network.
+    //
+    // Use `sendcvmvote` to cast a vote that is actually broadcast and applied
+    // during block processing.
+    const CAmount requiredBond = CVM::g_wotConfig.minBondAmount +
+                                 (CVM::g_wotConfig.bondPerVotePoint * std::abs(voteValue));
+
+    // Report the current stored score so callers can see the starting point
+    // without this call changing it.
+    CVM::ReputationSystem repSystem(*CVM::g_cvmdb);
+    CVM::ReputationScore currentScore;
+    repSystem.GetReputation(node, currentScore);
+
     UniValue result(UniValue::VOBJ);
-    result.pushKV("status", "Vote recorded (Soft Fork OP_RETURN)");
+    result.pushKV("status", "Vote prepared (not applied). Broadcast it with sendcvmvote.");
+    result.pushKV("applied", false);
     result.pushKV("address", addressStr);
     result.pushKV("vote", voteValue);
     result.pushKV("reason", reason);
     result.pushKV("timestamp", (int64_t)repData.timestamp);
+    result.pushKV("current_score", currentScore.score);
+    result.pushKV("required_bond", ValueFromAmount(requiredBond));
     result.pushKV("op_return_script", HexStr(cvmScript.begin(), cvmScript.end()));
     result.pushKV("softfork_compatible", true);
-    
-    // Note: In production, this would create a transaction with:
-    // - Input: Small amount from voter
-    // - Output 0: OP_RETURN (cvmScript)
-    // - Output 1: Change back
     
     return result;
 }
@@ -1398,12 +1408,18 @@ UniValue addtrust(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 5)
         throw std::runtime_error(
             "addtrust \"address\" weight ( bond \"reason\" \"from\" )\n"
-            "\nAdd trust relationship in Web-of-Trust graph.\n"
+            "\nAdd a LOCAL trust relationship to the Web-of-Trust graph.\n"
             "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
+            "\nThis command does not broadcast a transaction, so the declared bond is NOT\n"
+            "locked and cannot be slashed; the edge's bond_txid is null to mark it as\n"
+            "unbacked. Use sendtrustrelation to create an edge backed by a real on-chain\n"
+            "bond. Unlike sendtrustrelation, this command accepts every address type,\n"
+            "including P2WSH and quantum.\n"
             "\nArguments:\n"
             "1. \"address\"     (string, required) Address to trust\n"
             "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
-            "3. bond          (numeric, optional) Amount to bond (default: calculated)\n"
+            "3. bond          (numeric, optional) Declared bond (default: required minimum).\n"
+            "                 Recorded but NOT locked.\n"
             "4. \"reason\"      (string, optional) Reason for trust\n"
             "5. \"from\"        (string, optional) Address that creates the trust edge.\n"
             "                 If omitted, a new address is derived from the loaded wallet.\n"
@@ -1413,15 +1429,20 @@ UniValue addtrust(const JSONRPCRequest& request)
             "  \"from\": \"xxx\",           (string) Your address\n"
             "  \"to\": \"xxx\",             (string) Trusted address\n"
             "  \"weight\": n,             (numeric) Trust weight\n"
-            "  \"bond\": n,               (numeric) Bonded amount\n"
-            "  \"required_bond\": n,      (numeric) Required bond\n"
+            "  \"declared_bond\": n,      (numeric) Bond recorded on the edge (not locked)\n"
+            "  \"required_bond\": n,      (numeric) Minimum bond the graph requires\n"
+            "  \"bond_locked\": 0,        (numeric) Always 0; this command locks nothing\n"
+            "  \"bonded\": false,         (boolean) Always false; the bond is unbacked\n"
+            "  \"bond_txid\": \"000...\",   (string) Null, marking the bond as unbacked\n"
+            "  \"note\": \"xxx\",           (string) Points to sendtrustrelation for bonded edges\n"
             "  \"cluster_id\": \"xxx\",     (string) Wallet cluster ID\n"
             "  \"cluster_size\": n,       (numeric) Number of addresses in cluster\n"
             "  \"edges_propagated\": n    (numeric) Number of propagated trust edges\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("addtrust", "\"Qi9hi...\" 80 1.5 \"Trusted user\"")
-            + HelpExampleRpc("addtrust", "\"Qi9hi...\", 80, 1.5, \"Trusted user\"")
+            + HelpExampleCli("addtrust", "\"Qi9hi...\" 80")
+            + HelpExampleCli("addtrust", "\"Qi9hi...\" -50 2.0 \"Suspected scammer\"")
+            + HelpExampleRpc("addtrust", "\"Qi9hi...\", 80, 2.0, \"Trusted user\"")
         );
     
     if (!CVM::g_cvmdb) {
@@ -1489,14 +1510,32 @@ UniValue addtrust(const JSONRPCRequest& request)
     CVM::WalletClusterer clusterer(*CVM::g_cvmdb);
     CVM::TrustPropagator propagator(*CVM::g_cvmdb, clusterer, trustGraph);
     
-    // Calculate required bond
+    // Bond handling for this local (non-broadcasting) command.
+    //
+    // The trust graph requires every edge to declare at least
+    // CalculateRequiredBond(weight), so an edge cannot be stored with a zero
+    // bond. This command broadcasts nothing, so it cannot actually lock that
+    // stake.
+    //
+    // Previously it papered over this by generating a RANDOM bond txid, which is
+    // indistinguishable from a real one: the edge looked economically backed, but
+    // the referenced transaction did not exist, so the stake could never be
+    // slashed and no verifier could tell it apart from a funded bond.
+    //
+    // The declared bond is still recorded (the graph demands it), but the bond
+    // txid is left NULL so an unbacked edge is identifiable, and the RPC result
+    // states plainly that nothing is locked.
     CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
                           (CVM::g_wotConfig.bondPerVotePoint * std::abs(weight));
     
-    // Get bond amount
     CAmount bondAmount = requiredBond;
-    if (request.params.size() > 2) {
-        bondAmount = AmountFromValue(request.params[2]);
+    if (request.params.size() > 2 && !request.params[2].isNull()) {
+        const CAmount supplied = AmountFromValue(request.params[2]);
+        // A supplied value of 0 is treated as "use the required minimum" so the
+        // edge remains storable.
+        if (supplied > 0) {
+            bondAmount = supplied;
+        }
     }
     
     if (bondAmount < requiredBond) {
@@ -1524,9 +1563,10 @@ UniValue addtrust(const JSONRPCRequest& request)
                   addressStr);
     }
     
-    // Placeholder bond transaction (in production, would create real TX)
-    uint256 bondTx;
-    GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
+    // No bond transaction exists for a local edge, so the bond txid stays NULL
+    // rather than pointing at a fabricated random hash that would be
+    // indistinguishable from a funded bond.
+    const uint256 bondTx;
     
     // Add trust edge to canonical cluster address (the original target). Pass
     // the wide TrustNodeId identifiers directly so P2WSH/quantum edges are
@@ -1557,8 +1597,16 @@ UniValue addtrust(const JSONRPCRequest& request)
     result.pushKV("from", fromStr);
     result.pushKV("to", addressStr);
     result.pushKV("weight", weight);
-    result.pushKV("bond", ValueFromAmount(bondAmount));
+    // Report the declared bond and, separately, that nothing is actually locked,
+    // so a local edge cannot be mistaken for an economically backed one.
+    result.pushKV("declared_bond", ValueFromAmount(bondAmount));
     result.pushKV("required_bond", ValueFromAmount(requiredBond));
+    result.pushKV("bond_locked", ValueFromAmount(0));
+    result.pushKV("bonded", false);
+    result.pushKV("bond_txid", bondTx.GetHex());
+    result.pushKV("note", "Local trust edge: the declared bond is NOT locked and cannot be "
+                          "slashed (bond_txid is null). Use sendtrustrelation to create an "
+                          "edge backed by a real on-chain bond.");
     result.pushKV("reason", reason);
     // Cluster-aware fields (Requirement 4.1). Render the cluster ID through its
     // stored typed destination so non-P2PKH cluster IDs are not fabricated as
@@ -2679,25 +2727,35 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     if (request.fHelp || request.params.size() < 2 || request.params.size() > 4)
         throw std::runtime_error(
             "addclustertrust \"address\" weight ( bond \"reason\" )\n"
-            "\nAdd trust to entire wallet cluster.\n"
+            "\nAdd LOCAL trust to an entire wallet cluster.\n"
             "Trust is automatically propagated to all addresses in the target's wallet cluster.\n"
+            "\nThis command does not broadcast a transaction, so the declared bond is NOT\n"
+            "locked and cannot be slashed; each edge's bond_txid is null to mark it as\n"
+            "unbacked. Use sendtrustrelation for an edge backed by a real on-chain bond.\n"
             "\nArguments:\n"
             "1. \"address\"     (string, required) Any address in target cluster\n"
             "2. weight        (numeric, required) Trust weight (-100 to +100)\n"
-            "3. bond          (numeric, optional) Amount to bond (default: calculated)\n"
+            "3. bond          (numeric, optional) Declared bond (default: required minimum).\n"
+            "                 Recorded but NOT locked.\n"
             "4. \"reason\"      (string, optional) Reason for trust\n"
             "\nResult:\n"
             "{\n"
+            "  \"from\": \"xxx\",             (string) Wallet identity that created the edges\n"
             "  \"cluster_id\": \"xxx\",       (string) Cluster ID (canonical address)\n"
             "  \"members_affected\": n,      (numeric) Number of cluster members\n"
             "  \"edges_created\": n,         (numeric) Number of propagated edges created\n"
-            "  \"source_txid\": \"xxx\",      (string) Transaction ID of original trust edge\n"
             "  \"weight\": n,                (numeric) Trust weight applied\n"
-            "  \"bond\": n                   (numeric) Bond amount\n"
+            "  \"declared_bond\": n,         (numeric) Bond recorded on the edges (not locked)\n"
+            "  \"required_bond\": n,         (numeric) Minimum bond the graph requires\n"
+            "  \"bond_locked\": 0,           (numeric) Always 0; this command locks nothing\n"
+            "  \"bonded\": false,            (boolean) Always false; the bond is unbacked\n"
+            "  \"bond_txid\": \"000...\",      (string) Null, marking the bond as unbacked\n"
+            "  \"note\": \"xxx\"              (string) Points to sendtrustrelation\n"
             "}\n"
             "\nExamples:\n"
-            + HelpExampleCli("addclustertrust", "\"QAddress...\" -50 1.0 \"Scammer wallet\"")
-            + HelpExampleRpc("addclustertrust", "\"QAddress...\", -50, 1.0, \"Scammer wallet\"")
+            + HelpExampleCli("addclustertrust", "\"QAddress...\" -50")
+            + HelpExampleCli("addclustertrust", "\"QAddress...\" -50 2.0 \"Scammer wallet\"")
+            + HelpExampleRpc("addclustertrust", "\"QAddress...\", -50, 2.0, \"Scammer wallet\"")
         );
     
     if (!CVM::g_cvmdb) {
@@ -2723,18 +2781,46 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     // clusterer, and propagator.
     CVM::TrustNodeId toNode = DecodeTrustNodeOrThrow(addressStr);
     
-    // Get caller's address (placeholder - would need wallet integration).
-    // Preserve prior behavior: an all-zero P2PKH-shaped identity.
-    CVM::TrustNodeId fromNode = CVM::TrustNodeId::FromLegacyUint160(uint160());
+    // Resolve the creating (from) identity from the loaded wallet. This must
+    // never be an all-zeros placeholder: edges attributed to a null identity
+    // pollute the trust graph and cannot be reasoned about or revoked.
+    CVM::TrustNodeId fromNode;
+    std::string fromStr;
+    {
+        CWallet* const pwallet = GetWalletForJSONRPCRequest(request);
+        if (!pwallet) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY,
+                "Cannot resolve 'from' identity: no wallet loaded.");
+        }
+        LOCK2(cs_main, pwallet->cs_wallet);
+        CPubKey fresh;
+        if (!pwallet->GetKeyFromPool(fresh)) {
+            throw JSONRPCError(RPC_WALLET_ERROR,
+                "Cannot resolve 'from' identity: failed to get an address from the wallet.");
+        }
+        const uint160 freshId = fresh.GetID();
+        fromNode = CVM::TrustNodeId::FromLegacyUint160(freshId);
+        fromStr = EncodeDestination(CKeyID(freshId));
+    }
     
-    // Calculate required bond
+    if (fromNode.data.IsNull()) {
+        throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Could not resolve a valid 'from' identity");
+    }
+    
+    // Like addtrust, this command broadcasts nothing, so the declared bond is
+    // recorded (the trust graph requires a bond >= the minimum for the edge to be
+    // storable) but is NOT locked. The bond txid is left null so the edge is
+    // identifiable as unbacked, instead of carrying a fabricated random hash that
+    // would be indistinguishable from a funded bond.
     CAmount requiredBond = CVM::g_wotConfig.minBondAmount + 
                           (CVM::g_wotConfig.bondPerVotePoint * std::abs(weight));
     
-    // Get bond amount
     CAmount bondAmount = requiredBond;
-    if (request.params.size() > 2) {
-        bondAmount = AmountFromValue(request.params[2]);
+    if (request.params.size() > 2 && !request.params[2].isNull()) {
+        const CAmount supplied = AmountFromValue(request.params[2]);
+        if (supplied > 0) {
+            bondAmount = supplied;
+        }
     }
     
     if (bondAmount < requiredBond) {
@@ -2764,9 +2850,9 @@ UniValue addclustertrust(const JSONRPCRequest& request)
         clusterId = toNode;
     }
     
-    // Placeholder bond transaction (in production, would create real TX)
-    uint256 bondTx;
-    GetRandBytes(bondTx.begin(), 32);  // Generate random txid for now
+    // No bond transaction exists for a local edge, so the bond txid stays null
+    // rather than pointing at a fabricated hash.
+    const uint256 bondTx;
     
     // Add trust edge to original target
     if (!trustGraph.AddTrustEdge(fromNode, toNode, weight, bondAmount, bondTx, reason)) {
@@ -2789,12 +2875,20 @@ UniValue addclustertrust(const JSONRPCRequest& request)
     
     // Build result
     UniValue result(UniValue::VOBJ);
+    result.pushKV("from", fromStr);
     result.pushKV("cluster_id", EncodeDestination(clusterId.ToDestination()));
     result.pushKV("members_affected", (uint64_t)members.size());
     result.pushKV("edges_created", (uint64_t)edgesCreated);
-    result.pushKV("source_txid", bondTx.GetHex());
     result.pushKV("weight", weight);
-    result.pushKV("bond", ValueFromAmount(bondAmount));
+    // Report the declared bond and, separately, that nothing is actually locked.
+    result.pushKV("declared_bond", ValueFromAmount(bondAmount));
+    result.pushKV("required_bond", ValueFromAmount(requiredBond));
+    result.pushKV("bond_locked", ValueFromAmount(0));
+    result.pushKV("bonded", false);
+    result.pushKV("bond_txid", bondTx.GetHex());
+    result.pushKV("note", "Local trust edges: the declared bond is NOT locked and cannot be "
+                          "slashed (bond_txid is null). Use sendtrustrelation to create an "
+                          "edge backed by a real on-chain bond.");
     
     return result;
 }
@@ -6143,6 +6237,46 @@ void RegisterCVMRPCCommands(CRPCTable &t)
 
 // Vote Manipulation Detection RPC Methods
 
+/**
+ * Render a ManipulationDetection result as the documented RPC object.
+ */
+static UniValue ManipulationDetectionToUniValue(const ManipulationDetection& detection)
+{
+    const char* typeStr = "none";
+    switch (detection.type) {
+        case ManipulationDetection::COORDINATED_VOTING: typeStr = "coordinated_voting"; break;
+        case ManipulationDetection::TIMING_CORRELATION: typeStr = "timing_correlation"; break;
+        case ManipulationDetection::REPUTATION_SPIKE:   typeStr = "reputation_spike";   break;
+        case ManipulationDetection::COLLUSION:          typeStr = "collusion";          break;
+        case ManipulationDetection::SUSPICIOUS_PATTERN: typeStr = "suspicious_pattern"; break;
+        case ManipulationDetection::NONE:
+        default:                                        typeStr = "none";               break;
+    }
+
+    // Render each identity through its stored typed destination so P2WSH and
+    // quantum addresses come back as themselves rather than a narrowed form.
+    UniValue addresses(UniValue::VARR);
+    for (const CVM::TrustNodeId& node : detection.suspiciousAddresses) {
+        addresses.push_back(EncodeDestination(node.ToDestination()));
+    }
+
+    UniValue txs(UniValue::VARR);
+    for (const uint256& tx : detection.suspiciousTxs) {
+        txs.push_back(tx.ToString());
+    }
+
+    UniValue result(UniValue::VOBJ);
+    result.pushKV("type", typeStr);
+    result.pushKV("suspicious_addresses", addresses);
+    result.pushKV("suspicious_txs", txs);
+    result.pushKV("confidence", detection.confidence);
+    result.pushKV("description",
+        detection.description.empty() ? "No manipulation detected" : detection.description);
+    result.pushKV("escalate_to_dao", detection.escalateToDAO);
+
+    return result;
+}
+
 UniValue analyzevotemanipulation(const JSONRPCRequest& request)
 {
     if (request.fHelp || request.params.size() != 1)
@@ -6166,20 +6300,21 @@ UniValue analyzevotemanipulation(const JSONRPCRequest& request)
         );
     
     uint256 txHash = ParseHashV(request.params[0], "txhash");
-    
-    // Get HAT consensus validator
-    // TODO: Get from global instance
-    // For now, return placeholder
-    
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("type", "none");
-    result.pushKV("suspicious_addresses", UniValue(UniValue::VARR));
-    result.pushKV("suspicious_txs", UniValue(UniValue::VARR));
-    result.pushKV("confidence", 0.0);
-    result.pushKV("description", "No manipulation detected");
-    result.pushKV("escalate_to_dao", false);
-    
-    return result;
+
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+
+    // Run the real detection pipeline (coordinated voting, timing correlation
+    // and collusion analysis) instead of reporting a fixed "none" verdict.
+    ManipulationDetection detection = validator.AnalyzeTransactionVoting(txHash);
+
+    return ManipulationDetectionToUniValue(detection);
 }
 
 UniValue analyzeaddressreputation(const JSONRPCRequest& request)
@@ -6204,18 +6339,32 @@ UniValue analyzeaddressreputation(const JSONRPCRequest& request)
             + HelpExampleRpc("analyzeaddressreputation", "\"CAddress123...\"")
         );
     
-    std::string addressStr = request.params[0].get_str();
-    uint160 address;
-    // TODO: Parse address
-    
-    UniValue result(UniValue::VOBJ);
-    result.pushKV("type", "none");
-    result.pushKV("suspicious_addresses", UniValue(UniValue::VARR));
-    result.pushKV("confidence", 0.0);
-    result.pushKV("description", "No manipulation detected");
-    result.pushKV("escalate_to_dao", false);
-    result.pushKV("is_flagged", false);
-    
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
+
+    // Resolve the address through the shared WoT decode path, then narrow it to
+    // the 20-byte form the detector works with.
+    const std::string addressStr = request.params[0].get_str();
+    // The detector keys by the wide TrustNodeId, so the decoded identity is
+    // passed through unchanged. No narrowing to uint160 happens here, which is
+    // what lets P2WSH and quantum addresses be analysed as distinct identities.
+    CVM::TrustNodeId node = DecodeTrustNodeOrThrow(addressStr);
+
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
+
+    ManipulationDetection detection = validator.AnalyzeAddressReputation(node);
+
+    UniValue result = ManipulationDetectionToUniValue(detection);
+
+    // The flag set is persisted, so this reflects real stored state.
+    VoteManipulationDetector& detector = validator.GetVoteManipulationDetector();
+    detector.LoadFlaggedAddresses();
+    result.pushKV("is_flagged", detector.IsAddressFlagged(node));
+
     return result;
 }
 
@@ -6235,82 +6384,35 @@ UniValue getflaggedaddresses(const JSONRPCRequest& request)
             + HelpExampleRpc("getflaggedaddresses", "")
         );
     
-    UniValue result(UniValue::VARR);
-    
-    // TODO: Get from vote manipulation detector
-    
-    return result;
-}
+    if (!CVM::g_cvmdb) {
+        throw JSONRPCError(RPC_INTERNAL_ERROR, "CVM database not initialized");
+    }
 
-UniValue getvotehistory(const JSONRPCRequest& request)
-{
-    if (request.fHelp || request.params.size() != 1)
-        throw std::runtime_error(
-            "getvotehistory \"txhash\"\n"
-            "\nGet vote history for a transaction.\n"
-            "\nArguments:\n"
-            "1. \"txhash\"    (string, required) The transaction hash\n"
-            "\nResult:\n"
-            "[\n"
-            "  {\n"
-            "    \"validator\": \"address\",         (string) Validator address\n"
-            "    \"vote\": \"accept|reject\",        (string) Vote decision\n"
-            "    \"timestamp\": xxx,                 (numeric) Vote timestamp\n"
-            "    \"score_difference\": x             (numeric) Score difference\n"
-            "  },\n"
-            "  ...\n"
-            "]\n"
-            "\nExamples:\n"
-            + HelpExampleCli("getvotehistory", "\"1234567890abcdef...\"")
-            + HelpExampleRpc("getvotehistory", "\"1234567890abcdef...\"")
-        );
-    
-    uint256 txHash = ParseHashV(request.params[0], "txhash");
-    
-    UniValue result(UniValue::VARR);
-    
-    // TODO: Get from vote manipulation detector
-    
-    return result;
-}
+    CVM::CVMDatabase& db = *CVM::g_cvmdb;
+    CVM::TrustGraph trustGraph(db);
+    CVM::SecureHAT secureHAT(db);
+    CVM::HATConsensusValidator validator(db, secureHAT, trustGraph);
 
-UniValue getreputationhistory(const JSONRPCRequest& request)
-{
-    if (request.fHelp || request.params.size() < 1 || request.params.size() > 2)
-        throw std::runtime_error(
-            "getreputationhistory \"address\" ( count )\n"
-            "\nGet reputation change history for an address.\n"
-            "\nArguments:\n"
-            "1. \"address\"    (string, required) The address\n"
-            "2. count          (numeric, optional, default=100) Number of records to return\n"
-            "\nResult:\n"
-            "[\n"
-            "  {\n"
-            "    \"block_height\": xxx,              (numeric) Block height\n"
-            "    \"old_score\": x,                   (numeric) Old reputation score\n"
-            "    \"new_score\": x,                   (numeric) New reputation score\n"
-            "    \"change\": x,                      (numeric) Change amount\n"
-            "    \"reason\": \"xxx\"                 (string) Reason for change\n"
-            "  },\n"
-            "  ...\n"
-            "]\n"
-            "\nExamples:\n"
-            + HelpExampleCli("getreputationhistory", "\"CAddress123...\"")
-            + HelpExampleRpc("getreputationhistory", "\"CAddress123...\" 50")
-        );
-    
-    std::string addressStr = request.params[0].get_str();
-    int count = 100;
-    if (request.params.size() > 1) {
-        count = request.params[1].get_int();
+    // Flagged addresses are persisted in the CVM database, so load them rather
+    // than reporting the empty in-memory set of a freshly constructed detector.
+    VoteManipulationDetector& detector = validator.GetVoteManipulationDetector();
+    detector.LoadFlaggedAddresses();
+
+    UniValue result(UniValue::VARR);
+    for (const CVM::TrustNodeId& node : detector.GetFlaggedAddresses()) {
+        result.push_back(EncodeDestination(node.ToDestination()));
     }
     
-    UniValue result(UniValue::VARR);
-    
-    // TODO: Get from vote manipulation detector
-    
     return result;
 }
+
+// NOTE: `getvotehistory` and `getreputationhistory` were removed rather than
+// registered. The detector's vote and reputation histories are process-local
+// in-memory maps, populated only by RecordVote/RecordReputationChange during a
+// live consensus session and never persisted. An RPC handler constructs a fresh
+// detector per call, so those commands could only ever return an empty array,
+// which reads as "no suspicious history" instead of "this data is not available".
+// Reintroduce them once the histories are persisted in the CVM database.
 
 static const CRPCCommand voteManipulationCommands[] =
 { //  category              name                            actor (function)            argNames
@@ -6318,8 +6420,6 @@ static const CRPCCommand voteManipulationCommands[] =
     { "cvm",                "analyzevotemanipulation",      &analyzevotemanipulation,   {"txhash"} },
     { "cvm",                "analyzeaddressreputation",     &analyzeaddressreputation,  {"address"} },
     { "cvm",                "getflaggedaddresses",          &getflaggedaddresses,       {} },
-    { "cvm",                "getvotehistory",               &getvotehistory,            {"txhash"} },
-    { "cvm",                "getreputationhistory",         &getreputationhistory,      {"address","count"} },
 };
 
 void RegisterVoteManipulationRPCCommands(CRPCTable &t)

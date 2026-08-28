@@ -62,6 +62,28 @@ struct BlockValidationResult {
  * - UTXO set updates based on execution results
  * - Contract state storage in database
  * 
+ * ===== Consensus semantics of contract execution =====
+ *
+ * These rules are consensus-enforcing: violating them makes the block INVALID.
+ *   - a contract transaction with a missing or zero gas limit,
+ *   - exceeding the per-transaction or per-block gas limit,
+ *   - reputation/fee inconsistency (VerifyReputationGasCosts),
+ *   - exceeding the per-block gas subsidy maximum,
+ *   - failure to persist contract state.
+ *
+ * The OUTCOME of running a contract is deliberately NOT consensus-enforcing. A
+ * revert, an out-of-gas abort or an invalid opcode consumes the transaction's
+ * gas and leaves no contract state, but the block stays valid. This mirrors
+ * Ethereum's treatment of a failed CREATE/CALL and is what keeps the CVM a soft
+ * fork: a node that does not understand a contract still agrees on the chain.
+ *
+ * The one case that is NOT tolerated is a host fault: an exception escaping the
+ * VM indicates a node-local or infrastructure problem (database error,
+ * allocation failure, internal invariant violation) rather than a deterministic
+ * result every node would reproduce. Accepting the block in that situation would
+ * let the node follow the chain while holding CVM state that differs from the
+ * network. Such faults therefore fail validation instead.
+ * 
  * Requirements: 1.1, 10.1, 10.2
  */
 class BlockValidator {

@@ -217,7 +217,12 @@ BOOST_AUTO_TEST_CASE(explore_1_1_no_per_block_subsidy_max)
     const Consensus::Params& params = Params().GetConsensus();
 
     CBlockIndex index;
-    index.nHeight = params.cvmActivationHeight + 1;
+    // The per-block subsidy maximum is intentionally gated behind
+    // cvmSubsidyMaxActivationHeight so it never retroactively invalidates blocks
+    // mined before the rule existed. Exercise the rule at a height where it is
+    // active; this height is also above cvmActivationHeight, so the CVM-active
+    // and gas-cap checks still apply.
+    index.nHeight = params.cvmSubsidyMaxActivationHeight + 1;
     index.nTime = 1700000000;
 
     CCoinsView backing;
