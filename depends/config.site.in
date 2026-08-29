@@ -98,3 +98,6 @@ fi
 if test -n "@LDFLAGS@"; then
   LDFLAGS="@LDFLAGS@ $LDFLAGS"
 fi
+
+# Set evmone precompiles libraries for depends builds (these are built by the depends system)
+EVMONE_PRECOMPILES_LIBS="-levmone_precompiles -lblst"

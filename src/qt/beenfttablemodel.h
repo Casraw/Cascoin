@@ -64,11 +64,17 @@ public:
 
     void setIncludeExpired(bool includeExpired);
 
+    /** Call once the model is fully wired into a QTableView and all
+     *  signal/slot connections are established.  Starts the periodic
+     *  refresh timer and triggers the first data load. */
+    void startUpdates();
+
 private:
     WalletModel *walletModel;
     QStringList columns;
     QList<BeeNFTRecord> cachedBeeNFTList;
     bool includeExpired;
+    bool ready;
     QTimer *timer;
 
     /** Update cached bee NFT list from wallet */

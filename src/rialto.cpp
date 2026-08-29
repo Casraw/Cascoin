@@ -33,7 +33,7 @@ const size_t MAX_QUEUED_MESSAGES = 1000;
 // White pages directory mapping hashes of nicknames to pubkeys
 CRialtoWhitePagesDB::CRialtoWhitePagesDB(std::string dbName, size_t nCacheSize, bool fMemory, bool fWipe)
 : CDBWrapper(GetDataDir() / dbName, nCacheSize, fMemory, fWipe) {
-    LogPrintf("Rialto: DB online: %s\n", dbName);
+    LogPrint(BCLog::RIALTO, "Rialto: DB online: %s\n", dbName);
 
     // Dump the DB to the log
     #ifdef THIS_CODE_DISABLED

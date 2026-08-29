@@ -19,6 +19,10 @@
 #include <fs.h>
 #include <httpserver.h>
 #include <httprpc.h>
+#include <httpserver/cvmdashboard.h>
+#include <httpserver/l2_dashboard.h>
+#include <httpserver/l2_websocket.h>
+#include <httpserver/reward_dashboard.h>
 #include <key.h>
 #include <validation.h>
 #include <miner.h>
@@ -42,12 +46,25 @@
 #include <ui_interface.h>
 #include <util.h>
 #include <utilmoneystr.h>
+#include <utilstrencodings.h>
 #include <validationinterface.h>
 #include <rialto.h>   // Cascoin: Rialto
+#include <bctdb.h>    // Cascoin: BCT persistent database
 #ifdef ENABLE_WALLET
 #include <wallet/init.h>
+#include <wallet/wallet.h>
+#include <wallet/coincontrol.h>
 #endif
 #include <warnings.h>
+#include <cvm/cvmdb.h>  // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>  // Cascoin: CVM Block Processor and Trust Propagation
+#include <cvm/cross_chain_bridge.h>  // Cascoin: Cross-chain trust bridge
+#include <cvm/contract_state_sync.h>  // Cascoin: Contract State Sync
+#include <cvm/validator_keys.h>  // Cascoin: HAT v2 validator key manager
+#include <l2/l2_config.h>  // Cascoin: L2 Layer 2 configuration
+#include <l2/l2_common.h>   // Cascoin: L2 enabled check
+#include <l2/l2_globals.h>  // Cascoin: L2 burn-and-mint block processor / rescan
+#include <quantum_registry.h>  // Cascoin: Quantum public key registry
 #include <stdint.h>
 #include <stdio.h>
 #include <memory>
@@ -170,6 +187,7 @@ void Interrupt()
     InterruptRPC();
     InterruptREST();
     InterruptTorControl();
+    l2::InterruptL2();  // Cascoin: L2 Layer 2
     if (g_connman)
         g_connman->Interrupt();
 }
@@ -253,6 +271,32 @@ void Shutdown()
         pcoinsdbview.reset();
         pblocktree.reset();
     }
+    
+    // Shutdown cross-chain trust bridge
+    CVM::ShutdownCrossChainBridge();
+    
+    // Shutdown contract state sync
+    CVM::ShutdownContractStateSync();
+    
+    // Shutdown trust propagation components (Requirements: 2.4, 16.1)
+    CVM::ShutdownTrustPropagation();
+    
+    // Shutdown CVM database
+    CVM::ShutdownCVMDatabase();
+    
+    // Shutdown quantum public key registry
+    // Requirements: 1.5 - Flush pending writes before closing
+    ShutdownQuantumRegistry();
+    
+    // Cascoin: L2 Layer 2 shutdown
+    l2::StopL2();
+    l2::ShutdownL2Persistence();
+
+    // Free the validator/sequencer key while the secure-memory locked pool is
+    // still alive. It holds a CKey backed by secure_allocator; if left to static
+    // destruction at exit, the locked pool may already be gone -> SIGSEGV.
+    CVM::g_validatorKeys.reset();
+    
 #ifdef ENABLE_WALLET
     StopWallets();
 #endif
@@ -264,6 +308,10 @@ void Shutdown()
         pzmqNotificationInterface = nullptr;
     }
 #endif
+
+    // Cascoin: BCT: Shutdown BCT block handler and database
+    ShutdownBCTBlockHandler();
+    BCTDatabaseSQLite::instance()->shutdown();
 
 #ifndef WIN32
     try {
@@ -374,6 +422,8 @@ std::string HelpMessage(HelpMessageMode mode)
             "(default: 0 = disable pruning blocks, 1 = allow manual pruning via RPC, >%u = automatically prune block files to stay under the specified target size in MiB)"), MIN_DISK_SPACE_FOR_BLOCK_FILES / 1024 / 1024));
     strUsage += HelpMessageOpt("-reindex-chainstate", _("Rebuild chain state from the currently indexed blocks"));
     strUsage += HelpMessageOpt("-reindex", _("Rebuild chain state and block index from the blk*.dat files on disk"));
+    strUsage += HelpMessageOpt("-rebuildquantumregistry", _("Rebuild the quantum public key registry by scanning the blockchain from the quantum activation height. Use this to recover from database corruption."));
+    strUsage += HelpMessageOpt("-rescanbct", _("Force a full rescan of BCT (Bee Creation Transaction) data. This will delete the existing bct_database.sqlite and rebuild it"));
 #ifndef WIN32
     strUsage += HelpMessageOpt("-sysperms", _("Create new files with system default permissions, instead of umask 077 (only effective with disabled wallet functionality)"));
 #endif
@@ -519,6 +569,9 @@ std::string HelpMessage(HelpMessageMode mode)
         strUsage += HelpMessageOpt("-rpcservertimeout=<n>", strprintf("Timeout during HTTP requests (default: %d)", DEFAULT_HTTP_SERVER_TIMEOUT));
     }
 
+    // Cascoin: L2 Layer 2 options
+    strUsage += l2::GetL2HelpMessage();
+
     // Cascoin: Hive: Mining optimisations
     strUsage += HelpMessageOpt("-hivecheckdelay=<ms>", strprintf(_("Time between Hive checks in ms. This should be left at default unless performance degradation is observed (default: %u)"), DEFAULT_HIVE_CHECK_DELAY));
     strUsage += HelpMessageOpt("-hivecheckthreads=<threads>", strprintf(_("Number of threads to use when checking bees, -1 for all available cores, or -2 for one less than all available cores (default: %u)"), DEFAULT_HIVE_THREADS));
@@ -625,7 +678,8 @@ void CleanupBlockRevFiles()
     // start removing block files.
     int nContigCounter = 0;
     for (const std::pair<std::string, fs::path>& item : mapBlockFiles) {
-        if (atoi(item.first) == nContigCounter) {
+        int32_t fileIndex = 0;
+        if (ParseInt32(item.first, &fileIndex) && fileIndex == nContigCounter) {
             nContigCounter++;
             continue;
         }
@@ -743,6 +797,32 @@ bool AppInitServers()
         return false;
     if (!StartHTTPServer())
         return false;
+    
+    // Cascoin: Initialize CVM Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-cvmdashboard", false)) {
+        LogPrintf("CVM Dashboard enabled - handlers registered\n");
+        InitCVMDashboardHandlers();
+    } else {
+        LogPrintf("CVM Dashboard disabled (use -cvmdashboard=1 to enable)\n");
+    }
+    
+    // Cascoin L2: Initialize L2 Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-l2dashboard", false)) {
+        LogPrintf("L2 Dashboard enabled - handlers registered\n");
+        l2::InitL2DashboardHandlers();
+        l2::InitL2WebSocketHandlers();
+    } else {
+        LogPrintf("L2 Dashboard disabled (use -l2dashboard=1 to enable)\n");
+    }
+    
+    // Cascoin: Initialize Reward Dashboard HTTP handlers (OFF by default for security)
+    if (gArgs.GetBoolArg("-rewarddashboard", false)) {
+        LogPrintf("Reward Dashboard enabled - handlers registered\n");
+        reward::InitRewardDashboardHandlers();
+    } else {
+        LogPrintf("Reward Dashboard disabled (use -rewarddashboard=1 to enable)\n");
+    }
+    
     return true;
 }
 
@@ -1122,6 +1202,11 @@ bool AppInitParameterInteraction()
     if (gArgs.GetBoolArg("-rialto", DEFAULT_RIALTO_SUPPORT))
         nLocalServices = ServiceFlags(nLocalServices | NODE_RIALTO);
 
+    // Cascoin: L2 - advertise L2 service capability so peers gossip/relay L2
+    // blocks, transactions and sync requests to us.
+    if (gArgs.GetBoolArg("-l2", true))
+        nLocalServices = ServiceFlags(nLocalServices | NODE_L2);
+
     if (gArgs.GetArg("-rpcserialversion", DEFAULT_RPC_SERIALIZE_VERSION) < 0)
         return InitError("rpcserialversion must be non-negative.");
 
@@ -1172,6 +1257,12 @@ bool AppInitParameterInteraction()
             }
         }
     }
+
+    // Cascoin: L2 Layer 2 initialization
+    if (!l2::InitL2Config()) {
+        return InitError(_("Failed to initialize L2 configuration."));
+    }
+
     return true;
 }
 
@@ -1216,6 +1307,138 @@ bool AppInitLockDataDirectory()
         return false;
     }
     return true;
+}
+
+#ifdef ENABLE_WALLET
+// Cascoin: L2 - periodically anchor the latest uncommitted L2 block on L1.
+// Pick an unlocked wallet with spendable funds to pay L1 fees for L2 anchoring.
+static CWallet* L2FindFundedWallet()
+{
+    for (CWalletRef pw : vpwallets) {
+        if (pw && !pw->IsLocked() && pw->GetBalance() > 0) return pw;
+    }
+    return nullptr;
+}
+
+// Build, fund, sign and broadcast a single 0-value OP_RETURN transaction
+// carrying @p script. Returns true on success.
+static bool L2SendOpReturnTx(CWallet* pwallet, const CScript& script, std::string& txid)
+{
+    try {
+        LOCK2(cs_main, pwallet->cs_wallet);
+        std::vector<CRecipient> vecSend;
+        vecSend.push_back({script, 0, false});
+        CWalletTx wtxNew;
+        CReserveKey reservekey(pwallet);
+        CAmount nFeeRequired = 0;
+        int nChangePosRet = -1;
+        std::string strError;
+        CCoinControl coin_control;
+        if (!pwallet->CreateTransaction(vecSend, wtxNew, reservekey, nFeeRequired,
+                                        nChangePosRet, strError, coin_control)) {
+            LogPrintf("L2: OP_RETURN CreateTransaction failed: %s\n", strError);
+            return false;
+        }
+        CValidationState state;
+        if (!pwallet->CommitTransaction(wtxNew, reservekey, g_connman.get(), state)) {
+            LogPrintf("L2: OP_RETURN CommitTransaction failed: %s\n", state.GetRejectReason());
+            return false;
+        }
+        txid = wtxNew.GetHash().GetHex();
+        return true;
+    } catch (const std::exception& e) {
+        LogPrintf("L2: OP_RETURN tx exception: %s\n", e.what());
+        return false;
+    }
+}
+
+// Runs on sequencer nodes via the lightweight scheduler. Posts a 0-value
+// OP_RETURN "L2COMMIT" transaction with the wallet so state roots are anchored
+// to L1 automatically instead of via a manual RPC.
+static void L2AutoCommit()
+{
+    if (!l2::IsL2Enabled()) return;
+
+    size_t blockCount = l2::GetL2BlockCount();
+    if (blockCount == 0) return;
+    const uint64_t tip = blockCount - 1;
+
+    // Nothing to do if the tip is already committed on L1.
+    l2::L2Commitment latest;
+    if (l2::GetLatestL2Commitment(latest) && latest.l2BlockNumber >= tip) {
+        return;
+    }
+
+    l2::L2Block block;
+    if (!l2::GetL2BlockByNumber(tip, block)) return;
+
+    CWallet* pwallet = L2FindFundedWallet();
+    if (!pwallet) {
+        LogPrint(BCLog::NET, "L2: auto-commit skipped (no unlocked funded wallet)\n");
+        return;
+    }
+
+    const uint32_t chainId = static_cast<uint32_t>(l2::GetL2ChainId());
+    const CScript commitScript = l2::BuildL2CommitScript(chainId, tip, block.header.stateRoot);
+    std::string txid;
+    if (L2SendOpReturnTx(pwallet, commitScript, txid)) {
+        LogPrintf("L2: auto-committed L2 block %d (stateRoot=%s) via L1 tx %s\n",
+                  (int)tip, block.header.stateRoot.GetHex(), txid);
+    }
+}
+
+// M1 Data Availability: posts each not-yet-posted L2 block's full serialized
+// data to L1 as one or more "L2DATA" OP_RETURN transactions (one OP_RETURN per
+// tx). A node that later reindexes or joins fresh can reconstruct the entire L2
+// chain from L1 alone. Bounded per run so a large backlog is drained gradually.
+static void L2AutoPostData()
+{
+    if (!l2::IsL2Enabled()) return;
+
+    size_t blockCount = l2::GetL2BlockCount();
+    if (blockCount == 0) return;
+    const uint64_t tip = blockCount - 1;
+
+    uint64_t next = l2::GetNextL2DataPostBlock();
+    if (next > tip) return;
+
+    CWallet* pwallet = L2FindFundedWallet();
+    if (!pwallet) {
+        LogPrint(BCLog::NET, "L2: data-post skipped (no unlocked funded wallet)\n");
+        return;
+    }
+
+    const int maxBlocksPerRun = (int)gArgs.GetArg("-l2datapostperrun", 25);
+    int done = 0;
+    for (uint64_t n = next; n <= tip && done < maxBlocksPerRun; n++) {
+        l2::L2Block block;
+        if (!l2::GetL2BlockByNumber(n, block)) break;  // stop at first gap
+        std::vector<CScript> scripts = l2::BuildL2DataScripts(block);
+        bool allOk = true;
+        for (const CScript& s : scripts) {
+            std::string txid;
+            if (!L2SendOpReturnTx(pwallet, s, txid)) { allOk = false; break; }
+        }
+        if (!allOk) break;  // retry this block on the next run
+        l2::SetNextL2DataPostBlock(n + 1);
+        done++;
+    }
+    if (done > 0) {
+        LogPrintf("L2: posted data for %d L2 block(s) to L1 (through block %llu)\n",
+                  done, (unsigned long long)(next + done - 1));
+    }
+}
+#endif // ENABLE_WALLET
+
+// Cascoin: L2 - periodically re-gossip still-pending L2 transactions. L2
+// transactions are otherwise only broadcast once (at submit time), so a
+// transfer submitted while the sequencer was unreachable would be stuck in the
+// local pool forever. This runs on every L2 node (no wallet required) and
+// prunes already-applied transactions as a side effect.
+static void L2AutoRebroadcast()
+{
+    if (!l2::IsL2Enabled()) return;
+    l2::RebroadcastL2Mempool();
 }
 
 bool AppInitMain()
@@ -1639,6 +1862,83 @@ bool AppInitMain()
     LogPrintf("No wallet support compiled in!\n");
 #endif
 
+    // ********************************************************* Step 8a: initialize CVM (Cascoin Virtual Machine)
+    LogPrintf("Initializing CVM database...\n");
+    if (!CVM::InitCVMDatabase(GetDataDir())) {
+        return InitError(_("Failed to initialize CVM database"));
+    }
+    LogPrintf("CVM database initialized successfully\n");
+    
+    // Initialize the HAT v2 validator key manager. The manager must exist for
+    // the validator RPCs (generatevalidatorkey, getvalidatorinfo, ...) to work.
+    // Initialize() loads an existing validator.key (or one referenced by
+    // -validatoraddress); if none exists it returns false but the manager is
+    // still available so a key can be generated later via RPC.
+    LogPrintf("Initializing validator key manager...\n");
+    CVM::g_validatorKeys = std::unique_ptr<CVM::ValidatorKeyManager>(new CVM::ValidatorKeyManager());
+    if (CVM::g_validatorKeys->Initialize(GetDataDir())) {
+        LogPrintf("Validator key manager initialized (validator key loaded)\n");
+    } else {
+        LogPrintf("Validator key manager initialized (no validator key configured yet)\n");
+    }
+
+    // Initialize trust propagation components (Requirements: 2.4, 16.1)
+    LogPrintf("Initializing trust propagation components...\n");
+    if (!CVM::InitTrustPropagation(*CVM::g_cvmdb)) {
+        LogPrintf("Warning: Failed to initialize trust propagation components\n");
+        // Non-fatal - node can still operate without trust propagation
+    } else {
+        LogPrintf("Trust propagation components initialized successfully\n");
+    }
+    
+    // Initialize cross-chain trust bridge
+    LogPrintf("Initializing cross-chain trust bridge...\n");
+    CVM::InitializeCrossChainBridge(CVM::g_cvmdb.get());
+    LogPrintf("Cross-chain trust bridge initialized successfully\n");
+    
+    // Initialize contract state synchronization
+    LogPrintf("Initializing contract state sync manager...\n");
+    if (!CVM::InitContractStateSync(CVM::g_cvmdb.get())) {
+        LogPrintf("Warning: Failed to initialize contract state sync manager\n");
+        // Non-fatal - node can still operate without state sync
+    } else {
+        LogPrintf("Contract state sync manager initialized successfully\n");
+    }
+
+    // ********************************************************* Step 8b: initialize Quantum Public Key Registry
+    // Requirements: 1.4, 1.6 - Initialize registry, handle failure gracefully
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        // If rebuild or reindex is requested, delete existing database first
+        if (fRebuildQuantumRegistry || fReindexTriggered) {
+            fs::path dbPath = GetDataDir() / "quantum_pubkeys";
+            if (fRebuildQuantumRegistry) {
+                LogPrintf("Quantum: -rebuildquantumregistry specified, deleting existing quantum registry at %s\n", dbPath.string());
+            } else {
+                LogPrintf("Quantum: -reindex specified, deleting existing quantum registry at %s\n", dbPath.string());
+            }
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove_all(dbPath);
+                    LogPrintf("Quantum: Deleted existing quantum registry database\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("Quantum: Warning - could not delete quantum registry database: %s\n", e.what());
+                }
+            }
+        }
+        
+        LogPrintf("Initializing quantum public key registry...\n");
+        if (!InitQuantumRegistry(GetDataDir())) {
+            // Requirements: 1.6 - Log error and continue with compact mode disabled
+            LogPrintf("Warning: Quantum public key registry failed to initialize, compact mode disabled\n");
+            // Non-fatal - node can still operate without compact quantum transactions
+        } else {
+            LogPrintf("Quantum public key registry initialized successfully\n");
+        }
+    }
+
     // ********************************************************* Step 9: data directory maintenance
 
     // if pruning, unset the service bit and perform the initial blockstore prune
@@ -1789,6 +2089,206 @@ bool AppInitMain()
 #ifdef ENABLE_WALLET
     StartWallets(scheduler);
 #endif
+
+    // Cascoin: BCT: Initialize BCT persistent database and block handler
+    {
+        std::string dataDir = GetDataDir().string();
+        BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+        
+        // Check for -rescanbct or -reindex parameter - delete existing database before initialization
+        bool fRescanBCT = gArgs.GetBoolArg("-rescanbct", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if (fRescanBCT || fReindexTriggered) {
+            std::string bctDbPath = dataDir + "/bct_database.sqlite";
+            if (fRescanBCT) {
+                LogPrintf("BCT: -rescanbct specified, deleting existing BCT database at %s\n", bctDbPath);
+            } else {
+                LogPrintf("BCT: -reindex specified, deleting existing BCT database at %s\n", bctDbPath);
+            }
+            fs::path dbPath(bctDbPath);
+            if (fs::exists(dbPath)) {
+                try {
+                    fs::remove(dbPath);
+                    // Also remove WAL and SHM files if they exist
+                    fs::path walPath(bctDbPath + "-wal");
+                    fs::path shmPath(bctDbPath + "-shm");
+                    if (fs::exists(walPath)) fs::remove(walPath);
+                    if (fs::exists(shmPath)) fs::remove(shmPath);
+                    LogPrintf("BCT: Deleted existing BCT database files\n");
+                } catch (const fs::filesystem_error& e) {
+                    LogPrintf("BCT: Warning - could not delete BCT database: %s\n", e.what());
+                }
+            }
+        }
+        
+        if (bctDb->initialize(dataDir)) {
+            // Perform startup initialization (load cache or full scan)
+#ifdef ENABLE_WALLET
+            CWallet* pwallet = !vpwallets.empty() ? vpwallets[0] : nullptr;
+            if (!bctDb->initializeOnStartup(pwallet)) {
+                LogPrintf("Warning: BCT database startup initialization failed\n");
+            }
+#else
+            if (!bctDb->initializeOnStartup(nullptr)) {
+                LogPrintf("Warning: BCT database startup initialization failed (no wallet)\n");
+            }
+#endif
+            InitBCTBlockHandler();
+            LogPrintf("BCT database initialized at %s\n", bctDb->getDatabasePath());
+        } else {
+            LogPrintf("Warning: Failed to initialize BCT database\n");
+        }
+    }
+
+    // Cascoin: Quantum Registry rebuild scan (if requested)
+    // Requirements: 8.5 - Rebuild from blockchain data
+    {
+        bool fRebuildQuantumRegistry = gArgs.GetBoolArg("-rebuildquantumregistry", false);
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        
+        if ((fRebuildQuantumRegistry || fReindexTriggered) && g_quantumRegistry && g_quantumRegistry->IsInitialized()) {
+            int activationHeight = chainparams.GetConsensus().quantumActivationHeight;
+            int chainTip = 0;
+            {
+                LOCK(cs_main);
+                chainTip = chainActive.Height();
+            }
+            
+            // Only scan if we're past the activation height
+            if (chainTip >= activationHeight) {
+                LogPrintf("Quantum: Scanning blockchain for quantum public keys from height %d to %d...\n", 
+                          activationHeight, chainTip);
+                uiInterface.InitMessage(_("Rebuilding quantum registry..."));
+                
+                if (!RebuildQuantumRegistry(GetDataDir(), activationHeight, chainTip)) {
+                    LogPrintf("Warning: Quantum registry rebuild failed\n");
+                } else {
+                    QuantumRegistryStats stats = g_quantumRegistry->GetStats();
+                    LogPrintf("Quantum: Registry rebuild complete, %d keys registered\n", stats.totalKeys);
+                }
+            } else {
+                LogPrintf("Quantum: Chain tip (%d) is below activation height (%d), skipping rebuild scan\n",
+                          chainTip, activationHeight);
+            }
+        }
+    }
+
+    // Cascoin: L2 Layer 2 startup
+    if (!l2::StartL2()) {
+        LogPrintf("Warning: Failed to start L2 subsystem\n");
+    }
+
+    // Cascoin: L2 - rebuild the in-memory burn-and-mint state from the L1 chain.
+    // The burn-and-mint state (balances / total supply) lives in memory only, so
+    // it is lost on restart. Because a confirmed L1 burn is an objective on-chain
+    // fact and minting is fully deterministic and idempotent, replaying every
+    // block through the burn processor reconstructs the exact same L2 state. The
+    // L1 chain is the source of truth, so no separate persistence is required.
+    if (l2::IsL2Enabled()) {
+        // Open the L2 persistence DB and load any previously persisted state.
+        // On -reindex we wipe it so the state is rebuilt from scratch from chain.
+        bool fReindexTriggered = gArgs.GetBoolArg("-reindex", false);
+        l2::InitL2Persistence(GetDataDir() / "l2", fReindexTriggered);
+
+        int tipHeight = 0;
+        {
+            LOCK(cs_main);
+            tipHeight = chainActive.Height();
+        }
+        // Only replay the blocks after the persisted checkpoint (incremental
+        // rescan). The checkpoint lags the tip by REQUIRED_CONFIRMATIONS, so any
+        // burn that had not yet matured at shutdown is re-detected here.
+        int startHeight = l2::GetL2LastProcessedHeight() + 1;
+        if (startHeight < 1) startHeight = 1;
+        if (tipHeight >= startHeight) {
+            int toScan = tipHeight - startHeight + 1;
+            LogPrintf("L2: Rescanning blocks %d..%d (%d blocks) to rebuild burn-and-mint state...\n",
+                      startHeight, tipHeight, toScan);
+            uiInterface.InitMessage(_("Rebuilding L2 burn-and-mint state..."));
+            int scanned = 0;
+            for (int h = startHeight; h <= tipHeight; h++) {
+                CBlock block;
+                CBlockIndex* pindex = nullptr;
+                {
+                    LOCK(cs_main);
+                    pindex = chainActive[h];
+                }
+                if (!pindex) {
+                    continue;
+                }
+                if (!ReadBlockFromDisk(block, pindex, chainparams.GetConsensus())) {
+                    LogPrintf("L2: Rescan - failed to read block at height %d\n", h);
+                    continue;
+                }
+                // Evaluate maturity against the real chain tip so burns with
+                // >= REQUIRED_CONFIRMATIONS are minted during the rescan.
+                l2::ProcessConnectedBlockForBurns(block, h, tipHeight);
+                // M2: rebuild the on-chain sequencer registry (idempotent).
+                l2::ProcessConnectedBlockForSeqReg(block, h);
+                // Re-record L2 state-root commitments (idempotent).
+                l2::ProcessConnectedBlockForCommits(block, h);
+                // M1: reconstruct L2 blocks from L1-posted data (idempotent).
+                // On -reindex (wiped L2 DB) this rebuilds transfers from L1.
+                l2::ProcessConnectedBlockForData(block, h);
+                scanned++;
+            }
+            LogPrintf("L2: Rescan complete (%d blocks scanned)\n", scanned);
+        } else {
+            LogPrintf("L2: No blocks to rescan (checkpoint height %d, tip %d)\n",
+                      l2::GetL2LastProcessedHeight(), tipHeight);
+        }
+
+        // Phase 1: start the sequencer block producer if this node acts as a
+        // sequencer. Default on for regtest (single-node dev), off otherwise.
+        // Started here (after persistence load + rescan) so it continues from
+        // the correct L2 tip. Reuses the validator key as the sequencer key.
+        bool fDefaultSeq = (chainparams.NetworkIDString() == "regtest");
+        bool fSeq = gArgs.GetBoolArg("-l2sequencer", fDefaultSeq);
+        if (fSeq) {
+            if (CVM::g_validatorKeys && !CVM::g_validatorKeys->HasValidatorKey()) {
+                if (CVM::g_validatorKeys->GenerateNewKey()) {
+                    LogPrintf("L2: Generated sequencer key %s\n",
+                              CVM::g_validatorKeys->GetValidatorAddress().ToString());
+                }
+            }
+        }
+        // The L2 worker runs on all L2 nodes: it syncs blocks from peers, and
+        // additionally produces blocks when this node is a sequencer.
+        l2::StartL2BlockProducer(fSeq);
+        LogPrintf("L2: worker started (sequencer=%d)\n", (int)fSeq);
+
+        // Re-gossip still-pending L2 transactions on a timer so a transfer
+        // submitted while the sequencer was unreachable is delivered once
+        // connectivity is restored. Runs on all L2 nodes (submitters included),
+        // independent of wallet/sequencer role. -l2rebroadcastinterval seconds,
+        // default 60; 0 disables.
+        int64_t rebroadcastSecs = gArgs.GetArg("-l2rebroadcastinterval", 60);
+        if (rebroadcastSecs > 0) {
+            scheduler.scheduleEvery(&L2AutoRebroadcast, rebroadcastSecs * 1000);
+            LogPrintf("L2: pending-tx rebroadcast scheduled every %ds\n", (int)rebroadcastSecs);
+        }
+
+#ifdef ENABLE_WALLET
+        // Sequencers automatically anchor the latest L2 block on L1 on a timer.
+        // Interval configurable via -l2commitinterval (seconds, default 30; 0
+        // disables auto-commit and leaves it to the l2_createcommitment RPC).
+        if (fSeq) {
+            int64_t commitSecs = gArgs.GetArg("-l2commitinterval", 30);
+            if (commitSecs > 0) {
+                scheduler.scheduleEvery(&L2AutoCommit, commitSecs * 1000);
+                LogPrintf("L2: auto-commit scheduled every %ds\n", (int)commitSecs);
+            }
+            // M1: post L2 block data to L1 for data availability. Slightly more
+            // frequent than commits so the DA log keeps up with block production.
+            int64_t dataSecs = gArgs.GetArg("-l2datainterval", 10);
+            if (dataSecs > 0) {
+                scheduler.scheduleEvery(&L2AutoPostData, dataSecs * 1000);
+                LogPrintf("L2: data-availability posting scheduled every %ds\n", (int)dataSecs);
+            }
+        }
+#endif
+    }
 
     return true;
 }

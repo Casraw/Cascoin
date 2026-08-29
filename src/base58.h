@@ -147,4 +147,15 @@ CTxDestination DecodeDestination(const std::string& str);
 bool IsValidDestinationString(const std::string& str);
 bool IsValidDestinationString(const std::string& str, const CChainParams& params);
 
+/**
+ * Get a quantum destination from a FALCON-512 public key.
+ * The destination contains SHA256(pubkey) as the witness program.
+ *
+ * @param[in] pubkey The FALCON-512 public key (must be quantum type)
+ * @return WitnessV2Quantum destination, or CNoDestination if pubkey is not quantum
+ *
+ * Requirements: 3.6, 3.8 (quantum address derivation and routing)
+ */
+CTxDestination GetQuantumDestination(const CPubKey& pubkey);
+
 #endif // BITCOIN_BASE58_H

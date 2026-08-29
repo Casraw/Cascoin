@@ -5,6 +5,7 @@
 TESTS += test/test_cascoin
 bin_PROGRAMS += test/test_cascoin
 noinst_PROGRAMS += test/test_cascoin_fuzzy
+noinst_PROGRAMS += test/test_cascoin_cvm_fuzzy
 TEST_SRCDIR = test
 TEST_BINARY=test/test_cascoin$(EXEEXT)
 
@@ -23,6 +24,41 @@ GENERATED_TEST_FILES = $(JSON_TEST_FILES:.json=.json.h) $(RAW_TEST_FILES:.raw=.r
 
 # test_bitcoin binary #
 BITCOIN_TESTS =\
+  test/bctdb_tests.cpp \
+  test/challenger_reward_tests.cpp \
+  test/cvm_backward_compat_tests.cpp \
+  test/cvm_bytecode_detector_tests.cpp \
+  test/cvm_consensus_safety_tests.cpp \
+  test/cvm_enhanced_storage_tests.cpp \
+  test/cvm_functional_fix_explore_tests.cpp \
+  test/cvm_functional_fix_preserve_tests.cpp \
+  test/cvm_trust_activation_explore_tests.cpp \
+  test/cvm_trust_activation_fix_property_tests.cpp \
+  test/cvm_trust_activation_preserve_tests.cpp \
+  test/cvm_wot_fix_explore_tests.cpp \
+  test/cvm_wot_fix_property_tests.cpp \
+  test/cvm_wot_preserve_tests.cpp \
+  test/cvm_workstream1_fix_property_tests.cpp \
+  test/cvm_workstream1_preserve_tests.cpp \
+  test/cvm_workstream2_fix_property_tests.cpp \
+  test/cvm_workstream2_preserve_tests.cpp \
+  test/cvm_workstream3_tests.cpp \
+  test/cvm_workstream4_tests.cpp \
+  test/cvm_workstream5_tests.cpp \
+  test/cvm_workstream6_tests.cpp \
+  test/cvm_workstream7_tests.cpp \
+  test/cvm_workstream8_tests.cpp \
+  test/cvm_workstream9_tests.cpp \
+  test/cvm_workstream10_tests.cpp \
+  test/cvm_workstream11_tests.cpp \
+  test/cvm_workstream12_tests.cpp \
+  test/cvm_ws_integration_tests.cpp \
+  test/cvm_integration_tests.cpp \
+  test/cvm_quantum_tests.cpp \
+  test/cvm_sustainable_gas_tests.cpp \
+  test/cvm_trust_context_tests.cpp \
+  test/cvm_dashboard_contracts_tests.cpp \
+  test/cvm_fuzz_property_tests.cpp \
   test/arith_uint256_tests.cpp \
   test/scriptnum10.h \
   test/addrman_tests.cpp \
@@ -41,10 +77,43 @@ BITCOIN_TESTS =\
   test/compress_tests.cpp \
   test/crypto_tests.cpp \
   test/cuckoocache_tests.cpp \
+  test/quantum_tests.cpp \
+  test/quantum_endianness_property_tests.cpp \
+  test/quantum_registry_tests.cpp \
   test/DoS_tests.cpp \
   test/getarg_tests.cpp \
   test/hash_tests.cpp \
   test/key_tests.cpp \
+  test/l2_block_tests.cpp \
+  test/l2_bridge_contract_tests.cpp \
+  test/l2_burn_mint_integration_tests.cpp \
+  test/l2_burn_parser_tests.cpp \
+  test/l2_burn_registry_tests.cpp \
+  test/l2_burn_validator_tests.cpp \
+  test/l2_challenge_handler_tests.cpp \
+  test/l2_collusion_detector_tests.cpp \
+  test/l2_cross_layer_messaging_tests.cpp \
+  test/l2_data_availability_tests.cpp \
+  test/l2_encrypted_mempool_tests.cpp \
+  test/l2_fee_distributor_tests.cpp \
+  test/l2_forced_inclusion_tests.cpp \
+  test/l2_fraud_proof_tests.cpp \
+  test/l2_leader_election_tests.cpp \
+  test/l2_mint_consensus_tests.cpp \
+  test/l2_minter_tests.cpp \
+  test/l2_rate_limiter_tests.cpp \
+  test/l2_registry_tests.cpp \
+  test/l2_reorg_monitor_tests.cpp \
+  test/l2_reputation_tests.cpp \
+  test/l2_security_monitor_tests.cpp \
+  test/l2_sequencer_consensus_tests.cpp \
+  test/l2_sequencer_discovery_tests.cpp \
+  test/l2_sparse_merkle_tree_tests.cpp \
+  test/l2_state_manager_tests.cpp \
+  test/l2_timestamp_validator_tests.cpp \
+  test/l2_token_tests.cpp \
+  test/l2_token_manager_tests.cpp \
+  test/l2_faucet_tests.cpp \
   test/limitedmap_tests.cpp \
   test/dbwrapper_tests.cpp \
   test/main_tests.cpp \
@@ -81,6 +150,12 @@ BITCOIN_TESTS =\
   test/timedata_tests.cpp \
   test/torcontrol_tests.cpp \
   test/transaction_tests.cpp \
+  test/trustnodeid_tests.cpp \
+  test/trustnodeid_validation_tests.cpp \
+  test/trustnodeid_full_migration_explore_tests.cpp \
+  test/trustnodeid_full_migration_preserve_tests.cpp \
+  test/trustnodeid_full_migration_fix_property_tests.cpp \
+  test/trustpropagator_tests.cpp \
   test/txvalidation_tests.cpp \
   test/txvalidationcache_tests.cpp \
   test/versionbits_tests.cpp \
@@ -102,11 +177,15 @@ test_test_cascoin_LDADD =
 if ENABLE_WALLET
 test_test_cascoin_LDADD += $(LIBBITCOIN_WALLET)
 endif
-test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBUNIVALUE) \
+test_test_cascoin_LDADD += $(LIBBITCOIN_SERVER) $(LIBBITCOIN_CLI) $(LIBBITCOIN_COMMON) $(LIBBITCOIN_UTIL) $(LIBBITCOIN_CONSENSUS) $(LIBBITCOIN_CRYPTO) $(LIBBITCOIN_QUANTUM) $(LIBUNIVALUE) \
   $(LIBLEVELDB) $(LIBLEVELDB_SSE42) $(LIBMEMENV) $(BOOST_LIBS) $(BOOST_UNIT_TEST_FRAMEWORK_LIB) $(LIBSECP256K1) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
 test_test_cascoin_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
 
-test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS)
+test_test_cascoin_LDADD += $(LIBBITCOIN_CONSENSUS) $(BDB_LIBS) $(SSL_LIBS) $(CRYPTO_LIBS) $(MINIUPNPC_LIBS) $(EVMC_LIBS) $(SQLITE3_LIBS) $(LIBOQS_LIBS)
+if TARGET_WINDOWS
+# Windows requires bcrypt for Boost.Filesystem random path generation
+test_test_cascoin_LDADD += -lbcrypt
+endif
 test_test_cascoin_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
 
 if ENABLE_ZMQ
@@ -127,9 +206,103 @@ test_test_cascoin_fuzzy_LDADD = \
   $(LIBBITCOIN_UTIL) \
   $(LIBBITCOIN_CONSENSUS) \
   $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
   $(LIBSECP256K1)
 
-test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS)
+test_test_cascoin_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS)
+#
+
+# test_cvm_fuzzy binary (CVM-specific fuzz harness) #
+test_test_cascoin_cvm_fuzzy_SOURCES = test/test_cvm_fuzzy.cpp
+test_test_cascoin_cvm_fuzzy_CPPFLAGS = $(AM_CPPFLAGS) $(BITCOIN_INCLUDES)
+test_test_cascoin_cvm_fuzzy_CXXFLAGS = $(AM_CXXFLAGS) $(PIE_FLAGS)
+# -static tells libtool to resolve against the static archives as a set (the
+# same flag the main test_cascoin binary uses); this is what allows the
+# circular libbitcoin_server <-> libbitcoin_wallet references pulled in via
+# cvm/evm_rpc.cpp and cvm/txbuilder.cpp to be satisfied.
+test_test_cascoin_cvm_fuzzy_LDFLAGS = $(RELDFLAGS) $(AM_LDFLAGS) $(LIBTOOL_APP_LDFLAGS) -static
+
+# NOTE on library order: the CVM harness pulls in CVMDatabase (LevelDB) plus
+# RPC/serialization code from libbitcoin_{server,common,util}. Because
+# cvm/evm_rpc.cpp, cvm/txbuilder.cpp and rpc/l2_burn.cpp live in
+# libbitcoin_server but call into CWallet, libbitcoin_server and
+# libbitcoin_wallet are mutually dependent: the server archive references
+# wallet symbols and the wallet archive references server/common/util symbols.
+# With static archives a single left-to-right pass cannot resolve such a cycle
+# (whichever archive is scanned last leaves the other's newly pulled objects
+# unresolved). The robust, order-independent fix is to wrap the mutually
+# dependent archives in a GNU ld linker group (--start-group/--end-group), which
+# rescans the enclosed archives until no new symbols are resolved. This is the
+# only reliable way to close the multi-level cycle here: the harness pulls
+# libbitcoin_server (CVM / init / RPC objects); init.o and rpc/cvm.o reference
+# the RPC command table which drags in evm_rpc.o / txbuilder.o / l2_burn.o; and
+# those reference CWallet transaction-building methods, whose defining wallet
+# objects in turn reference further server/common/util symbols. Alternating the
+# archives a fixed number of times does not converge (the RPC subgraph is pulled
+# in whichever server pass ends up last, with no wallet pass after it).
+#
+# Automake rejects a literal '-Wl,--start-group' token inside an _LDADD and also
+# expands plain make variables during its scan, so the group markers are wrapped
+# in a $(shell ...) call: automake treats the function call as opaque (it does
+# not run the shell at Makefile.in generation time), while make expands it to the
+# real linker flag on the link line, where libtool passes it through verbatim
+# and preserves its position around the archives.
+CVM_FUZZY_GROUP_START = $(shell printf '%s' '-Wl,--start-group')
+CVM_FUZZY_GROUP_END = $(shell printf '%s' '-Wl,--end-group')
+test_test_cascoin_cvm_fuzzy_LDADD = \
+  $(CVM_FUZZY_GROUP_START) \
+  $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_COMMON) \
+  $(LIBBITCOIN_UTIL) \
+  $(LIBBITCOIN_CONSENSUS) \
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM)
+if ENABLE_WALLET
+test_test_cascoin_cvm_fuzzy_LDADD += $(LIBBITCOIN_WALLET)
+endif
+if ENABLE_ZMQ
+# init.o (pulled into the harness) references CZMQNotificationInterface, which
+# lives in the internal libbitcoin_zmq archive; keep it inside the linker group.
+test_test_cascoin_cvm_fuzzy_LDADD += $(LIBBITCOIN_ZMQ)
+endif
+test_test_cascoin_cvm_fuzzy_LDADD += \
+  $(LIBUNIVALUE) \
+  $(LIBLEVELDB) \
+  $(LIBLEVELDB_SSE42) \
+  $(LIBMEMENV) \
+  $(LIBSECP256K1) \
+  $(CVM_FUZZY_GROUP_END)
+
+test_test_cascoin_cvm_fuzzy_LDADD += $(BOOST_LIBS) $(CRYPTO_LIBS) $(EVMC_LIBS) $(LIBOQS_LIBS) \
+  $(BDB_LIBS) $(SSL_LIBS) $(MINIUPNPC_LIBS) $(SQLITE3_LIBS) $(EVENT_LIBS) $(EVENT_PTHREADS_LIBS)
+
+if ENABLE_ZMQ
+test_test_cascoin_cvm_fuzzy_LDADD += $(ZMQ_LIBS)
+endif
+
+# Because the linker-group markers are injected via $(shell ...) (see above),
+# automake cannot classify them and would otherwise list them as build
+# prerequisites of the binary, so make would try to "build" '-Wl,--start-group'
+# as a file. Define the link dependencies explicitly (the real internal
+# archives only) so the group-marker tokens are never treated as targets.
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES = \
+  $(LIBBITCOIN_SERVER) \
+  $(LIBBITCOIN_COMMON) \
+  $(LIBBITCOIN_UTIL) \
+  $(LIBBITCOIN_CONSENSUS) \
+  $(LIBBITCOIN_CRYPTO) \
+  $(LIBBITCOIN_QUANTUM) \
+  $(LIBUNIVALUE) \
+  $(LIBLEVELDB) \
+  $(LIBLEVELDB_SSE42) \
+  $(LIBMEMENV) \
+  $(LIBSECP256K1)
+if ENABLE_WALLET
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES += $(LIBBITCOIN_WALLET)
+endif
+if ENABLE_ZMQ
+test_test_cascoin_cvm_fuzzy_DEPENDENCIES += $(LIBBITCOIN_ZMQ)
+endif
 #
 
 nodist_test_test_cascoin_SOURCES = $(GENERATED_TEST_FILES)

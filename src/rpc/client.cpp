@@ -157,6 +157,51 @@ static const CRPCConvertParam vRPCConvertParams[] =
     { "echojson", 9, "arg9" },
     { "rescanblockchain", 0, "start_height"},
     { "rescanblockchain", 1, "stop_height"},
+    // L2 RPC commands
+    { "l2_getchaininfo", 0, "chainid" },
+    { "l2_getbalance", 1, "chainid" },
+    { "l2_getblockbynumber", 0, "blocknumber" },
+    { "l2_getblockbynumber", 1, "chainid" },
+    { "l2_deploy", 1, "blocktime" },
+    { "l2_deploy", 2, "gaslimit" },
+    { "l2_deploy", 3, "challengeperiod" },
+    { "l2_announcesequencer", 0, "stake" },
+    { "l2_announcesequencer", 1, "hatscore" },
+    { "l2_getsequencers", 0, "eligibleonly" },
+    // Task 12: l2_deposit and l2_withdraw removed (Requirements: 11.1, 11.4)
+    // Use the new burn-and-mint model: l2_createburntx, l2_sendburntx, l2_getburnstatus
+    { "l2_createcommitment", 0, "blocknumber" },
+    { "l2_getcommitment", 0, "blocknumber" },
+    { "l2_submitfraudproof", 0, "blocknumber" },
+    { "l2_createforcedtx", 3, "nonce" },
+    { "l2_getminthistory", 0, "from_block" },
+    { "l2_getminthistory", 1, "to_block" },
+    { "l2_getwithdrawalstatus", 1, "chainid" },
+    { "l2_sendtransaction", 1, "amount" },
+    { "l2_sendtransaction", 2, "gas" },
+    { "l2_sendtransaction", 3, "gasprice" },
+    { "l2_sendtransaction", 4, "nonce" },
+    { "l2_sendtransaction", 5, "chainid" },
+    { "l2_getregisteredchains", 0, "activeonly" },
+    { "l2_updatechainstatus", 0, "chainid" },
+    // Cascoin: Web-of-Trust / reputation numeric parameters.
+    // Without these, cascoin-cli passes numeric args as JSON strings, which
+    // breaks handlers that read them via get_int()/get_int64() (e.g. the
+    // getweightedreputation "maxdepth" argument reported "JSON value is not an
+    // integer as expected"). The weight/bond/vote handlers already tolerate a
+    // string, but converting here also enables named-argument invocation.
+    { "getweightedreputation", 2, "maxdepth" },
+    { "listtrustrelations", 0, "max_count" },
+    { "listreputations", 0, "threshold" },
+    { "listreputations", 1, "count" },
+    { "addtrust", 1, "weight" },
+    { "addtrust", 2, "bond" },
+    { "sendtrustrelation", 1, "weight" },
+    { "sendtrustrelation", 2, "bond" },
+    { "sendbondedvote", 1, "vote" },
+    { "sendbondedvote", 2, "bond" },
+    { "votereputation", 1, "vote" },
+    { "sendcvmvote", 1, "vote" },
 };
 
 class CRPCConvertTable

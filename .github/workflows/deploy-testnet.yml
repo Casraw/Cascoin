@@ -1,0 +1,230 @@
+name: Deploy Testnet
+
+on:
+  # Automatisch nach erfolgreichem Build
+  workflow_run:
+    workflows: ["Build Cascoin (Qt6 GUI + Wallet)"]
+    types: [completed]
+    branches: [main, cvm]
+
+  # Manuell mit optionaler Run-ID
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Build Run-ID (leer = letzter erfolgreicher Build)'
+        required: false
+        default: ''
+
+env:
+  SERVER_1: ${{ secrets.TESTNET_SERVER_1 }}
+  SERVER_2: ${{ secrets.TESTNET_SERVER_2 }}
+  SEED_SERVER: ${{ secrets.TESTNET_SEED_SERVER }}
+
+jobs:
+  deploy-testnet:
+    runs-on: default
+    timeout-minutes: 15
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+
+    steps:
+      - name: Determine artifact run ID
+        id: run
+        run: |
+          if [ -n "${{ inputs.run_id }}" ]; then
+            echo "id=${{ inputs.run_id }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Keine Run-ID angegeben und kein workflow_run Event"
+            exit 1
+          fi
+
+      - name: Download Linux distribution artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cascoin-linux-x86_64-distribution-${{ steps.run.outputs.id }}
+          path: dist/
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config << 'EOF'
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            IdentityFile ~/.ssh/deploy_key
+            ServerAliveInterval 30
+            ConnectTimeout 15
+          EOF
+
+      - name: Find distribution archive
+        id: archive
+        run: |
+          ARCHIVE=$(ls dist/cascoin-linux-x86_64-distribution-*.tar.gz 2>/dev/null | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            echo "::error::Kein Distributionsarchiv im Artifact gefunden"
+            ls -laR dist/
+            exit 1
+          fi
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "Archiv gefunden: $ARCHIVE"
+
+      # ────────────────────────────────────────────
+      # Server 1
+      # ────────────────────────────────────────────
+      - name: "Deploy: ${{ env.SERVER_1 }}"
+        run: |
+          ARCHIVE="${{ steps.archive.outputs.archive }}"
+          scp "$ARCHIVE" root@${{ env.SERVER_1 }}:/root/cascoin-test/deploy-update.tar.gz
+
+          ssh root@${{ env.SERVER_1 }} bash -s << 'REMOTE'
+          set -e
+          cd /root/cascoin-test
+
+          echo "==> Stopping testnet daemon..."
+          cascoin-linux-distribution/bin/cascoin-cli -datadir=/root/cascoin-test -testnet stop 2>/dev/null || true
+          for i in $(seq 1 30); do
+            pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 || break
+            sleep 1
+          done
+          pkill -f "cascoin-linux-distribution/bin/cascoind.*-testnet" 2>/dev/null || true
+          sleep 2
+
+          echo "==> Replacing distribution..."
+          rm -rf cascoin-linux-distribution.bak
+          mv cascoin-linux-distribution cascoin-linux-distribution.bak 2>/dev/null || true
+          tar -xzf deploy-update.tar.gz
+          rm -f deploy-update.tar.gz
+
+          echo "==> Starting testnet daemon..."
+          export LD_LIBRARY_PATH="/root/cascoin-test/cascoin-linux-distribution/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          nohup /root/cascoin-test/cascoin-linux-distribution/bin/cascoind \
+            -datadir=/root/cascoin-test -testnet > /dev/null 2>&1 &
+          sleep 3
+
+          pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 \
+            && echo "✓ Daemon läuft" \
+            || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
+          REMOTE
+
+      # ────────────────────────────────────────────
+      # Server 2
+      # ────────────────────────────────────────────
+      - name: "Deploy: ${{ env.SERVER_2 }}"
+        run: |
+          ARCHIVE="${{ steps.archive.outputs.archive }}"
+          scp "$ARCHIVE" root@${{ env.SERVER_2 }}:/root/cascoin-test/deploy-update.tar.gz
+
+          ssh root@${{ env.SERVER_2 }} bash -s << 'REMOTE'
+          set -e
+          cd /root/cascoin-test
+
+          echo "==> Stopping testnet daemon..."
+          cascoin-linux-distribution/bin/cascoin-cli -datadir=/root/cascoin-test -testnet stop 2>/dev/null || true
+          for i in $(seq 1 30); do
+            pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 || break
+            sleep 1
+          done
+          pkill -f "cascoin-linux-distribution/bin/cascoind.*-testnet" 2>/dev/null || true
+          sleep 2
+
+          echo "==> Replacing distribution..."
+          rm -rf cascoin-linux-distribution.bak
+          mv cascoin-linux-distribution cascoin-linux-distribution.bak 2>/dev/null || true
+          tar -xzf deploy-update.tar.gz
+          rm -f deploy-update.tar.gz
+
+          echo "==> Starting testnet daemon..."
+          export LD_LIBRARY_PATH="/root/cascoin-test/cascoin-linux-distribution/lib/x86_64-linux-gnu:$LD_LIBRARY_PATH"
+          nohup /root/cascoin-test/cascoin-linux-distribution/bin/cascoind \
+            -datadir=/root/cascoin-test -testnet > /dev/null 2>&1 &
+          sleep 3
+
+          pgrep -f "cascoin-linux-distribution/bin/cascoind.*-testnet" > /dev/null 2>&1 \
+            && echo "✓ Daemon läuft" \
+            || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
+          REMOTE
+
+      # ────────────────────────────────────────────
+      # Seed Server (Binaries direkt)
+      # ────────────────────────────────────────────
+      - name: "Deploy: ${{ env.SEED_SERVER }}"
+        run: |
+          ARCHIVE="${{ steps.archive.outputs.archive }}"
+
+          rm -rf /tmp/cascoin-seed-deploy
+          mkdir -p /tmp/cascoin-seed-deploy
+          tar -xzf "$ARCHIVE" -C /tmp/cascoin-seed-deploy
+
+          ssh root@${{ env.SEED_SERVER }} "mkdir -p /root/testnetcascoin/deploy-staging"
+
+          scp /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoind \
+              /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-cli \
+              /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-tx \
+              /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-qt \
+              /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoind-wrapper \
+              /tmp/cascoin-seed-deploy/cascoin-linux-distribution/bin/cascoin-qt-wrapper \
+              root@${{ env.SEED_SERVER }}:/root/testnetcascoin/deploy-staging/
+
+          ssh root@${{ env.SEED_SERVER }} bash -s << 'REMOTE'
+          set -e
+          cd /root/testnetcascoin
+
+          echo "==> Stopping testnet daemon..."
+          ./cascoin-cli -testnet stop 2>/dev/null || true
+          for i in $(seq 1 30); do
+            pgrep -f "/root/testnetcascoin/cascoind.*-testnet" > /dev/null 2>&1 || break
+            sleep 1
+          done
+          pkill -f "/root/testnetcascoin/cascoind.*-testnet" 2>/dev/null || true
+          sleep 2
+
+          echo "==> Backing up old binaries..."
+          mkdir -p backup
+          for f in cascoind cascoin-cli cascoin-tx cascoin-qt cascoind-wrapper cascoin-qt-wrapper; do
+            [ -f "$f" ] && cp "$f" "backup/$f" || true
+          done
+
+          echo "==> Installing new binaries..."
+          mv deploy-staging/* ./
+          rmdir deploy-staging
+          chmod +x cascoind cascoin-cli cascoin-tx cascoin-qt cascoind-wrapper cascoin-qt-wrapper 2>/dev/null || true
+
+          echo "==> Starting testnet daemon..."
+          nohup /root/testnetcascoin/cascoind -testnet -shrinkdebugfile > /dev/null 2>&1 &
+          sleep 3
+
+          pgrep -f "/root/testnetcascoin/cascoind.*-testnet" > /dev/null 2>&1 \
+            && echo "✓ Daemon läuft" \
+            || { echo "✗ Daemon Start fehlgeschlagen"; exit 1; }
+          REMOTE
+
+          rm -rf /tmp/cascoin-seed-deploy
+
+      # ────────────────────────────────────────────
+      # Verifikation
+      # ────────────────────────────────────────────
+      - name: Verify all daemons
+        run: |
+          echo "=== Deployment Verifikation ==="
+          FAILED=0
+          for host in "${{ env.SERVER_1 }}" "${{ env.SERVER_2 }}" "${{ env.SEED_SERVER }}"; do
+            echo -n "$host: "
+            if ssh root@$host "pgrep -af 'cascoind.*-testnet'" 2>/dev/null; then
+              echo "  ✓"
+            else
+              echo "  ✗ FAILED"
+              FAILED=1
+            fi
+          done
+          [ $FAILED -eq 0 ] || exit 1
+
+      - name: Cleanup SSH
+        if: always()
+        run: rm -rf ~/.ssh/deploy_key ~/.ssh/config

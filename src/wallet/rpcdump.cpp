@@ -16,6 +16,8 @@
 #include <wallet/wallet.h>
 #include <merkleblock.h>
 #include <core_io.h>
+#include <address_quantum.h>
+#include <chainparams.h>
 
 #include <wallet/rpcwallet.h>
 
@@ -90,6 +92,74 @@ bool GetWalletAddressesForKey(CWallet * const pwallet, const CKeyID &keyid, std:
         strAddr = EncodeDestination(GetDestinationForKey(key.GetPubKey(), g_address_type));
     }
     return fLabelFound;
+}
+
+/**
+ * Cascoin: Quantum: Encode a quantum private key for wallet dump.
+ * Format: "QKEY:" + hex-encoded private key + ":" + hex-encoded public key
+ * This format is distinct from WIF and allows easy identification of quantum keys.
+ * Requirements: 10.7 (quantum keys included in wallet dump)
+ */
+std::string EncodeQuantumKeyForDump(const CKey& key)
+{
+    if (!key.IsQuantum()) {
+        return "";
+    }
+    
+    // Get the raw private key data
+    std::vector<unsigned char> privKeyData(key.begin(), key.end());
+    
+    // Get the public key
+    CPubKey pubkey = key.GetPubKey();
+    std::vector<unsigned char> pubKeyData(pubkey.begin(), pubkey.end());
+    
+    // Format: QKEY:<hex_privkey>:<hex_pubkey>
+    return "QKEY:" + HexStr(privKeyData) + ":" + HexStr(pubKeyData);
+}
+
+/**
+ * Cascoin: Quantum: Decode a quantum private key from wallet dump format.
+ * Returns true if successful, false otherwise.
+ * Requirements: 10.7 (quantum keys included in wallet dump)
+ */
+bool DecodeQuantumKeyFromDump(const std::string& str, CKey& key)
+{
+    // Check for QKEY: prefix
+    if (str.substr(0, 5) != "QKEY:") {
+        return false;
+    }
+    
+    // Find the separator between private and public key
+    size_t sepPos = str.find(':', 5);
+    if (sepPos == std::string::npos) {
+        return false;
+    }
+    
+    std::string hexPrivKey = str.substr(5, sepPos - 5);
+    std::string hexPubKey = str.substr(sepPos + 1);
+    
+    // Validate hex strings
+    if (!IsHex(hexPrivKey) || !IsHex(hexPubKey)) {
+        return false;
+    }
+    
+    std::vector<unsigned char> privKeyData = ParseHex(hexPrivKey);
+    std::vector<unsigned char> pubKeyData = ParseHex(hexPubKey);
+    
+    // Validate sizes (FALCON-512: 1281 byte private key, 897 byte public key)
+    if (privKeyData.size() != 1281 || pubKeyData.size() != 897) {
+        return false;
+    }
+    
+    // Create the quantum key
+    key = CKey(CKeyType::KEY_TYPE_QUANTUM);
+    
+    // Set the private key data
+    if (!key.SetQuantumKeyData(privKeyData.data(), privKeyData.size(), pubKeyData)) {
+        return false;
+    }
+    
+    return key.IsValid();
 }
 
 
@@ -180,6 +250,116 @@ UniValue importprivkey(const JSONRPCRequest& request)
                 throw JSONRPCError(RPC_WALLET_ERROR, "Error adding key to wallet");
             }
             pwallet->LearnAllRelatedScripts(pubkey);
+        }
+    }
+    if (fRescan) {
+        pwallet->RescanFromTime(TIMESTAMP_MIN, reserver, true /* update */);
+    }
+
+    return NullUniValue;
+}
+
+/**
+ * Cascoin: Quantum: Import a quantum (FALCON-512) private key.
+ * Requirements: 10.8 (implement importquantumkey RPC command)
+ *
+ * The key format is: QKEY:<hex_privkey>:<hex_pubkey>
+ * - hex_privkey: 1281 bytes (2562 hex chars) FALCON-512 private key
+ * - hex_pubkey: 897 bytes (1794 hex chars) FALCON-512 public key
+ */
+UniValue importquantumkey(const JSONRPCRequest& request)
+{
+    CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
+    if (!EnsureWalletIsAvailable(pwallet, request.fHelp)) {
+        return NullUniValue;
+    }
+
+    if (request.fHelp || request.params.size() < 1 || request.params.size() > 3)
+        throw std::runtime_error(
+            "importquantumkey \"quantumkey\" ( \"label\" ) ( rescan )\n"
+            "\nAdds a quantum (FALCON-512) private key to your wallet. Requires a new wallet backup.\n"
+            "\nThe key format is: QKEY:<hex_privkey>:<hex_pubkey>\n"
+            "  - hex_privkey: 1281 bytes (2562 hex chars) FALCON-512 private key\n"
+            "  - hex_pubkey: 897 bytes (1794 hex chars) FALCON-512 public key\n"
+            "\nArguments:\n"
+            "1. \"quantumkey\"       (string, required) The quantum private key in QKEY format\n"
+            "2. \"label\"            (string, optional, default=\"\") An optional label\n"
+            "3. rescan               (boolean, optional, default=true) Rescan the wallet for transactions\n"
+            "\nNote: This call can take minutes to complete if rescan is true.\n"
+            "\nExamples:\n"
+            "\nImport a quantum key with rescan\n"
+            + HelpExampleCli("importquantumkey", "\"QKEY:...\"") +
+            "\nImport using a label without rescan\n"
+            + HelpExampleCli("importquantumkey", "\"QKEY:...\" \"testing\" false") +
+            "\nAs a JSON-RPC call\n"
+            + HelpExampleRpc("importquantumkey", "\"QKEY:...\", \"testing\", false")
+        );
+
+    WalletRescanReserver reserver(pwallet);
+    bool fRescan = true;
+    {
+        LOCK2(cs_main, pwallet->cs_wallet);
+
+        EnsureWalletIsUnlocked(pwallet);
+
+        std::string strQuantumKey = request.params[0].get_str();
+        std::string strLabel = "";
+        if (!request.params[1].isNull())
+            strLabel = request.params[1].get_str();
+
+        // Whether to perform rescan after import
+        if (!request.params[2].isNull())
+            fRescan = request.params[2].get_bool();
+
+        if (fRescan && fPruneMode)
+            throw JSONRPCError(RPC_WALLET_ERROR, "Rescan is disabled in pruned mode");
+
+        if (fRescan && !reserver.reserve()) {
+            throw JSONRPCError(RPC_WALLET_ERROR, "Wallet is currently rescanning. Abort existing rescan or wait.");
+        }
+
+        // Decode the quantum key
+        CKey key;
+        if (!DecodeQuantumKeyFromDump(strQuantumKey, key)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid quantum key format. Expected: QKEY:<hex_privkey>:<hex_pubkey>");
+        }
+
+        if(fWalletUnlockWithoutTransactions)
+            throw JSONRPCError(RPC_WALLET_UNLOCK_NEEDED, "Wallet is unlocked for Hive Mining and Rialto Messaging only.");
+
+        if (!key.IsValid()) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid quantum key");
+        if (!key.IsQuantum()) throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Key is not a quantum key");
+
+        CPubKey pubkey = key.GetPubKey();
+        if (!key.VerifyPubKey(pubkey)) {
+            throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Quantum key verification failed");
+        }
+        
+        CKeyID vchAddress = pubkey.GetID();
+        {
+            pwallet->MarkDirty();
+            
+            // Get the quantum address for this key
+            std::string quantumAddr = address::EncodeQuantumAddress(pubkey, Params());
+            
+            // Set address book entry with the quantum address
+            CTxDestination dest = GetQuantumDestination(pubkey);
+            if (IsValidDestination(dest)) {
+                pwallet->SetAddressBook(dest, strLabel, "receive");
+            }
+
+            // Don't throw error in case a key is already there
+            if (pwallet->HaveKey(vchAddress)) {
+                return NullUniValue;
+            }
+
+            // whenever a key is imported, we need to scan the whole chain
+            pwallet->UpdateTimeFirstKey(1);
+            pwallet->mapKeyMetadata[vchAddress].nCreateTime = 1;
+
+            if (!pwallet->AddKeyPubKey(key, pubkey)) {
+                throw JSONRPCError(RPC_WALLET_ERROR, "Error adding quantum key to wallet");
+            }
         }
     }
     if (fRescan) {
@@ -556,9 +736,49 @@ UniValue importwallet(const JSONRPCRequest& request)
             boost::split(vstr, line, boost::is_any_of(" "));
             if (vstr.size() < 2)
                 continue;
-            CBitcoinSecret vchSecret;
-            if (vchSecret.SetString(vstr[0])) {
-                CKey key = vchSecret.GetKey();
+            
+            // Cascoin: Quantum: Check for quantum key format (QKEY:...)
+            // Requirements: 10.7 (quantum keys included in wallet dump)
+            CKey key;
+            bool fQuantumKey = false;
+            if (vstr[0].substr(0, 5) == "QKEY:") {
+                // Decode quantum key
+                if (!DecodeQuantumKeyFromDump(vstr[0], key)) {
+                    LogPrintf("Error importing quantum key (invalid format)\n");
+                    fGood = false;
+                    continue;
+                }
+                fQuantumKey = true;
+            } else {
+                // Try standard WIF format for ECDSA keys
+                CBitcoinSecret vchSecret;
+                if (!vchSecret.SetString(vstr[0])) {
+                    // Not a WIF key, check if it's a hex script
+                    if (IsHex(vstr[0])) {
+                        std::vector<unsigned char> vData(ParseHex(vstr[0]));
+                        CScript script = CScript(vData.begin(), vData.end());
+                        if (pwallet->HaveCScript(script)) {
+                            LogPrintf("Skipping import of %s (script already present)\n", vstr[0]);
+                            continue;
+                        }
+                        if(!pwallet->AddCScript(script)) {
+                            LogPrintf("Error importing script %s\n", vstr[0]);
+                            fGood = false;
+                            continue;
+                        }
+                        int64_t birth_time = DecodeDumpTime(vstr[1]);
+                        if (birth_time > 0) {
+                            pwallet->m_script_metadata[CScriptID(script)].nCreateTime = birth_time;
+                            nTimeBegin = std::min(nTimeBegin, birth_time);
+                        }
+                    }
+                    continue;
+                }
+                key = vchSecret.GetKey();
+            }
+            
+            // Process the key (both ECDSA and quantum)
+            if (key.IsValid()) {
                 CPubKey pubkey = key.GetPubKey();
                 assert(key.VerifyPubKey(pubkey));
                 CKeyID keyid = pubkey.GetID();
@@ -576,12 +796,14 @@ UniValue importwallet(const JSONRPCRequest& request)
                         fLabel = false;
                     if (vstr[nStr] == "reserve=1")
                         fLabel = false;
+                    if (vstr[nStr] == "quantum=1")
+                        fQuantumKey = true; // Confirm quantum flag
                     if (boost::algorithm::starts_with(vstr[nStr], "label=")) {
                         strLabel = DecodeDumpString(vstr[nStr].substr(6));
                         fLabel = true;
                     }
                 }
-                LogPrintf("Importing %s...\n", EncodeDestination(keyid));
+                LogPrintf("Importing %s%s...\n", EncodeDestination(keyid), fQuantumKey ? " (quantum)" : "");
                 if (!pwallet->AddKeyPubKey(key, pubkey)) {
                     fGood = false;
                     continue;
@@ -590,23 +812,6 @@ UniValue importwallet(const JSONRPCRequest& request)
                 if (fLabel)
                     pwallet->SetAddressBook(keyid, strLabel, "receive");
                 nTimeBegin = std::min(nTimeBegin, nTime);
-            } else if(IsHex(vstr[0])) {
-               std::vector<unsigned char> vData(ParseHex(vstr[0]));
-               CScript script = CScript(vData.begin(), vData.end());
-               if (pwallet->HaveCScript(script)) {
-                   LogPrintf("Skipping import of %s (script already present)\n", vstr[0]);
-                   continue;
-               }
-               if(!pwallet->AddCScript(script)) {
-                   LogPrintf("Error importing script %s\n", vstr[0]);
-                   fGood = false;
-                   continue;
-               }
-               int64_t birth_time = DecodeDumpTime(vstr[1]);
-               if (birth_time > 0) {
-                   pwallet->m_script_metadata[CScriptID(script)].nCreateTime = birth_time;
-                   nTimeBegin = std::min(nTimeBegin, birth_time);
-               }
             }
         }
         file.close();
@@ -758,7 +963,16 @@ UniValue dumpwallet(const JSONRPCRequest& request)
         std::string strLabel;
         CKey key;
         if (pwallet->GetKey(keyid, key)) {
-            file << strprintf("%s %s ", CBitcoinSecret(key).ToString(), strTime);
+            // Cascoin: Quantum: Handle quantum keys differently
+            // Requirements: 10.7 (quantum keys included in wallet dump)
+            std::string keyStr;
+            if (key.IsQuantum()) {
+                keyStr = EncodeQuantumKeyForDump(key);
+            } else {
+                keyStr = CBitcoinSecret(key).ToString();
+            }
+            
+            file << strprintf("%s %s ", keyStr, strTime);
             if (GetWalletAddressesForKey(pwallet, keyid, strAddr, strLabel)) {
                file << strprintf("label=%s", strLabel);
             } else if (keyid == masterKeyID) {
@@ -769,6 +983,10 @@ UniValue dumpwallet(const JSONRPCRequest& request)
                 file << "inactivehdmaster=1";
             } else {
                 file << "change=1";
+            }
+            // Cascoin: Quantum: Add quantum flag to output
+            if (key.IsQuantum()) {
+                file << " quantum=1";
             }
             file << strprintf(" # addr=%s%s\n", strAddr, (pwallet->mapKeyMetadata[keyid].hdKeypath.size() > 0 ? " hdkeypath="+pwallet->mapKeyMetadata[keyid].hdKeypath : ""));
         }

@@ -10,6 +10,7 @@
 #include <qt/rpcconsole.h>
 #include <qt/addresstablemodel.h>
 #include <qt/beenfttablemodel.h>
+#include <qt/safeinvoke.h>
 
 #include <QHeaderView>
 #include <QMessageBox>
@@ -28,27 +29,22 @@
 #include <QDialogButtonBox>
 #include <QSpinBox>
 #include <QFont>
+#include <QPointer>
 #include <thread>
 
 BeeNFTPage::BeeNFTPage(const PlatformStyle *_platformStyle, QWidget *parent) :
     QWidget(parent),
     walletModel(0),
     beeNFTModel(0),
-    platformStyle(_platformStyle),
-    bctDatabase(new BCTDatabase())
+    platformStyle(_platformStyle)
 {
-    // Set as global BCTDatabase instance for synchronization with wallet data
-    BCTDatabase::setInstance(bctDatabase);
+    // BCTDatabaseSQLite is accessed via singleton - no initialization needed here
     setupUI();
 }
 
 BeeNFTPage::~BeeNFTPage()
 {
-    // Clear global instance before deleting
-    if (BCTDatabase::instance() == bctDatabase) {
-        BCTDatabase::setInstance(nullptr);
-    }
-    delete bctDatabase;
+    // BCTDatabaseSQLite is a singleton - no cleanup needed here
 }
 
 void BeeNFTPage::setModel(WalletModel *_walletModel)
@@ -68,13 +64,19 @@ void BeeNFTPage::setModel(WalletModel *_walletModel)
                 connect(beeNFTView->selectionModel(), SIGNAL(selectionChanged(QItemSelection,QItemSelection)),
                         this, SLOT(onBeeNFTSelectionChanged()));
             }
+
+            // Model is now fully wired — safe to start periodic updates
+            beeNFTModel->startUpdates();
         }
         
         updateBeeNFTCombo();
-        refreshBeeNFTs();
         
-        // Load mice asynchronously to not block GUI startup
-        QTimer::singleShot(100, this, SLOT(loadAvailableMice()));
+        // Delay async operations to give Qt event loop time to finish widget setup.
+        // refreshBeeNFTs and loadAvailableMice both spawn detached threads that post
+        // lambdas back via Qt::QueuedConnection — calling them too early can crash
+        // if the model/view hierarchy isn't fully initialized yet.
+        QTimer::singleShot(500, this, SLOT(refreshBeeNFTs()));
+        QTimer::singleShot(1000, this, SLOT(loadAvailableMice()));
     }
 }
 
@@ -263,7 +265,8 @@ void BeeNFTPage::loadAvailableMice()
     bctProgressBar->setValue(1);
 
     // Run RPC in background to avoid blocking UI
-    std::thread([this]() {
+    QPointer<BeeNFTPage> guard(this);
+    std::thread([this, guard]() {
         // Inform splash that mice DB init starts
         uiInterface.ShowProgress("Mice DB initialisieren", 1, false);
         std::string rpcResult;
@@ -276,18 +279,18 @@ void BeeNFTPage::loadAvailableMice()
 
         if (!rpcOk) {
             // Fallback to local DB on UI thread
-            QMetaObject::invokeMethod(this, "loadAvailableMiceFromWallet", Qt::QueuedConnection);
-            QMetaObject::invokeMethod(this, [this]() {
+            safeInvoke(guard, [this]() {
+                loadAvailableMiceFromWallet();
                 mouseSelectionCombo->setEnabled(true);
                 bctStatusLabel->setText(tr("Using local BCT cache"));
                 bctProgressBar->setValue(100);
-            }, Qt::QueuedConnection);
+            });
             uiInterface.ShowProgress("Mice DB initialisieren", 100, false);
             return;
         }
 
         // Parse and populate on UI thread
-        QMetaObject::invokeMethod(this, [this, rpcResult]() {
+        safeInvoke(guard, [this, rpcResult]() {
             QString jsonString = QString::fromStdString(rpcResult);
             QJsonParseError error;
             QJsonDocument doc = QJsonDocument::fromJson(jsonString.toUtf8(), &error);
@@ -371,37 +374,27 @@ void BeeNFTPage::loadAvailableMice()
 
             mouseSelectionCombo->setEnabled(true);
             bctLoading = false;
-        }, Qt::QueuedConnection);
+        });
     }).detach();
 }
 
 void BeeNFTPage::loadAvailableMiceFromWallet()
 {
-    // Load BCTs from local database (much faster than blockchain sync)
+    // Load BCTs from SQLite database (much faster than blockchain sync)
     
     mouseSelectionCombo->clear();
     mouseSelectionCombo->addItem(tr("Select a mouse to tokenize..."), "");
     
-    if (!bctDatabase) {
+    BCTDatabaseSQLite* bctDb = BCTDatabaseSQLite::instance();
+    if (!bctDb || !bctDb->isInitialized()) {
         mouseSelectionCombo->addItem(tr("BCT database not available"), "");
         return;
     }
     
-    // Initialize database asynchronously to avoid blocking GUI
-    // Don't initialize here, use cached data or show loading message
-    
-    // Try to load from cache file first (fast) - simplified without try-catch
-    if (!bctDatabase->loadFromFile()) {
-        // If no cache exists, show placeholder and setup lazy loading
-        mouseSelectionCombo->addItem(tr("BCT database loading... Please wait"), "");
-        mouseSelectionCombo->addItem(tr("(Database will be ready shortly)"), "");
-        return;
-    }
+    // Load all mature BCTs from SQLite database
+    std::vector<BCTRecord> bctList = bctDb->getBCTsByStatus("mature");
         
-    // Load all BCTs from local database cache
-    QList<BCTDatabase::BCTInfo> bctList = bctDatabase->getAllBCTs();
-        
-    if (bctList.isEmpty()) {
+    if (bctList.empty()) {
         // Just show placeholder - don't create sample data on startup
         mouseSelectionCombo->addItem(tr("No BCT data available yet"), "");
         mouseSelectionCombo->addItem(tr("(Data will load as blockchain syncs)"), "");
@@ -411,32 +404,24 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
     int totalAvailableMice = 0;
     int matureBCTs = 0;
     
-    for (const BCTDatabase::BCTInfo& bct : bctList) {
-        // Only show mature BCTs
-        if (bct.status != "mature") continue;
-        
+    for (const BCTRecord& bct : bctList) {
         matureBCTs++;
         
-        // Add each individual mouse from this BCT
-        for (int mouseIndex = 0; mouseIndex < bct.availableMice.size(); mouseIndex++) {
-            QString mouseId = bct.availableMice[mouseIndex];
-            QString displayText = QString("Mouse #%1 in BCT %2 (ID: %3)")
-                               .arg(mouseIndex)
-                               .arg(bct.txid.left(8) + "...")
-                               .arg(mouseId.left(8) + "...");
-            
-            // Store data in format "bctId:mouseIndex" for tokenization
-            QString mouseData = QString("%1:%2").arg(bct.txid).arg(mouseIndex);
-            mouseSelectionCombo->addItem(displayText, mouseData);
-            totalAvailableMice++;
-        }
+        // Add BCT entry with bee count
+        QString displayText = QString("BCT %1 — %2 mice available (mature)")
+                           .arg(QString::fromStdString(bct.txid).left(8) + "...")
+                           .arg(bct.beeCount);
+        
+        // Store BCT txid for tokenization
+        mouseSelectionCombo->addItem(displayText, QString::fromStdString(bct.txid));
+        totalAvailableMice += bct.beeCount;
     }
     
     // Insert summary at top
     if (totalAvailableMice > 0) {
         mouseSelectionCombo->insertItem(1, tr("--- %1 Available Mice from %2 Mature BCTs ---").arg(totalAvailableMice).arg(matureBCTs), "");
         mouseSelectionCombo->insertSeparator(2);
-        mouseSelectionCombo->insertItem(3, tr("(Using local BCT database - instant loading)"), "");
+        mouseSelectionCombo->insertItem(3, tr("(Using SQLite BCT database - instant loading)"), "");
         mouseSelectionCombo->insertSeparator(4);
     } else {
         mouseSelectionCombo->clear();
@@ -446,37 +431,9 @@ void BeeNFTPage::loadAvailableMiceFromWallet()
 
 void BeeNFTPage::loadSampleBCTData()
 {
-    if (!bctDatabase) return;
-    
-    // Create sample BCT data quickly for immediate GUI response
-    QStringList sampleTxids = {
-        "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789a",
-        "b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789ab",
-        "c3d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789abc",
-        "d4e5f67890abcdef1234567890abcdef1234567890abcdef123456789abcd",
-        "e5f67890abcdef1234567890abcdef1234567890abcdef123456789abcde",
-        "f67890abcdef1234567890abcdef1234567890abcdef123456789abcdef",
-        "67890abcdef1234567890abcdef1234567890abcdef123456789abcdef6",
-        "7890abcdef1234567890abcdef1234567890abcdef123456789abcdef67"
-    };
-    
-    for (int i = 0; i < sampleTxids.size(); ++i) {
-        BCTDatabase::BCTInfo bct;
-        bct.txid = sampleTxids[i];
-        bct.status = "mature";
-        bct.totalMice = (i % 8) + 1; // 1-8 mice per BCT  
-        bct.blocksLeft = 0;
-        bct.honeyAddress = QString("CAddr%1Sample123...").arg(i + 1);
-        bct.timestamp = QDateTime::currentSecsSinceEpoch() - (i * 3600);
-        
-        // Generate available mice for this BCT
-        for (int mouseIndex = 0; mouseIndex < bct.totalMice; ++mouseIndex) {
-            QString mouseId = QString("%1:%2").arg(bct.txid).arg(mouseIndex);
-            bct.availableMice.append(mouseId);
-        }
-        
-        bctDatabase->addBCT(bct);
-    }
+    // Sample data is no longer needed - BCTDatabaseSQLite is populated from blockchain
+    // This function is kept for compatibility but does nothing
+    LogPrintf("BeeNFTPage::loadSampleBCTData() - Sample data not needed with SQLite database\n");
 }
 
 void BeeNFTPage::tokenizeBee()
@@ -534,6 +491,8 @@ void BeeNFTPage::showMouseSelectionDialog(const QString& bctId, const QString& o
     connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     
     // Load BCT information in background
+    QPointer<QLabel> infoGuard(infoLabel);
+    QPointer<QDialogButtonBox> buttonGuard(buttonBox);
     std::thread([=]() {
         try {
             int totalMiceCount = 0;
@@ -544,23 +503,25 @@ void BeeNFTPage::showMouseSelectionDialog(const QString& bctId, const QString& o
             totalMiceCount = 200000; // Sample: 200,000 total mice (realistic)
             status = "mature";       // Sample status
             
-            // Update UI on main thread
-            QMetaObject::invokeMethod(infoLabel, [=]() {
+            // Update UI on main thread — guarded against dialog-closed-early
+            safeInvoke(QPointer<QObject>(infoGuard), [=]() {
+                if (infoGuard.isNull() || buttonGuard.isNull()) return;
                 // Format number with thousands separators
                 QString formattedMiceCount = QString::number(totalMiceCount);
                 int len = formattedMiceCount.length();
                 for (int i = len - 3; i > 0; i -= 3) {
                     formattedMiceCount.insert(i, ',');
                 }
-                infoLabel->setText(tr("BCT Status: %1\nTotal Mice: %2\nThis will create 1 BCT-NFT containing all mice.")
+                infoGuard->setText(tr("BCT Status: %1\nTotal Mice: %2\nThis will create 1 BCT-NFT containing all mice.")
                                   .arg(status).arg(formattedMiceCount));
-                buttonBox->button(QDialogButtonBox::Ok)->setEnabled(true);
-            }, Qt::QueuedConnection);
+                buttonGuard->button(QDialogButtonBox::Ok)->setEnabled(true);
+            });
             
         } catch (...) {
-            QMetaObject::invokeMethod(infoLabel, [=]() {
-                infoLabel->setText(tr("Error loading BCT data"));
-            }, Qt::QueuedConnection);
+            safeInvoke(QPointer<QObject>(infoGuard), [=]() {
+                if (!infoGuard.isNull())
+                    infoGuard->setText(tr("Error loading BCT data"));
+            });
         }
     }).detach();
     
@@ -586,24 +547,26 @@ void BeeNFTPage::executeTokenization(const QString& bctId, int mouseIndex, const
     
     if (reply == QMessageBox::Yes) {
         // Execute RPC command in background thread to avoid GUI blocking
-        std::thread([=]() {
+        QPointer<BeeNFTPage> guard(this);
+        std::thread([=, guard]() {
             try {
                 // Use the native wallet functions instead of RPC for better integration
                 QString result = tr("Tokenization process initiated for mouse #%1 from BCT %2 to address %3")
                                .arg(mouseIndex).arg(bctId.left(12) + "...").arg(ownerAddress);
                 
                 // Update UI on main thread
-                QMetaObject::invokeMethod(this, [=]() {
+                safeInvoke(guard, [=]() {
                     QMessageBox::information(this, tr("Tokenization Started"), result);
                     // Refresh the mice list after tokenization
                     QTimer::singleShot(2000, this, SLOT(loadAvailableMice()));
-                }, Qt::QueuedConnection);
+                });
                 
             } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
+                std::string msg = e.what();
+                safeInvoke(guard, [=]() {
                     QMessageBox::warning(this, tr("RPC Error"), 
-                                       tr("Failed to execute tokenization: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
+                                       tr("Failed to execute tokenization: %1").arg(QString::fromStdString(msg)));
+                });
             }
         }).detach();
     }
@@ -624,7 +587,8 @@ void BeeNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, co
     
     if (reply == QMessageBox::Yes) {
         // Execute batch tokenization in background thread
-        std::thread([=]() {
+        QPointer<BeeNFTPage> guard(this);
+        std::thread([=, guard]() {
             try {
                 QString result = tr("Batch tokenization started: %1 mice from BCT %2 to address %3\n\n"
                                    "This may take a few moments to complete...")
@@ -633,29 +597,30 @@ void BeeNFTPage::executeTokenizationBatch(const QString& bctId, int quantity, co
                                .arg(ownerAddress);
                 
                 // Update UI on main thread
-                QMetaObject::invokeMethod(this, [=]() {
+                safeInvoke(guard, [=]() {
                     QMessageBox::information(this, tr("Batch Tokenization Started"), result);
                     // Refresh the mice list after tokenization
                     QTimer::singleShot(3000, this, SLOT(loadAvailableMice()));
-                }, Qt::QueuedConnection);
+                });
                 
                 // TODO: Implement actual batch tokenization logic
                 // For now, simulate the process
                 std::this_thread::sleep_for(std::chrono::milliseconds(500));
                 
-                QMetaObject::invokeMethod(this, [=]() {
+                safeInvoke(guard, [=]() {
                     QString completionMsg = tr("Batch tokenization completed!\n\n"
                                               "%1 mice from BCT %2 have been tokenized.")
                                             .arg(quantity)
                                             .arg(bctId.left(12) + "...");
                     QMessageBox::information(this, tr("Tokenization Complete"), completionMsg);
-                }, Qt::QueuedConnection);
+                });
                 
             } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
+                std::string msg = e.what();
+                safeInvoke(guard, [=]() {
                     QMessageBox::warning(this, tr("Batch Tokenization Error"), 
-                                       tr("Failed to execute batch tokenization: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
+                                       tr("Failed to execute batch tokenization: %1").arg(QString::fromStdString(msg)));
+                });
             }
         }).detach();
     }
@@ -676,14 +641,15 @@ void BeeNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QStr
     
     if (reply == QMessageBox::Yes) {
         // Execute complete BCT tokenization in background thread
-        std::thread([=]() {
+        QPointer<BeeNFTPage> guard(this);
+        std::thread([=, guard]() {
             try {
                 // Execute the real bctnftokenize RPC command for complete BCT tokenization
                 std::string rpcCommand = "bctnftokenize \"" + bctId.toStdString() + "\" \"" + ownerAddress.toStdString() + "\"";
                 std::string rpcResult;
                 bool success = RPCConsole::RPCExecuteCommandLine(rpcResult, rpcCommand);
                 
-                QMetaObject::invokeMethod(this, [=]() {
+                safeInvoke(guard, [=]() {
                     if (success && !rpcResult.empty()) {
                         QString result = tr("BCT Tokenization completed successfully!\n\n"
                                            "Transaction: %1\n\n"
@@ -703,13 +669,14 @@ void BeeNFTPage::executeCompleteBCTTokenization(const QString& bctId, const QStr
                         QMessageBox::warning(this, tr("BCT Tokenization Failed"), 
                                            tr("Failed to tokenize BCT: %1").arg(errorMsg));
                     }
-                }, Qt::QueuedConnection);
+                });
                 
             } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
+                std::string msg = e.what();
+                safeInvoke(guard, [=]() {
                     QMessageBox::warning(this, tr("BCT Tokenization Error"), 
-                                       tr("Failed to execute BCT tokenization: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
+                                       tr("Failed to execute BCT tokenization: %1").arg(QString::fromStdString(msg)));
+                });
             }
         }).detach();
     }
@@ -751,7 +718,8 @@ void BeeNFTPage::transferBeeNFT()
                             .arg(recipientAddress);
         
         // Execute transfer in background thread to avoid GUI blocking
-        std::thread([=]() {
+        QPointer<BeeNFTPage> guard(this);
+        std::thread([=, guard]() {
             try {
                 // Execute the real bctnftransfer RPC command
                 std::string rpcCommandStr = QString("bctnftransfer \"%1\" \"%2\"")
@@ -760,7 +728,7 @@ void BeeNFTPage::transferBeeNFT()
                 bool success = RPCConsole::RPCExecuteCommandLine(rpcResult, rpcCommandStr);
                 
                 // Update UI on main thread
-                QMetaObject::invokeMethod(this, [=]() {
+                safeInvoke(guard, [=]() {
                     if (success && !rpcResult.empty()) {
                         QString result = tr("BCT NFT Transfer completed successfully!\n\n"
                                            "Transaction: %1\n\n"
@@ -780,13 +748,14 @@ void BeeNFTPage::transferBeeNFT()
                         QMessageBox::warning(this, tr("Transfer Failed"), 
                                            tr("Failed to transfer NFT: %1").arg(errorMsg));
                     }
-                }, Qt::QueuedConnection);
+                });
                 
             } catch (const std::exception& e) {
-                QMetaObject::invokeMethod(this, [=]() {
+                std::string msg = e.what();
+                safeInvoke(guard, [=]() {
                     QMessageBox::warning(this, tr("RPC Error"), 
-                                       tr("Failed to execute transfer: %1").arg(QString::fromStdString(e.what())));
-                }, Qt::QueuedConnection);
+                                       tr("Failed to execute transfer: %1").arg(QString::fromStdString(msg)));
+                });
             }
         }).detach();
     }
@@ -799,12 +768,13 @@ void BeeNFTPage::refreshBeeNFTs()
     }
     
     // Refresh bee NFT list by calling wallet functions
-    std::thread([=]() {
+    QPointer<BeeNFTPage> guard(this);
+    std::thread([this, guard]() {
         try {
             // TODO: Implement actual wallet call to get owned NFTs
             // For now, simulate loading some owned NFTs
             
-            QMetaObject::invokeMethod(this, [this]() {
+            safeInvoke(guard, [this]() {
                 // Update both the combo and the table view
                 updateBeeNFTCombo();
                 
@@ -812,17 +782,15 @@ void BeeNFTPage::refreshBeeNFTs()
                 if (beeNFTModel) {
                     // Trigger model update which will reload the data
                     beeNFTModel->updateBeeNFTs();
-    
-    // Note: Real NFT data will be loaded on demand when user interacts with the NFT system
-    // This prevents startup crashes when no RPC connection is available
                 }
-            }, Qt::QueuedConnection);
+            });
             
         } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(this, [=]() {
+            std::string msg = e.what();
+            safeInvoke(guard, [this, msg]() {
                 QMessageBox::warning(this, tr("Wallet Error"), 
-                                   tr("Failed to refresh NFT list: %1").arg(QString::fromStdString(e.what())));
-            }, Qt::QueuedConnection);
+                                   tr("Failed to refresh NFT list: %1").arg(QString::fromStdString(msg)));
+            });
         }
     }).detach();
 }
@@ -856,7 +824,8 @@ void BeeNFTPage::updateBeeNFTCombo()
     }
     
     // Load owned BCT NFTs in background thread
-    std::thread([=]() {
+    QPointer<BeeNFTPage> guard(this);
+    std::thread([this, guard]() {
         try {
             // TODO: Call actual RPC to get owned BCT NFTs
             // For now, simulate some owned NFTs
@@ -868,7 +837,7 @@ void BeeNFTPage::updateBeeNFTCombo()
             ownedNFTs << "BCT-NFT: 789abcde...xyz (250,000 mice)" << "Sample3";
             
             // Update UI on main thread
-            QMetaObject::invokeMethod(this, [=]() {
+            safeInvoke(guard, [this, ownedNFTs]() {
                 for (int i = 0; i < ownedNFTs.size(); i += 2) {
                     if (i + 1 < ownedNFTs.size()) {
                         QString displayText = ownedNFTs[i];
@@ -882,13 +851,14 @@ void BeeNFTPage::updateBeeNFTCombo()
                 }
                 
                 transferButton->setEnabled(beeNFTCombo->count() > 2);
-            }, Qt::QueuedConnection);
+            });
             
         } catch (const std::exception& e) {
-            QMetaObject::invokeMethod(this, [=]() {
-                beeNFTCombo->addItem(tr("Error loading NFTs: %1").arg(QString::fromStdString(e.what())), "");
+            std::string msg = e.what();
+            safeInvoke(guard, [this, msg]() {
+                beeNFTCombo->addItem(tr("Error loading NFTs: %1").arg(QString::fromStdString(msg)), "");
                 transferButton->setEnabled(false);
-            }, Qt::QueuedConnection);
+            });
         }
     }).detach();
 }
@@ -977,7 +947,8 @@ void BeeNFTPage::loadRealNFTData()
     }
     
     // Execute bctnftlist RPC command to get real NFT data
-    std::thread([=]() {
+    QPointer<BeeNFTPage> guard(this);
+    std::thread([this, guard]() {
         try {
             std::string resultStr;
             bool success = false;
@@ -1031,11 +1002,11 @@ void BeeNFTPage::loadRealNFTData()
                     }
                     
                     // Update UI on main thread
-                    QMetaObject::invokeMethod(this, [=]() {
+                    safeInvoke(guard, [=]() {
                         if (beeNFTModel) {
                             beeNFTModel->updateBeeNFTListWithData(nftRecords);
                         }
-                    }, Qt::QueuedConnection);
+                    });
                 }
             }
             

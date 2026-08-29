@@ -46,6 +46,11 @@ using namespace boost::placeholders;
 #include <rpc/server.h>     // Cascoin: Rialto
 #include <wallet/wallet.h>  // Cascoin: Rialto
 #include <base58.h>         // Cascoin: Rialto: for DecodeDestination()
+#include <cvm/fee_calculator.h>  // Cascoin: CVM/EVM fee calculation
+#include <cvm/softfork.h>        // Cascoin: CVM soft fork support
+#include <cvm/block_validator.h> // Cascoin: CVM/EVM block validation
+#include <cvm/validator_compensation.h> // Cascoin: HAT v2 validator compensation
+#include <quantum_registry.h>    // Cascoin: FALCON-512 Public Key Registry
 
 #include <future>
 #include <sstream>
@@ -56,6 +61,12 @@ using namespace boost::placeholders;
 
 #include <miner.h>  // Cascoin: Hive
 #include <merkleblock.h> // Cascoin: Hive for merkle transaction check in block
+#include <beenft.h>   // Cascoin: BCT & NFT
+#include <cvm/cvmdb.h>   // Cascoin: CVM Database
+#include <cvm/blockprocessor.h>   // Cascoin: CVM Block Processor
+#include <cvm/softfork.h>   // Cascoin: CVM Soft Fork
+#include <l2/l2_common.h>   // Cascoin: L2 enabled check
+#include <l2/l2_globals.h>  // Cascoin: L2 burn-and-mint block processor
 
 #if defined(NDEBUG)
 # error "Cascoin cannot be compiled without assertions."
@@ -728,9 +739,56 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
             return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "mempool min fee not met", false, strprintf("%d < %d", nFees, mempoolRejectFee));
         }
 
-        // No transactions are allowed below minRelayTxFee except from disconnected blocks
-        if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
-            return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+        // Cascoin: CVM/EVM transaction fee validation with reputation-based pricing
+        // Check if this is a CVM/EVM transaction and apply reputation-based fee calculation
+        if (CVM::IsEVMTransaction(tx) || CVM::FindCVMOpReturn(tx) >= 0) {
+            static CVM::FeeCalculator feeCalculator;
+            static bool feeCalculatorInitialized = false;
+            
+            // Initialize fee calculator on first use
+            if (!feeCalculatorInitialized) {
+                // TODO: Initialize with CVM database when available
+                feeCalculatorInitialized = true;
+            }
+            
+            // Calculate reputation-adjusted fee
+            CVM::FeeCalculationResult feeResult = feeCalculator.CalculateFee(tx, chainActive.Height());
+            
+            if (feeResult.IsValid()) {
+                // For free gas eligible transactions (80+ reputation), allow zero fee
+                if (feeResult.isFreeGas) {
+                    LogPrint(BCLog::CVM, "AcceptToMemoryPool: Free gas transaction accepted for %s (reputation=%d)\n",
+                             tx.GetHash().ToString(), feeResult.reputation);
+                    // Skip standard fee checks for free gas transactions
+                } else {
+                    // Check if transaction meets minimum CVM/EVM fee requirements
+                    if (!bypass_limits && nModifiedFees < feeResult.effectiveFee) {
+                        return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "cvm fee not met", false,
+                                       strprintf("%d < %d (reputation=%d, discount=%d, subsidy=%d)",
+                                                nFees, feeResult.effectiveFee, feeResult.reputation,
+                                                feeResult.reputationDiscount, feeResult.gasSubsidy));
+                    }
+                    
+                    LogPrint(BCLog::CVM, "AcceptToMemoryPool: CVM/EVM transaction fee validated: "
+                             "base=%d effective=%d reputation=%d discount=%d subsidy=%d\n",
+                             feeResult.baseFee, feeResult.effectiveFee, feeResult.reputation,
+                             feeResult.reputationDiscount, feeResult.gasSubsidy);
+                }
+            } else {
+                // Fee calculation failed, log warning but continue with standard validation
+                LogPrint(BCLog::CVM, "AcceptToMemoryPool: CVM fee calculation failed: %s, using standard fee\n",
+                         feeResult.error);
+                
+                // Fall through to standard fee validation
+                if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+                    return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+                }
+            }
+        } else {
+            // Standard Bitcoin transaction - use normal fee validation
+            if (!bypass_limits && nModifiedFees < ::minRelayTxFee.GetFee(nSize)) {
+                return state.DoS(0, false, REJECT_INSUFFICIENTFEE, "min relay fee not met");
+            }
         }
 
         if (nAbsurdFee && nFees > nAbsurdFee)
@@ -895,6 +953,12 @@ static bool AcceptToMemoryPoolWorker(const CChainParams& chainparams, CTxMemPool
         unsigned int scriptVerifyFlags = STANDARD_SCRIPT_VERIFY_FLAGS;
         if (!chainparams.RequireStandard()) {
             scriptVerifyFlags = gArgs.GetArg("-promiscuousmempoolflags", scriptVerifyFlags);
+        }
+
+        // Cascoin: Add SCRIPT_VERIFY_QUANTUM flag if quantum features are active
+        // This allows quantum transactions to be accepted into the mempool after activation
+        if (chainActive.Height() >= chainparams.GetConsensus().quantumActivationHeight) {
+            scriptVerifyFlags |= SCRIPT_VERIFY_QUANTUM;
         }
 
         // Check against previous transactions
@@ -1597,6 +1661,26 @@ DisconnectResult CChainState::DisconnectBlock(const CBlock& block, const CBlockI
 {
     bool fClean = true;
 
+    // Cascoin: L2 - drop tracked (not-yet-minted) burns at/above this height so
+    // they are re-detected if the chain is rebuilt.
+    if (l2::IsL2Enabled() && pindex) {
+        l2::HandleBurnReorg(pindex->nHeight);
+        // Revert the full L2 state (accounts/mints/tip) to the snapshot at the
+        // fork point (the parent of the block being disconnected).
+        l2::HandleL1StateReorg(pindex->nHeight - 1);
+    }
+
+    // Cascoin: CVM - Revert every CVM state change this block made, using the
+    // reverse journal written by ConnectBlock. Without this a reorg would leave
+    // committed contract state, trust edges, bonded votes and DAO records behind
+    // that no longer correspond to the active chain.
+    //
+    // A missing journal is not an error: the block may have touched no CVM state,
+    // or it may have been connected by a build that predates the journal.
+    if (CVM::g_cvmdb && pindex) {
+        CVM::g_cvmdb->UndoBlock(pindex->GetBlockHash());
+    }
+
     CBlockUndo blockUndo;
     if (!UndoReadFromDisk(blockUndo, pindex)) {
         error("DisconnectBlock(): failure reading undo data");
@@ -1812,6 +1896,13 @@ static unsigned int GetBlockScriptFlags(const CBlockIndex* pindex, const Consens
         flags |= SCRIPT_VERIFY_STRICTENC;
         flags |= SCRIPT_ENABLE_SIGHASH_FORKID;
     }
+
+    // Cascoin: Quantum - Enable post-quantum FALCON-512 signatures at activation height
+    // Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+    if (pindex->nHeight >= consensusparams.quantumActivationHeight) {
+        flags |= SCRIPT_VERIFY_QUANTUM;
+    }
+
     return flags;
 }
 
@@ -1825,6 +1916,55 @@ static int64_t nTimeIndex = 0;
 static int64_t nTimeCallbacks = 0;
 static int64_t nTimeTotal = 0;
 static int64_t nBlocksTotal = 0;
+
+namespace {
+
+/**
+ * RAII guard for the CVM per-block undo journal.
+ *
+ * Begins the journal on construction and, unless Commit() is called, reverts
+ * every CVM write made while it was in scope. This makes CVM state changes
+ * all-or-nothing for a block: any early return out of ConnectBlock (a failed
+ * CVM/consensus check, or a validation-only fJustCheck pass) leaves no CVM
+ * state behind, and a committed block gets a persisted journal that
+ * DisconnectBlock can replay on a reorg.
+ */
+class CVMUndoGuard
+{
+public:
+    explicit CVMUndoGuard(int height)
+    {
+        if (CVM::g_cvmdb) {
+            CVM::g_cvmdb->BeginBlockUndo(height);
+            m_active = true;
+        }
+    }
+
+    ~CVMUndoGuard()
+    {
+        if (m_active && CVM::g_cvmdb) {
+            CVM::g_cvmdb->AbortBlockUndo();
+        }
+    }
+
+    /** Persist the journal for `blockHash` and stop guarding. */
+    bool Commit(const uint256& blockHash)
+    {
+        if (!m_active || !CVM::g_cvmdb) {
+            return true;
+        }
+        m_active = false;
+        return CVM::g_cvmdb->CommitBlockUndo(blockHash);
+    }
+
+    CVMUndoGuard(const CVMUndoGuard&) = delete;
+    CVMUndoGuard& operator=(const CVMUndoGuard&) = delete;
+
+private:
+    bool m_active = false;
+};
+
+} // anonymous namespace
 
 /** Apply the effects of this block (with given index) on the UTXO set represented by coins.
  *  Validity checks that depend on the UTXO set are also done; ConnectBlock()
@@ -2021,6 +2161,52 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
     int64_t nTime3 = GetTimeMicros(); nTimeConnect += nTime3 - nTime2;
     LogPrint(BCLog::BENCH, "      - Connect %u transactions: %.2fms (%.3fms/tx, %.3fms/txin) [%.2fs (%.2fms/blk)]\n", (unsigned)block.vtx.size(), MILLI * (nTime3 - nTime2), MILLI * (nTime3 - nTime2) / block.vtx.size(), nInputs <= 1 ? 0 : MILLI * (nTime3 - nTime2) / (nInputs-1), nTimeConnect * MICRO, nTimeConnect * MILLI / nBlocksTotal);
 
+    // Cascoin: CVM - Begin the per-block reverse journal.
+    //
+    // Everything the CVM writes for this block (contract code/metadata, contract
+    // storage, nonces, balances, and the generic keyspace backing the
+    // Web-of-Trust) is recorded so DisconnectBlock can restore the exact
+    // pre-block CVM state. The guard brackets BOTH the contract execution below
+    // and the non-contract WoT persistence further down, so a reorg reverts the
+    // block's CVM effects atomically instead of leaving them committed.
+    //
+    // Because the guard reverts on destruction unless Commit() runs, every early
+    // return out of ConnectBlock (CVM failure, fJustCheck, or any consensus
+    // check further down) is automatically free of CVM side effects.
+    CVMUndoGuard cvmUndoGuard(pindex->nHeight);
+
+    // Cascoin: CVM/EVM - Validate and execute CVM/EVM transactions
+    {
+        static CVM::BlockValidator blockValidator;
+        static bool blockValidatorInitialized = false;
+        
+        // Initialize on first use with CVM database
+        if (!blockValidatorInitialized && CVM::g_cvmdb) {
+            blockValidator.Initialize(CVM::g_cvmdb.get());
+            blockValidatorInitialized = true;
+        }
+        
+        // Skip CVM validation if not initialized (pre-activation or db not ready)
+        if (!blockValidatorInitialized) {
+            LogPrint(BCLog::CVM, "ConnectBlock(): CVM validator not initialized, skipping CVM validation\n");
+        } else {
+            // Validate CVM/EVM transactions in block
+            CVM::BlockValidationResult cvmResult = blockValidator.ValidateBlock(
+                block, state, pindex, view, chainparams.GetConsensus(), fJustCheck
+            );
+            
+            if (!cvmResult.success) {
+                return error("ConnectBlock(): CVM/EVM validation failed: %s", cvmResult.error);
+            }
+            
+            if (cvmResult.contractsExecuted > 0 || cvmResult.contractsDeployed > 0) {
+                LogPrint(BCLog::CVM, "ConnectBlock(): CVM/EVM validation succeeded - "
+                         "contracts executed: %d, deployed: %d, gas used: %d\n",
+                         cvmResult.contractsExecuted, cvmResult.contractsDeployed, cvmResult.totalGasUsed);
+            }
+        }
+    }
+
     // Cascoin: MinotaurX+Hive1.2: Get correct block reward
     CAmount blockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
     if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
@@ -2038,8 +2224,47 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
                                block.vtx[0]->GetValueOut(), blockReward),
                                REJECT_INVALID, "bad-cb-amount");
 
+    // Cascoin: HAT v2 - Validate coinbase validator payments (70/30 split)
+    // Only validate if CVM soft fork is active (validator compensation requires CVM)
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        // Calculate block reward without fees for validator payment validation
+        CAmount baseBlockReward = GetBlockSubsidy(pindex->nHeight, chainparams.GetConsensus());
+        if (IsMinotaurXEnabled(pindex->pprev, chainparams.GetConsensus())) {
+            if (block.IsHiveMined(chainparams.GetConsensus()))
+                baseBlockReward += baseBlockReward >> 1;
+            else
+                baseBlockReward = baseBlockReward >> 1;
+        }
+        baseBlockReward += nFees;
+        
+        if (!CheckCoinbaseValidatorPayments(block, baseBlockReward)) {
+            // The 70/30 miner/validator split becomes a consensus rule at
+            // cvmValidatorPaymentActivationHeight. Before that height it stays
+            // advisory: the existing chains contain blocks mined before validator
+            // payouts existed, and rejecting them retroactively would stall every
+            // upgraded node.
+            //
+            // Note this only ever bites for blocks that actually owe a validator
+            // share; a block with no gas-fee-bearing contract transactions owes
+            // nothing and passes regardless.
+            if (pindex->nHeight >= chainparams.GetConsensus().cvmValidatorPaymentActivationHeight) {
+                return state.DoS(100,
+                    error("ConnectBlock(): invalid validator payments (70/30 split not honoured) at height %d",
+                          pindex->nHeight),
+                    REJECT_INVALID, "bad-coinbase-validator-payments");
+            }
+
+            LogPrint(BCLog::CVM, "ConnectBlock(): Validator payment validation failed at height %d "
+                     "(advisory until height %d)\n",
+                     pindex->nHeight, chainparams.GetConsensus().cvmValidatorPaymentActivationHeight);
+        }
+    }
+
     // Cascoin: Ensure that lastScryptBlock+1 coinbase TX pays to the premine address
-    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1) {
+    // Skip this check for regtest and testnet as they use generatetoaddress
+    if (pindex->nHeight == chainparams.GetConsensus().lastScryptBlock+1 && 
+        chainparams.NetworkIDString() != "regtest" && 
+        chainparams.NetworkIDString() != "test") {
         if (block.vtx[0]->vout[0].scriptPubKey.size() == 1) {
             LogPrintf("ConnectBlock(): allowing mine\n");
         } else if (block.vtx[0]->vout[0].scriptPubKey != chainparams.GetConsensus().premineOutputScript) {
@@ -2079,6 +2304,92 @@ bool CChainState::ConnectBlock(const CBlock& block, CValidationState& state, CBl
 
     int64_t nTime6 = GetTimeMicros(); nTimeCallbacks += nTime6 - nTime5;
     LogPrint(BCLog::BENCH, "    - Callbacks: %.2fms [%.2fs (%.2fms/blk)]\n", MILLI * (nTime6 - nTime5), nTimeCallbacks * MICRO, nTimeCallbacks * MILLI / nBlocksTotal);
+
+    // Cascoin: CVM - Process CVM transactions in block (soft fork)
+    // NOTE: Contract deployment and execution is already handled by BlockValidator::ValidateBlock()
+    // above. CVMBlockProcessor::ProcessBlock() was duplicating this work and creating expensive
+    // TrustContext+SecureHAT calculations that caused the node to hang.
+    // Here we persist only the non-contract CVM records (trust edges, bonded votes, DAO
+    // disputes/votes, reputation votes) and run ProcessClusterUpdates() for wallet trust
+    // propagation. This section is reached only when fJustCheck == false (the fJustCheck
+    // return precedes it), so no durable WoT/reputation write occurs during validation-only.
+    if (CVM::IsCVMSoftForkActive(pindex->nHeight, chainparams.GetConsensus())) {
+        if (CVM::g_cvmdb) {
+            // Persist on-chain non-contract CVM records (trust edges, bonded votes, DAO
+            // disputes/votes, reputation votes). Contract deploy/call work is already done by
+            // BlockValidator::ValidateBlock() above and is NOT re-executed here. Run before
+            // ProcessClusterUpdates() so records exist before cluster propagation runs.
+            // (Requirements: 2.1, 2.9, 3.1, 3.6, 3.7)
+            CVM::CVMBlockProcessor::ProcessNonContractBlock(block, pindex->nHeight, *CVM::g_cvmdb);
+            // Process cluster updates for wallet trust propagation (Requirements: 2.4, 16.1)
+            CVM::CVMBlockProcessor::ProcessClusterUpdates(block, pindex->nHeight, *CVM::g_cvmdb);
+        } else {
+            LogPrintf("CVM: ERROR - Database NOT available at height %d!\n", pindex->nHeight);
+        }
+    }
+
+    // Cascoin: CVM - All CVM work for this block is done; persist the reverse
+    // journal so a later DisconnectBlock can restore the pre-block CVM state.
+    // Past this point the guard no longer reverts on scope exit.
+    if (!cvmUndoGuard.Commit(pindex->GetBlockHash())) {
+        return AbortNode(state, "Failed to write CVM undo journal");
+    }
+
+    // Cascoin: L2 - Burn-and-Mint processing (soft fork).
+    // Detect OP_RETURN "L2BURN" outputs and, once a burn has enough L1
+    // confirmations, deterministically mint 1:1 L2 tokens to the recipient.
+    // Reached only when fJustCheck == false. Never throws.
+    if (l2::IsL2Enabled()) {
+        l2::ProcessConnectedBlockForBurns(block, pindex->nHeight, pindex->nHeight);
+        // M2: update the on-chain sequencer registry (L2SEQREG). Runs before
+        // commits so a block's committed stake reflects the latest registry.
+        l2::ProcessConnectedBlockForSeqReg(block, pindex->nHeight);
+        // Record any L2 state-root commitments (L2COMMIT) anchored in this block.
+        l2::ProcessConnectedBlockForCommits(block, pindex->nHeight);
+        // M1 Data Availability: reconstruct L2 blocks from any L2DATA posted on
+        // L1 (runs after burns so mint state is present before transfers apply).
+        l2::ProcessConnectedBlockForData(block, pindex->nHeight);
+        // Queue any forced-inclusion (L2FORCE) transfers posted on L1.
+        l2::ProcessConnectedBlockForForced(block, pindex->nHeight);
+        // Snapshot the resulting L2 state so it can be reverted on an L1 reorg.
+        l2::SnapshotL2State(pindex->nHeight);
+    }
+
+    // Cascoin: Quantum Registry - Register public keys from registration transactions
+    // Requirements: 2.1-2.4 (Public key registration on successful validation)
+    if (pindex->nHeight >= chainparams.GetConsensus().quantumActivationHeight && g_quantumRegistry) {
+        for (const auto& tx : block.vtx) {
+            if (tx->IsCoinBase()) continue;
+            
+            for (const auto& txin : tx->vin) {
+                // Check if this input has a quantum witness
+                if (!txin.scriptWitness.IsNull() && !txin.scriptWitness.stack.empty()) {
+                    const auto& witnessStack = txin.scriptWitness.stack;
+                    
+                    // Check for registry format (single stack item with marker byte 0x51)
+                    if (witnessStack.size() == 1 && !witnessStack[0].empty()) {
+                        uint8_t marker = witnessStack[0][0];
+                        
+                        // Only process registration transactions (0x51)
+                        if (marker == QUANTUM_WITNESS_MARKER_REGISTRATION) {
+                            QuantumWitnessData witnessData = ParseQuantumWitness(witnessStack);
+                            
+                            if (witnessData.isValid && witnessData.isRegistration) {
+                                // Register the public key
+                                if (g_quantumRegistry->RegisterPubKey(witnessData.pubkey)) {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Registered quantum pubkey from tx %s at height %d\n",
+                                             tx->GetHash().ToString(), pindex->nHeight);
+                                } else {
+                                    LogPrint(BCLog::ALL, "ConnectBlock(): Failed to register quantum pubkey from tx %s: %s\n",
+                                             tx->GetHash().ToString(), g_quantumRegistry->GetLastError());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     return true;
 }
@@ -2439,14 +2750,12 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
     // Read block from disk.
     int64_t nTime1 = GetTimeMicros();
     std::shared_ptr<const CBlock> pthisBlock;
-    if (!pblock) {
-        std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
-        if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
-            return AbortNode(state, "Failed to read block");
-        pthisBlock = pblockNew;
-    } else {
-        pthisBlock = pblock;
-    }
+    // CASCOIN FIX: Always read full block from disk for CVM processing
+    // The pblock parameter may be a witness-stripped block that doesn't contain all TXs
+    std::shared_ptr<CBlock> pblockNew = std::make_shared<CBlock>();
+    if (!ReadBlockFromDisk(*pblockNew, pindexNew, chainparams.GetConsensus()))
+        return AbortNode(state, "Failed to read block");
+    pthisBlock = pblockNew;
     const CBlock& blockConnecting = *pthisBlock;
     // Apply the block atomically to the chain state.
     int64_t nTime2 = GetTimeMicros(); nTimeReadFromDisk += nTime2 - nTime1;
@@ -2508,12 +2817,12 @@ bool CChainState::ConnectTip(CValidationState& state, const CChainParams& chainp
                         JSONRPCRequest request;
                         CWallet * const pwallet = GetWalletForJSONRPCRequest(request);
                         if (!EnsureWalletIsAvailable(pwallet, true)) {
-                            LogPrintf("Rialto: ERROR: Can't check if nick %s is local; wallet unavailable\n", nickname);
+                            LogPrint(BCLog::RIALTO, "Rialto: ERROR: Can't check if nick %s is local; wallet unavailable\n", nickname);
                             continue;
                         }
 
                         if (pwallet->IsLocked()) {
-                            LogPrintf("Rialto: ERROR: Can't check if nick %s is local; wallet locked\n", nickname);
+                            LogPrint(BCLog::RIALTO, "Rialto: ERROR: Can't check if nick %s is local; wallet locked\n", nickname);
                             continue;
                         }
 
@@ -3225,6 +3534,16 @@ bool IsRialtoEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& par
     return (VersionBitsState(pindexPrev, params, Consensus::DEPLOYMENT_RIALTO, versionbitscache) == THRESHOLD_ACTIVE);
 }
 
+// Cascoin: Quantum: Check if quantum features are activated at given point
+// Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+bool IsQuantumEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params) {
+    if (pindexPrev == nullptr) {
+        return false;
+    }
+    // Quantum activation is based on block height, not version bits
+    return (pindexPrev->nHeight + 1) >= params.quantumActivationHeight;
+}
+
 // Cascoin: Rialto: Check if a nick is already registered (helper to provide access to White Pages DB)
 bool RialtoNickExists(const std::string nick) {
     LOCK(cs_main);
@@ -3471,7 +3790,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             }
 
             if (LogAcceptCategory(BCLog::ALL)) { 
-                LogPrintf("ContextualCheckBlockHeader: block.nVersion=0x%08x, raw block.GetPoWType()=%d, effectivePowTypeForHashing=%d (%s)\\n",
+                LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: block.nVersion=0x%08x, raw block.GetPoWType()=%d, effectivePowTypeForHashing=%d (%s)\\n",
                     block.nVersion, static_cast<int>(block.GetPoWType()), static_cast<int>(effectivePowType),
                     effective_pow_type_name_for_log
                 );
@@ -3497,15 +3816,15 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
                         prev_pow_type_name_for_log = "PREV_POW_TYPE_OUT_OF_BOUNDS";
                     }
                 }
-                LogPrintf("ContextualCheckBlockHeader: SHA256 PRE-CHECK (using effectiveType): block.nBits=0x%08x, expected_nBits (from LWMA)=0x%08x. MismatchFound=%s. pindexPrev height %d, PrevPoWType %s\\n",
+                LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 PRE-CHECK (using effectiveType): block.nBits=0x%08x, expected_nBits (from LWMA)=0x%08x. MismatchFound=%s. pindexPrev height %d, PrevPoWType %s\\n",
                     block.nBits, expected_nBits, MismatchFound ? "true" : "false",
                     pindexPrev ? pindexPrev->nHeight : -1,
                     prev_pow_type_name_for_log
                 );
                 if (MismatchFound) {
-                    LogPrintf("ContextualCheckBlockHeader: SHA256 MISMATCH CONFIRMED (block.nBits 0x%08x != expected_nBits 0x%08x)\\n", block.nBits, expected_nBits);
+                    LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 MISMATCH CONFIRMED (block.nBits 0x%08x != expected_nBits 0x%08x)\\n", block.nBits, expected_nBits);
                 } else {
-                    LogPrintf("ContextualCheckBlockHeader: SHA256 nBits OK (MismatchFound=false). Proceeding with other contextual checks.\\n");
+                    LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 nBits OK (MismatchFound=false). Proceeding with other contextual checks.\\n");
                 }
             }
 
@@ -3560,7 +3879,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
             // However, if raw bits are problematic despite effective type being okay, it could be an issue.
             // For now, if effectivePowType passed its NUM_BLOCK_TYPES check, we trust that for consensus.
             // This log helps if we still see issues related to raw PoW type bits.
-            LogPrintf("ContextualCheckBlockHeader: Warning - Raw PoW type bits (0x%02x) from nVersion (0x%08x) are >= NUM_BLOCK_TYPES (%d), but effectivePoWType was %d and passed its check.\n",
+            LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: Warning - Raw PoW type bits (0x%02x) from nVersion (0x%08x) are >= NUM_BLOCK_TYPES (%d), but effectivePoWType was %d and passed its check.\n",
                       rawBlockPoWType, block.nVersion, NUM_BLOCK_TYPES, static_cast<int>(block.GetEffectivePoWTypeForHashing(consensusParams)));
             // Do not return invalid here if the effectivePoWType was deemed valid for consensus (e.g. SHA256)
             // return state.Invalid(false, REJECT_INVALID, "bad-blocktype-raw", strprintf("unrecognised raw blocktype bits =0x%02x in nVersion 0x%08x", rawBlockPoWType, block.nVersion));
@@ -3569,7 +3888,7 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, CValidationSta
 
     // Cascoin: Log before returning true if all checks passed so far for SHA256 (MinotaurX enabled path)
     if (block.GetPoWType() == POW_TYPE_SHA256 && !block.IsHiveMined(consensusParams) && IsMinotaurXEnabled(pindexPrev, consensusParams) ) {
-         LogPrintf("ContextualCheckBlockHeader: SHA256 All contextual checks PASSED. Returning true.\\n");
+         LogPrint(BCLog::MINOTAURX, "ContextualCheckBlockHeader: SHA256 All contextual checks PASSED. Returning true.\\n");
     }
 
     return true; // All good
@@ -3907,20 +4226,20 @@ bool TestBlockValidity(CValidationState& state, const CChainParams& chainparams,
     if (!CheckBlock(block, state, chainparams.GetConsensus(), fCheckPOW, fCheckMerkleRoot)) {
         // If CheckBlock fails, state will be set with the reason.
         // For fCheckPOW=true, a failure here is likely due to CheckProofOfWork returning false.
-        LogPrintf("TestBlockValidity: CheckBlock FAILED. Reason: %s. (If fCheckPOW=true, likely PoW failure: high-hash or bad-algo-proof etc.)\n",
+        LogPrint(BCLog::LEVELDB, "TestBlockValidity: CheckBlock FAILED. Reason: %s. (If fCheckPOW=true, likely PoW failure: high-hash or bad-algo-proof etc.)\n",
             FormatStateMessage(state).c_str());
         return error("%s: CheckBlock failed: %s", __func__, FormatStateMessage(state));
     }
-    LogPrintf("TestBlockValidity: CheckBlock PASSED.\n");
+    LogPrint(BCLog::LEVELDB, "TestBlockValidity: CheckBlock PASSED.\n");
 
     // Contextual checks (including the detailed nBits check in ContextualCheckBlockHeader for MinotaurX)
     // This function (ContextualCheckBlock) internally calls ContextualCheckBlockHeader.
     if (!ContextualCheckBlock(block, state, chainparams.GetConsensus(), pindexPrev)) {
-        LogPrintf("TestBlockValidity: ContextualCheckBlock FAILED. Reason: %s.\n",
+        LogPrint(BCLog::LEVELDB, "TestBlockValidity: ContextualCheckBlock FAILED. Reason: %s.\n",
             FormatStateMessage(state).c_str());
         return error("%s: ContextualCheckBlock failed: %s", __func__, FormatStateMessage(state));
     }
-    LogPrintf("TestBlockValidity: ContextualCheckBlock PASSED.\n");
+    LogPrint(BCLog::LEVELDB, "TestBlockValidity: ContextualCheckBlock PASSED.\n");
     
     // The problematic line should be removed by this edit if it exists below.
     // if (fCheckpointsEnabled && !CheckAgainstCheckpoint(pindexPrev, block.GetHash(), chainparams))

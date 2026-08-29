@@ -7,6 +7,7 @@ src/cascoin-cli
 src/cascoin-tx
 src/test/test_cascoin
 src/test/test_cascoin_fuzzy
+src/test/test_cascoin_cvm_fuzzy
 src/qt/test/test_cascoin-qt
 
 # autoreconf
@@ -119,3 +120,10 @@ contrib/devtools/split-debug.sh
 src/.vscode/
 .vscode/
 just*.sh
+
+mcp.json
+
+# External CPU miner (not part of the Cascoin build)
+cpuminer/
+cpuminer
+mine-testnet.sh

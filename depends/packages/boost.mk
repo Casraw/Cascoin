@@ -1,8 +1,8 @@
 package=boost
-$(package)_version=1_83_0
-$(package)_download_path=https://archives.boost.io/release/1.83.0/source/
+$(package)_version=1_87_0
+$(package)_download_path=https://archives.boost.io/release/1.87.0/source/
 $(package)_file_name=$(package)_$($(package)_version).tar.bz2
-$(package)_sha256_hash=6478edfe2f3305127cffe8caf73ea0176c53769f4bf1585be237eb30798c3b8e
+$(package)_sha256_hash=af57be25cb4c4f4b413ed692fe378affb4352ea50fbe294a11ef548f4d527d89
 
 define $(package)_set_vars
 $(package)_config_opts_release=variant=release
@@ -35,9 +35,9 @@ define $(package)_config_cmds
 endef
 
 define $(package)_build_cmds
-  ./b2 -d2 -j2 -d1 --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) stage
+  ./b2 -d2 -j$(JOBS) -d1 --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) stage
 endef
 
 define $(package)_stage_cmds
-  ./b2 -d0 -j4 --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) install
+  ./b2 -d0 -j$(JOBS) --prefix=$($(package)_staging_prefix_dir) $($(package)_config_opts) install
 endef

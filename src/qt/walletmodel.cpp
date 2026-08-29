@@ -704,7 +704,7 @@ void WalletModel::getBCTs(std::vector<CBeeCreationTransactionInfo>& vBeeCreation
         
         if (!success) {
             // Only clear and log after all retries failed
-            LogPrintf("Warning: Could not acquire wallet lock for BCT update after %d retries, showing previous results\n", retries);
+            LogPrint(BCLog::QT, "Warning: Could not acquire wallet lock for BCT update after %d retries, showing previous results\n", retries);
             // Don't clear the vector - keep previous results instead of showing empty
             // vBeeCreationTransactions.clear();
         }

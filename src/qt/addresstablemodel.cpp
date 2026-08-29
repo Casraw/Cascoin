@@ -9,6 +9,8 @@
 
 #include <base58.h>
 #include <wallet/wallet.h>
+#include <address_quantum.h>
+#include <chainparams.h>
 
 
 #include <QFont>
@@ -369,23 +371,45 @@ QString AddressTableModel::addRow(const QString &type, const QString &label, con
     {
         // Generate a new address to associate with given label
         CPubKey newKey;
-        if(!wallet->GetKeyFromPool(newKey))
-        {
-            WalletModel::UnlockContext ctx(walletModel->requestUnlock());
-            if(!ctx.isValid())
+        
+        // Cascoin: Handle quantum address generation
+        if (address_type == OUTPUT_TYPE_QUANTUM) {
+            if(!wallet->GetQuantumKeyFromPool(newKey))
             {
-                // Unlock wallet failed or was cancelled
-                editStatus = WALLET_UNLOCK_FAILURE;
-                return QString();
+                WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+                if(!ctx.isValid())
+                {
+                    // Unlock wallet failed or was cancelled
+                    editStatus = WALLET_UNLOCK_FAILURE;
+                    return QString();
+                }
+                if(!wallet->GetQuantumKeyFromPool(newKey))
+                {
+                    editStatus = KEY_GENERATION_FAILURE;
+                    return QString();
+                }
             }
+            // Encode as quantum address
+            strAddress = address::EncodeQuantumAddress(newKey, Params());
+        } else {
             if(!wallet->GetKeyFromPool(newKey))
             {
-                editStatus = KEY_GENERATION_FAILURE;
-                return QString();
+                WalletModel::UnlockContext ctx(walletModel->requestUnlock());
+                if(!ctx.isValid())
+                {
+                    // Unlock wallet failed or was cancelled
+                    editStatus = WALLET_UNLOCK_FAILURE;
+                    return QString();
+                }
+                if(!wallet->GetKeyFromPool(newKey))
+                {
+                    editStatus = KEY_GENERATION_FAILURE;
+                    return QString();
+                }
             }
+            wallet->LearnRelatedScripts(newKey, address_type);
+            strAddress = EncodeDestination(GetDestinationForKey(newKey, address_type));
         }
-        wallet->LearnRelatedScripts(newKey, address_type);
-        strAddress = EncodeDestination(GetDestinationForKey(newKey, address_type));
     }
     else
     {

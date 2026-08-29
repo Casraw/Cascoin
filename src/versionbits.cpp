@@ -38,6 +38,16 @@ const struct VBDeploymentInfo VersionBitsDeploymentInfo[Consensus::MAX_VERSION_B
     {
         /*.name =*/ "rialto",
         /*.gbt_force =*/ true,
+    },
+    // Cascoin: CVM-EVM: Deployment
+    {
+        /*.name =*/ "cvm_evm",
+        /*.gbt_force =*/ true,
+    },
+    // Cascoin: Quantum: Deployment of FALCON-512 post-quantum cryptography
+    {
+        /*.name =*/ "quantum",
+        /*.gbt_force =*/ true,
     }
 };
 

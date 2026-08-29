@@ -122,6 +122,11 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nStartTime = 2000000000;               // Far future (2033)
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nTimeout = 2000000000 + 31536000;      // Start + 1 year
 
+        // Cascoin: CVM-EVM: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = 1750000000;  // ~March 2025 - Start signaling for CVM-EVM enhancement
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = 1750000000 + 31536000;  // Start + 1 year
+
         // Cascoin fields
         consensus.powForkTime = 0;                 // Time of PoW hash method change
         consensus.lastScryptBlock = -1;                // Height of last scrypt block
@@ -170,6 +175,51 @@ public:
         consensus.nickCreationCost4Char     = 100000000000;
         consensus.nickCreationCostStandard  = 1000000000;
         consensus.nickCreationAntiDust      = 10000;                                    // Portion of creation cost burnt in 2nd output
+
+        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
+        consensus.cvmActivationHeight       = 220000;                                   // Activate CVM at block 220000 (2+ months for network upgrade)
+        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
+        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
+        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
+
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height. Set to a
+        // coordinated future block so all nodes begin recognising L2COMMIT /
+        // L2FORCE outputs and burn-minting at the same L1 height. Adjust to the
+        // real upgrade height before mainnet release.
+        consensus.l2ActivationHeight        = 400000;                                   // Activate L2 anchoring/minting at block 400000 (future coordinated upgrade)
+
+        // Cascoin: CVM per-block subsidy maximum enforced from a future height so
+        // existing mainnet history is not retroactively invalidated. Adjust to
+        // the coordinated upgrade height before release (current mainnet ~276k).
+        consensus.cvmSubsidyMaxActivationHeight = 500000;                               // Enforce CVM per-block subsidy cap from block 500000
+
+        // Cascoin: CVM opcode completion (OP_PUBKEY + cross-contract OP_CALL).
+        // Scheduled together with the other pending CVM consensus tightenings so
+        // the network performs a single coordinated upgrade. Must stay above the
+        // live tip until the release ships.
+        consensus.cvmOpcodeV2ActivationHeight = 500000;                                 // OP_PUBKEY / OP_CALL become functional at block 500000
+
+        // Cascoin: HAT v2 validator payments become a consensus rule here.
+        // Advisory (log-only) before this height so blocks mined during the
+        // transition, which predate validator payouts, stay valid.
+        consensus.cvmValidatorPaymentActivationHeight = 500000;                         // Enforce coinbase validator payments from block 500000
+
+        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
+        consensus.asrsActivationHeight      = 220000;                                   // Activate ASRS at block 220000 (2+ months for network upgrade)
+        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
+        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
+
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.1 (mainnet activation at block 350000)
+        consensus.quantumActivationHeight   = 350000;                                   // Activate quantum at block 350000 (current: ~276606)
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = 1800000000;  // ~January 2027 - Start signaling for quantum
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = 1800000000 + 31536000;  // Start + 1 year
 
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Cascoin: 1695238
@@ -282,6 +332,11 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nStartTime = 2000000000;               // Feb 14, 2024
         consensus.vDeployments[Consensus::DEPLOYMENT_RIALTO].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;      // Start + 1 year
 
+        // Cascoin: CVM-EVM: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = 1745000000;  // ~February 2025 - Earlier activation for testnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = 1745000000 + 31536000;  // Start + 1 year
+
         // Cascoin fields
         consensus.powForkTime = 0;                 // Time of PoW hash method change (block 50)
         consensus.lastScryptBlock = 0;                     // Height of last scrypt block
@@ -332,16 +387,65 @@ public:
         consensus.nickCreationAntiDust      = 10000;        // Portion of creation cost burnt in 2nd output
         //consensus.firstRialtoBlock = uint256S("0xb602f3f5093626bea32c5b9cf499de562e7a364dbe55ee3d34211e7f15502a7e");   // Block 500: First block to consider for Rialto registrations (only required if launching without a UASF)
 
+        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
+        consensus.cvmActivationHeight       = 500;                                      // Activate CVM at block 500 (earlier for testing)
+        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
+        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
+        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
+
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height (testnet: early).
+        consensus.l2ActivationHeight        = 500;                                      // Activate L2 anchoring/minting at block 500 (earlier for testing)
+
+        // Cascoin: CVM per-block subsidy maximum. The live testnet chain (tip
+        // ~7131) already contains blocks that predate this stricter rule and
+        // whose subsidy exceeds the cap; enforcing it from cvmActivationHeight
+        // (500) retroactively rejected them and stalled every upgraded node.
+        // Activate it just above the current tip so existing history stays valid
+        // and the cap applies only to newly mined blocks.
+        consensus.cvmSubsidyMaxActivationHeight = 7132;                                 // Enforce CVM per-block subsidy cap from block 7132 (current tip 7131 + 1)
+
+        // Cascoin: CVM opcode completion (OP_PUBKEY + cross-contract OP_CALL).
+        // Set two blocks above the current live testnet tip (7239) so the new
+        // opcode behaviour activates almost immediately and can be exercised by
+        // mining, while all already-validated history stays reproducible.
+        consensus.cvmOpcodeV2ActivationHeight = 7241;                                    // OP_PUBKEY / OP_CALL become functional at block 7241
+
+        // Cascoin: HAT v2 validator payments become a consensus rule here.
+        // MUST stay above the live tip: the existing testnet chain contains
+        // blocks that pay 100% to the miner, and enforcing the split
+        // retroactively would reject them and stall every upgraded node (the
+        // same failure mode documented for the subsidy cap above). Set two
+        // blocks above the current tip (7239) so it activates right away.
+        consensus.cvmValidatorPaymentActivationHeight = 7241;                            // Enforce coinbase validator payments from block 7241
+
+        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
+        consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
+        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
+        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
+
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.2 (testnet activation at block 50000)
+        consensus.quantumActivationHeight   = 5680;                                    // Activate quantum at block 50000 (current: ~5377)
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;  // Always active for testnet
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;  // No timeout
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");  // Block 412
 
         // By default assume that the signatures in ancestors of this block are valid.
         consensus.defaultAssumeValid = uint256S("0x00"); // Block 412
 
-        pchMessageStart[0] = 0xca;
-        pchMessageStart[1] = 0x5c;
-        pchMessageStart[2] = 0x01;
-        pchMessageStart[3] = 0xcf;
+        // Testnet uses different magic bytes to prevent connecting to mainnet
+        pchMessageStart[0] = 0xfc;
+        pchMessageStart[1] = 0xc1;
+        pchMessageStart[2] = 0xb7;
+        pchMessageStart[3] = 0xdc;
         nDefaultPort = 22223;
         nPruneAfterHeight = 1000;
 
@@ -353,10 +457,11 @@ public:
         vFixedSeeds.clear();
         vSeeds.emplace_back("testseed.cascoin.net");
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 40);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 8);
-        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 50);
-        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 188);
+        // Testnet uses different address prefixes (111 = 't' prefix like Bitcoin testnet)
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 196);
+        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 58);
+        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 239);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
@@ -411,6 +516,9 @@ public:
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].bit = 1;
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
         consensus.vDeployments[Consensus::DEPLOYMENT_SEGWIT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].bit = 10;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_CVM_EVM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
 
         // Cascoin fields
         consensus.powForkTime = 1543765622;                 // Time of PoW hash method change (block 100)
@@ -426,16 +534,77 @@ public:
         // Cascoin: Add powLimitHive for regtest, matching the other networks for consistency during bootstrap
         consensus.powLimitHive = uint256S("000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); // Target for ~2^20 work, good for CPU bootstrap
 
+        // Cascoin: MinotaurX+Hive1.2-related consensus fields
+        consensus.lwmaAveragingWindow = 90;                 // Averaging window size for LWMA diff adjust
+        consensus.powTypeLimits.emplace_back(uint256S("0x000000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // sha256d limit
+        consensus.powTypeLimits.emplace_back(uint256S("0x000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"));   // MinotaurX limit
+
+        // Cascoin: Hive: Consensus Fields (regtest specific defaults)
+        consensus.minBeeCost = 10000;
+        consensus.beeCostFactor = 2500;
+        consensus.beeGestationBlocks = 48*24;               // reasonable default
+        consensus.beeLifespanBlocks = 48*24*14;             // reasonable default
+        consensus.hiveTargetAdjustAggression = 30;
+        consensus.hiveBlockSpacingTarget = 2;
+        consensus.hiveBlockSpacingTargetTypical = 3;
+        consensus.hiveBlockSpacingTargetTypical_1_1 = 2;
+
+        // Cascoin: Rialto-related consensus fields
+        consensus.nickCreationAddress = "tKJjaPcSS3nXYBN4QmmYnSanr9oUhSXAZB";        // Nick creation address (regtest uses same as testnet)
+        consensus.nickCreationCost3Char     = 100000000000; // Minimum costs to register a nick
+        consensus.nickCreationCost4Char     = 5000000000;
+        consensus.nickCreationCostStandard  = 100000000;
+        consensus.nickCreationAntiDust      = 10000;        // Portion of creation cost burnt in 2nd output
+
+        // Cascoin: CVM (Cascoin Virtual Machine) related consensus fields
+        consensus.cvmActivationHeight       = 0;                                        // Activate CVM immediately for regtest
+        consensus.cvmMaxGasPerBlock         = 10000000;                                 // 10M gas per block
+        consensus.cvmMaxGasPerTx            = 1000000;                                  // 1M gas per transaction
+        consensus.cvmMaxCodeSize            = 24576;                                    // 24KB max contract size
+
+        // Cascoin: L2 (Layer 2 burn-and-mint) activation height (regtest: immediate).
+        consensus.l2ActivationHeight        = 0;                                        // Activate L2 anchoring/minting immediately for regtest
+
+        // Cascoin: CVM per-block subsidy maximum active from genesis in regtest
+        // so the subsidy-cap unit/functional tests keep exercising the rule.
+        consensus.cvmSubsidyMaxActivationHeight = 0;                                    // Enforce CVM per-block subsidy cap immediately for regtest
+
+        // Cascoin: CVM opcode completion and validator-payment enforcement are
+        // active from genesis in regtest so the unit/functional tests exercise
+        // the post-activation rules directly. A block with no gas-fee-bearing
+        // contract transactions owes no validator share, so ordinary regtest
+        // mining is unaffected.
+        consensus.cvmOpcodeV2ActivationHeight = 0;                                      // OP_PUBKEY / OP_CALL functional immediately for regtest
+        consensus.cvmValidatorPaymentActivationHeight = 0;                              // Enforce coinbase validator payments immediately for regtest
+
+        // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
+        consensus.asrsActivationHeight      = 0;                                        // Activate ASRS immediately for regtest
+        consensus.asrsMinVotingPower        = 1;                                        // Minimum voting power to participate
+        consensus.asrsMaxScoreChange        = 1000;                                     // Max score change per vote
+
+        // Cascoin: Post-Quantum Cryptography (PQC) related consensus fields
+        // Requirements: 6.3 (regtest activation at block 1)
+        consensus.quantumActivationHeight   = 1;                                        // Activate quantum at block 1 for testing
+        consensus.maxQuantumSignatureSize   = 700;                                      // Maximum FALCON-512 signature size
+        consensus.maxQuantumPubKeySize      = 897;                                      // FALCON-512 public key size
+        consensus.cvmQuantumVerifyGas       = 3000;                                     // Gas cost for VERIFY_SIG_QUANTUM in CVM
+
+        // Cascoin: Quantum: Deployment (always active for regtest)
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].bit = 11;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
+        consensus.vDeployments[Consensus::DEPLOYMENT_QUANTUM].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
+
         // The best chain should have at least this much work.
         consensus.nMinimumChainWork = uint256S("0x00");
 
         // By default assume that the signatures in ancestors of this block are valid.
         consensus.defaultAssumeValid = uint256S("0x00");
 
-        pchMessageStart[0] = 0xca;
-        pchMessageStart[1] = 0x5c;
-        pchMessageStart[2] = 0x01;
-        pchMessageStart[3] = 0xcf;
+        // Regtest uses different magic bytes to prevent connecting to mainnet/testnet
+        pchMessageStart[0] = 0xfa;
+        pchMessageStart[1] = 0xbf;
+        pchMessageStart[2] = 0xb5;
+        pchMessageStart[3] = 0xda;
         nDefaultPort = 22224;
         nPruneAfterHeight = 1000;
 
@@ -463,10 +632,11 @@ public:
             0
         };
 
-        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 40);
-        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 8);
-        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 50);
-        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 188);
+        // Regtest uses different address prefixes (111 = 't' prefix)
+        base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
+        base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 196);
+        base58Prefixes[SCRIPT_ADDRESS2] = std::vector<unsigned char>(1, 58);
+        base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 239);
         base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
         base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
@@ -477,7 +647,11 @@ public:
 static std::unique_ptr<CChainParams> globalChainParams;
 
 const CChainParams &Params() {
-    assert(globalChainParams);
+    // Be robust against early thread startup: wait until SelectParams() ran
+    // instead of throwing across threads which can terminate the process.
+    while (!globalChainParams) {
+        MilliSleep(1); // avoid busy spin; utiltime.h provides MilliSleep
+    }
     return *globalChainParams;
 }
 

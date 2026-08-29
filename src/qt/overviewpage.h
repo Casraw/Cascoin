@@ -44,8 +44,9 @@ public Q_SLOTS:
 
 Q_SIGNALS:
     void transactionClicked(const QModelIndex &index);
-    void beeButtonClicked();                    // Cascoin: Hive
+    void beeButtonClicked();                    // Cascoin: Labyrinth
     void outOfSyncWarningClicked();
+    void cvmDashboardButtonClicked();           // Cascoin: CVM Dashboard
 
 private:
     Ui::OverviewPage *ui;
@@ -57,7 +58,7 @@ private:
     CAmount currentWatchOnlyBalance;
     CAmount currentWatchUnconfBalance;
     CAmount currentWatchImmatureBalance;
-    CAmount cost, rewardsPaid, profit;          // Cascoin: Hive
+    CAmount cost, rewardsPaid, profit;          // Cascoin: Labyrinth
 
     TxViewDelegate *txdelegate;
     std::unique_ptr<TransactionFilterProxy> filter;
@@ -68,9 +69,10 @@ private Q_SLOTS:
     void updateAlerts(const QString &warnings);
     void updateWatchOnlyLabels(bool showWatchOnly);
     void handleOutOfSyncWarningClicks();
-    void on_beeButton_clicked();                // Cascoin: Hive: Bee button handler
-    void updateHiveSummary();                   // Cascoin: Hive: Update hive summary
+    void on_beeButton_clicked();                // Cascoin: Labyrinth: Mice button handler
+    void updateHiveSummary();                   // Cascoin: Labyrinth: Update labyrinth summary
     void on_unlockWalletButton_clicked();       // Cascoin: Rialto: Unlock wallet button handler
+    void on_cvmDashboardButton_clicked();       // Cascoin: CVM: Open dashboard in browser
 };
 
 #endif // BITCOIN_QT_OVERVIEWPAGE_H

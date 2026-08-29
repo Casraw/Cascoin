@@ -424,6 +424,10 @@ bool IsMinotaurXEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& 
 // Cascoin: Rialto: Check if Rialto is activated at given point
 bool IsRialtoEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 
+// Cascoin: Quantum: Check if quantum features are activated at given point
+// Requirements: 9.1, 9.2, 9.3, 9.4 (Activation height enforcement)
+bool IsQuantumEnabled(const CBlockIndex* pindexPrev, const Consensus::Params& params);
+
 // Cascoin: Rialto: Helpers to provide access to the white pages instance)
 bool RialtoNickExists(const std::string nick);                                      // Check if a nick is already registered in global white pages
 bool RialtoNickIsLocal(const std::string nick);                                     // Check if a nick is ours

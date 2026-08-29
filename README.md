@@ -1,80 +1,80 @@
-Cascoin Core integration/staging tree
-===========================================
-
-What is Cascoin?
-----------------------
-
-Cascoin is a fork of Litecoin Cash supporting SHA256 PoW and Hive Mining. For full details, as well as prebuilt binaries for Windows, Mac and Linux, please visit our website at https://cascoin.net.
+# Cascoin Core
 
 Cascoin Core is the full node software that makes up the backbone of the CAS network.
 
-License
--------
+## What is Cascoin?
 
-Cascoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more
-information or see https://opensource.org/licenses/MIT.
+Cascoin is a cryptocurrency supporting dual PoW (SHA256/MinotaurX) and Labyrinth Mining (Hive) - a unique hybrid consensus mechanism that combines traditional mining with "mice" creation for block rewards.
 
-Build‑Manuals
--------------
+### Key Specifications
 
-- Linux: See `doc/build-linux.md` (Qt6, Wallet, GUI, System‑Libraries)
-- Windows: See `doc/build-windows.md`
-- macOS (Qt6 + Wallet, BDB5): `doc/build-osx.md`
-- Further Unix‑Tips: `doc/build-unix.md`
+| Parameter | Value |
+|-----------|-------|
+| Block Time | 2.5 minutes |
+| Max Supply | 84 million CAS |
+| Halving Interval | 840,000 blocks |
+| PoW Block Reward | 25 CAS |
+| Hive Block Reward | 75 CAS |
+| PoW Algorithm | SHA256 (ASIC) / MinotaurX (CPU) |
+| Default Port | 22222 |
+| Address Prefix | H (mainnet) |
 
-Development Process
--------------------
+### Features
 
-The `master` branch is regularly built and tested, but is not guaranteed to be
-completely stable. [Tags](https://github.com/Casraw/Cascoin/tags) are created
-regularly to indicate new official, stable release versions of Cascoin Core.
+- **Hybrid Consensus**: Combines PoW with Labyrinth Mining (Hive)
+- **Labyrinth Mining**: Create "mice" that can mine blocks without hardware
+- **Dual PoW**: SHA256 for ASIC miners, MinotaurX for CPU miners
+- **SegWit**: Native Segregated Witness support
+- **Fast Sync**: SQLite-based BCT database for quick startup
+
+## Getting Started
+
+### Download
+
+Prebuilt binaries for Windows, Mac and Linux are available on the [GitHub Releases](https://github.com/Casraw/Cascoin/releases) page.
+
+### Build from Source
+
+- **Linux**: See [doc/build-linux.md](doc/build-linux.md)
+- **Windows**: See [doc/build-windows.md](doc/build-windows.md)
+- **macOS**: See [doc/build-osx.md](doc/build-osx.md)
+- **Unix**: See [doc/build-unix.md](doc/build-unix.md)
+
+## Development
+
+The `main` branch is regularly built and tested, but is not guaranteed to be completely stable. [Tags](https://github.com/Casraw/Cascoin/tags) are created regularly to indicate new official, stable release versions.
+
+### Contributing
 
 The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The developer [mailing list](https://groups.google.com/forum/#!forum/cascoin-dev)
-should be used to discuss complicated or controversial changes before working
-on a patch set.
+### Testing
 
-Developer IRC can be found on Freenode at #cascoin-dev.
+Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code.
 
-Testing
--------
+```bash
+# Run unit tests
+make check
 
-Testing and code review is the bottleneck for development; we get more pull
-requests than we can review and test on short notice. Please be patient and help out by testing
-other people's pull requests, and remember this is a security-critical project where any mistake might cost people
-lots of money.
+# Run functional tests
+test/functional/test_runner.py
+```
 
-### Automated Testing
+## Documentation
 
-Developers are strongly encouraged to write [unit tests](src/test/README.md) for new code, and to
-submit new unit tests for old code. Unit tests can be compiled and run
-(assuming they weren't disabled in configure) with: `make check`. Further details on running
-and extending unit tests can be found in [/src/test/README.md](/src/test/README.md).
+- [Release Notes](doc/release-notes/)
+- [Build Instructions](doc/)
+- [Memory Leak Fixes](doc/memory-leak-fixes.md)
+- [Windows Qt Fix](doc/windows-qt-platform-plugin-fix.md)
 
-There are also [regression and integration tests](/test), written
-in Python, that are run automatically on the build server.
-These tests can be run (if the [test dependencies](/test) are installed) with: `test/functional/test_runner.py`
+## Links
 
-The Travis CI system makes sure that every pull request is built for Windows, Linux, and OS X, and that unit/sanity tests are run automatically.
+- 🌐 Website: [cascoin.net](https://cascoin.net)
+- 🔍 Explorer: [casplorer.com](https://casplorer.com)
+- ⛏ Pool: [mining-pool.io](https://mining-pool.io)
+- � Ditscord: [discord.gg/J2NxATBS8z](https://discord.gg/J2NxATBS8z)
+- 📂 GitHub: [github.com/Casraw/Cascoin](https://github.com/Casraw/Cascoin)
 
-### Manual Quality Assurance (QA) Testing
+## License
 
-Changes should be tested by somebody other than the developer who wrote the
-code. This is especially important for large or high-risk changes. It is useful
-to add a test plan to the pull request description if testing the changes is
-not straightforward.
-
-Translations
-------------
-
-Any translation corrections or expansions are welcomed as GitHub pull requests.
-
-
-Links
-------------
-
-🌐 Website: [cascoin.net]
-⛏ Pool: [mining-pool.io]
-💬 Discord: [https://discord.gg/J2NxATBS8z]
-📂 GitHub: [https://github.com/Casraw/Cascoin]
+Cascoin Core is released under the terms of the MIT license. See [COPYING](COPYING) for more information.
