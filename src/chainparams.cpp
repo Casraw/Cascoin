@@ -405,17 +405,18 @@ public:
         consensus.cvmSubsidyMaxActivationHeight = 7132;                                 // Enforce CVM per-block subsidy cap from block 7132 (current tip 7131 + 1)
 
         // Cascoin: CVM opcode completion (OP_PUBKEY + cross-contract OP_CALL).
-        // Set above the live testnet tip (~7222) so already-validated history
-        // keeps reproducing, while staying close enough to be reached by mining
-        // and exercised on testnet before the mainnet upgrade.
-        consensus.cvmOpcodeV2ActivationHeight = 7500;                                    // OP_PUBKEY / OP_CALL become functional at block 7500
+        // Set two blocks above the current live testnet tip (7239) so the new
+        // opcode behaviour activates almost immediately and can be exercised by
+        // mining, while all already-validated history stays reproducible.
+        consensus.cvmOpcodeV2ActivationHeight = 7241;                                    // OP_PUBKEY / OP_CALL become functional at block 7241
 
         // Cascoin: HAT v2 validator payments become a consensus rule here.
         // MUST stay above the live tip: the existing testnet chain contains
         // blocks that pay 100% to the miner, and enforcing the split
         // retroactively would reject them and stall every upgraded node (the
-        // same failure mode documented for the subsidy cap above).
-        consensus.cvmValidatorPaymentActivationHeight = 7500;                            // Enforce coinbase validator payments from block 7500
+        // same failure mode documented for the subsidy cap above). Set two
+        // blocks above the current tip (7239) so it activates right away.
+        consensus.cvmValidatorPaymentActivationHeight = 7241;                            // Enforce coinbase validator payments from block 7241
 
         // Cascoin: Anti-Scam Reputation System (ASRS) related consensus fields
         consensus.asrsActivationHeight      = 500;                                      // Activate ASRS at block 500 (earlier for testing)
