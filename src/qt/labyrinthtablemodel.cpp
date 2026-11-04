@@ -133,6 +133,40 @@ void LabyrinthTableModel::updateBCTs(bool includeDeadMice) {
                 records = convertWalletBCTs(vMouseCreationTransactions);
             }
             
+            // Reconcile cached Labyrinth reward totals against wallet data.
+            // SQLite can contain stale or zeroed reward values following
+            // a new reward event. Match records by creation transaction ID.
+            //
+            // Keep the existing SQLite records for other metadata, but use
+            // wallet-derived reward accounting for the GUI.
+            if (walletModelPtr && !records.empty()) {
+                std::vector<CMouseCreationTransactionInfo> walletBCTs;
+                walletModelPtr->getBCTs(walletBCTs, includeDeadMice);
+
+                for (auto& record : records) {
+                    for (const auto& walletBCT : walletBCTs) {
+                        if (record.txid != walletBCT.txid) {
+                            continue;
+                        }
+
+                        if (record.rewardsPaid != walletBCT.rewardsPaid ||
+                            record.blocksFound != walletBCT.blocksFound) {
+                            LogPrintf(
+                                "LabyrinthTableModel: Reconciling rewards for %s "
+                                "(SQLite blocks=%d, wallet blocks=%d)\n",
+                                record.txid,
+                                record.blocksFound,
+                                walletBCT.blocksFound);
+                        }
+
+                        record.blocksFound = walletBCT.blocksFound;
+                        record.rewardsPaid = walletBCT.rewardsPaid;
+                        record.profit = walletBCT.profit;
+                        break;
+                    }
+                }
+            }
+
             // Get current chain height for blocks left calculation
             int currentHeight = 0;
             {
