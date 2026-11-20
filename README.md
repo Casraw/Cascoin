@@ -72,6 +72,7 @@ test/functional/test_runner.py
 - 🌐 Website: [cascoin.net](https://cascoin.net)
 - 🔍 Explorer: [casplorer.com](https://casplorer.com)
 - ⛏ Pool: [mining-pool.io](https://mining-pool.io)
+- ⛏ Pool: [veinpool.fr](https://veinpool.fr/en/coin/cas) (EU, PPLNS + SOLO)
 - � Discord: [discord.gg/J2NxATBS8z](https://discord.gg/J2NxATBS8z)
 - 📂 GitHub: [github.com/Casraw/Cascoin](https://github.com/Casraw/Cascoin)
 - 📂 Codeberg: [codeberg.org/Cascoin/Cascoin](https://codeberg.org/Cascoin/Cascoin)
